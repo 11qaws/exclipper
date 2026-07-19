@@ -850,3 +850,10 @@
 - Vite의 500kB 초과 chunk 경고는 기존 lazy audio-event Worker와 local ORT WASM에 대한 알려진 비차단 경고다. 이번 변경은 해당 asset을 main 초기 경로로 합치지 않았다.
 - 독립 감사가 연속 저음성 click 쌍이 후보 12개를 모두 소진하는 첫 수정안의 P1 반례를 재현해 배포 전에 막았다. 최종 재감사에서는 click 쌍 21개가 후보 0개, 누락 창 사이 click이 후보 0개, vocal anchor 양옆의 고crest support가 후보 1개였으며 새 P0/P1이 없었다.
 - Graphify는 문서 semantic 갱신이 외부 LLM key를 요구해 중단됐으므로 키를 주입하지 않았다. 로컬 AST `--code-only` 증분 갱신과 재클러스터링으로 최종 코드 4개 파일을 반영했고, query에서 `selectAudioReactionHighlights()`·`scoreWindow()`·`adjacentWindows()`와 후속 audio reaction/fusion 경로가 연결된 것을 재확인했다.
+
+### `0.3.8` 배포 완료
+
+- 커밋 `0d2dcd0`을 `main`에 push했다.
+- GitHub Pages workflow `29704002290`의 build job이 dependency 설치, 546개 테스트를 포함한 전체 검사, production build와 artifact upload를 통과했고 deploy job도 성공했다.
+- 공개 주소 `https://11qaws.github.io/rettolight/`에서 HTML, main JS `index-DCoyIotz.js`, CSS `index-Bwklaeef.css`, fast audio Worker `audioReactionAnalysis.worker-D3T6_2Rt.js`가 모두 HTTP 200과 올바른 MIME으로 응답했다. 공개 main bundle에는 앱 `0.3.8`과 `streamer-reaction-fast-pass-v2`가 포함된다.
+- 앱 내 브라우저로 공개 첫 화면을 다시 열어 최대 12시간·여러 후보·로컬 기본 분석 안내와 원본 선택 흐름이 정상 렌더링되는 것을 확인했다. 실제 Gemini 한국어 결과는 사용자 소유 키가 필요한 비차단 실사용 검증으로 계속 구분한다.
