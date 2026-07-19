@@ -857,3 +857,9 @@
 - GitHub Pages workflow `29704002290`의 build job이 dependency 설치, 546개 테스트를 포함한 전체 검사, production build와 artifact upload를 통과했고 deploy job도 성공했다.
 - 공개 주소 `https://11qaws.github.io/rettolight/`에서 HTML, main JS `index-DCoyIotz.js`, CSS `index-Bwklaeef.css`, fast audio Worker `audioReactionAnalysis.worker-D3T6_2Rt.js`가 모두 HTTP 200과 올바른 MIME으로 응답했다. 공개 main bundle에는 앱 `0.3.8`과 `streamer-reaction-fast-pass-v2`가 포함된다.
 - 앱 내 브라우저로 공개 첫 화면을 다시 열어 최대 12시간·여러 후보·로컬 기본 분석 안내와 원본 선택 흐름이 정상 렌더링되는 것을 확인했다. 실제 Gemini 한국어 결과는 사용자 소유 키가 필요한 비차단 실사용 검증으로 계속 구분한다.
+
+### 배포 후 후보 시간 분포 관측 보강
+
+- 같은 장시간 샘플의 최종 12개 후보 peak가 원본 4등분 기준 `[0, 0, 3, 9]`로 후반부에 집중됐다. 첫 peak는 4,426.5초, 마지막은 6,742.5초이고 두 peak의 범위는 원본의 32.03%, 원본 시작부터 첫 peak까지의 가장 큰 공백은 4,426.5초다.
+- 방송의 실제 재미있는 구간이 후반부였을 가능성과 상위 점수의 시간 편향 가능성을 정답 라벨 없이 구분할 수 없으므로, 후보를 억지로 시간대별 할당하는 production 변경은 하지 않았다. 대신 로컬 평가 script에 4등분 peak 수, 첫·마지막 peak, peak span, 경계 포함 최대 공백과 75% 단일 4분위 집중 flag를 추가했다.
+- 이 telemetry는 후보 품질 판정이나 사용자 UI 경고가 아니다. 다음 직접 청취·Gemini A/B에서 앞부분의 좋은 반응이 누락됐다는 근거가 확인될 때 시간 다양성 재정렬 또는 구간별 reserve를 검토하기 위한 회귀 관측값이다. 원본 경로와 PCM은 출력·저장하지 않는다.

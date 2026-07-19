@@ -325,6 +325,41 @@ function percentile(sortedValues, quantile) {
   return lower + (upper - lower) * (position - lowerIndex);
 }
 
+function candidatePeakDistribution(candidates, sourceDurationMs) {
+  const peaks = candidates.map((candidate) => candidate.peakMs).sort((a, b) => a - b);
+  const peakCountsBySourceQuartile = [0, 0, 0, 0];
+  for (const peakMs of peaks) {
+    const quartile = Math.min(
+      3,
+      Math.floor((peakMs / Math.max(1, sourceDurationMs)) * 4),
+    );
+    peakCountsBySourceQuartile[quartile] += 1;
+  }
+  const edgeInclusivePoints = [0, ...peaks, sourceDurationMs];
+  let largestPeakGapMs = 0;
+  for (let index = 1; index < edgeInclusivePoints.length; index += 1) {
+    largestPeakGapMs = Math.max(
+      largestPeakGapMs,
+      (edgeInclusivePoints[index] ?? 0) - (edgeInclusivePoints[index - 1] ?? 0),
+    );
+  }
+  const earliestPeakMs = peaks[0] ?? null;
+  const latestPeakMs = peaks.at(-1) ?? null;
+  const maximumQuartileCount = Math.max(...peakCountsBySourceQuartile);
+  return {
+    peakCountsBySourceQuartile,
+    earliestPeakMs,
+    latestPeakMs,
+    peakSpanRatio:
+      earliestPeakMs === null || latestPeakMs === null
+        ? 0
+        : round((latestPeakMs - earliestPeakMs) / Math.max(1, sourceDurationMs), 6),
+    largestPeakGapMs,
+    concentratedInSingleQuartile:
+      peaks.length >= 4 && maximumQuartileCount / peaks.length >= 0.75,
+  };
+}
+
 async function main() {
   const [videoPath, ffmpegPath = "ffmpeg", ffprobePath = "ffprobe"] =
     process.argv.slice(2);
@@ -377,6 +412,10 @@ async function main() {
     coverageComplete: result.coverageComplete,
     candidateWindowMs: result.candidateWindowMs,
     candidateCount: result.candidates.length,
+    candidatePeakDistribution: candidatePeakDistribution(
+      result.candidates,
+      result.sourceDurationMs,
+    ),
     diagnostics: {
       ...result.diagnostics,
       impulseLikeWindowRatio: round(
