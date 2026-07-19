@@ -1,7 +1,7 @@
 {
   "name": "rettolight",
   "private": true,
-  "version": "0.3.2",
+  "version": "0.3.3",
   "type": "module",
   "engines": {
     "node": ">=22.12.0"
@@ -17,6 +17,7 @@
     "check": "npm run typecheck && npm run lint && npm run test"
   },
   "dependencies": {
+    "@huggingface/transformers": "3.8.1",
     "mediabunny": "^1.50.9",
     "react": "^19.2.7",
     "react-dom": "^19.2.7"

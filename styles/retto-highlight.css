@@ -1181,6 +1181,163 @@
   margin-bottom: 14px;
 }
 
+.rh-passb-panel {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 14px 20px;
+  margin: 0 0 16px;
+  padding: 16px;
+  border: 1px solid var(--rh-audio-border);
+  border-radius: var(--rh-radius-lg);
+  background: linear-gradient(135deg, var(--rh-audio-bg), var(--bg2));
+}
+
+.rh-passb-copy h4 {
+  margin: 2px 0 6px;
+  color: var(--text1);
+  font-size: 1rem;
+}
+
+.rh-passb-copy > p:not(.rh-eyebrow) {
+  margin: 0;
+  color: var(--text3);
+  font-size: .8125rem;
+  line-height: 1.55;
+}
+
+.rh-passb-copy > .rh-help {
+  margin-top: 6px;
+}
+
+.rh-passb-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: flex-start;
+  justify-content: flex-end;
+}
+
+.rh-passb-status {
+  grid-column: 1 / -1;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+  color: var(--text3);
+  font-size: .8125rem;
+}
+
+.rh-passb-status strong {
+  color: var(--text2);
+}
+
+.rh-passb-status p {
+  margin: 6px 0 0;
+  line-height: 1.5;
+}
+
+.rh-passb-badge {
+  display: inline-flex;
+  padding: 2px 7px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg2);
+  color: var(--text3);
+  font-size: .6875rem;
+  font-weight: 700;
+}
+
+.rh-passb-badge[data-status="clueFound"] {
+  border-color: var(--rh-success-border);
+  background: var(--rh-success-bg);
+  color: var(--rh-success);
+}
+
+.rh-passb-badge[data-status="noClearSpeech"],
+.rh-passb-badge[data-status="failed"] {
+  border-color: var(--rh-warning-border);
+  background: var(--rh-warning-bg);
+  color: var(--rh-warning);
+}
+
+.rh-passb-badge[data-status="pending"] {
+  border-color: var(--rh-audio-border);
+  background: var(--rh-audio-bg);
+  color: var(--rh-audio);
+}
+
+.rh-transcript-cues {
+  margin-top: 10px;
+  padding: 10px;
+  border: 1px solid var(--rh-audio-border);
+  border-radius: var(--rh-radius-md);
+  background: var(--rh-audio-bg);
+}
+
+.rh-transcript-cues > strong {
+  color: var(--text2);
+  font-size: .75rem;
+}
+
+.rh-transcript-cues ul {
+  display: grid;
+  gap: 6px;
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.rh-transcript-cue-note {
+  display: block;
+  margin-top: 4px;
+  color: var(--text3);
+  font-size: .72rem;
+}
+
+.rh-transcript-cue {
+  display: grid;
+  width: 100%;
+  grid-template-columns: auto auto minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+  padding: 8px 9px;
+  border: 1px solid var(--border);
+  border-radius: var(--rh-radius-md);
+  background: var(--bg1);
+  color: var(--text2);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.rh-transcript-cue:hover:not(:disabled),
+.rh-transcript-cue:focus-visible {
+  border-color: var(--accent);
+}
+
+.rh-transcript-cue:disabled {
+  cursor: not-allowed;
+  opacity: .7;
+}
+
+.rh-transcript-cue span,
+.rh-transcript-cue time {
+  color: var(--rh-audio);
+  font-size: .6875rem;
+  font-weight: 750;
+  white-space: nowrap;
+}
+
+.rh-transcript-cue time {
+  color: var(--text4);
+  font-variant-numeric: tabular-nums;
+}
+
+.rh-transcript-cue q {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: .75rem;
+  line-height: 1.45;
+}
+
 .rh-results-actions,
 .rh-inline-actions {
   display: flex;
@@ -1537,6 +1694,7 @@
   .rh-chat-controls,
   .rh-source-card-actions,
   .rh-results-actions,
+  .rh-passb-actions,
   .rh-export-actions,
   .rh-inline-actions {
     width: 100%;
@@ -1545,10 +1703,28 @@
   .rh-chat-controls > *,
   .rh-source-card-actions > *,
   .rh-results-actions > *,
+  .rh-passb-actions > *,
   .rh-export-actions > *,
   .rh-inline-actions > * {
     flex: 1;
     justify-content: center;
+  }
+
+  .rh-passb-panel {
+    grid-template-columns: 1fr;
+  }
+
+  .rh-passb-actions {
+    width: 100%;
+    justify-content: stretch;
+  }
+
+  .rh-transcript-cue {
+    grid-template-columns: auto 1fr;
+  }
+
+  .rh-transcript-cue q {
+    grid-column: 1 / -1;
   }
 
   .rh-export-panel {

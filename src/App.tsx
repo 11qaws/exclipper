@@ -19,6 +19,29 @@ import {
   runChatAnalysisWorker,
 } from "./analysis/chatAnalysisWorkerClient";
 import {
+  buildCandidatePassBEvidence,
+  selectCandidatePassBTargets,
+  type CandidatePassBEvidence,
+  type CandidatePassBTarget as CandidatePassBCoreTarget,
+} from "./analysis/candidatePassB";
+import { buildCandidatePassBPresentation } from "./analysis/candidatePassBPresentation";
+import {
+  mergeCandidatePassBEvidence,
+  type CandidatePassBEvidenceById,
+} from "./analysis/candidatePassBEvidenceState";
+import { selectCandidatePassBRuntimeDevice } from "./analysis/candidatePassBRuntime";
+import {
+  CANDIDATE_PASS_B_MODEL_ID,
+  CANDIDATE_PASS_B_MODEL_REVISION,
+  CandidatePassBWorkerError,
+  runCandidatePassBWorker,
+  type CandidatePassBCandidateGap,
+  type CandidatePassBCandidateProgress,
+  type CandidatePassBModelProgress,
+  type CandidatePassBTranscriptResult,
+  type CandidatePassBWorkerIdentity,
+} from "./analysis/candidatePassBWorkerClient";
+import {
   fuseReactionHighlightCandidates,
   highlightReasonForSignalKinds,
   type UnifiedHighlightCandidate,
@@ -31,6 +54,17 @@ import {
   type AnalysisRunState,
 } from "./domain/analysisRun";
 import { deriveAnalysisControlState } from "./domain/analysisControlState";
+import {
+  createCandidatePassBRun,
+  reduceCandidatePassBRun,
+  summarizeCandidatePassBRun,
+  type CandidatePassBCandidateFailureReasonCode,
+  type CandidatePassBNoClearSpeechReasonCode,
+  type CandidatePassBRunEvent,
+  type CandidatePassBRunFailureReasonCode,
+  type CandidatePassBRunState,
+  type CandidatePassBWorkerEventPayload,
+} from "./domain/candidatePassBRun";
 import {
   applyCandidateBoundaryCommand,
   BOUNDARY_NUDGE_MS,
@@ -138,7 +172,7 @@ interface AudioAnalysisOutcome {
   readonly coverageComplete: boolean;
 }
 
-const APP_VERSION = "0.3.2";
+const APP_VERSION = "0.3.3";
 const PERSISTENCE_SCHEMA_VERSION = "0.3.0";
 const SIGNAL_ENGINE_VERSION = "streamer-reaction-fast-pass-v1";
 const MAX_CHAT_FILE_BYTES = 32 * 1024 * 1024;
@@ -159,6 +193,73 @@ class SourceRebindMismatchError extends Error {
 function createOperationId(prefix: string): string {
   const randomId = globalThis.crypto?.randomUUID?.();
   return `${prefix}-${randomId ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`}`;
+}
+
+function candidatePassBNoClearReason(
+  evidence: CandidatePassBEvidence,
+): CandidatePassBNoClearSpeechReasonCode {
+  if (evidence.status !== "fast-pass-fallback") {
+    return "unintelligible_speech";
+  }
+  switch (evidence.fallbackReason) {
+    case "silent":
+    case "empty-transcript":
+      return "no_speech";
+    case "low-quality-transcript":
+      return "low_transcript_confidence";
+  }
+}
+
+function candidatePassBFailureReason(
+  gap: CandidatePassBCandidateGap,
+): CandidatePassBCandidateFailureReasonCode {
+  switch (gap.reasonCode) {
+    case "NO_AUDIO_TRACK":
+      return "audio_extraction_failed";
+    case "UNSUPPORTED_CONTAINER":
+    case "UNSUPPORTED_AUDIO_CODEC":
+    case "AUDIO_DECODE_FAILED":
+      return "audio_decode_failed";
+    case "EMPTY_AUDIO":
+      return "audio_extraction_failed";
+    case "TRANSCRIPTION_FAILED":
+      return "transcription_failed";
+  }
+}
+
+function candidatePassBRunFailureReason(
+  error: unknown,
+): CandidatePassBRunFailureReasonCode {
+  if (!(error instanceof CandidatePassBWorkerError)) {
+    return "runtime_unavailable";
+  }
+  if (error.workerReasonCode === "MODEL_LOAD_FAILED") {
+    return "model_load_failed";
+  }
+  if (
+    error.code === "EVENT_FENCE_REJECTED" ||
+    error.code === "WORKER_MESSAGE_ERROR" ||
+    error.code === "RESULT_CALLBACK_FAILED" ||
+    error.code === "PROGRESS_CALLBACK_FAILED"
+  ) {
+    return "protocol_error";
+  }
+  if (error.code === "WORKER_FAILED") {
+    return "worker_initialization_failed";
+  }
+  return "runtime_unavailable";
+}
+
+function explainCandidatePassBError(error: unknown): string {
+  if (error instanceof CandidatePassBWorkerError) {
+    if (error.code === "ABORTED") {
+      return "대사 단서 찾기를 멈췄어요. 이미 찾은 단서는 이 탭에서 그대로 볼 수 있어요.";
+    }
+    if (error.workerReasonCode === "MODEL_LOAD_FAILED") {
+      return "음성 AI 파일을 불러오지 못했어요. 인터넷 연결이나 브라우저 호환 상태를 확인한 뒤 다시 시도해 주세요. 기존 후보는 그대로 사용할 수 있어요.";
+    }
+  }
+  return "대사 단서를 끝까지 찾지 못했어요. 기존 오디오·채팅 근거와 후보는 그대로 사용할 수 있어요.";
 }
 
 function toDurableCandidate(candidate: UnifiedHighlightCandidate): DurableHighlightCandidate {
@@ -414,6 +515,18 @@ function App() {
   const [audioAnalysisProgress, setAudioAnalysisProgress] =
     useState<LocalAudioReactionAnalysisProgress | null>(null);
   const [analysisError, setAnalysisError] = useState<string | null>(null);
+  const [candidatePassBRun, setCandidatePassBRun] =
+    useState<CandidatePassBRunState | null>(null);
+  const [candidatePassBEvidenceById, setCandidatePassBEvidenceById] =
+    useState<CandidatePassBEvidenceById>({});
+  const [candidatePassBModelProgress, setCandidatePassBModelProgress] =
+    useState<CandidatePassBModelProgress | null>(null);
+  const [candidatePassBCandidateProgress, setCandidatePassBCandidateProgress] =
+    useState<CandidatePassBCandidateProgress | null>(null);
+  const [candidatePassBError, setCandidatePassBError] = useState<string | null>(null);
+  const [candidatePassBStartPending, setCandidatePassBStartPending] = useState(false);
+  const [candidatePassBUseCompatibilityMode, setCandidatePassBUseCompatibilityMode] =
+    useState(false);
   const [lastExportFormat, setLastExportFormat] =
     useState<HighlightExportFormat | null>(null);
   const [copyStatus, setCopyStatus] = useState<"idle" | "copied" | "failed">("idle");
@@ -428,14 +541,20 @@ function App() {
   const chatSelectionEpoch = useRef(0);
   const sourceAbortController = useRef<AbortController | null>(null);
   const analysisAbortController = useRef<AbortController | null>(null);
+  const candidatePassBAbortController = useRef<AbortController | null>(null);
   const analysisStartOperation = useRef<number | null>(null);
   const analysisOperationEpoch = useRef(0);
+  const candidatePassBOperationEpoch = useRef(0);
+  const candidatePassBStartPendingRef = useRef(false);
+  const candidatePassBMachine = useRef<CandidatePassBRunState | null>(null);
+  const candidatePassBIdentity = useRef<CandidatePassBWorkerIdentity | null>(null);
   const recoveryOperationEpoch = useRef(0);
   const [appSessionId] = useState(() => createOperationId("session"));
   const [writerEpoch] = useState(() => Date.now());
   const resultStore = useRef<AnalysisResultStore | null>(null);
   const sourcePreviewUrlRef = useRef<string | null>(null);
   const previewVideo = useRef<HTMLVideoElement | null>(null);
+  const lastCandidateCueTrigger = useRef<HTMLButtonElement | null>(null);
   const sourceHeading = useRef<HTMLHeadingElement | null>(null);
   const candidateHeading = useRef<HTMLHeadingElement | null>(null);
   const isMounted = useRef(true);
@@ -462,6 +581,11 @@ function App() {
         sourceAbortController.current = null;
         analysisAbortController.current?.abort();
         analysisAbortController.current = null;
+        candidatePassBOperationEpoch.current += 1;
+        candidatePassBAbortController.current?.abort();
+        candidatePassBAbortController.current = null;
+        candidatePassBMachine.current = null;
+        candidatePassBIdentity.current = null;
         resultStore.current?.close();
         resultStore.current = null;
         if (sourcePreviewUrlRef.current !== null) {
@@ -551,6 +675,69 @@ function App() {
     analysisCommitPending,
     runStatus: analysisRun?.status ?? null,
   });
+  const candidatePassBBusy =
+    candidatePassBStartPending ||
+    (candidatePassBRun !== null &&
+      ["preparing", "loadingModel", "transcribing", "finalizing", "cancelling"].includes(
+        candidatePassBRun.status,
+      ));
+  const candidatePassBSummary =
+    candidatePassBRun === null ? null : summarizeCandidatePassBRun(candidatePassBRun);
+  const candidatePassBProgressRatio =
+    candidatePassBRun !== null &&
+    ["completed", "completedWithGaps"].includes(candidatePassBRun.status)
+      ? 1
+      : candidatePassBCandidateProgress !== null
+        ? Math.min(
+            1,
+            Math.max(
+              0,
+              0.2 +
+                ((candidatePassBCandidateProgress.candidateOrdinal - 1 +
+                  candidatePassBCandidateProgress.ratio) /
+                  candidatePassBCandidateProgress.targetCount) *
+                  0.8,
+            ),
+          )
+        : candidatePassBRun?.status === "transcribing"
+          ? 0.2
+          : (candidatePassBModelProgress?.ratio ?? 0) * 0.2;
+  const candidatePassBCurrentOrdinal =
+    candidatePassBCandidateProgress?.candidateOrdinal ??
+    (candidatePassBSummary === null
+      ? 1
+      : Math.min(
+          candidatePassBSummary.totalCandidateCount,
+          candidatePassBSummary.totalCandidateCount - candidatePassBSummary.pendingCount + 1,
+        ));
+  const candidatePassBStatusText =
+    candidatePassBStartPending
+      ? "이 브라우저에서 가장 안정적인 음성 AI 실행 방법을 확인하고 있어요."
+      : candidatePassBRun === null
+      ? "빠르게 찾은 후보는 지금 바로 검토할 수 있어요. 원할 때 대사 단서를 더 붙여 보세요."
+      : candidatePassBRun.status === "idle" || candidatePassBRun.status === "preparing"
+        ? "음성 AI 작업을 준비하고 있어요."
+        : candidatePassBRun.status === "loadingModel"
+          ? "음성 AI 파일을 준비하고 있어요. 첫 실행이 가장 오래 걸릴 수 있어요."
+          : candidatePassBRun.status === "transcribing"
+            ? `후보 ${candidatePassBCurrentOrdinal}/${candidatePassBSummary?.totalCandidateCount ?? candidates.length}의 대사 단서를 확인하고 있어요.`
+            : candidatePassBRun.status === "finalizing"
+              ? "모든 후보 결과를 마지막으로 확인하고 있어요."
+              : candidatePassBRun.status === "cancelling"
+              ? "현재 작업을 안전하게 정리하고 있어요."
+              : candidatePassBRun.status === "completed"
+                ? `후보 ${candidatePassBSummary?.clueFoundCount ?? 0}개에서 재생해 확인할 자동 전사 위치를 찾았어요.`
+                : candidatePassBRun.status === "completedWithGaps"
+                  ? `자동 전사 확인 위치 ${candidatePassBSummary?.clueFoundCount ?? 0}개 후보 · 분명한 단서 없음 ${candidatePassBSummary?.noClearSpeechCount ?? 0}개 · 건너뜀 ${candidatePassBSummary?.failedCount ?? 0}개로 마쳤어요.`
+                  : candidatePassBRun.status === "cancelled"
+                    ? "대사 단서 찾기를 멈췄어요. 이미 찾은 단서는 그대로 남아 있어요."
+                    : "대사 단서 찾기를 마치지 못했어요. 기존 후보는 그대로 검토할 수 있어요.";
+  const currentAnalysisRunId =
+    openedRecoveredResult?.terminal.runId ?? analysisRun?.runId ?? null;
+  const candidatePassBRuntimeAvailable =
+    preflight !== null &&
+    preflight.capabilities.worker &&
+    (preflight.capabilities.webGpu || preflight.capabilities.webAssembly);
   const sourceCheckBusy =
     sourceCheck !== null && ["checking", "committing", "cancelling"].includes(sourceCheck.status);
   const showStatusBar =
@@ -585,6 +772,8 @@ function App() {
     ({ revision }) => revision > 0,
   );
   const reviewWorkStarted = reviewStarted || boundaryWorkStarted;
+  const candidatePassBWorkStarted = Object.keys(candidatePassBEvidenceById).length > 0;
+  const unsavedSessionWorkStarted = reviewWorkStarted || candidatePassBWorkStarted;
   const reviewCompleted =
     candidates.length > 0 && candidates.every(({ reviewState }) => reviewState !== "unreviewed");
   const analysisFinishedWithoutCandidates =
@@ -598,12 +787,12 @@ function App() {
         : reviewCompleted
           ? 4
           : 3;
-  const sourceInputLocked = analysisBusy || sourceCheckBusy;
+  const sourceInputLocked = analysisBusy || sourceCheckBusy || candidatePassBBusy;
   const chatInputLocked =
     openedRecoveredResult !== null || analysisBusy || chatImportStatus === "reading";
   const chatOffsetLocked =
     analysisStartPending || analysisRun !== null || openedRecoveredResult !== null;
-  const sourceFileActionLabel = analysisBusy
+  const sourceFileActionLabel = analysisBusy || candidatePassBBusy
     ? "AI 분석 중 변경 잠금"
     : sourceCheck?.status === "checking"
       ? "확인 중…"
@@ -618,7 +807,7 @@ function App() {
           : "영상 파일 고르기";
 
   useEffect(() => {
-    if (!analysisBusy && !reviewWorkStarted) {
+    if (!analysisBusy && !candidatePassBBusy && !unsavedSessionWorkStarted) {
       return;
     }
     const warnBeforeLeaving = (event: BeforeUnloadEvent): void => {
@@ -627,24 +816,41 @@ function App() {
     };
     window.addEventListener("beforeunload", warnBeforeLeaving);
     return () => window.removeEventListener("beforeunload", warnBeforeLeaving);
-  }, [analysisBusy, reviewWorkStarted]);
+  }, [analysisBusy, candidatePassBBusy, unsavedSessionWorkStarted]);
 
   const confirmDiscardCurrentWork = useCallback((): boolean => {
-    if (analysisBusy) {
+    if (analysisBusy || candidatePassBBusy) {
       return false;
     }
-    if (!reviewWorkStarted) {
+    if (!unsavedSessionWorkStarted) {
       return true;
     }
     return window.confirm(
-      "승인·제외 판단과 시작·끝 조정은 아직 이 브라우저에 저장되지 않았어요. 지금 이동하면 방금 한 작업이 사라집니다. 그래도 계속할까요?",
+      "승인·제외 판단, 시작·끝 조정, 자세히 찾은 대사 단서는 현재 탭에만 있어요. 지금 이동하면 방금 한 작업이 사라집니다. 그래도 계속할까요?",
     );
-  }, [analysisBusy, reviewWorkStarted]);
+  }, [analysisBusy, candidatePassBBusy, unsavedSessionWorkStarted]);
 
   const resetBoundarySession = useCallback((): void => {
     setBoundarySessionId(createOperationId("boundary-session"));
     setBoundaryRevisions({});
     setBoundaryFeedback(null);
+  }, []);
+
+  const resetCandidatePassB = useCallback((): void => {
+    candidatePassBOperationEpoch.current += 1;
+    candidatePassBAbortController.current?.abort();
+    candidatePassBAbortController.current = null;
+    candidatePassBMachine.current = null;
+    candidatePassBIdentity.current = null;
+    candidatePassBStartPendingRef.current = false;
+    setCandidatePassBRun(null);
+    setCandidatePassBEvidenceById({});
+    setCandidatePassBStartPending(false);
+    setCandidatePassBUseCompatibilityMode(false);
+    setCandidatePassBModelProgress(null);
+    setCandidatePassBCandidateProgress(null);
+    setCandidatePassBError(null);
+    lastCandidateCueTrigger.current = null;
   }, []);
 
   const resetDownstream = useCallback(() => {
@@ -659,6 +865,7 @@ function App() {
     setSelectionResult(null);
     setCandidates([]);
     resetBoundarySession();
+    resetCandidatePassB();
     setAnalysisProgress(null);
     setAudioAnalysisProgress(null);
     setAnalysisError(null);
@@ -667,7 +874,7 @@ function App() {
     setExportError(null);
     setPreviewCandidateId(null);
     setOpenedRecoveredResult(null);
-  }, [resetBoundarySession]);
+  }, [resetBoundarySession, resetCandidatePassB]);
 
   const inspectSelectedFile = useCallback(
     async (file: File) => {
@@ -1729,6 +1936,386 @@ function App() {
     controller.abort();
   };
 
+  const applyCandidatePassBEvent = useCallback(
+    (event: CandidatePassBRunEvent): boolean => {
+      const current = candidatePassBMachine.current;
+      if (current === null) {
+        return false;
+      }
+      const transition = reduceCandidatePassBRun(current, event);
+      if (!transition.accepted) {
+        return false;
+      }
+      candidatePassBMachine.current = transition.state;
+      setCandidatePassBRun(transition.state);
+      return true;
+    },
+    [],
+  );
+
+  const runCandidatePassB = async (): Promise<void> => {
+    const sourceBindingId =
+      sourceContentFingerprint ??
+      openedRecoveredResult?.finalResult.result.input.source.contentFingerprint ??
+      null;
+    if (
+      sourceFile === null ||
+      preflight === null ||
+      currentAnalysisRunId === null ||
+      sourceBindingId === null ||
+      candidates.length === 0 ||
+      analysisBusy ||
+      candidatePassBBusy ||
+      candidatePassBStartPendingRef.current ||
+      !candidatePassBRuntimeAvailable ||
+      (candidatePassBMachine.current !== null &&
+        !["completed", "completedWithGaps", "cancelled", "failed"].includes(
+          candidatePassBMachine.current.status,
+        ))
+    ) {
+      return;
+    }
+
+    candidatePassBStartPendingRef.current = true;
+    setCandidatePassBStartPending(true);
+    candidatePassBOperationEpoch.current += 1;
+    const operationEpoch = candidatePassBOperationEpoch.current;
+    const runtimeDevice = await selectCandidatePassBRuntimeDevice(
+      preflight.capabilities,
+      { forceWasm: candidatePassBUseCompatibilityMode },
+    );
+    if (
+      !isMounted.current ||
+      operationEpoch !== candidatePassBOperationEpoch.current
+    ) {
+      candidatePassBStartPendingRef.current = false;
+      if (isMounted.current) {
+        setCandidatePassBStartPending(false);
+      }
+      return;
+    }
+    if (runtimeDevice === null) {
+      candidatePassBStartPendingRef.current = false;
+      setCandidatePassBStartPending(false);
+      setCandidatePassBError(
+        "이 브라우저에서 음성 AI 실행 장치를 준비하지 못했어요. 최신 Chrome이나 Edge에서 다시 열어 주세요.",
+      );
+      return;
+    }
+
+    const sourceDurationMs = Math.round(preflight.metadata.durationMs);
+    let targets: readonly CandidatePassBCoreTarget[];
+    try {
+      targets = selectCandidatePassBTargets(candidates, {
+        sourceDurationMs,
+        maxCandidates: 12,
+      });
+    } catch {
+      candidatePassBStartPendingRef.current = false;
+      setCandidatePassBStartPending(false);
+      setCandidatePassBError(
+        "대사 단서를 확인할 후보 시간을 읽지 못했어요. 빠른 분석을 다시 실행해 주세요.",
+      );
+      return;
+    }
+    if (targets.length === 0) {
+      candidatePassBStartPendingRef.current = false;
+      setCandidatePassBStartPending(false);
+      return;
+    }
+
+    candidatePassBAbortController.current?.abort();
+    const controller = new AbortController();
+    candidatePassBAbortController.current = controller;
+    const identity: CandidatePassBWorkerIdentity = {
+      sessionId: appSessionId,
+      writerEpoch,
+      analysisRunId: currentAnalysisRunId,
+      passBRunId: createOperationId("pass-b"),
+      workerEpoch: operationEpoch,
+      workerInstanceId: createOperationId("pass-b-worker"),
+      taskId: createOperationId("pass-b-task"),
+    };
+    const machine = createCandidatePassBRun({
+      identity,
+      sourceBinding: {
+        sourceBindingId,
+        sourceBindingRevision: 0,
+        sourceDurationMs,
+      },
+      model: {
+        modelId: CANDIDATE_PASS_B_MODEL_ID,
+        modelRevision: CANDIDATE_PASS_B_MODEL_REVISION,
+        runtimeDevice,
+      },
+      candidates: targets.map((target) => ({
+        candidateId: target.candidateId,
+        proposalRevision: 0,
+        proposalRange: {
+          startMs: target.decodeStartMs,
+          endMs: target.decodeEndMs,
+        },
+        peakMs: target.reactionPeakMs,
+      })),
+    });
+    candidatePassBMachine.current = machine;
+    candidatePassBIdentity.current = identity;
+    candidatePassBStartPendingRef.current = false;
+    setCandidatePassBStartPending(false);
+    setCandidatePassBRun(machine);
+    setCandidatePassBModelProgress(null);
+    setCandidatePassBCandidateProgress(null);
+    setCandidatePassBError(null);
+    if (!applyCandidatePassBEvent({ type: "START_REQUESTED" })) {
+      setCandidatePassBError("대사 단서 찾기를 시작하지 못했어요. 다시 시도해 주세요.");
+      return;
+    }
+    if (
+      !applyCandidatePassBEvent({
+        ...identity,
+        eventId: createOperationId("pass-b-event"),
+        type: "WORKER_PREPARED",
+      })
+    ) {
+      setCandidatePassBError("음성 AI 작업을 준비하지 못했어요. 다시 시도해 주세요.");
+      return;
+    }
+
+    const isCurrentOperation = (): boolean =>
+      isMounted.current &&
+      operationEpoch === candidatePassBOperationEpoch.current &&
+      candidatePassBIdentity.current?.passBRunId === identity.passBRunId;
+    const targetById = new Map(targets.map((target) => [target.candidateId, target]));
+    const applyCurrentWorkerEvent = (
+      event: CandidatePassBWorkerEventPayload,
+    ): boolean => {
+      if (!isCurrentOperation()) {
+        return false;
+      }
+      return applyCandidatePassBEvent({
+        ...identity,
+        eventId: createOperationId("pass-b-event"),
+        ...event,
+      });
+    };
+
+    try {
+      const workerResult = await runCandidatePassBWorker(sourceFile, {
+        identity,
+        sourceDurationMs,
+        device: runtimeDevice,
+        targets: targets.map((target) => ({
+          candidateId: target.candidateId,
+          startMs: target.decodeStartMs,
+          endMs: target.decodeEndMs,
+        })),
+        signal: controller.signal,
+        onModelProgress: (progress) => {
+          if (!isCurrentOperation()) {
+            return;
+          }
+          setCandidatePassBModelProgress(progress);
+          if (
+            progress.stage === "ready" &&
+            candidatePassBMachine.current?.status === "loadingModel" &&
+            !applyCurrentWorkerEvent({ type: "MODEL_READY" })
+          ) {
+            throw new Error("The Pass B model-ready event was rejected.");
+          }
+        },
+        onCandidateProgress: (progress) => {
+          if (isCurrentOperation()) {
+            setCandidatePassBCandidateProgress(progress);
+          }
+        },
+        onPartialResult: (result: CandidatePassBTranscriptResult) => {
+          const target = targetById.get(result.candidateId);
+          if (!isCurrentOperation() || target === undefined) {
+            return;
+          }
+          const evidence = buildCandidatePassBEvidence(
+            target,
+            result.segments.map((segment) => ({
+              relativeStartMs: segment.startMs - target.decodeStartMs,
+              relativeEndMs: segment.endMs - target.decodeStartMs,
+              text: segment.text,
+            })),
+          );
+          setCandidatePassBEvidenceById((current) =>
+            mergeCandidatePassBEvidence(current, evidence),
+          );
+          const accepted =
+            evidence.status !== "fast-pass-fallback"
+              ? applyCurrentWorkerEvent({
+                  type: "CANDIDATE_CLUE_FOUND",
+                  candidateId: evidence.candidateId,
+                  expectedProposalRevision: 0,
+                  clueCount: evidence.cues.length,
+                })
+              : applyCurrentWorkerEvent({
+                  type: "CANDIDATE_NO_CLEAR_SPEECH",
+                  candidateId: evidence.candidateId,
+                  expectedProposalRevision: 0,
+                  reasonCode: candidatePassBNoClearReason(evidence),
+                  workerDisposition: "result",
+                });
+          if (!accepted) {
+            throw new Error("The Pass B candidate result was rejected.");
+          }
+        },
+        onCandidateGap: (gap: CandidatePassBCandidateGap) => {
+          const target = targetById.get(gap.candidateId);
+          if (!isCurrentOperation() || target === undefined) {
+            return;
+          }
+          if (
+            candidatePassBMachine.current?.status === "loadingModel" &&
+            !applyCurrentWorkerEvent({
+              type: "MODEL_BYPASSED",
+              reasonCode:
+                gap.reasonCode === "UNSUPPORTED_CONTAINER" ||
+                gap.reasonCode === "UNSUPPORTED_AUDIO_CODEC"
+                  ? "source_audio_unsupported"
+                  : "source_audio_unavailable",
+            })
+          ) {
+            throw new Error("The Pass B model-bypass event was rejected.");
+          }
+          if (gap.reasonCode === "EMPTY_AUDIO") {
+            const evidence = buildCandidatePassBEvidence(target, [
+              {
+                relativeStartMs: 0,
+                relativeEndMs: Math.min(1_000, target.decodeEndMs - target.decodeStartMs),
+                text: "",
+                isSilence: true,
+              },
+            ]);
+            setCandidatePassBEvidenceById((current) =>
+              mergeCandidatePassBEvidence(current, evidence),
+            );
+            if (
+              !applyCurrentWorkerEvent({
+                type: "CANDIDATE_NO_CLEAR_SPEECH",
+                candidateId: gap.candidateId,
+                expectedProposalRevision: 0,
+                reasonCode: "no_speech",
+                workerDisposition: "gap",
+              })
+            ) {
+              throw new Error("The Pass B no-speech result was rejected.");
+            }
+            return;
+          }
+          if (
+            !applyCurrentWorkerEvent({
+              type: "CANDIDATE_FAILED",
+              candidateId: gap.candidateId,
+              expectedProposalRevision: 0,
+              reasonCode: candidatePassBFailureReason(gap),
+            })
+          ) {
+            throw new Error("The Pass B candidate gap was rejected.");
+          }
+        },
+        onCancellationAcknowledged: () => {
+          if (
+            isCurrentOperation() &&
+            candidatePassBMachine.current?.status === "cancelling" &&
+            !applyCurrentWorkerEvent({ type: "CANCEL_ACKNOWLEDGED" })
+          ) {
+            throw new Error("The Pass B cancellation acknowledgement was rejected.");
+          }
+        },
+      });
+      if (!isCurrentOperation()) {
+        return;
+      }
+      if (
+        !applyCurrentWorkerEvent({
+          type: "RUN_COMPLETED",
+          requestedCount: workerResult.summary.requestedCount,
+          resultCount: workerResult.summary.completedCount,
+          gapCount: workerResult.summary.gapCount,
+        })
+      ) {
+        throw new CandidatePassBWorkerError(
+          "WORKER_MESSAGE_ERROR",
+          "The validated Pass B completion envelope was rejected.",
+        );
+      }
+      const summary =
+        candidatePassBMachine.current === null
+          ? null
+          : summarizeCandidatePassBRun(candidatePassBMachine.current);
+      if (summary === null || summary.pendingCount !== 0) {
+        throw new Error("Pass B finished before every candidate reached a terminal state.");
+      }
+    } catch (error) {
+      if (!isCurrentOperation()) {
+        return;
+      }
+      if (candidatePassBMachine.current?.status === "cancelling") {
+        const forcedTerminationAccepted = applyCandidatePassBEvent({
+          type: "CLIENT_FORCE_TERMINATED",
+        });
+        setCandidatePassBError(
+          forcedTerminationAccepted
+            ? "대사 단서 찾기를 멈추고 작업 공간을 정리했어요. 이미 찾은 단서는 이 탭에 그대로 남아 있어요."
+            : "대사 단서 작업을 정리하지 못했어요. 기존 후보는 그대로 사용할 수 있어요.",
+        );
+        return;
+      }
+      if (error instanceof CandidatePassBWorkerError && error.code === "ABORTED") {
+        if (candidatePassBMachine.current?.status === "cancelled") {
+          setCandidatePassBError(explainCandidatePassBError(error));
+        }
+        return;
+      }
+      if (
+        candidatePassBMachine.current !== null &&
+        !["completed", "completedWithGaps", "cancelled", "failed"].includes(
+          candidatePassBMachine.current.status,
+        )
+      ) {
+        applyCurrentWorkerEvent({
+          type: "RUN_FAILED",
+          reasonCode: candidatePassBRunFailureReason(error),
+        });
+      }
+      if (
+        runtimeDevice === "webgpu" &&
+        preflight.capabilities.webAssembly &&
+        error instanceof CandidatePassBWorkerError &&
+        error.workerReasonCode === "MODEL_LOAD_FAILED"
+      ) {
+        setCandidatePassBUseCompatibilityMode(true);
+        setCandidatePassBError(
+          "그래픽 가속으로 음성 AI를 준비하지 못했어요. 아래 ‘호환 모드로 다시 시도’를 누르면 더 널리 지원되는 방식으로 새 작업을 시작해요. 기존 후보와 단서는 그대로예요.",
+        );
+      } else {
+        setCandidatePassBError(explainCandidatePassBError(error));
+      }
+    } finally {
+      if (candidatePassBAbortController.current === controller) {
+        candidatePassBAbortController.current = null;
+      }
+    }
+  };
+
+  const cancelCandidatePassB = (): void => {
+    const controller = candidatePassBAbortController.current;
+    if (
+      controller === null ||
+      candidatePassBMachine.current === null ||
+      candidatePassBMachine.current.status === "cancelling"
+    ) {
+      return;
+    }
+    if (applyCandidatePassBEvent({ type: "CANCEL_REQUESTED" })) {
+      controller.abort();
+    }
+  };
+
   const updateReview = (candidateId: string, reviewState: CandidateReviewState): void => {
     const currentBoundaryRevision = boundaryRevisions[candidateId]?.revision ?? 0;
     setCandidates((current) =>
@@ -1866,6 +2453,7 @@ function App() {
 
   const playCandidate = (candidate: ReviewedCandidate): void => {
     setPreviewCandidateId(candidate.id);
+    lastCandidateCueTrigger.current = null;
     const player = previewVideo.current;
     if (player === null) {
       return;
@@ -1887,7 +2475,46 @@ function App() {
     });
   };
 
+  const playCandidateCue = (
+    candidate: ReviewedCandidate,
+    timestampMs: number,
+    trigger: HTMLButtonElement,
+  ): void => {
+    setPreviewCandidateId(candidate.id);
+    lastCandidateCueTrigger.current = trigger;
+    const player = previewVideo.current;
+    if (player === null || !Number.isFinite(timestampMs)) {
+      return;
+    }
+    const range = effectiveCandidateRange(
+      candidate,
+      boundaryRevisions[candidate.id],
+    );
+    player.currentTime = Math.max(range.startMs, Math.min(range.endMs, timestampMs)) / 1_000;
+    player.scrollIntoView({
+      behavior: globalThis.matchMedia?.("(prefers-reduced-motion: reduce)").matches
+        ? "auto"
+        : "smooth",
+      block: "center",
+    });
+    player.focus({ preventScroll: true });
+    void player.play().catch(() => {
+      // Browser autoplay policy may require the user to press the native play control.
+    });
+  };
+
   const focusPreviewCandidateEditor = (): void => {
+    const cueTrigger = lastCandidateCueTrigger.current;
+    if (cueTrigger?.isConnected === true && !cueTrigger.disabled) {
+      cueTrigger.focus({ preventScroll: true });
+      cueTrigger.scrollIntoView({
+        behavior: globalThis.matchMedia?.("(prefers-reduced-motion: reduce)").matches
+          ? "auto"
+          : "smooth",
+        block: "center",
+      });
+      return;
+    }
     if (previewCandidateNumber <= 0) {
       return;
     }
@@ -1917,6 +2544,7 @@ function App() {
     if (!confirmDiscardCurrentWork()) {
       return;
     }
+    resetCandidatePassB();
     resetBoundarySession();
     sourceSelectionEpoch.current += 1;
     sourceAbortController.current?.abort();
@@ -2157,7 +2785,8 @@ function App() {
             <summary>지금 AI가 보는 기준</summary>
             <p>
               스트리머의 웃음·외침처럼 이어지는 오디오 반응을 먼저 찾고, 선택한 CHZZK 채팅 반응을 함께 봅니다.
-              화면 변화는 사건 전후 맥락을 보조합니다. 아직 대사를 받아써 사건 이름을 확정하지는 않아요.
+              화면 변화는 사건 전후 맥락을 보조합니다. 빠른 분석 뒤에는 후보 구간만 자동 전사해 시간 링크를
+              붙일 수 있지만, 그 문구만으로 사건 이름이나 반응 원인을 확정하지는 않아요.
             </p>
           </details>
         </section>
@@ -2349,7 +2978,7 @@ function App() {
               {sourceError !== null && <p className="rh-notice" data-tone="danger" role="alert">{sourceError}</p>}
               {sourceReady && preflight?.capabilities.preferredRuntimeTier === "signals-only" && (
                 <p className="rh-notice" data-tone="warning">
-                  이 브라우저에서는 오디오·채팅 Worker를 쓰지 못할 수 있어요.
+                  이 브라우저에서는 오디오·채팅 분석 기능을 쓰지 못할 수 있어요.
                   그 경우 반응을 찾았다고 과장하지 않고, 제한된 화면 탐색 후보와 빠진 신호를 분명히 표시합니다.
                 </p>
               )}
@@ -2591,7 +3220,7 @@ function App() {
                   )}
                   {selectionResult.skippedChatMessageCount > 0 && (
                     <p className="rh-notice" data-tone="warning" role="status">
-                      채팅 Worker를 사용할 수 없어 채팅 {selectionResult.skippedChatMessageCount.toLocaleString("ko-KR")}개는 분석하지 못했어요.
+                      채팅 분석 기능을 사용할 수 없어 채팅 {selectionResult.skippedChatMessageCount.toLocaleString("ko-KR")}개는 분석하지 못했어요.
                       오디오 반응과 화면 맥락으로 찾은 후보를 보존한 ‘채팅 제외 완료’ 결과입니다.
                     </p>
                   )}
@@ -2605,6 +3234,90 @@ function App() {
                     원본 연결하러 가기
                   </button>
                 </div>
+              )}
+
+              {candidates.length > 0 && (
+                <section className="rh-passb-panel" aria-labelledby="pass-b-title">
+                  <div className="rh-passb-copy">
+                    <p className="rh-eyebrow">선택 기능 · 후보 대사만 자세히</p>
+                    <h4 id="pass-b-title">대사 단서를 더 찾아볼까요?</h4>
+                    <p>
+                      몇 시간짜리 원본 전체가 아니라 위에서 찾은 후보 {Math.min(12, candidates.length)}개만
+                      다시 들어 보고, 자동 전사가 추정한 짧은 문구를 반응 전후의 시간 링크로 붙여요.
+                      문구는 틀릴 수 있으므로 눌러서 실제 장면을 확인해 주세요.
+                    </p>
+                    <p className="rh-help">
+                      첫 실행에는 약 45~80MB의 음성 AI 파일을 받을 수 있어요. 영상·음성·채팅은
+                      어디에도 보내지 않고 이 브라우저 안에서만 처리합니다.
+                    </p>
+                  </div>
+                  <div className="rh-passb-actions">
+                    {!candidatePassBBusy && (
+                      <button
+                        className="btn btn-primary"
+                        type="button"
+                        disabled={
+                          sourceFile === null ||
+                          !candidatePassBRuntimeAvailable ||
+                          selectionResult.audioGapReasonCode === "NO_AUDIO_TRACK"
+                        }
+                        onClick={() => void runCandidatePassB()}
+                      >
+                        {candidatePassBRun === null
+                          ? "대사 단서 더 보기"
+                          : candidatePassBUseCompatibilityMode
+                            ? "호환 모드로 다시 시도"
+                            : "대사 단서 다시 찾기"}
+                      </button>
+                    )}
+                    {candidatePassBBusy && (
+                      <button
+                        className="btn btn-secondary"
+                        type="button"
+                        disabled={
+                          candidatePassBStartPending ||
+                          candidatePassBRun?.status === "cancelling"
+                        }
+                        onClick={cancelCandidatePassB}
+                      >
+                        {candidatePassBStartPending
+                          ? "실행 방법 확인 중…"
+                          : candidatePassBRun?.status === "cancelling"
+                            ? "멈추는 중…"
+                            : "대사 찾기 멈추기"}
+                      </button>
+                    )}
+                    {sourceFile === null && (
+                      <button className="btn btn-secondary" type="button" onClick={focusSourceSection}>
+                        원본 연결하러 가기
+                      </button>
+                    )}
+                  </div>
+                  <div className="rh-passb-status" role="status" aria-live="polite">
+                    <strong>{candidatePassBStatusText}</strong>
+                    {candidatePassBRun !== null && (
+                      <progress
+                        className="rh-analysis-progress"
+                        max={1}
+                        value={candidatePassBProgressRatio}
+                        aria-label="후보 대사 단서 찾기 진행률"
+                      />
+                    )}
+                    {selectionResult.audioGapReasonCode === "NO_AUDIO_TRACK" && (
+                      <p>이 원본에는 읽을 소리가 없어 대사 단서 기능을 사용할 수 없어요.</p>
+                    )}
+                    {!candidatePassBRuntimeAvailable && (
+                      <p>이 브라우저에서는 기기 안에서 음성 AI를 실행할 수 없어요. 최신 Chrome이나 Edge에서 다시 열어 주세요.</p>
+                    )}
+                    {candidatePassBError !== null && <p role="alert">{candidatePassBError}</p>}
+                    {candidatePassBWorkStarted && (
+                      <p>
+                        자동 전사 추정은 현재 탭에서 재생 확인을 돕는 임시 단서예요. 새로고침하면 사라지며,
+                        현재 CSV·Markdown·JSON·복사 결과에는 포함되지 않아요.
+                      </p>
+                    )}
+                  </div>
+                </section>
               )}
 
               {candidates.length === 0 ? (
@@ -2629,7 +3342,7 @@ function App() {
                             type="button"
                             onClick={focusPreviewCandidateEditor}
                           >
-                            후보 {previewCandidateNumber} 시작·끝으로 돌아가기
+                            후보 {previewCandidateNumber}에서 보던 곳으로 돌아가기
                           </button>
                         )}
                       </div>
@@ -2667,7 +3380,23 @@ function App() {
                     aria-label="AI가 찾은 클립 후보들"
                   >
                   {candidates.map((candidate, index) => {
-                    const narrative = buildHighlightNarrative(candidate);
+                    const narrative = buildCandidatePassBPresentation(
+                      candidate.id,
+                      buildHighlightNarrative(candidate),
+                      candidatePassBEvidenceById[candidate.id],
+                    );
+                    const candidatePassBOutcome = candidatePassBRun?.candidateOutcomes.find(
+                      ({ candidateId }) => candidateId === candidate.id,
+                    );
+                    const candidatePassBStatusLabel =
+                      candidatePassBOutcome?.status === "failed"
+                        ? "대사 분석 건너뜀"
+                        : candidatePassBOutcome?.status === "pending" && candidatePassBBusy
+                          ? candidatePassBRun?.status === "transcribing" &&
+                            candidatePassBRun.activeCandidateId === candidate.id
+                            ? "대사 확인 중"
+                            : "대사 확인 대기"
+                          : narrative.passBStatusLabel;
                     const boundaryRevision = boundaryRevisions[candidate.id] ?? null;
                     const effectiveRange = effectiveCandidateRange(
                       candidate,
@@ -2697,6 +3426,12 @@ function App() {
                           </span>
                           <span className="rh-interpretation-badge" data-basis={narrative.basis}>
                             {narrative.basisLabel}
+                          </span>
+                          <span
+                            className="rh-passb-badge"
+                            data-status={candidatePassBOutcome?.status ?? "idle"}
+                          >
+                            {candidatePassBStatusLabel}
                           </span>
                           {boundaryTouched && (
                             <span className="rh-boundary-badge">
@@ -2738,6 +3473,49 @@ function App() {
                             </div>
                           </dl>
                           <p className="rh-review-hint">{narrative.reviewHint}</p>
+                          {narrative.cues.length > 0 && (
+                            <div className="rh-transcript-cues" aria-label="시간 위치가 있는 자동 전사 추정">
+                              <strong>눌러서 바로 확인할 자동 전사 위치</strong>
+                              <ul>
+                                {narrative.cues.map((cue) => {
+                                  const cueInsideCurrentRange =
+                                    cue.absoluteStartMs >= effectiveRange.startMs &&
+                                    cue.absoluteStartMs < effectiveRange.endMs;
+                                  const cueDisabled =
+                                    sourcePreviewUrl === null || !cueInsideCurrentRange;
+                                  return (
+                                    <li key={`${cue.phase}-${cue.absoluteStartMs}`}>
+                                      <button
+                                        className="rh-transcript-cue"
+                                        type="button"
+                                        disabled={cueDisabled}
+                                        aria-label={`${formatDuration(cue.absoluteStartMs)} ${cue.phaseLabel}, 자동 전사 추정 “${cue.text}”${cueInsideCurrentRange ? " 재생" : ", 현재 조정한 구간 밖"}`}
+                                        onClick={(event) =>
+                                          playCandidateCue(
+                                            candidate,
+                                            cue.absoluteStartMs,
+                                            event.currentTarget,
+                                          )
+                                        }
+                                      >
+                                        <span>{cue.phaseLabel}</span>
+                                        <time>{formatDuration(cue.absoluteStartMs)}</time>
+                                        <q>{cue.text}</q>
+                                      </button>
+                                      {!cueInsideCurrentRange && (
+                                        <small className="rh-transcript-cue-note">
+                                          현재 조정한 클립 구간 밖이라 재생하지 않아요.
+                                        </small>
+                                      )}
+                                    </li>
+                                  );
+                                })}
+                              </ul>
+                              {sourcePreviewUrl === null && (
+                                <p className="rh-help">원본을 다시 연결하면 이 대사 위치로 바로 이동할 수 있어요.</p>
+                              )}
+                            </div>
+                          )}
                           <div className="rh-evidence-list" aria-label="선택 근거">
                           {candidate.evidence.audio !== undefined && (
                             <>
@@ -2943,10 +3721,11 @@ function App() {
                 승인 {approvedCount}개 · 제외 {candidates.filter(({ reviewState }) => reviewState === "rejected").length}개
                 {" · 언제든 판단을 바꿀 수 있어요."}
               </p>
-              {reviewWorkStarted && (
+              {unsavedSessionWorkStarted && (
                 <p className="rh-notice" data-tone="warning" role="status">
-                  이 승인·제외 판단과 시작·끝 조정은 아직 브라우저에 저장되지 않았어요. 다른 영상이나 결과로 이동하면 확인을 먼저 물어봅니다.
-                  필요한 후보들을 승인한 뒤 아래에서 편집용 시간표를 받아 주세요.
+                  이 승인·제외 판단, 시작·끝 조정, 자동 전사 추정은 아직 저장되지 않았어요. 다른 영상이나
+                  결과로 이동하면 확인을 먼저 물어봅니다. 자동 전사 추정은 현재 다운로드에도 포함되지
+                  않으니, 필요한 후보를 직접 재생해 확인한 뒤 승인해 주세요.
                 </p>
               )}
 
@@ -2986,7 +3765,11 @@ function App() {
                           );
                         })
                         .map(({ proposal: candidate, boundaryRevision }) => {
-                          const narrative = buildHighlightNarrative(candidate);
+                          const narrative = buildCandidatePassBPresentation(
+                            candidate.id,
+                            buildHighlightNarrative(candidate),
+                            candidatePassBEvidenceById[candidate.id],
+                          );
                           const range = effectiveCandidateRange(
                             candidate,
                             boundaryRevision,

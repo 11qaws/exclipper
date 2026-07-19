@@ -629,3 +629,55 @@
 - `LocalMediaPreflight`가 메타데이터를 읽은 직후 `43,200,000ms`까지 허용하고 1ms라도 초과하면 `DURATION_LIMIT_EXCEEDED`로 중단한다. 전체 fingerprint·Worker 분석보다 먼저 실패하므로 긴 작업을 뒤늦게 버리지 않는다.
 - UI는 파일 선택 전 `최대 12시간`, 초과 뒤 `12시간 이하의 파일로 나눠 주세요`를 기술 용어 없이 안내한다.
 - 정확히 12시간 성공과 12시간+1ms 거부·자원 정리를 각각 테스트한다.
+
+## 2026-07-19 — AI 기능 우선순위 재조정과 앱 0.3.3 Pass B 착수
+
+### 사용자 우선순위 수정
+
+- 저장·복구·다중 탭 같은 구조적 구멍을 먼저 닫기보다, 하이라이트 품질을 직접 높이는 AI 기능들을 먼저 구현한다.
+- 따라서 직전 감사의 `검토 revision 영속화 P0` 결론을 뒤로 미루고, 후보 전용 한국어 Whisper Pass B를 다음 구현으로 확정했다.
+
+### 코드·계획 재감사
+
+- 현재 fast pass는 최대 12개의 30~60초 후보를 이미 만들지만, `highlightNarrative`의 사건 설명은 대사 근거가 없어 `사건 종류 확인 전`에 머문다.
+- 전체 12시간을 전사할 필요 없이 최악 약 12분 이내의 후보 오디오만 다시 읽으면 되며, 설치된 Mediabunny의 `AudioSampleSink.samples(start, end)`가 범위 디코드를 지원한다.
+- 부분 후보 공개는 대기 체감을 줄이지만 설명·선별 품질을 직접 올리지는 않고, YAMNet 단독은 반응 종류만 알려 줄 뿐 원인 발화 단서를 주지 못하므로 Whisper를 먼저 둔다.
+
+### 확정한 첫 AI 슬라이스
+
+1. fast-pass 후보를 먼저 표시한다.
+2. 별도 lazy Worker가 후보 범위만 16kHz mono로 읽는다.
+3. 고정 revision의 다국어 Whisper tiny를 한국어·timestamp 모드로 로컬 실행한다.
+4. 결과는 후보별 overlay 설명만 보강하고 AI 제안·점수·순위·사람의 검토와 구간을 덮어쓰지 않는다.
+5. 무음·낮은 품질·모델 실패는 현재 fast-pass 설명으로 폴백한다.
+
+다음 AI 순서는 후보 음향 사건 분류 → 전사·음향 사건·채팅 재랭킹과 경계 제안 → 분석 중 부분 후보 공개다. 검토 자동 저장·새로고침 복원은 이 AI 기능 묶음 뒤에 다시 진행한다.
+
+### `0.3.3` 첫 AI 슬라이스 구현 결과
+
+- `CandidatePassBRun` reducer를 추가해 준비·모델 로드·후보별 전사·부분 gap·실제 취소 ACK·terminal 상태를 event fence로 관리한다.
+- 오디오 트랙 부재나 미지원 형식을 모델 로드 전에 발견하면, 검증된 첫 후보 gap에서 App가 `MODEL_BYPASSED`를 적용하고 모든 후보를 개별 gap으로 종결한다. 모델 준비를 허위로 표시하거나 불필요한 모델 다운로드를 시작하지 않는다.
+- 별도 lazy Worker가 Mediabunny로 후보 하나만 범위 디코드하고 16kHz mono PCM을 만든 뒤 고정 revision의 Whisper tiny q8 한국어 timestamp 전사를 실행한다. 후보가 끝날 때 PCM을 0으로 덮고 참조를 해제한다.
+- 디지털 무음과 한 번의 클릭은 보수적인 지속 오디오 gate에서 음성 인식 전에 제외해 무음 환각 위험을 낮춘다. 이는 화자·감정·사건 분류기가 아니며 기존 반응 후보를 삭제하지 않는다.
+- timestamp가 있는 자동 전사 문구를 최대 3개까지 `반응 전 / 반응 시점 부근 / 반응 뒤` 확인 위치로 표시한다. 현재 Worker 출력에는 confidence/VAD가 없으므로 실제 발화로 확정하지 않고 provisional로 표시하며, 버튼은 원본 플레이어의 절대 시각으로 이동한다. 화면 사건·승패·인과는 임의 생성하지 않는다.
+- UI는 `대사 단서 더 보기`, 첫 실행 약 45~80MB, `영상은 보내지 않음`, 후보별 진행·취소·완료/gap을 초심자 문장으로 안내한다. Pass B overlay는 기존 후보 ID·점수·순서·경계·review를 바꾸지 않고 세션 메모리에만 둔다.
+- production build 관찰값은 대사 Worker 약 1.22MB, lazy ONNX WASM 약 21.6MB, 메인 JavaScript 약 407kB다.
+
+### 독립 감사 뒤 긴급 품질·lifecycle 보강
+
+- 음량 gate는 디지털 무음과 단발 click만 막을 뿐 BGM·효과음에서 Whisper가 문장을 환각할 위험까지 판별하지 못한다. 따라서 timestamp·text만 있는 현재 결과를 `provisional-transcript`로 분리하고 `자동 전사 추정 · 재생 확인 필요`로 표시한다. cue는 재생 위치로 제공하지만 fast-pass 사건·원인 설명은 덮어쓰지 않는다. `grounded-transcript`는 confidence와 VAD/no-speech 품질 신호가 함께 있는 경우로 좁혔다.
+- 마지막 후보 event는 `finalizing`으로만 이동한다. Client가 Worker 완료 envelope의 terminal candidate ID와 requested/result/gap 수를 검증하고, reducer가 후보별 Worker disposition과 다시 맞춘 fenced `RUN_COMPLETED` 뒤에만 성공을 확정한다.
+- 취소 ACK 대기 기본값을 1초에서 5초로 늘렸다. ACK가 없어 client가 Worker를 terminate한 경우 로컬 `CLIENT_FORCE_TERMINATED`와 `clientForceTerminated` 종료 종류를 기록해 `cancelling` 화면 잠금을 해제한다.
+- 재시도 시작 때 기존 overlay를 지우지 않는다. 후보별 같거나 더 높은 품질의 새 transcript result만 기존 단서를 교체하고 무음·실패·품질 하락 결과는 이미 찾은 cue를 보존한다.
+- 실제 WebGPU adapter를 요청해 사용 가능할 때만 WebGPU를 선택한다. adapter 실패는 WASM으로 자동 폴백하고 WebGPU 모델 준비 실패 뒤에는 새 run identity로 `호환 모드` 재시도를 제공한다.
+- Transformers.js의 파일별 다운로드 callback을 파일 ID별로 집계해 작은 tokenizer 하나가 완료됐다고 전체가 95%로 보이지 않게 했다. Vite가 방출한 로컬 `ort-wasm-simd-threaded.jsep-*.wasm`을 `wasmPaths`에 명시해 기본 jsDelivr 경로에 우연히 의존하지 않는다.
+- 자동 전사 추정은 현재 탭 전용이며 현재 CSV·Markdown·JSON·clipboard에 포함되지 않는다는 사실을 결과 패널과 dirty 안내에 표시한다. 재생 cue가 사용자가 줄인 effective range 밖이면 비활성화하고, 화면 판독기 이름에 timestamp·phase·전사 문구를 모두 포함하며 영상 확인 뒤 마지막 cue 버튼으로 초점을 돌린다.
+
+### `0.3.3` 검증 결과
+
+- clean dependency tree 기준 `npm audit --omit=dev`: 취약점 0개.
+- `npm run check`: TypeScript, ESLint, 28개 파일의 316개 Vitest 테스트 통과.
+- `npm run build`: 46 modules, 메인 JavaScript 414.96kB, candidate Pass B Worker 1,217.79kB, 로컬 ONNX WASM 21,596.01kB로 production build 성공.
+- 로컬 Vite preview의 `/rettolight/`, hashed candidate Worker, hashed ONNX WASM에 각각 HTTP 200을 확인했다. production Worker 안의 고정 모델 revision `ff4177021cc41f7db950912b73ea4fdf7d01d8e7`, hashed WASM 경로, `wasmPaths` 설정도 확인했다.
+- 실제 한국어 media fixture가 workspace에 없어 모델 다운로드→범위 디코드→전사→cue seek의 브라우저 실기기 smoke는 아직 실행하지 않았다. README는 이 기능을 `구현 및 정적 검증 완료, 브라우저 성공 경로 검증 전`으로 명시하며 이를 출시 완료로 과장하지 않는다.
+- 이번 변경은 아직 commit·push·Pages 배포하지 않았다. 사용자 승인 전 로컬 working tree에만 둔다.

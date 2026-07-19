@@ -230,8 +230,8 @@ const DEFAULT_ADAPTERS: LocalVideoVisualAnalysisAdapters = {
   createVideoProbe: createDefaultVideoProbe,
   createCanvas: createDefaultCanvas,
   captureLumaFingerprint: captureDefaultLumaFingerprint,
-  setTimeout: (callback, delayMs) => globalThis.setTimeout(callback, delayMs),
-  clearTimeout: (handle) => globalThis.clearTimeout(handle),
+  setTimeout: (callback, delayMs) => window.setTimeout(callback, delayMs),
+  clearTimeout: (handle) => window.clearTimeout(handle),
   yieldControl: defaultYieldControl,
 };
 
