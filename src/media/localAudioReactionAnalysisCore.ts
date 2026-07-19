@@ -16,6 +16,10 @@ const MIN_RATE_SCALE = 0.015;
 const SILENCE_RMS = 0.0025;
 const SILENCE_PEAK = 0.015;
 const IMPULSE_CREST_DB = 14;
+// A one-second mixed-audio window often has a high crest during ordinary
+// speech. Only discard it as an impulse when the signal is also isolated.
+const IMPULSE_TEMPORAL_SUPPORT_LIFT_DB = 2.5;
+const STRONG_VOCAL_SUPPORT_RATIO = 0.55;
 const SUSTAINED_BACKGROUND_MS = 12_000;
 
 export interface AudioReactionFeatureWindow {
@@ -345,16 +349,28 @@ function scoreWindow(
   const crestDb = window.peakDb - window.rmsDb;
   const clickPenalty = clamp((crestDb - 10) / 8, 0, 1);
   const silence = window.rms <= SILENCE_RMS && window.peak <= SILENCE_PEAK;
-  const impulseLike =
+  const candidateElevated =
     !silence &&
-    crestDb >= IMPULSE_CREST_DB &&
-    window.endMs - window.startMs <= 2_000;
-  const active =
-    !silence &&
-    !impulseLike &&
     loudnessLiftDb >= MIN_LOUDNESS_LIFT_DB &&
     peakLiftDb >= MIN_PEAK_LIFT_DB &&
     robustLoudnessScore >= MIN_ROBUST_LOUDNESS_SCORE;
+  const baselineRmsDb = amplitudeToDb(baseline.rms);
+  const hasTemporalSupport = adjacentWindows(window, windows).some(
+    (adjacent) =>
+      adjacent.rmsDb - baselineRmsDb >= IMPULSE_TEMPORAL_SUPPORT_LIFT_DB,
+  );
+  const hasStrongVocalSupport =
+    speechBandEnergyRatio >= STRONG_VOCAL_SUPPORT_RATIO;
+  const highCrestWithoutVocalAnchor =
+    crestDb >= IMPULSE_CREST_DB && !hasStrongVocalSupport;
+  const impulseLike =
+    candidateElevated &&
+    highCrestWithoutVocalAnchor &&
+    window.endMs - window.startMs <= 2_000 &&
+    !hasTemporalSupport;
+  // Sustained high-crest effects may extend a real reaction, but they cannot
+  // seed a candidate without a lower-crest or strong vocal-band anchor.
+  const active = candidateElevated && !highCrestWithoutVocalAnchor;
   const support =
     active ||
     (!silence &&
@@ -385,6 +401,28 @@ function scoreWindow(
     support,
     score,
   };
+}
+
+function adjacentWindows(
+  target: NormalizedWindow,
+  windows: readonly NormalizedWindow[],
+): readonly NormalizedWindow[] {
+  const adjacent: NormalizedWindow[] = [];
+  const previous = windows[target.index - 1];
+  if (
+    previous !== undefined &&
+    previous.endMs === target.startMs
+  ) {
+    adjacent.push(previous);
+  }
+  const next = windows[target.index + 1];
+  if (
+    next !== undefined &&
+    next.startMs === target.endMs
+  ) {
+    adjacent.push(next);
+  }
+  return adjacent;
 }
 
 function selectBaselineWindows(
@@ -525,7 +563,8 @@ function evaluateCluster(
   const singleWindowHasVocalSupport =
     activeWindows.length === 1 &&
     apex.vocalProxyStrength >= 1.5 &&
-    apex.clickPenalty < 0.5;
+    (apex.clickPenalty < 0.5 ||
+      (apex.speechBandEnergyRatio ?? 0) >= STRONG_VOCAL_SUPPORT_RATIO);
   if (activeWindows.length < 2 && !singleWindowHasVocalSupport) {
     return null;
   }

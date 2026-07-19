@@ -309,6 +309,22 @@ function round(value, digits) {
   return Math.round(value * factor) / factor;
 }
 
+function amplitudeToDb(value) {
+  return Math.max(-100, 20 * Math.log10(Math.max(0.00001, value)));
+}
+
+function percentile(sortedValues, quantile) {
+  if (sortedValues.length === 0) {
+    return 0;
+  }
+  const position = (sortedValues.length - 1) * quantile;
+  const lowerIndex = Math.floor(position);
+  const upperIndex = Math.ceil(position);
+  const lower = sortedValues[lowerIndex] ?? 0;
+  const upper = sortedValues[upperIndex] ?? lower;
+  return lower + (upper - lower) * (position - lowerIndex);
+}
+
 async function main() {
   const [videoPath, ffmpegPath = "ffmpeg", ffprobePath = "ffprobe"] =
     process.argv.slice(2);
@@ -338,8 +354,16 @@ async function main() {
     { plannedWindowCount },
   );
   const elapsedMs = Math.round(performance.now() - startedAt);
+  const crestDbValues = decoded.windows
+    .map((window) => amplitudeToDb(window.peak) - amplitudeToDb(window.rms))
+    .sort((left, right) => left - right);
+  const highCrestWindowCount = decoded.windows.filter(
+    (window) =>
+      !(window.rms <= 0.0025 && window.peak <= 0.015) &&
+      amplitudeToDb(window.peak) - amplitudeToDb(window.rms) >= 14,
+  ).length;
   const summary = {
-    schemaVersion: "local-audio-fast-pass-evaluation-v1",
+    schemaVersion: "local-audio-fast-pass-evaluation-v2",
     mode: result.mode,
     featureWindowMs: FEATURE_WINDOW_MS,
     sampleRateHz: SAMPLE_RATE_HZ,
@@ -353,7 +377,22 @@ async function main() {
     coverageComplete: result.coverageComplete,
     candidateWindowMs: result.candidateWindowMs,
     candidateCount: result.candidates.length,
-    diagnostics: result.diagnostics,
+    diagnostics: {
+      ...result.diagnostics,
+      impulseLikeWindowRatio: round(
+        result.diagnostics.impulseLikeWindowCount /
+          Math.max(1, result.analyzedWindowCount),
+        6,
+      ),
+      highCrestWindowCount,
+      highCrestWindowRatio: round(
+        highCrestWindowCount / Math.max(1, result.analyzedWindowCount),
+        6,
+      ),
+      crestDbP50: round(percentile(crestDbValues, 0.5), 3),
+      crestDbP90: round(percentile(crestDbValues, 0.9), 3),
+      crestDbP95: round(percentile(crestDbValues, 0.95), 3),
+    },
     candidates: result.candidates.map(candidateSummary),
   };
   process.stdout.write(`${JSON.stringify(summary, null, 2)}\n`);

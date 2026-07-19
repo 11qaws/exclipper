@@ -818,3 +818,35 @@
 - production artifact에서 `gemini-3.5-flash`, Google endpoint, `x-goog-api-key`, structured `responseFormat`, `store:false`가 포함되고 `onnx-community/whisper-tiny`와 실제 `AIza...` key pattern이 없음을 확인했다.
 - 로컬 production preview의 저장된 후보 1개를 열어 Gemini 패널을 확인했다. 390×844에서 가로 overflow가 없고 key input 44px, key clear button 44px, 전송 버튼 44px 이상이며 무료 tier 경고·원본 재연결 안내·동적 `외부 전송 선택 시 후보만` 상태가 노출됐다. 브라우저 console warning/error는 없었다.
 - 실제 Gemini 호출은 사용자 소유 키가 필요한 외부 처리이므로 테스트 키나 공용 키로 대신 실행하지 않았다. 공식 요청 계약·Pages origin CORS preflight·mock fetch/Worker·production bundle까지 검증했으며, 실제 한국어 품질 smoke는 사용자가 자기 키로 첫 후보를 전송할 때 확인해야 한다.
+
+### `0.3.7` 배포 완료
+
+- 커밋 `a5200df`를 `main`에 push했다.
+- GitHub Pages workflow `29703330647`이 541개 테스트를 포함한 전체 검사, production build, artifact upload, Pages deploy를 모두 통과했다.
+- 공개 주소 `https://11qaws.github.io/rettolight/`에서 앱 `0.3.7`, main JS `index-g23dyy44.js`, CSS `index-Bwklaeef.css`, Gemini Pass B Worker와 나머지 Worker asset을 HTTP 200으로 확인했다. production bundle에는 실제 API key pattern과 제거한 Whisper 모델 참조가 없다.
+- 공개 화면과 동일한 production asset을 390px 폭에서 확인해 key 입력·지우기·동의·실행 control이 최소 44px이고 가로 overflow와 console warning/error가 없음을 확인했다. 실제 한국어 인식 품질은 사용자 소유 키로 전송한 결과를 직접 들어 보는 비차단 검증으로 남는다.
+
+## 2026-07-20 — 앱 0.3.8 로컬 빠른 분석 impulse 포화 교정
+
+### 발견한 원인과 변경 계약
+
+- 허용된 약 2시간 샘플의 7,232개 1초 feature window 중 5,041개(69.70%)가 기존 impulse gate에 걸렸다. 기존 조건은 비무음 창의 `crest >= 14dB`와 길이 2초 이하만 확인했는데, 분석 창 자체가 항상 약 1초여서 보통 말소리·혼합 방송 오디오의 높은 crest까지 클릭음으로 간주했다. 샘플의 crest 중앙값은 15.473dB, 90백분위는 20.783dB여서 기준 포화가 구조적으로 발생했다.
+- Before: 후보 수준으로 크지 않은 평범한 고crest 창도 impulse 진단에 쌓였고, 실제 반응과 연속된 고crest 창도 바로 제거됐다. After: 로컬 baseline보다 충분히 상승한 후보 창에만 impulse 판정을 검토한다. 연속 고crest 창은 반응 범위를 넓히는 보조 신호로만 쓰며, 강한 음성대역 또는 crest가 낮은 반응 anchor가 없으면 후보를 시작하지 못한다.
+- click penalty 자체는 점수에 남겨 화려한 단발 효과음이 상위로 오르는 것을 계속 억제한다. 새 예외는 점수·후보 수 상한·비중첩 선택·45초 기본 경계·12시간 처리 계약·Gemini 전송 범위를 바꾸지 않는다.
+- 후보 선택 의미가 바뀌므로 앱 버전과 별도로 신호 엔진 identity를 `streamer-reaction-fast-pass-v2`로 올린다. 기존 v1 완료 결과는 그대로 저장되어도 새 엔진 결과로 가장하지 않으며, 같은 원본의 새 분석은 v2 input signature와 manifest를 사용한다.
+- 직접 위험은 연속된 게임 효과음 두 개가 시간 지지를 얻을 수 있다는 점이고, 반대 위험은 너무 엄격한 gate가 짧은 웃음·외침을 다시 버리는 것이다. 따라서 지속성 하나만으로 “스트리머 반응”이라고 확정하지 않고 speech-band proxy, 후속 오디오 사건 AI, Gemini 설명과 사람 재생 확인을 서로 다른 근거로 유지한다.
+
+### 구현과 실제 샘플 검증
+
+- `candidateElevated`를 먼저 계산한 뒤에만 impulse 후보를 판정한다. `crest >= 14dB`인 짧은 창은 강한 speech-band 근거가 있을 때만 active anchor가 된다. 바로 이어진 상승 창은 실제 anchor 주변의 범위를 보조할 수 있지만 단독으로 후보를 만들 수 없고, feature gap을 사이에 둔 창은 시간 지지로 인정하지 않는다.
+- 단일 창 이벤트도 강한 speech-band 근거가 있으면 검토 후보가 될 수 있게 했고, 기존 고립 저음성 click 제거와 장시간 일정한 배경음 억제는 유지했다. 단위 테스트는 평범한 고crest baseline, vocal anchor 주변 시간 지지, 강한 음성대역의 단일 burst, 고립 click, 연속 click 쌍, 누락 창 너머 click을 각각 분리한다. 독립 감사에서 재현한 click 쌍 반복의 12개 슬롯 소진은 이 anchor 규칙 뒤 후보 0개가 된다.
+- 실제 약 2시간 샘플 전체를 다시 읽기 전용으로 분석한 결과 7,232/7,232 창을 26.776초에 처리했고 후보 12개를 만들었다. 5,041개는 여전히 존재하는 raw high-crest 창의 수이며, 이 중 새 gate가 실제 고립 impulse로 제거한 창은 1개다. eligible event는 기존 28개에서 102개로 회복됐다. 두 수치의 모집단을 혼동하지 않도록 평가 schema를 v2로 올리고 high-crest 수·비율과 rejected impulse 수·비율, crest 50·90·95백분위를 따로 출력한다.
+- 이 결과는 gate 포화와 전체 처리 성공을 입증하지만 후보가 실제로 재미있는 장면인지에 대한 정답 라벨은 아니다. 후보의 의미 품질과 새로운 오탐 분포는 직접 청취 및 선택형 Gemini 후보 해석으로 A/B 확인해야 하며, 그 검증 없이 정확도 향상을 수치로 주장하지 않는다.
+
+### `0.3.8` 배포 전 검증
+
+- `npm run check`: TypeScript strict, ESLint warning 0, 39개 파일의 546개 Vitest 테스트를 통과했다.
+- `npm run build`: 55 modules, main JavaScript 509.24kB(gzip 145.75kB), CSS 58.69kB, fast audio Worker 333.84kB, Gemini Pass B Worker 338.11kB, audio-event Worker 1,226.70kB, ORT WASM 21,596.01kB로 production build에 성공했다. main과 Gemini Worker의 크기는 `0.3.7`과 사실상 같고 fast audio Worker만 새 gate만큼 소폭 증가했다.
+- Vite의 500kB 초과 chunk 경고는 기존 lazy audio-event Worker와 local ORT WASM에 대한 알려진 비차단 경고다. 이번 변경은 해당 asset을 main 초기 경로로 합치지 않았다.
+- 독립 감사가 연속 저음성 click 쌍이 후보 12개를 모두 소진하는 첫 수정안의 P1 반례를 재현해 배포 전에 막았다. 최종 재감사에서는 click 쌍 21개가 후보 0개, 누락 창 사이 click이 후보 0개, vocal anchor 양옆의 고crest support가 후보 1개였으며 새 P0/P1이 없었다.
+- Graphify는 문서 semantic 갱신이 외부 LLM key를 요구해 중단됐으므로 키를 주입하지 않았다. 로컬 AST `--code-only` 증분 갱신과 재클러스터링으로 최종 코드 4개 파일을 반영했고, query에서 `selectAudioReactionHighlights()`·`scoreWindow()`·`adjacentWindows()`와 후속 audio reaction/fusion 경로가 연결된 것을 재확인했다.

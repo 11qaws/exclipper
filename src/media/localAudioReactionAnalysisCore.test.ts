@@ -110,6 +110,98 @@ describe("local audio reaction scoring core", () => {
     expect(result.diagnostics.impulseLikeWindowCount).toBe(1);
   });
 
+  it("does not label an ordinary high-crest baseline as repeated impulses", () => {
+    const windows = baseline(80).map((window) => ({
+      ...window,
+      peak: Math.min(1, window.rms * 6),
+    }));
+
+    const result = selectAudioReactionHighlights(windows, 80_000);
+
+    expect(result.candidates).toEqual([]);
+    expect(result.diagnostics.impulseLikeWindowCount).toBe(0);
+  });
+
+  it("uses temporally supported high-crest windows only around a vocal anchor", () => {
+    const windows = baseline(100);
+    for (const [offset, rms] of [0.16, 0.22, 0.18].entries()) {
+      const index = 45 + offset;
+      windows[index] = speechWindow(index, {
+        rms,
+        peak: 1,
+        zeroCrossingRate: 0.18,
+        speechBandEnergyRatio: offset === 1 ? 0.72 : 0.2,
+      });
+    }
+
+    const result = selectAudioReactionHighlights(windows, 100_000);
+
+    expect(result.diagnostics.impulseLikeWindowCount).toBe(0);
+    expect(result.candidates[0]?.evidence).toMatchObject({
+      activeWindowCount: 1,
+      sustainedWindowCount: 3,
+    });
+  });
+
+  it("does not let consecutive low-vocal transients seed a candidate", () => {
+    const windows = baseline(80);
+    for (const index of [30, 31]) {
+      windows[index] = speechWindow(index, {
+        rms: 0.16,
+        peak: 1,
+        zeroCrossingRate: 0.48,
+        speechBandEnergyRatio: 0.15,
+      });
+    }
+
+    const result = selectAudioReactionHighlights(windows, 80_000);
+
+    expect(result.candidates).toEqual([]);
+    expect(result.diagnostics.eligibleEventCount).toBe(0);
+  });
+
+  it("does not treat transients across a missing feature window as continuous", () => {
+    const windows = baseline(80)
+      .filter((_, index) => index !== 31)
+      .map((window) =>
+        window.startMs === 30_000 || window.startMs === 32_000
+          ? {
+              ...window,
+              rms: 0.16,
+              peak: 1,
+              zeroCrossingRate: 0.48,
+              speechBandEnergyRatio: 0.15,
+            }
+          : window,
+      );
+
+    const result = selectAudioReactionHighlights(windows, 80_000, {
+      plannedWindowCount: 80,
+    });
+
+    expect(result.coverageComplete).toBe(false);
+    expect(result.candidates).toEqual([]);
+    expect(result.diagnostics.impulseLikeWindowCount).toBe(2);
+  });
+
+  it("keeps an isolated high-crest burst with strong vocal-band support", () => {
+    const windows = baseline(80);
+    windows[30] = speechWindow(30, {
+      rms: 0.16,
+      peak: 1,
+      zeroCrossingRate: 0.2,
+      speechBandEnergyRatio: 0.82,
+    });
+
+    const result = selectAudioReactionHighlights(windows, 80_000);
+
+    expect(result.diagnostics.impulseLikeWindowCount).toBe(0);
+    expect(result.candidates[0]?.evidence).toMatchObject({
+      eventKind: "short-loudness-burst",
+      activeWindowCount: 1,
+    });
+  });
+
   it("rejects a long, steady loud game/background plateau", () => {
     const windows = baseline(140);
     for (let index = 40; index < 80; index += 1) {
