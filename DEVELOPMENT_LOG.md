@@ -746,3 +746,32 @@
 - 로컬 production preview의 `/rettolight/`에서 초심자용 4단계 시작 화면, 최대 12시간·로컬 처리·여러 후보 안내가 정상 렌더링되고 브라우저 warning/error 로그가 없음을 확인했다.
 - 허용된 폴더의 가장 짧은 약 2시간 H.264/AAC MP4로 종단 smoke를 시도했지만, 앱 내 브라우저 자동화의 native file chooser event가 숨은 입력과 보이는 버튼 모두에서 열리지 않아 파일 주입 단계에서 중단했다. 앱 preflight나 분석 Worker 실패의 증거는 아니며, 실제 `파일 선택 → fast pass → 여러 후보 → 추천 순서 제안` 완주는 아직 별도 비차단 검증 항목으로 남긴다. 파일은 복사하거나 외부로 전송하지 않았다.
 - 최종 독립 감사에서 채팅 신호가 한 작성자의 여러 메시지일 수도 있는데 `여러 시청자`라고 단정하던 설명을 중립적인 `채팅 반응`으로 고쳤다. 내부 가중치는 초심자 기본 화면에서 숨기고, 비교할 순서가 없는 후보 1개에는 랭킹 패널을 표시하지 않는다. 코드·UX 감사 모두 배포 차단 P0/P1이 남지 않았다고 확인했다.
+
+## 2026-07-20 — 앱 0.3.6 근거 기반 사건·반응 단서 착수
+
+### 구현 전 조사와 선택
+
+- 현재 카드에는 fast narrative, 자동 전사 cue, 오디오 사건 cue가 서로 다른 블록으로 이미 존재하지만 사용자가 직접 합쳐 읽어야 한다. 다음 기능은 새 거대 생성 모델보다 이 근거들을 한 후보 설명과 가장 먼저 확인할 위치로 결정적으로 투영해 검토 부담을 더 줄이는 것으로 정했다.
+- Qwen2.5 0.5B급 브라우저 생성 모델도 한국어를 지원하지만 ONNX 양자화 가중치와 tokenizer가 약 0.5~0.8GB이며 실용 성능은 WebGPU 의존도가 높다. 현재 Pages에는 COOP/COEP도 없어 WASM 다중 스레드 폴백을 기대하기 어렵고, 모델은 화면 사건을 새로 보지 못한 채 provisional 전사와 집계값을 자연어로 부풀릴 위험이 있다. 이번 3시간 수직 슬라이스에는 새 생성 모델을 넣지 않는다.
+- production Pass B Worker는 start/end/text만 반환해 confidence와 speech-presence를 함께 요구하는 `grounded-transcript`에 도달하지 못한다. 따라서 모든 실제 전사는 `자동 전사 추정 · 위치 확인용`으로 유지하며 사건·행위자·원인·결과나 clip-worth를 만들지 않는다.
+- 독립 UX 감사에서 이전 `0.3.5` 수정이 비슷한 JSX 조건을 잘못 바꿔 후보 1개에서 audio-event 패널을 숨기고 ranking 패널을 표시하는 회귀를 찾았다. 또한 stale ranking reason code를 최신 audio-event evidence와 섞는 provenance 오류, 재시도 실패 뒤 보존된 Pass B cue를 배지가 숨기는 문제, export의 `스트리머 오디오 반응`·`참여자 N명` 과장 표현을 함께 확인했다.
+- `0.3.6`은 `candidate-evidence-explanation-v1` 순수 builder와 테스트, 기존 details의 `사건·반응 단서` projection, 가장 유용한 replay focus, 후보 수 조건·stale 이유·보존 cue 문구·export 주체 표현·키보드 focus와 작은 배지 대비 보강을 한 배포 단위로 묶는다. persistence/export schema와 새 AI run은 변경하지 않는다.
+
+### `0.3.6` 구현 결과
+
+- 새 `CandidateEvidenceExplanation` projection이 fast audio·chat·visual, 선택적 Pass B, 선택적 audio-event를 후보 ID별로 합친다. 사건·행위자·원인·결과는 항상 unknown으로 남기고, 전사는 80 Unicode code point 이내의 정규화된 인용과 위치로만 사용하며 clip-worth에는 가산하지 않는다. audio-event는 혼합 방송 오디오의 정성 단서이고 주체를 지정하지 않는다.
+- 각 카드 기본 화면은 중립 제목과 `먼저 볼 이유`만 남겼다. `사건·반응 단서 보기` 안에서 사건 단서·반응 단서·아직 확인되지 않은 점·관측 신호를 세로로 읽고, AI가 하나로 고른 확인 위치를 별도 버튼으로 재생한다. 기본 `이 장면 처음부터 보기`는 사건 전 문맥을 건너뛰지 않는다.
+- 사용자가 구간을 다듬어 strongest cue가 밖으로 나가면 원래 timestamp와 `현재 구간 밖`을 그대로 보이고, AI 확인 버튼은 현재 구간의 반응 정점, 그것도 밖이면 구간 시작으로 이동한다. 단서를 현재 구간 안으로 임의 clamp하지 않는다.
+- 후보 수별 기능 노출을 순수 helper로 고정했다. 0개는 정밀 기능 없음, 1개는 전사·반응 종류 제공/랭킹 숨김, 2~12개는 모두 제공한다. stale ranking에서는 과거 reason과 최신 audio-event를 섞지 않고 상세 이유를 숨긴다.
+- malformed Pass B ID, audio-event ID·proposal range·reaction peak, invalid effective range는 typed error로 검출한다. App은 precision presentation보다 먼저 binding을 검사하며, 한 카드의 잘못된 overlay를 모두 버리고 fast-pass 근거로 다시 만들어 후보 목록·편집·출력을 보존한다. 승인 목록도 같은 안전 wrapper를 사용한다.
+- Pass B Worker 결과는 reducer가 현재 run phase와 event fence를 수락한 뒤에만 evidence map에 기록한다. 재시도의 불분명·실패·취소 결과가 기존 cue를 지우지 않으며 카드 배지는 `이번 재확인 불분명/실패 · 기존 단서 유지`를 구분한다.
+- durable candidate reason과 CSV·Markdown 표시는 `스트리머 음성`·`참여자 N명`을 더 이상 단정하지 않는다. `혼합 방송 오디오 반응 신호`, `채팅 반응 신호`, `서로 다른 작성자 표기 N개`, `사건 단서`로 표현하며 JSON export schema `0.4.0`과 persistence schema `0.3.0`은 유지한다.
+- 후보 제목을 실제 `h4`로 바꾸고 summary·일반 버튼·테마 버튼·경계 편집 버튼·cue를 최소 44px로 맞췄다. 밝은 테마 chat/visual 대비를 높이고 핵심 설명 본문은 13px로 올렸다.
+
+### `0.3.6` 배포 전 검증
+
+- `npm run check`: TypeScript, ESLint, 37개 파일의 523개 Vitest 테스트 통과. explanation 테스트는 provisional 전사의 무가점, 혼합 오디오 주체 미확정, 작성자 키 비인원화, 결정성·deep freeze, ID/range/peak mismatch fallback, 구간 밖 replay target을 포함한다.
+- `npm run build`: 55 modules, main JavaScript 499.05kB(gzip 142.53kB), CSS 53.91kB, audio Worker 333.57kB, Pass B Worker 1,217.79kB, audio-event Worker 1,226.70kB, 로컬 ORT WASM 21,596.01kB로 production build 성공.
+- 로컬 production preview에서 main JS·CSS·WASM의 HTTP 200과 올바른 MIME을 확인했다. 390×844 검증에서 수평 overflow가 없고 source/summary/theme control이 44px이며, 브라우저 console error가 없었다. production bundle에도 `스트리머의 음성 반응`, `평소보다 두드러진 스트리머 음성 반응`, `참여자 N명` 문구가 남지 않았다.
+- 허용된 약 2시간 H.264/AAC MP4로 실제 파일 선택을 다시 시도했지만 Chrome 확장의 파일 URL 접근 권한이 없어 native chooser event 단계에서 중단했다. 앱 preflight·분석 Worker 실패와 구분하며, 파일은 복사·외부 전송하지 않았다. 시작 화면·순수 분석 계약·production asset은 검증됐지만 실제 샘플의 `파일 선택 → fast pass → 여러 후보` 브라우저 완주는 아직 별도 검증 항목이다.
+- 세 차례 독립 재감사에서 reducer 수락 전 Pass B evidence 기록, malformed overlay 전체 render 중단, 승인 목록의 raw evidence 사용, 범위 밖 focus 표현, 혼합 오디오 export 과장을 찾아 수정했다. 최종 재감사 결과 P0·P1·P2는 남지 않았다.

@@ -310,7 +310,7 @@ function createCandidate(
     `평소보다 ${evidence.burstRatio.toFixed(1)}배`,
   ];
   if (evidence.uniqueAuthorCount > 0) {
-    reasonParts.push(`고유 참여자 ${evidence.uniqueAuthorCount}명`);
+    reasonParts.push(`서로 다른 작성자 표기 ${evidence.uniqueAuthorCount}개`);
   }
   if (evidence.reactionMessageCount > 0) {
     reasonParts.push(`반응 표현 ${evidence.reactionMessageCount}개`);

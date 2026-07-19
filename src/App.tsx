@@ -27,6 +27,11 @@ import {
   candidateAudioEventKindLabel,
 } from "./analysis/candidateAudioEventPresentation";
 import {
+  buildCandidateEvidenceExplanationWithFallback,
+  resolveCandidateEvidenceReplayTarget,
+  type CandidateEvidenceUnknown,
+} from "./analysis/candidateEvidenceExplanation";
+import {
   CANDIDATE_AUDIO_EVENT_MODEL_DTYPE,
   CANDIDATE_AUDIO_EVENT_MODEL_ID,
   CANDIDATE_AUDIO_EVENT_MODEL_REVISION,
@@ -81,6 +86,7 @@ import {
   type AnalysisRunState,
 } from "./domain/analysisRun";
 import { deriveAnalysisControlState } from "./domain/analysisControlState";
+import { deriveCandidateReviewFeatureAvailability } from "./domain/candidateReviewFeatureAvailability";
 import {
   createCandidateAudioEventRun,
   reduceCandidateAudioEventRun,
@@ -219,7 +225,7 @@ interface AudioAnalysisOutcome {
   readonly coverageComplete: boolean;
 }
 
-const APP_VERSION = "0.3.5";
+const APP_VERSION = "0.3.6";
 const PERSISTENCE_SCHEMA_VERSION = "0.3.0";
 const SIGNAL_ENGINE_VERSION = "streamer-reaction-fast-pass-v1";
 const MAX_CHAT_FILE_BYTES = 32 * 1024 * 1024;
@@ -365,6 +371,19 @@ function candidateAudioEventGapStatusLabel(
 
 function candidateElementId(prefix: string, candidateId: string): string {
   return `${prefix}-${encodeURIComponent(candidateId)}`;
+}
+
+function candidateEvidenceUnknownLabel(value: CandidateEvidenceUnknown): string {
+  switch (value) {
+    case "event":
+      return "실제 사건의 종류";
+    case "actor":
+      return "반응이나 대사의 주체";
+    case "cause":
+      return "반응의 원인";
+    case "outcome":
+      return "사건의 결과";
+  }
 }
 
 function candidateRankingReasonText(
@@ -2506,9 +2525,6 @@ function App() {
               text: segment.text,
             })),
           );
-          setCandidatePassBEvidenceById((current) =>
-            mergeCandidatePassBEvidence(current, evidence),
-          );
           const accepted =
             evidence.status !== "fast-pass-fallback"
               ? applyCurrentWorkerEvent({
@@ -2527,6 +2543,11 @@ function App() {
           if (!accepted) {
             throw new Error("The Pass B candidate result was rejected.");
           }
+          setCandidatePassBEvidenceById((current) =>
+            isCurrentOperation()
+              ? mergeCandidatePassBEvidence(current, evidence)
+              : current,
+          );
         },
         onCandidateGap: (gap: CandidatePassBCandidateGap) => {
           const target = targetById.get(gap.candidateId);
@@ -2555,9 +2576,6 @@ function App() {
                 isSilence: true,
               },
             ]);
-            setCandidatePassBEvidenceById((current) =>
-              mergeCandidatePassBEvidence(current, evidence),
-            );
             if (
               !applyCurrentWorkerEvent({
                 type: "CANDIDATE_NO_CLEAR_SPEECH",
@@ -2569,6 +2587,11 @@ function App() {
             ) {
               throw new Error("The Pass B no-speech result was rejected.");
             }
+            setCandidatePassBEvidenceById((current) =>
+              isCurrentOperation()
+                ? mergeCandidatePassBEvidence(current, evidence)
+                : current,
+            );
             return;
           }
           if (
@@ -3595,6 +3618,8 @@ function App() {
         ? "stale"
         : "fresh";
   const candidateRankingApplied = candidateRankingView.appliedProposalId !== null;
+  const candidateReviewFeatureAvailability =
+    deriveCandidateReviewFeatureAvailability(candidates.length);
   const candidateRankingPreviewEntries = useMemo(
     () =>
       candidateRankingProposal === null
@@ -4147,7 +4172,9 @@ function App() {
                 </div>
               </div>
 
-              {openedRecoveredResult !== null && sourcePreviewUrl === null && candidates.length > 0 && (
+              {openedRecoveredResult !== null &&
+                sourcePreviewUrl === null &&
+                candidateReviewFeatureAvailability.hasCandidates && (
                 <div className="rh-notice rh-notice-with-action" data-tone="warning">
                   <span>후보 시간표는 바로 검토할 수 있어요. 장면 재생은 원래 영상 파일을 다시 연결한 뒤 켜집니다.</span>
                   <button className="btn btn-secondary" type="button" onClick={focusSourceSection}>
@@ -4156,7 +4183,7 @@ function App() {
                 </div>
               )}
 
-              {candidates.length > 1 && (
+              {candidateReviewFeatureAvailability.showAudioEvent && (
                 <section
                   className="rh-passb-panel rh-audio-event-panel"
                   aria-labelledby="audio-event-title"
@@ -4246,7 +4273,7 @@ function App() {
                 </section>
               )}
 
-              {candidates.length > 0 && (
+              {candidateReviewFeatureAvailability.showPassB && (
                 <section className="rh-passb-panel" aria-labelledby="pass-b-title">
                   <div className="rh-passb-copy">
                     <p className="rh-eyebrow">선택 기능 · 후보 대사만 자세히</p>
@@ -4331,7 +4358,7 @@ function App() {
                 </section>
               )}
 
-              {candidates.length > 0 && (
+              {candidateReviewFeatureAvailability.showRanking && (
                 <section
                   className="rh-ranking-panel"
                   aria-labelledby="candidate-ranking-title"
@@ -4447,6 +4474,12 @@ function App() {
                       추천은 검토 차례만 바꿉니다. 승인·제외, 시작·끝, 재생 위치는 후보 ID로
                       그대로 이어지고 다운로드 결과는 편집하기 쉬운 시간순을 유지해요.
                     </p>
+                    {candidateRankingApplied &&
+                      candidateRankingProposalDisposition === "stale" && (
+                        <p>
+                          최신 추천을 만들려면 먼저 적용 전 순서로 돌아가 주세요.
+                        </p>
+                      )}
                     {candidateAudioEventRankingCoverage !== "complete" && (
                       <p>
                         반응 종류 AI가 모든 후보를 빠짐없이 끝내지 않았다면 일부 후보만 유리해지지
@@ -4455,7 +4488,8 @@ function App() {
                     )}
                   </div>
 
-                  {candidateRankingProposal !== null && (
+                  {candidateRankingProposal !== null &&
+                    candidateRankingProposalDisposition === "fresh" && (
                     <details className="rh-ranking-preview">
                       <summary>추천 상위 장면과 순서가 바뀌는 이유 보기</summary>
                       <ol>
@@ -4501,6 +4535,13 @@ function App() {
                       </p>
                     </details>
                   )}
+                  {candidateRankingProposal !== null &&
+                    candidateRankingProposalDisposition === "stale" && (
+                      <p className="rh-ranking-caution">
+                        새 단서가 생겨 이전 추천 이유는 표시하지 않아요. 현재 카드 순서는 자동으로
+                        바꾸지 않았습니다.
+                      </p>
+                    )}
                 </section>
               )}
 
@@ -4564,25 +4605,62 @@ function App() {
                     aria-label="AI가 찾은 클립 후보들"
                   >
                   {orderedCandidates.map((candidate, index) => {
+                    const candidatePassBEvidenceFromMap =
+                      candidatePassBEvidenceById[candidate.id];
+                    const candidatePassBEvidence =
+                      candidatePassBEvidenceFromMap?.candidateId === candidate.id
+                        ? candidatePassBEvidenceFromMap
+                        : undefined;
                     const narrative = buildCandidatePassBPresentation(
                       candidate.id,
                       buildHighlightNarrative(candidate),
-                      candidatePassBEvidenceById[candidate.id],
+                      candidatePassBEvidence,
                     );
                     const candidatePassBOutcome = candidatePassBRun?.candidateOutcomes.find(
                       ({ candidateId }) => candidateId === candidate.id,
                     );
+                    const candidatePassBRunStoppedBeforeOutcome =
+                      candidatePassBRun !== null &&
+                      ["cancelled", "failed"].includes(candidatePassBRun.status) &&
+                      candidatePassBOutcome?.status === "pending";
                     const candidatePassBStatusLabel =
-                      candidatePassBOutcome?.status === "failed"
-                        ? "대사 분석 건너뜀"
+                      candidatePassBRunStoppedBeforeOutcome
+                        ? candidatePassBEvidence === undefined
+                          ? candidatePassBRun?.status === "cancelled"
+                            ? "대사 확인 멈춤 · 빠른 근거 유지"
+                            : "대사 확인 실패 · 빠른 근거 유지"
+                          : `${narrative.passBStatusLabel} · 기존 단서 유지`
+                        : candidatePassBOutcome?.status === "failed"
+                        ? candidatePassBEvidence === undefined
+                          ? "추가 대사 분석 건너뜀 · 빠른 근거 유지"
+                          : `${narrative.passBStatusLabel} · 재확인 실패, 기존 단서 유지`
                         : candidatePassBOutcome?.status === "pending" && candidatePassBBusy
-                          ? candidatePassBRun?.status === "transcribing" &&
-                            candidatePassBRun.activeCandidateId === candidate.id
-                            ? "대사 확인 중"
-                            : "대사 확인 대기"
-                          : narrative.passBStatusLabel;
-                    const candidateAudioEventEvidence =
+                          ? candidatePassBEvidence === undefined
+                            ? candidatePassBRun?.status === "transcribing" &&
+                              candidatePassBRun.activeCandidateId === candidate.id
+                              ? "대사 확인 중"
+                              : "대사 확인 대기"
+                            : candidatePassBRun?.status === "transcribing" &&
+                                candidatePassBRun.activeCandidateId === candidate.id
+                              ? `${narrative.passBStatusLabel} · 재확인 중, 기존 단서 유지`
+                              : `${narrative.passBStatusLabel} · 재확인 대기, 기존 단서 유지`
+                          : candidatePassBOutcome?.status === "noClearSpeech" &&
+                              candidatePassBEvidence !== undefined &&
+                              candidatePassBEvidence.status !== "fast-pass-fallback"
+                            ? `${narrative.passBStatusLabel} · 이번 재확인 불분명, 기존 단서 유지`
+                            : narrative.passBStatusLabel;
+                    const candidateAudioEventEvidenceFromMap =
                       candidateAudioEventEvidenceById[candidate.id];
+                    const candidateAudioEventEvidence =
+                      candidateAudioEventEvidenceFromMap?.candidateId === candidate.id &&
+                      candidateAudioEventEvidenceFromMap.sourceStartMs ===
+                        candidate.startMs &&
+                      candidateAudioEventEvidenceFromMap.sourceEndMs ===
+                        candidate.endMs &&
+                      candidateAudioEventEvidenceFromMap.reactionPeakMs ===
+                        candidate.peakMs
+                        ? candidateAudioEventEvidenceFromMap
+                        : undefined;
                     const audioEventPresentation =
                       buildCandidateAudioEventPresentation(
                         candidate.id,
@@ -4636,6 +4714,21 @@ function App() {
                       candidate,
                       boundaryRevision,
                     );
+                    const evidenceExplanationProjection =
+                      buildCandidateEvidenceExplanationWithFallback({
+                        candidate,
+                        effectiveRange,
+                        passBEvidence: candidatePassBEvidenceFromMap,
+                        audioEventEvidence: candidateAudioEventEvidenceFromMap,
+                      });
+                    const evidenceExplanation =
+                      evidenceExplanationProjection.explanation;
+                    const evidenceReplayTarget =
+                      resolveCandidateEvidenceReplayTarget(
+                        evidenceExplanation.primaryReplayFocus,
+                        evidenceExplanationProjection.explanationRange,
+                        candidate.peakMs,
+                      );
                     const rangeAdjusted = candidateRangeWasAdjusted(boundaryRevision);
                     const boundaryTouched = (boundaryRevision?.revision ?? 0) > 0;
                     const approvedAfterEdit =
@@ -4654,28 +4747,32 @@ function App() {
                       <div className="rh-candidate-main">
                         <div className="rh-candidate-meta">
                           <strong>{formatDuration(effectiveRange.startMs)}–{formatDuration(effectiveRange.endMs)}</strong>
-                          <span>상대 신호 {Math.round(candidate.score * 100)}점</span>
                           <span className="rh-review-badge" data-state={candidate.reviewState}>
                             {candidate.reviewState === "approved" ? "사용하기로 함" : candidate.reviewState === "rejected" ? "제외함" : "검토 전"}
                           </span>
-                          {candidateRankingApplied && (
-                            <span className="rh-ranking-badge">추천 검토 순서</span>
+                          {narrative.basis === "visual-exploration" && (
+                            <span className="rh-interpretation-badge" data-basis={narrative.basis}>
+                              {narrative.basisLabel}
+                            </span>
                           )}
-                          <span className="rh-interpretation-badge" data-basis={narrative.basis}>
-                            {narrative.basisLabel}
-                          </span>
-                          <span
-                            className="rh-passb-badge"
-                            data-status={candidatePassBOutcome?.status ?? "idle"}
-                          >
-                            {candidatePassBStatusLabel}
-                          </span>
-                          <span
-                            className="rh-audio-event-badge"
-                            data-status={candidateAudioEventBadgeStatus}
-                          >
-                            {candidateAudioEventStatusLabel}
-                          </span>
+                          {(candidatePassBEvidence !== undefined ||
+                            candidatePassBOutcome !== undefined) && (
+                            <span
+                              className="rh-passb-badge"
+                              data-status={candidatePassBOutcome?.status ?? "clueFound"}
+                            >
+                              {candidatePassBStatusLabel}
+                            </span>
+                          )}
+                          {(candidateAudioEventEvidence !== undefined ||
+                            candidateAudioEventOutcome !== undefined) && (
+                            <span
+                              className="rh-audio-event-badge"
+                              data-status={candidateAudioEventBadgeStatus}
+                            >
+                              {candidateAudioEventStatusLabel}
+                            </span>
+                          )}
                           {boundaryTouched && (
                             <span className="rh-boundary-badge">
                               {boundaryRevision?.provenance === "userResetToAi"
@@ -4689,54 +4786,96 @@ function App() {
                             </span>
                           )}
                         </div>
-                        <p
+                        <h4
                           className="rh-candidate-title"
                           id={candidateElementId("candidate-title", candidate.id)}
                         >
-                          후보 {index + 1} · {narrative.title}
+                          후보 {index + 1} · {evidenceExplanation.headline}
+                        </h4>
+                        <p className="rh-candidate-reason">
+                          <strong>먼저 볼 이유</strong>
+                          {evidenceExplanation.whyWorthReviewing.text}
                         </p>
-                        <p className="rh-candidate-reason">{narrative.whyRecommended}</p>
                         <details className="rh-candidate-evidence">
-                          <summary aria-label={`후보 ${index + 1}의 사건과 반응 설명 보기`}>
-                            무슨 일이 있었고 왜 반응했는지 보기
+                          <summary aria-label={`후보 ${index + 1}의 사건과 반응 단서 보기`}>
+                            사건·반응 단서 보기
                           </summary>
+                          {boundaryTouched && (
+                            <p className="rh-evidence-boundary-note">
+                              아래 내용은 AI가 처음 후보를 찾을 때 본 단서예요. 다듬은 구간에 모두
+                              들어 있는지는 재생해 확인해 주세요.
+                            </p>
+                          )}
+                          {evidenceExplanationProjection.fallbackReason !== null && (
+                            <p className="rh-evidence-boundary-note" role="status">
+                              추가 단서의 연결을 확인할 수 없어 이 카드에는 안전한 빠른 분석
+                              근거만 보여 드려요. 다른 후보와 편집 결과는 그대로 유지됩니다.
+                            </p>
+                          )}
                           <dl className="rh-narrative-grid">
                             <div>
-                              <dt>무슨 일이 있었나</dt>
-                              <dd>{narrative.event}</dd>
+                              <dt>사건 단서</dt>
+                              <dd>{evidenceExplanation.eventClue.text}</dd>
                             </div>
                             <div>
-                              <dt>방송 오디오 반응 · 주체 확인 필요</dt>
-                              <dd>{narrative.streamerReaction}</dd>
+                              <dt>반응 단서</dt>
+                              <dd>{evidenceExplanation.reactionClue.text}</dd>
                             </div>
                             <div>
-                              <dt>시청자 반응</dt>
-                              <dd>{narrative.audienceReaction}</dd>
-                            </div>
-                            <div>
-                              <dt>왜 볼 만한가</dt>
-                              <dd>{narrative.whyRecommended}</dd>
-                            </div>
-                            <div>
-                              <dt>오디오 반응 종류 AI</dt>
+                              <dt>아직 확인되지 않은 점</dt>
                               <dd>
-                                {audioEventPresentation.summary ??
-                                  candidateAudioEventStatusLabel}
+                                직접 재생해서 확인해 주세요: {evidenceExplanation.unknowns
+                                  .map(candidateEvidenceUnknownLabel)
+                                  .join(" · ")}
                               </dd>
                             </div>
                           </dl>
-                          <p className="rh-review-hint">{narrative.reviewHint}</p>
-                          {audioEventPresentation.caution !== null && (
-                            <p className="rh-audio-event-caution">
-                              {audioEventPresentation.caution}
-                            </p>
-                          )}
+                          <p className="rh-primary-replay-focus">
+                            <strong>
+                              {evidenceExplanation.primaryReplayFocus.insideEffectiveRange
+                                ? "AI가 먼저 확인하라고 짚은 위치"
+                                : "AI가 처음 찾은 위치 · 현재 구간 밖"}
+                            </strong>
+                            {evidenceExplanation.primaryReplayFocus.label} · {formatDuration(evidenceExplanation.primaryReplayFocus.startMs)}
+                            {!evidenceExplanation.primaryReplayFocus.insideEffectiveRange && (
+                              <> · 아래 버튼은 {evidenceReplayTarget.label}에서 시작해요.</>
+                            )}
+                          </p>
+                          <button
+                            className="btn btn-secondary rh-evidence-replay"
+                            type="button"
+                            aria-label={`후보 ${index + 1}, ${formatDuration(evidenceReplayTarget.startMs)}부터 ${evidenceReplayTarget.label}`}
+                            disabled={sourcePreviewUrl === null}
+                            onClick={(event) =>
+                              playCandidateCue(
+                                candidate,
+                                evidenceReplayTarget.startMs,
+                                event.currentTarget,
+                              )
+                            }
+                          >
+                            {sourcePreviewUrl === null
+                              ? "원본 연결 후 확인 위치 보기"
+                              : evidenceReplayTarget.basis === "primary-evidence-focus"
+                                ? "AI가 짚은 위치 보기"
+                                : evidenceReplayTarget.basis === "effective-reaction-peak"
+                                  ? "현재 구간의 반응 정점 보기"
+                                  : "현재 구간 처음부터 보기"}
+                          </button>
+                          <details className="rh-observed-evidence">
+                            <summary>AI가 실제로 본 신호 더 보기</summary>
+                            <ul>
+                              {evidenceExplanation.observedStatements.map((statement) => (
+                                <li key={`${statement.kind}-${statement.text}`}>{statement.text}</li>
+                              ))}
+                            </ul>
+                          </details>
                           {audioEventPresentation.cues.length > 0 && (
                             <div
                               className="rh-audio-event-cues"
                               aria-label="시간 위치가 있는 오디오 반응 종류 AI 단서"
                             >
-                              <strong>눌러서 실제 스트리머 반응인지 확인할 위치</strong>
+                              <strong>눌러서 소리의 주체와 반응 맥락을 확인할 위치</strong>
                               <ul>
                                 {audioEventPresentation.cues.map((cue) => {
                                   const cueInsideCurrentRange =
@@ -4855,7 +4994,7 @@ function App() {
                           {candidate.evidence.chat !== undefined && (
                             <>
                               <span className="rh-evidence" data-signal="chat">채팅 {candidate.evidence.chat.messageCount}개</span>
-                              <span className="rh-evidence" data-signal="chat">참여자 {candidate.evidence.chat.uniqueAuthorCount}명</span>
+                              <span className="rh-evidence" data-signal="chat">서로 다른 작성자 표기 {candidate.evidence.chat.uniqueAuthorCount}개</span>
                               <span className="rh-evidence" data-signal="chat">평소의 {candidate.evidence.chat.burstRatio.toFixed(1)}배</span>
                               {candidate.evidence.chat.reactionMessageCount > 0 && (
                                 <span className="rh-evidence" data-signal="chat">반응 표현 {candidate.evidence.chat.reactionMessageCount}개</span>
@@ -4984,11 +5123,13 @@ function App() {
                           <button
                             className="btn btn-secondary"
                             type="button"
-                            aria-label={`후보 ${index + 1} 장면 보기`}
+                            aria-label={`후보 ${index + 1} 장면 처음부터 보기`}
                             disabled={sourcePreviewUrl === null}
                             onClick={() => playCandidate(candidate)}
                           >
-                            {sourcePreviewUrl === null ? "원본 연결 필요" : "이 장면 보기"}
+                            {sourcePreviewUrl === null
+                              ? "원본 연결 필요"
+                              : "이 장면 처음부터 보기"}
                           </button>
                           <button
                             className="btn btn-primary"
@@ -5077,19 +5218,22 @@ function App() {
                           );
                         })
                         .map(({ proposal: candidate, boundaryRevision }) => {
-                          const narrative = buildCandidatePassBPresentation(
-                            candidate.id,
-                            buildHighlightNarrative(candidate),
-                            candidatePassBEvidenceById[candidate.id],
-                          );
                           const range = effectiveCandidateRange(
                             candidate,
                             boundaryRevision,
                           );
+                          const explanation =
+                            buildCandidateEvidenceExplanationWithFallback({
+                              candidate,
+                              effectiveRange: range,
+                              passBEvidence: candidatePassBEvidenceById[candidate.id],
+                              audioEventEvidence:
+                                candidateAudioEventEvidenceById[candidate.id],
+                            }).explanation;
                           return (
                             <li key={candidate.id}>
                               <strong>{formatDuration(range.startMs)}–{formatDuration(range.endMs)}</strong>
-                              <span>{narrative.whyRecommended}</span>
+                              <span>{explanation.whyWorthReviewing.text}</span>
                             </li>
                           );
                         })}

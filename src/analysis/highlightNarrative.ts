@@ -122,7 +122,7 @@ function audienceReactionExplanation(candidate: UnifiedHighlightCandidate): stri
     chat.reactionMessageCount > 0
       ? ` 이 중 반응 표현은 ${chat.reactionMessageCount}개였어요.`
       : "";
-  return `${timing} ${chat.uniqueAuthorCount}명이 채팅 ${chat.messageCount}개를 남겨 평소의 ${chat.burstRatio.toFixed(1)}배로 늘었어요.${reactionSuffix}`;
+  return `${timing} 채팅 ${chat.messageCount}개가 모였고 서로 다른 작성자 표기는 ${chat.uniqueAuthorCount}개로, 평소의 ${chat.burstRatio.toFixed(1)}배로 늘었어요.${reactionSuffix}`;
 }
 
 function recommendationExplanation(candidate: UnifiedHighlightCandidate): string {
@@ -133,30 +133,30 @@ function recommendationExplanation(candidate: UnifiedHighlightCandidate): string
     return hasVisual
       ? "화면 변화, 방송 오디오 반응 신호, 시청자 채팅이 가까운 후보 구간에 함께 잡혔어요. 오디오의 주체나 어느 신호가 원인인지는 단정하지 않고, 실제 사건과 반응 흐름을 먼저 확인할 가치가 높아요."
       : relationBetween(chatRange(candidate), audioRange(candidate)) === "after"
-        ? "방송 오디오 반응 신호 뒤 시간대에 시청자 반응도 커져, 실제 흐름을 먼저 검토할 가치가 높아요."
+        ? "방송 오디오 반응 신호 뒤 시간대에 채팅 반응 신호도 커져, 실제 흐름을 먼저 검토할 가치가 높아요."
         : relationBetween(chatRange(candidate), audioRange(candidate)) === "before"
-          ? "시청자 반응이 먼저 커진 뒤 시간대에 방송 오디오 반응 신호도 잡혀, 실제 흐름을 먼저 검토할 가치가 높아요."
+          ? "채팅 반응 신호가 먼저 커진 뒤 시간대에 방송 오디오 반응 신호도 잡혀, 실제 흐름을 먼저 검토할 가치가 높아요."
           : relationBetween(chatRange(candidate), audioRange(candidate)) === "overlap"
-            ? "방송 오디오 반응 신호와 시청자 반응이 겹치는 시간대에 잡혀, 먼저 검토할 가치가 높아요."
-            : "방송 오디오 반응 신호와 시청자 반응이 같은 후보 구간에 잡혀, 실제 순서와 반응 주체를 재생으로 확인할 가치가 높아요.";
+            ? "방송 오디오 반응 신호와 채팅 반응 신호가 겹치는 시간대에 잡혀, 먼저 검토할 가치가 높아요."
+            : "방송 오디오 반응 신호와 채팅 반응 신호가 같은 후보 구간에 잡혀, 실제 순서와 반응 주체를 재생으로 확인할 가치가 높아요.";
   }
   if (hasAudio) {
     return hasVisual
-      ? "화면 변화와 방송 오디오 반응 신호가 가까워, 실제 스트리머 반응과 그 원인이 함께 담겼는지 먼저 확인할 후보예요."
-      : "방송 오디오 반응 신호가 두드러져, 실제 스트리머의 말투·웃음·외침인지 먼저 확인할 후보예요.";
+      ? "화면 변화와 혼합 방송 오디오 반응 신호가 가까워, 실제 사건과 소리 주체의 관계를 먼저 확인할 후보예요."
+      : "혼합 방송 오디오 반응 신호가 두드러져, 스트리머 목소리인지 게임·영상 소리인지 먼저 확인할 후보예요.";
   }
   if (hasChat) {
     if (!hasVisual) {
-      return "시청자 반응이 평소보다 크게 몰려, 화면과 실제 스트리머 반응을 먼저 확인할 후보예요.";
+      return "채팅 반응 신호가 평소보다 크게 몰려, 실제 화면 사건과 방송 반응을 먼저 확인할 후보예요.";
     }
     const relation = relationBetween(visualRange(candidate), chatRange(candidate));
     return relation === "before"
-      ? "화면 변화가 먼저 잡히고 그 뒤 시간대에 시청자 반응이 몰려, 실제 사건과 반응을 확인할 후보예요."
+      ? "화면 변화가 먼저 잡히고 그 뒤 시간대에 채팅 반응 신호가 몰려, 실제 사건과 반응을 확인할 후보예요."
       : relation === "after"
-        ? "시청자 반응이 먼저 몰리고 그 뒤 시간대에 화면 변화가 잡혀, 실제 흐름을 확인할 후보예요."
+        ? "채팅 반응 신호가 먼저 몰리고 그 뒤 시간대에 화면 변화가 잡혀, 실제 흐름을 확인할 후보예요."
         : relation === "overlap"
-          ? "화면 변화와 시청자 반응이 겹치는 시간대에 잡혀, 스트리머의 조용한 반응이나 중요한 사건을 확인할 후보예요."
-          : "화면 변화와 시청자 반응이 같은 후보 구간에 잡혔지만 정확한 순서는 알 수 없어, 재생으로 실제 흐름을 확인할 후보예요.";
+          ? "화면 변화와 채팅 반응 신호가 겹치는 시간대에 잡혀, 실제 화면 사건과 방송 반응을 확인할 후보예요."
+          : "화면 변화와 채팅 반응 신호가 같은 후보 구간에 잡혔지만 정확한 순서는 알 수 없어, 재생으로 실제 흐름을 확인할 후보예요.";
   }
   return "오디오·채팅 반응 근거가 없어 화면 변화만으로 남긴 낮은 우선순위 탐색 후보예요.";
 }
@@ -180,7 +180,7 @@ export function buildHighlightNarrative(
             : "오디오 반응 신호와 채팅이 같은 후보 구간에 잡힌 장면"
       : hasAudio
         ? "방송 오디오 반응 신호가 두드러진 장면"
-        : "시청자 반응이 갑자기 모인 장면";
+        : "채팅 반응 신호가 갑자기 모인 장면";
 
   return {
     title,

@@ -374,7 +374,10 @@ describe("fuseReactionHighlightCandidates", () => {
       endMs: 116_875,
       signalKinds: ["audio", "chat", "visual"],
     });
-    expect(candidates[0]?.reason).toContain("음성 반응과 시청자 채팅");
+    expect(candidates[0]?.reason).toContain(
+      "혼합 방송 오디오 반응 신호와 채팅 반응 신호",
+    );
+    expect(candidates[0]?.reason).not.toContain("스트리머의 음성 반응");
     expect(candidates[0]?.evidence.audio).toMatchObject({
       eventKind: "sustained-vocal-reaction",
       rmsLiftRatio: 3.2,

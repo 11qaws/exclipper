@@ -58,7 +58,8 @@ describe("buildHighlightNarrative", () => {
     expect(narrative.title).toContain("오디오 반응 신호");
     expect(narrative.event).toContain("종류는 아직 확인 전");
     expect(narrative.streamerReaction).toContain("3.2배");
-    expect(narrative.audienceReaction).toContain("25명");
+    expect(narrative.audienceReaction).toContain("서로 다른 작성자 표기는 25개");
+    expect(narrative.audienceReaction).not.toMatch(/25명|시청자 25/u);
     expect(narrative.title).toContain("겹치는 시간대");
     expect(narrative.title).not.toContain("뒤 채팅");
     expect(narrative.whyRecommended).toContain("검토할 가치");
@@ -100,7 +101,7 @@ describe("buildHighlightNarrative", () => {
 
     expect(narrative.title).toContain("채팅이 먼저");
     expect(narrative.audienceReaction).toContain("앞선 시간대");
-    expect(narrative.whyRecommended).toContain("시청자 반응이 먼저");
+    expect(narrative.whyRecommended).toContain("채팅 반응 신호가 먼저");
     expect(narrative.title).not.toContain("스트리머 반응 뒤");
   });
 
@@ -255,5 +256,29 @@ describe("buildHighlightNarrative", () => {
     expect(narrative.basis).toBe("visual-exploration");
     expect(narrative.basisLabel).toContain("반응 근거 부족");
     expect(narrative.whyRecommended).toContain("낮은 우선순위");
+  });
+
+  it("does not attribute an audio-only signal to the streamer or invent its cause", () => {
+    const narrative = buildHighlightNarrative(
+      candidate(
+        {
+          normalization: "within-signal-rank-and-mad",
+          audio: {
+            rankPercentile: 0.95,
+            robustPercentile: 0.9,
+            normalizedScore: 0.93,
+            eventKind: "short-loudness-burst",
+          },
+        },
+        ["audio"],
+      ),
+    );
+
+    expect(narrative.whyRecommended).toContain(
+      "스트리머 목소리인지 게임·영상 소리인지",
+    );
+    expect(narrative.whyRecommended).not.toMatch(
+      /실제 스트리머(?:의|가| 반응)|그 원인/u,
+    );
   });
 });

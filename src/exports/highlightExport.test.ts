@@ -133,8 +133,49 @@ describe("highlight export", () => {
     expect(file.content).toContain("# Retto Highlight 편집 시간표");
     expect(file.content).toContain("00:00:05–00:00:50");
     expect(file.content).toContain("영상 클립 파일은 포함하지 않습니다");
-    expect(file.content).toContain("무슨 일이 있었나");
-    expect(file.content).toContain("스트리머 반응");
+    expect(file.content).toContain("사건 단서");
+    expect(file.content).toContain("혼합 방송 오디오 반응 단서");
+    expect(file.content).not.toContain("- 스트리머 반응:");
+  });
+
+  it("labels mixed audio and imported author keys without claiming a streamer or people count", () => {
+    const proposal: UnifiedHighlightCandidate = {
+      ...candidate("mixed-evidence", 5_000),
+      signalKinds: ["audio", "chat"],
+      evidence: {
+        normalization: "within-signal-rank-and-mad",
+        audio: {
+          rankPercentile: 0.95,
+          robustPercentile: 0.9,
+          normalizedScore: 0.92,
+          eventKind: "short-loudness-burst",
+        },
+        chat: {
+          rankPercentile: 0.9,
+          robustPercentile: 0.85,
+          normalizedScore: 0.88,
+          bucketStartMs: 20_000,
+          bucketEndMs: 25_000,
+          messageCount: 30,
+          uniqueAuthorCount: 18,
+          reactionMessageCount: 12,
+          baselineMessageCount: 6,
+          baselineUniqueAuthorCount: 4,
+          burstRatio: 5,
+          robustBurstScore: 3,
+          repetitionRatio: 0.1,
+          singleAuthorRatio: 0.08,
+          spamPenalty: 0,
+        },
+      },
+    };
+
+    const csv = createHighlightExportFile("csv", request([proposal]));
+
+    expect(csv.content).toContain("혼합 방송 오디오 신호");
+    expect(csv.content).toContain("서로 다른 작성자 표기 18개");
+    expect(csv.content).not.toContain("스트리머 오디오 반응");
+    expect(csv.content).not.toContain("참여자 18명");
   });
 
   it("keeps the privacy-safe JSON contract and approved state", () => {

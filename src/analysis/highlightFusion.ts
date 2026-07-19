@@ -924,7 +924,7 @@ function createReactionUnifiedCandidate(
     endMs: draft.endMs,
     score: round(draft.score, 6),
     reason: draft.exploration
-      ? "스트리머 반응을 확인한 결과가 아니라, 화면 변화만으로 넓게 남긴 탐색 후보예요. 직접 보고 판단해 주세요."
+      ? "방송 오디오·채팅 반응을 확인한 결과가 아니라, 화면 변화만으로 넓게 남긴 탐색 후보예요. 직접 보고 판단해 주세요."
       : reactionReasonForSignalKinds(draft.signalKinds),
     signalKinds: draft.signalKinds,
     evidence: {
@@ -1042,12 +1042,12 @@ export function highlightReasonForSignalKinds(
     return reactionReasonForSignalKinds(signalKinds);
   }
   if (signalKinds.includes("visual") && signalKinds.includes("chat")) {
-    return "장면 변화와 시청자 채팅 반응이 같은 구간에 함께 나타나 우선 확인할 후보로 골랐어요.";
+    return "장면 변화와 채팅 반응 신호가 같은 구간에 함께 나타나 우선 확인할 후보로 골랐어요.";
   }
   if (signalKinds.includes("visual")) {
     return "화면 변화가 두드러진 구간이라 먼저 확인할 후보로 골랐어요.";
   }
-  return "시청자 채팅 반응이 집중된 구간이라 먼저 확인할 후보로 골랐어요.";
+  return "채팅 반응 신호가 집중된 구간이라 먼저 확인할 후보로 골랐어요.";
 }
 
 function reactionReasonForSignalKinds(
@@ -1057,24 +1057,24 @@ function reactionReasonForSignalKinds(
   const hasChat = signalKinds.includes("chat");
   const hasVisual = signalKinds.includes("visual");
   if (hasAudio && hasChat && hasVisual) {
-    return "스트리머의 음성 반응과 시청자 채팅이 함께 커진 구간이에요. 가까운 화면 변화는 사건 맥락을 보강하는 근거로만 사용했어요.";
+    return "혼합 방송 오디오 반응 신호와 채팅 반응 신호가 함께 커진 구간이에요. 가까운 화면 변화는 사건 맥락을 보강하는 근거로만 사용했어요.";
   }
   if (hasAudio && hasChat) {
-    return "스트리머의 음성 반응과 시청자 채팅 반응이 같은 구간에 함께 나타나 우선 확인할 후보로 골랐어요.";
+    return "혼합 방송 오디오 반응 신호와 채팅 반응 신호가 같은 구간에 함께 나타나 우선 확인할 후보로 골랐어요.";
   }
   if (hasAudio && hasVisual) {
-    return "스트리머의 음성 반응이 두드러졌고 가까운 화면 변화가 맥락 근거로 함께 잡힌 구간이에요.";
+    return "혼합 방송 오디오 반응 신호가 두드러졌고 가까운 화면 변화가 맥락 근거로 함께 잡힌 구간이에요.";
   }
   if (hasAudio) {
-    return "평소보다 두드러진 스트리머 음성 반응이 잡혀 먼저 확인할 후보로 골랐어요.";
+    return "평소보다 두드러진 혼합 방송 오디오 반응 신호가 잡혀, 소리의 주체를 확인할 후보로 골랐어요.";
   }
   if (hasChat && hasVisual) {
-    return "시청자 채팅 반응이 집중됐고 가까운 화면 변화가 맥락 근거로 함께 잡힌 구간이에요.";
+    return "채팅 반응 신호가 집중됐고 가까운 화면 변화가 맥락 근거로 함께 잡힌 구간이에요.";
   }
   if (hasChat) {
-    return "시청자 채팅 반응이 집중된 구간이라 스트리머 반응을 확인할 후보로 골랐어요.";
+    return "채팅 반응 신호가 집중된 구간이라 실제 화면 사건과 방송 반응을 확인할 후보로 골랐어요.";
   }
-  return "스트리머 반응을 확인한 결과가 아니라 화면 변화만으로 남긴 탐색 후보예요.";
+  return "방송 오디오·채팅 반응을 확인한 결과가 아니라 화면 변화만으로 남긴 탐색 후보예요.";
 }
 
 function comparePreparedCandidates<TCandidate>(

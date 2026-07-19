@@ -112,7 +112,7 @@ function normalizedText(value: string): string {
 function signalLabel(candidate: UnifiedHighlightCandidate): string {
   const labels: string[] = [];
   if (candidate.signalKinds.includes("audio")) {
-    labels.push("스트리머 오디오 반응");
+    labels.push("혼합 방송 오디오 신호");
   }
   if (candidate.signalKinds.includes("chat")) {
     labels.push("채팅 반응");
@@ -143,7 +143,7 @@ function evidenceLabel(candidate: UnifiedHighlightCandidate): string {
   if (candidate.evidence.chat !== undefined) {
     evidence.push(
       `채팅 ${candidate.evidence.chat.messageCount}개`,
-      `참여자 ${candidate.evidence.chat.uniqueAuthorCount}명`,
+      `서로 다른 작성자 표기 ${candidate.evidence.chat.uniqueAuthorCount}개`,
       `평소의 ${candidate.evidence.chat.burstRatio.toFixed(1)}배`,
     );
   }
@@ -175,9 +175,9 @@ function createCsv(candidates: readonly ApprovedHighlightExportCandidate[]): str
     "신호",
     "근거 요약",
     "상대 점수",
-    "무슨 일이 있었나 (추정)",
-    "스트리머 반응",
-    "시청자 반응",
+    "사건 단서 (재생 확인 필요)",
+    "혼합 방송 오디오 반응 단서",
+    "채팅 반응 단서",
     "추천 이유",
     "해석 수준",
     "구간 기준",
@@ -253,9 +253,9 @@ function createMarkdown(request: HighlightExportRequest): string {
           ]),
       `- 가장 강한 순간: ${formatHighlightTimecode(candidate.peakMs)}`,
       `- 해석 수준: ${narrative.basisLabel}`,
-      `- 무슨 일이 있었나: ${markdownText(narrative.event)}`,
-      `- 스트리머 반응: ${markdownText(narrative.streamerReaction)}`,
-      `- 시청자 반응: ${markdownText(narrative.audienceReaction)}`,
+      `- 사건 단서: ${markdownText(narrative.event)}`,
+      `- 혼합 방송 오디오 반응 단서: ${markdownText(narrative.streamerReaction)}`,
+      `- 채팅 반응 단서: ${markdownText(narrative.audienceReaction)}`,
       `- AI가 고른 이유: ${markdownText(narrative.whyRecommended)}`,
       `- 신호: ${signalLabel(candidate)}`,
       `- 근거: ${evidenceLabel(candidate) || "추가 근거 없음"}`,
