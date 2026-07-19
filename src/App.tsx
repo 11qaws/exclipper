@@ -19,6 +19,24 @@ import {
   runChatAnalysisWorker,
 } from "./analysis/chatAnalysisWorkerClient";
 import {
+  mergeCandidateAudioEventEvidence,
+  type CandidateAudioEventEvidenceById,
+} from "./analysis/candidateAudioEventEvidenceState";
+import { buildCandidateAudioEventPresentation } from "./analysis/candidateAudioEventPresentation";
+import {
+  CANDIDATE_AUDIO_EVENT_MODEL_DTYPE,
+  CANDIDATE_AUDIO_EVENT_MODEL_ID,
+  CANDIDATE_AUDIO_EVENT_MODEL_REVISION,
+  CANDIDATE_AUDIO_EVENT_PROTOCOL_VERSION,
+  CANDIDATE_AUDIO_EVENT_RUNTIME_DEVICE,
+  CandidateAudioEventWorkerError,
+  runCandidateAudioEventWorker,
+  type CandidateAudioEventCandidateGap,
+  type CandidateAudioEventCandidateProgress,
+  type CandidateAudioEventModelProgress,
+  type CandidateAudioEventWorkerIdentity,
+} from "./analysis/candidateAudioEventWorkerClient";
+import {
   buildCandidatePassBEvidence,
   selectCandidatePassBTargets,
   type CandidatePassBEvidence,
@@ -54,6 +72,15 @@ import {
   type AnalysisRunState,
 } from "./domain/analysisRun";
 import { deriveAnalysisControlState } from "./domain/analysisControlState";
+import {
+  createCandidateAudioEventRun,
+  reduceCandidateAudioEventRun,
+  summarizeCandidateAudioEventRun,
+  type CandidateAudioEventRunEvent,
+  type CandidateAudioEventRunFailureReasonCode,
+  type CandidateAudioEventRunState,
+  type CandidateAudioEventWorkerEventPayload,
+} from "./domain/candidateAudioEventRun";
 import {
   createCandidatePassBRun,
   reduceCandidatePassBRun,
@@ -172,7 +199,7 @@ interface AudioAnalysisOutcome {
   readonly coverageComplete: boolean;
 }
 
-const APP_VERSION = "0.3.3";
+const APP_VERSION = "0.3.4";
 const PERSISTENCE_SCHEMA_VERSION = "0.3.0";
 const SIGNAL_ENGINE_VERSION = "streamer-reaction-fast-pass-v1";
 const MAX_CHAT_FILE_BYTES = 32 * 1024 * 1024;
@@ -262,6 +289,60 @@ function explainCandidatePassBError(error: unknown): string {
   return "대사 단서를 끝까지 찾지 못했어요. 기존 오디오·채팅 근거와 후보는 그대로 사용할 수 있어요.";
 }
 
+function candidateAudioEventRunFailureReason(
+  error: unknown,
+): CandidateAudioEventRunFailureReasonCode {
+  if (!(error instanceof CandidateAudioEventWorkerError)) {
+    return "runtime_unavailable";
+  }
+  if (error.workerReasonCode === "MODEL_LOAD_FAILED") {
+    return "model_load_failed";
+  }
+  if (
+    error.code === "EVENT_FENCE_REJECTED" ||
+    error.code === "WORKER_MESSAGE_ERROR" ||
+    error.code === "RESULT_CALLBACK_FAILED" ||
+    error.code === "PROGRESS_CALLBACK_FAILED"
+  ) {
+    return "protocol_error";
+  }
+  if (error.code === "WORKER_FAILED") {
+    return "worker_initialization_failed";
+  }
+  return "runtime_unavailable";
+}
+
+function explainCandidateAudioEventError(error: unknown): string {
+  if (error instanceof CandidateAudioEventWorkerError) {
+    if (error.code === "ABORTED") {
+      return "반응 종류 찾기를 멈췄어요. 이미 찾은 단서는 이 탭에 그대로 남아 있어요.";
+    }
+    if (error.workerReasonCode === "MODEL_LOAD_FAILED") {
+      return "반응 종류 AI 파일을 불러오지 못했어요. 인터넷 연결을 확인한 뒤 다시 시도해 주세요. 기존 후보와 대사 단서는 그대로 사용할 수 있어요.";
+    }
+  }
+  return "반응 종류를 끝까지 나누지 못했어요. 빠른 분석 후보와 이미 찾은 대사 단서는 그대로 사용할 수 있어요.";
+}
+
+function candidateAudioEventGapStatusLabel(
+  reasonCode: CandidateAudioEventCandidateGap["reasonCode"],
+): string {
+  switch (reasonCode) {
+    case "NO_AUDIO_TRACK":
+      return "오디오 트랙 없음 · 후보 유지";
+    case "UNSUPPORTED_CONTAINER":
+      return "영상 형식 지원 안 됨 · 후보 유지";
+    case "UNSUPPORTED_AUDIO_CODEC":
+      return "오디오 코덱 지원 안 됨 · 후보 유지";
+    case "EMPTY_AUDIO":
+      return "들을 반응 없음 · 후보 유지";
+    case "AUDIO_DECODE_FAILED":
+      return "이 후보 오디오 읽기 실패 · 후보 유지";
+    case "CLASSIFICATION_FAILED":
+      return "이 후보 반응 분류 실패 · 후보 유지";
+  }
+}
+
 function toDurableCandidate(candidate: UnifiedHighlightCandidate): DurableHighlightCandidate {
   const { reason: _presentationReason, ...durableCandidate } = candidate;
   void _presentationReason;
@@ -325,7 +406,7 @@ function explainAnalysisError(error: unknown): string {
   if (error instanceof LocalAudioReactionAnalysisError) {
     return error.code === "ABORTED"
       ? "분석을 안전하게 취소했어요."
-      : "스트리머 오디오 반응을 읽지 못했어요. 채팅·화면 신호로 남긴 제한 결과인지 안내를 확인해 주세요.";
+      : "방송 오디오의 음성형·큰 반응 신호를 읽지 못했어요. 채팅·화면 신호로 남긴 제한 결과인지 안내를 확인해 주세요.";
   }
   if (error instanceof ChatAnalysisWorkerError) {
     return error.code === "ABORTED"
@@ -379,7 +460,7 @@ function analysisRunLabel(state: AnalysisRunState | null): string {
   const labels: Record<AnalysisRunState["status"], string> = {
     created: "분석 준비",
     starting: "분석 시작 중",
-    running: "스트리머 반응·채팅·화면 맥락 분석 중",
+    running: "방송 오디오·채팅·화면 맥락 분석 중",
     pausing: "안전하게 멈추는 중",
     paused: "분석 일시정지",
     resuming: "분석 이어 하는 중",
@@ -527,6 +608,18 @@ function App() {
   const [candidatePassBStartPending, setCandidatePassBStartPending] = useState(false);
   const [candidatePassBUseCompatibilityMode, setCandidatePassBUseCompatibilityMode] =
     useState(false);
+  const [candidateAudioEventRun, setCandidateAudioEventRun] =
+    useState<CandidateAudioEventRunState | null>(null);
+  const [candidateAudioEventEvidenceById, setCandidateAudioEventEvidenceById] =
+    useState<CandidateAudioEventEvidenceById>({});
+  const [candidateAudioEventModelProgress, setCandidateAudioEventModelProgress] =
+    useState<CandidateAudioEventModelProgress | null>(null);
+  const [candidateAudioEventCandidateProgress, setCandidateAudioEventCandidateProgress] =
+    useState<CandidateAudioEventCandidateProgress | null>(null);
+  const [candidateAudioEventError, setCandidateAudioEventError] =
+    useState<string | null>(null);
+  const [candidateAudioEventStartPending, setCandidateAudioEventStartPending] =
+    useState(false);
   const [lastExportFormat, setLastExportFormat] =
     useState<HighlightExportFormat | null>(null);
   const [copyStatus, setCopyStatus] = useState<"idle" | "copied" | "failed">("idle");
@@ -542,12 +635,17 @@ function App() {
   const sourceAbortController = useRef<AbortController | null>(null);
   const analysisAbortController = useRef<AbortController | null>(null);
   const candidatePassBAbortController = useRef<AbortController | null>(null);
+  const candidateAudioEventAbortController = useRef<AbortController | null>(null);
   const analysisStartOperation = useRef<number | null>(null);
   const analysisOperationEpoch = useRef(0);
   const candidatePassBOperationEpoch = useRef(0);
   const candidatePassBStartPendingRef = useRef(false);
   const candidatePassBMachine = useRef<CandidatePassBRunState | null>(null);
   const candidatePassBIdentity = useRef<CandidatePassBWorkerIdentity | null>(null);
+  const candidateAudioEventOperationEpoch = useRef(0);
+  const candidateAudioEventStartPendingRef = useRef(false);
+  const candidateAudioEventMachine = useRef<CandidateAudioEventRunState | null>(null);
+  const candidateAudioEventIdentity = useRef<CandidateAudioEventWorkerIdentity | null>(null);
   const recoveryOperationEpoch = useRef(0);
   const [appSessionId] = useState(() => createOperationId("session"));
   const [writerEpoch] = useState(() => Date.now());
@@ -586,6 +684,11 @@ function App() {
         candidatePassBAbortController.current = null;
         candidatePassBMachine.current = null;
         candidatePassBIdentity.current = null;
+        candidateAudioEventOperationEpoch.current += 1;
+        candidateAudioEventAbortController.current?.abort();
+        candidateAudioEventAbortController.current = null;
+        candidateAudioEventMachine.current = null;
+        candidateAudioEventIdentity.current = null;
         resultStore.current?.close();
         resultStore.current = null;
         if (sourcePreviewUrlRef.current !== null) {
@@ -732,12 +835,79 @@ function App() {
                   : candidatePassBRun.status === "cancelled"
                     ? "대사 단서 찾기를 멈췄어요. 이미 찾은 단서는 그대로 남아 있어요."
                     : "대사 단서 찾기를 마치지 못했어요. 기존 후보는 그대로 검토할 수 있어요.";
+  const candidateAudioEventBusy =
+    candidateAudioEventStartPending ||
+    (candidateAudioEventRun !== null &&
+      ["preparing", "loadingModel", "classifying", "finalizing", "cancelling"].includes(
+        candidateAudioEventRun.status,
+      ));
+  const candidateAudioEventSummary =
+    candidateAudioEventRun === null
+      ? null
+      : summarizeCandidateAudioEventRun(candidateAudioEventRun);
+  const candidateAudioEventProgressRatio =
+    candidateAudioEventRun !== null &&
+    ["completed", "completedWithGaps"].includes(candidateAudioEventRun.status)
+      ? 1
+      : candidateAudioEventCandidateProgress !== null
+        ? Math.min(
+            1,
+            Math.max(
+              0,
+              0.2 +
+                ((candidateAudioEventCandidateProgress.candidateOrdinal - 1 +
+                  candidateAudioEventCandidateProgress.ratio) /
+                  candidateAudioEventCandidateProgress.targetCount) *
+                  0.8,
+            ),
+          )
+        : candidateAudioEventRun?.status === "classifying"
+          ? 0.2
+          : (candidateAudioEventModelProgress?.ratio ?? 0) * 0.2;
+  const candidateAudioEventCurrentOrdinal =
+    candidateAudioEventCandidateProgress?.candidateOrdinal ??
+    (candidateAudioEventSummary === null
+      ? 1
+      : Math.min(
+          candidateAudioEventSummary.totalCandidateCount,
+          candidateAudioEventSummary.totalCandidateCount -
+            candidateAudioEventSummary.pendingCount +
+            1,
+        ));
+  const candidateAudioEventStatusText =
+    candidateAudioEventStartPending
+      ? "후보 반응 종류 AI를 준비하고 있어요."
+      : candidateAudioEventRun === null
+        ? "먼저 찾은 후보에서 웃음·고함·비명·박수/환호처럼 들리는 구간을 더 살펴볼 수 있어요."
+        : candidateAudioEventRun.status === "idle" ||
+            candidateAudioEventRun.status === "preparing"
+          ? "반응 종류 AI 작업 공간을 준비하고 있어요."
+          : candidateAudioEventRun.status === "loadingModel"
+            ? "반응 종류 AI 파일을 준비하고 있어요. 첫 실행이 가장 오래 걸릴 수 있어요."
+            : candidateAudioEventRun.status === "classifying"
+              ? `후보 ${candidateAudioEventCurrentOrdinal}/${candidateAudioEventSummary?.totalCandidateCount ?? candidates.length}의 반응 종류를 듣고 있어요.`
+              : candidateAudioEventRun.status === "finalizing"
+                ? "모든 후보의 반응 종류 결과를 마지막으로 확인하고 있어요."
+                : candidateAudioEventRun.status === "cancelling"
+                  ? "현재 반응 종류 작업을 안전하게 정리하고 있어요."
+                  : candidateAudioEventRun.status === "completed"
+                    ? `후보 ${candidateAudioEventSummary?.detectedCount ?? 0}개에서 재생해 확인할 반응 종류 단서를 찾았어요.`
+                    : candidateAudioEventRun.status === "completedWithGaps"
+                      ? `반응 종류 단서 ${candidateAudioEventSummary?.detectedCount ?? 0}개 후보 · 종류 불분명 ${candidateAudioEventSummary?.noClearCount ?? 0}개 · 건너뜀 ${candidateAudioEventSummary?.failedCount ?? 0}개로 마쳤어요.`
+                      : candidateAudioEventRun.status === "cancelled"
+                        ? "반응 종류 찾기를 멈췄어요. 이미 찾은 단서는 그대로 남아 있어요."
+                        : "반응 종류 찾기를 마치지 못했어요. 기존 후보와 대사 단서는 그대로예요.";
   const currentAnalysisRunId =
     openedRecoveredResult?.terminal.runId ?? analysisRun?.runId ?? null;
   const candidatePassBRuntimeAvailable =
     preflight !== null &&
     preflight.capabilities.worker &&
     (preflight.capabilities.webGpu || preflight.capabilities.webAssembly);
+  const candidateAudioEventRuntimeAvailable =
+    preflight !== null &&
+    preflight.capabilities.worker &&
+    preflight.capabilities.webAssembly;
+  const candidateRefinementBusy = candidatePassBBusy || candidateAudioEventBusy;
   const sourceCheckBusy =
     sourceCheck !== null && ["checking", "committing", "cancelling"].includes(sourceCheck.status);
   const showStatusBar =
@@ -773,7 +943,10 @@ function App() {
   );
   const reviewWorkStarted = reviewStarted || boundaryWorkStarted;
   const candidatePassBWorkStarted = Object.keys(candidatePassBEvidenceById).length > 0;
-  const unsavedSessionWorkStarted = reviewWorkStarted || candidatePassBWorkStarted;
+  const candidateAudioEventWorkStarted =
+    Object.keys(candidateAudioEventEvidenceById).length > 0;
+  const unsavedSessionWorkStarted =
+    reviewWorkStarted || candidatePassBWorkStarted || candidateAudioEventWorkStarted;
   const reviewCompleted =
     candidates.length > 0 && candidates.every(({ reviewState }) => reviewState !== "unreviewed");
   const analysisFinishedWithoutCandidates =
@@ -787,12 +960,13 @@ function App() {
         : reviewCompleted
           ? 4
           : 3;
-  const sourceInputLocked = analysisBusy || sourceCheckBusy || candidatePassBBusy;
+  const sourceInputLocked =
+    analysisBusy || sourceCheckBusy || candidateRefinementBusy;
   const chatInputLocked =
     openedRecoveredResult !== null || analysisBusy || chatImportStatus === "reading";
   const chatOffsetLocked =
     analysisStartPending || analysisRun !== null || openedRecoveredResult !== null;
-  const sourceFileActionLabel = analysisBusy || candidatePassBBusy
+  const sourceFileActionLabel = analysisBusy || candidateRefinementBusy
     ? "AI 분석 중 변경 잠금"
     : sourceCheck?.status === "checking"
       ? "확인 중…"
@@ -807,7 +981,7 @@ function App() {
           : "영상 파일 고르기";
 
   useEffect(() => {
-    if (!analysisBusy && !candidatePassBBusy && !unsavedSessionWorkStarted) {
+    if (!analysisBusy && !candidateRefinementBusy && !unsavedSessionWorkStarted) {
       return;
     }
     const warnBeforeLeaving = (event: BeforeUnloadEvent): void => {
@@ -816,19 +990,19 @@ function App() {
     };
     window.addEventListener("beforeunload", warnBeforeLeaving);
     return () => window.removeEventListener("beforeunload", warnBeforeLeaving);
-  }, [analysisBusy, candidatePassBBusy, unsavedSessionWorkStarted]);
+  }, [analysisBusy, candidateRefinementBusy, unsavedSessionWorkStarted]);
 
   const confirmDiscardCurrentWork = useCallback((): boolean => {
-    if (analysisBusy || candidatePassBBusy) {
+    if (analysisBusy || candidateRefinementBusy) {
       return false;
     }
     if (!unsavedSessionWorkStarted) {
       return true;
     }
     return window.confirm(
-      "승인·제외 판단, 시작·끝 조정, 자세히 찾은 대사 단서는 현재 탭에만 있어요. 지금 이동하면 방금 한 작업이 사라집니다. 그래도 계속할까요?",
+      "승인·제외 판단, 시작·끝 조정, 자세히 찾은 반응 종류와 대사 단서는 현재 탭에만 있어요. 지금 이동하면 방금 한 작업이 사라집니다. 그래도 계속할까요?",
     );
-  }, [analysisBusy, candidatePassBBusy, unsavedSessionWorkStarted]);
+  }, [analysisBusy, candidateRefinementBusy, unsavedSessionWorkStarted]);
 
   const resetBoundarySession = useCallback((): void => {
     setBoundarySessionId(createOperationId("boundary-session"));
@@ -853,6 +1027,21 @@ function App() {
     lastCandidateCueTrigger.current = null;
   }, []);
 
+  const resetCandidateAudioEvent = useCallback((): void => {
+    candidateAudioEventOperationEpoch.current += 1;
+    candidateAudioEventAbortController.current?.abort();
+    candidateAudioEventAbortController.current = null;
+    candidateAudioEventMachine.current = null;
+    candidateAudioEventIdentity.current = null;
+    candidateAudioEventStartPendingRef.current = false;
+    setCandidateAudioEventRun(null);
+    setCandidateAudioEventEvidenceById({});
+    setCandidateAudioEventModelProgress(null);
+    setCandidateAudioEventCandidateProgress(null);
+    setCandidateAudioEventError(null);
+    setCandidateAudioEventStartPending(false);
+  }, []);
+
   const resetDownstream = useCallback(() => {
     analysisOperationEpoch.current += 1;
     analysisStartOperation.current = null;
@@ -866,6 +1055,7 @@ function App() {
     setCandidates([]);
     resetBoundarySession();
     resetCandidatePassB();
+    resetCandidateAudioEvent();
     setAnalysisProgress(null);
     setAudioAnalysisProgress(null);
     setAnalysisError(null);
@@ -874,7 +1064,7 @@ function App() {
     setExportError(null);
     setPreviewCandidateId(null);
     setOpenedRecoveredResult(null);
-  }, [resetBoundarySession, resetCandidatePassB]);
+  }, [resetBoundarySession, resetCandidateAudioEvent, resetCandidatePassB]);
 
   const inspectSelectedFile = useCallback(
     async (file: File) => {
@@ -1966,6 +2156,8 @@ function App() {
       candidates.length === 0 ||
       analysisBusy ||
       candidatePassBBusy ||
+      candidateAudioEventBusy ||
+      candidateAudioEventStartPendingRef.current ||
       candidatePassBStartPendingRef.current ||
       !candidatePassBRuntimeAvailable ||
       (candidatePassBMachine.current !== null &&
@@ -2316,6 +2508,365 @@ function App() {
     }
   };
 
+  const applyCandidateAudioEventEvent = useCallback(
+    (event: CandidateAudioEventRunEvent): boolean => {
+      const current = candidateAudioEventMachine.current;
+      if (current === null) {
+        return false;
+      }
+      const transition = reduceCandidateAudioEventRun(current, event);
+      if (!transition.accepted) {
+        return false;
+      }
+      candidateAudioEventMachine.current = transition.state;
+      setCandidateAudioEventRun(transition.state);
+      return true;
+    },
+    [],
+  );
+
+  const runCandidateAudioEvent = async (): Promise<void> => {
+    const sourceBindingId =
+      sourceContentFingerprint ??
+      openedRecoveredResult?.finalResult.result.input.source.contentFingerprint ??
+      null;
+    if (
+      sourceFile === null ||
+      preflight === null ||
+      currentAnalysisRunId === null ||
+      sourceBindingId === null ||
+      candidates.length === 0 ||
+      analysisBusy ||
+      candidatePassBBusy ||
+      candidatePassBStartPendingRef.current ||
+      candidateAudioEventBusy ||
+      candidateAudioEventStartPendingRef.current ||
+      !candidateAudioEventRuntimeAvailable ||
+      (candidateAudioEventMachine.current !== null &&
+        !["completed", "completedWithGaps", "cancelled", "failed"].includes(
+          candidateAudioEventMachine.current.status,
+        ))
+    ) {
+      return;
+    }
+
+    candidateAudioEventStartPendingRef.current = true;
+    setCandidateAudioEventStartPending(true);
+    candidateAudioEventOperationEpoch.current += 1;
+    const operationEpoch = candidateAudioEventOperationEpoch.current;
+    const sourceDurationMs = Math.round(preflight.metadata.durationMs);
+    let targets: readonly CandidatePassBCoreTarget[];
+    try {
+      targets = selectCandidatePassBTargets(candidates, {
+        sourceDurationMs,
+        maxCandidates: 12,
+      });
+    } catch {
+      candidateAudioEventStartPendingRef.current = false;
+      setCandidateAudioEventStartPending(false);
+      setCandidateAudioEventError(
+        "반응 종류를 확인할 후보 시간을 읽지 못했어요. 빠른 분석을 다시 실행해 주세요.",
+      );
+      return;
+    }
+    if (targets.length === 0) {
+      candidateAudioEventStartPendingRef.current = false;
+      setCandidateAudioEventStartPending(false);
+      return;
+    }
+
+    candidateAudioEventAbortController.current?.abort();
+    const controller = new AbortController();
+    candidateAudioEventAbortController.current = controller;
+    const identity: CandidateAudioEventWorkerIdentity = {
+      protocolVersion: CANDIDATE_AUDIO_EVENT_PROTOCOL_VERSION,
+      sessionId: appSessionId,
+      writerEpoch,
+      analysisRunId: currentAnalysisRunId,
+      audioEventRunId: createOperationId("audio-event"),
+      workerEpoch: operationEpoch,
+      workerInstanceId: createOperationId("audio-event-worker"),
+      taskId: createOperationId("audio-event-task"),
+    };
+    let machine: CandidateAudioEventRunState;
+    try {
+      machine = createCandidateAudioEventRun({
+        identity,
+        sourceBinding: {
+          sourceBindingId,
+          sourceBindingRevision: 0,
+          sourceDurationMs,
+        },
+        model: {
+          modelId: CANDIDATE_AUDIO_EVENT_MODEL_ID,
+          modelRevision: CANDIDATE_AUDIO_EVENT_MODEL_REVISION,
+          dtype: CANDIDATE_AUDIO_EVENT_MODEL_DTYPE,
+          runtimeDevice: CANDIDATE_AUDIO_EVENT_RUNTIME_DEVICE,
+        },
+        candidates: targets.map((target) => ({
+          candidateId: target.candidateId,
+          proposalRevision: 0,
+          proposalRange: {
+            startMs: target.decodeStartMs,
+            endMs: target.decodeEndMs,
+          },
+          peakMs: target.reactionPeakMs,
+        })),
+      });
+    } catch {
+      candidateAudioEventStartPendingRef.current = false;
+      setCandidateAudioEventStartPending(false);
+      setCandidateAudioEventError(
+        "반응 종류 AI 입력을 준비하지 못했어요. 빠른 분석을 다시 실행해 주세요.",
+      );
+      return;
+    }
+
+    candidateAudioEventMachine.current = machine;
+    candidateAudioEventIdentity.current = identity;
+    candidateAudioEventStartPendingRef.current = false;
+    setCandidateAudioEventStartPending(false);
+    setCandidateAudioEventRun(machine);
+    setCandidateAudioEventModelProgress(null);
+    setCandidateAudioEventCandidateProgress(null);
+    setCandidateAudioEventError(null);
+    if (!applyCandidateAudioEventEvent({ type: "START_REQUESTED" })) {
+      setCandidateAudioEventError(
+        "반응 종류 찾기를 시작하지 못했어요. 다시 시도해 주세요.",
+      );
+      return;
+    }
+    if (
+      !applyCandidateAudioEventEvent({
+        ...identity,
+        eventId: createOperationId("audio-event-event"),
+        type: "WORKER_PREPARED",
+      })
+    ) {
+      setCandidateAudioEventError(
+        "반응 종류 AI 작업 공간을 준비하지 못했어요. 다시 시도해 주세요.",
+      );
+      return;
+    }
+
+    const isCurrentOperation = (): boolean =>
+      isMounted.current &&
+      operationEpoch === candidateAudioEventOperationEpoch.current &&
+      candidateAudioEventIdentity.current?.audioEventRunId ===
+        identity.audioEventRunId;
+    const targetById = new Map(
+      targets.map((target) => [target.candidateId, target]),
+    );
+    const applyCurrentWorkerEvent = (
+      event: CandidateAudioEventWorkerEventPayload,
+    ): boolean => {
+      if (!isCurrentOperation()) {
+        return false;
+      }
+      return applyCandidateAudioEventEvent({
+        ...identity,
+        eventId: createOperationId("audio-event-event"),
+        ...event,
+      });
+    };
+
+    try {
+      const workerResult = await runCandidateAudioEventWorker(sourceFile, {
+        identity,
+        sourceDurationMs,
+        targets: targets.map((target) => ({
+          candidateId: target.candidateId,
+          startMs: target.decodeStartMs,
+          endMs: target.decodeEndMs,
+          peakMs: target.reactionPeakMs,
+        })),
+        signal: controller.signal,
+        onModelProgress: (progress) => {
+          if (!isCurrentOperation()) {
+            return;
+          }
+          setCandidateAudioEventModelProgress(progress);
+          if (
+            progress.stage === "ready" &&
+            candidateAudioEventMachine.current?.status === "loadingModel" &&
+            !applyCurrentWorkerEvent({ type: "MODEL_READY" })
+          ) {
+            throw new Error("The audio-event model-ready event was rejected.");
+          }
+        },
+        onCandidateProgress: (progress) => {
+          if (isCurrentOperation()) {
+            setCandidateAudioEventCandidateProgress(progress);
+          }
+        },
+        onPartialResult: (result) => {
+          if (!isCurrentOperation() || !targetById.has(result.candidateId)) {
+            return;
+          }
+          const accepted =
+            result.status === "detected"
+              ? applyCurrentWorkerEvent({
+                  type: "CANDIDATE_DETECTED",
+                  candidateId: result.candidateId,
+                  expectedProposalRevision: 0,
+                  detectionCount: result.detections.length,
+                })
+              : applyCurrentWorkerEvent({
+                  type: "CANDIDATE_NO_CLEAR_EVENT",
+                  candidateId: result.candidateId,
+                  expectedProposalRevision: 0,
+                  reasonCode: result.reasonCode,
+                });
+          if (!accepted) {
+            throw new Error("The audio-event candidate result was rejected.");
+          }
+          setCandidateAudioEventEvidenceById((current) =>
+            isCurrentOperation()
+              ? mergeCandidateAudioEventEvidence(current, result)
+              : current,
+          );
+        },
+        onCandidateGap: (gap: CandidateAudioEventCandidateGap) => {
+          if (!isCurrentOperation() || !targetById.has(gap.candidateId)) {
+            return;
+          }
+          if (
+            candidateAudioEventMachine.current?.status === "loadingModel"
+          ) {
+            if (
+              gap.reasonCode !== "NO_AUDIO_TRACK" &&
+              gap.reasonCode !== "UNSUPPORTED_CONTAINER" &&
+              gap.reasonCode !== "UNSUPPORTED_AUDIO_CODEC" &&
+              gap.reasonCode !== "AUDIO_DECODE_FAILED"
+            ) {
+              throw new Error(
+                "A candidate-only audio-event gap arrived before the model was ready.",
+              );
+            }
+            if (
+              !applyCurrentWorkerEvent({
+                type: "MODEL_BYPASSED",
+                reasonCode:
+                  gap.reasonCode === "UNSUPPORTED_CONTAINER" ||
+                  gap.reasonCode === "UNSUPPORTED_AUDIO_CODEC"
+                    ? "source_audio_unsupported"
+                    : "source_audio_unavailable",
+              })
+            ) {
+              throw new Error(
+                "The audio-event model-bypass event was rejected.",
+              );
+            }
+          }
+          if (
+            !applyCurrentWorkerEvent({
+              type: "CANDIDATE_FAILED",
+              candidateId: gap.candidateId,
+              expectedProposalRevision: 0,
+              reasonCode: gap.reasonCode,
+            })
+          ) {
+            throw new Error("The audio-event candidate gap was rejected.");
+          }
+        },
+        onCancellationAcknowledged: () => {
+          if (
+            isCurrentOperation() &&
+            candidateAudioEventMachine.current?.status === "cancelling" &&
+            !applyCurrentWorkerEvent({ type: "CANCEL_ACKNOWLEDGED" })
+          ) {
+            throw new Error(
+              "The audio-event cancellation acknowledgement was rejected.",
+            );
+          }
+        },
+      });
+      if (!isCurrentOperation()) {
+        return;
+      }
+      if (
+        !applyCurrentWorkerEvent({
+          type: "RUN_COMPLETED",
+          requestedCount: workerResult.summary.requestedCount,
+          completedCount: workerResult.summary.completedCount,
+          gapCount: workerResult.summary.gapCount,
+        })
+      ) {
+        throw new CandidateAudioEventWorkerError(
+          "WORKER_MESSAGE_ERROR",
+          "The validated audio-event completion envelope was rejected.",
+        );
+      }
+      const summary =
+        candidateAudioEventMachine.current === null
+          ? null
+          : summarizeCandidateAudioEventRun(candidateAudioEventMachine.current);
+      if (
+        summary === null ||
+        summary.pendingCount !== 0 ||
+        summary.classifyingCount !== 0
+      ) {
+        throw new Error(
+          "Audio-event analysis finished before every candidate reached a terminal state.",
+        );
+      }
+    } catch (error) {
+      if (!isCurrentOperation()) {
+        return;
+      }
+      if (candidateAudioEventMachine.current?.status === "cancelling") {
+        const forcedTerminationAccepted = applyCandidateAudioEventEvent({
+          type: "CLIENT_FORCE_TERMINATED",
+        });
+        setCandidateAudioEventError(
+          forcedTerminationAccepted
+            ? "반응 종류 찾기를 멈추고 작업 공간을 정리했어요. 이미 찾은 단서는 이 탭에 그대로 남아 있어요."
+            : "반응 종류 작업을 정리하지 못했어요. 기존 후보는 그대로 사용할 수 있어요.",
+        );
+        return;
+      }
+      if (
+        error instanceof CandidateAudioEventWorkerError &&
+        error.code === "ABORTED"
+      ) {
+        if (candidateAudioEventMachine.current?.status === "cancelled") {
+          setCandidateAudioEventError(null);
+        }
+        return;
+      }
+      if (
+        candidateAudioEventMachine.current !== null &&
+        !["completed", "completedWithGaps", "cancelled", "failed"].includes(
+          candidateAudioEventMachine.current.status,
+        )
+      ) {
+        applyCurrentWorkerEvent({
+          type: "RUN_FAILED",
+          reasonCode: candidateAudioEventRunFailureReason(error),
+        });
+      }
+      setCandidateAudioEventError(explainCandidateAudioEventError(error));
+    } finally {
+      if (candidateAudioEventAbortController.current === controller) {
+        candidateAudioEventAbortController.current = null;
+      }
+    }
+  };
+
+  const cancelCandidateAudioEvent = (): void => {
+    const controller = candidateAudioEventAbortController.current;
+    if (
+      controller === null ||
+      candidateAudioEventMachine.current === null ||
+      candidateAudioEventMachine.current.status === "cancelling"
+    ) {
+      return;
+    }
+    if (applyCandidateAudioEventEvent({ type: "CANCEL_REQUESTED" })) {
+      controller.abort();
+    }
+  };
+
   const updateReview = (candidateId: string, reviewState: CandidateReviewState): void => {
     const currentBoundaryRevision = boundaryRevisions[candidateId]?.revision ?? 0;
     setCandidates((current) =>
@@ -2545,6 +3096,7 @@ function App() {
       return;
     }
     resetCandidatePassB();
+    resetCandidateAudioEvent();
     resetBoundarySession();
     sourceSelectionEpoch.current += 1;
     sourceAbortController.current?.abort();
@@ -2784,9 +3336,9 @@ function App() {
           <details className="rh-inline-details">
             <summary>지금 AI가 보는 기준</summary>
             <p>
-              스트리머의 웃음·외침처럼 이어지는 오디오 반응을 먼저 찾고, 선택한 CHZZK 채팅 반응을 함께 봅니다.
-              화면 변화는 사건 전후 맥락을 보조합니다. 빠른 분석 뒤에는 후보 구간만 자동 전사해 시간 링크를
-              붙일 수 있지만, 그 문구만으로 사건 이름이나 반응 원인을 확정하지는 않아요.
+              방송 오디오에서 웃음·외침처럼 이어지는 음성형·큰 반응 신호를 먼저 찾고, 선택한 CHZZK 채팅 반응을 함께 봅니다.
+              게임·영상 소리와 스트리머 마이크는 아직 분리하지 않으므로 실제 주체는 재생해 확인해 주세요.
+              화면 변화는 사건 전후 맥락을 보조하며, 자동 전사 문구만으로 사건 이름이나 반응 원인을 확정하지 않아요.
             </p>
           </details>
         </section>
@@ -2810,7 +3362,12 @@ function App() {
               <h3 id="recovery-title">지난 AI 분석 결과를 이어볼까요?</h3>
             </div>
             {openedRecoveredResult !== null && (
-              <button className="btn btn-secondary" type="button" onClick={startFreshAnalysis}>
+              <button
+                className="btn btn-secondary"
+                type="button"
+                disabled={analysisBusy || candidateRefinementBusy}
+                onClick={startFreshAnalysis}
+              >
                 새 영상으로 시작
               </button>
             )}
@@ -2846,7 +3403,7 @@ function App() {
                     <button
                       className="btn btn-secondary"
                       type="button"
-                      disabled={analysisBusy || isOpen}
+                      disabled={analysisBusy || candidateRefinementBusy || isOpen}
                       onClick={() => openRecoveredAnalysis(recovered)}
                     >
                       {isOpen ? "지금 열어둔 결과" : "이 결과 이어보기"}
@@ -2855,6 +3412,11 @@ function App() {
                 );
               })}
             </div>
+          )}
+          {candidateRefinementBusy && (
+            <p className="rh-help" role="status">
+              후보의 자세한 AI 단서를 찾는 중에는 결과를 바꾸지 않아요. 현재 작업을 먼저 멈추거나 끝날 때까지 기다려 주세요.
+            </p>
           )}
           {recoveryCatalog.status === "ready" &&
             recoveryCatalog.audit.skippedCompletedResultCount +
@@ -3096,7 +3658,7 @@ function App() {
               <p className="rh-eyebrow">2단계</p>
               <h3 id="analysis-title">AI가 먼저 하이라이트를 찾습니다</h3>
               <p>
-                영상 전체의 스트리머 오디오 반응을 먼저 훑고 서로 다른 30초~1분 클립 후보들을 정리해요. 채팅이 없어도 시작할 수 있습니다.
+                영상 전체의 방송 오디오에서 음성형·큰 반응 신호를 먼저 훑고 서로 다른 30초~1분 클립 후보들을 정리해요. 채팅이 없어도 시작할 수 있습니다.
                 분명한 반응이 여러 번 있으면 별도 카드로 나누며, 현재 기본판은 겹치지 않는 상위 후보를 최대 12개까지 보여 줍니다.
               </p>
               <details className="rh-inline-details">
@@ -3158,12 +3720,12 @@ function App() {
                         : analysisCancelPending
                           ? "분석을 안전하게 멈추고 기록을 정리하는 중"
                           : audioAnalysisProgress?.stage === "decoding-audio"
-                            ? `스트리머 반응 소리 ${audioAnalysisProgress.analyzedWindowCount.toLocaleString("ko-KR")}개 구간 확인 중`
+                            ? `방송 오디오 반응 신호 ${audioAnalysisProgress.analyzedWindowCount.toLocaleString("ko-KR")}개 구간 확인 중`
                             : audioAnalysisProgress?.stage === "scoring"
                               ? "오디오 반응과 채팅·화면 맥락을 정리하는 중"
                               : analysisProgress?.stage === "sampling"
                                 ? `영상 맥락 ${analysisProgress.completedSampleCount.toLocaleString("ko-KR")}/${analysisProgress.totalSampleCount.toLocaleString("ko-KR")} 확인 중`
-                                : "영상과 스트리머 반응 분석 준비 중"}
+                                : "영상과 방송 오디오 반응 분석 준비 중"}
                     </strong>
                     <p className="rh-help">
                       원본은 이 브라우저 안에서만 읽어요. 몇 시간짜리 파일도 짧은 조각씩 처리합니다.
@@ -3206,7 +3768,7 @@ function App() {
                   {selectionResult.audioGapReasonCode !== undefined && selectionResult.audioGapReasonCode !== null && (
                     <p className="rh-notice" data-tone="warning" role="status">
                       {selectionResult.audioGapReasonCode === "NO_AUDIO_TRACK"
-                        ? "이 원본에는 읽을 오디오 트랙이 없어 스트리머 음성 반응은 분석하지 못했어요."
+                        ? "이 원본에는 읽을 오디오 트랙이 없어 방송 오디오 반응은 분석하지 못했어요."
                         : selectionResult.audioGapReasonCode === "UNSUPPORTED_AUDIO_CODEC" ||
                             selectionResult.audioGapReasonCode === "UNSUPPORTED_CONTAINER"
                           ? "이 브라우저가 원본 오디오 형식을 읽지 못해 채팅과 제한된 화면 탐색 신호로 완료했어요. MP4(H.264/AAC) 또는 WebM으로 바꾸면 더 정확해져요."
@@ -3237,6 +3799,96 @@ function App() {
               )}
 
               {candidates.length > 0 && (
+                <section
+                  className="rh-passb-panel rh-audio-event-panel"
+                  aria-labelledby="audio-event-title"
+                >
+                  <div className="rh-passb-copy">
+                    <p className="rh-eyebrow">권장 기능 · 후보 반응 종류 확인</p>
+                    <h4 id="audio-event-title">웃음·고함·비명·박수/환호를 더 찾아볼까요?</h4>
+                    <p>
+                      몇 시간짜리 원본 전체를 다시 보지 않고, 먼저 찾은 후보 {Math.min(12, candidates.length)}개에서
+                      반응 정점 주변의 짧은 구간만 AI가 들어요. 후보마다 재생할 위치를 붙이지만,
+                      스트리머 마이크와 게임·영상 소리가 섞여 있으므로 직접 들어 보고 판단해 주세요.
+                    </p>
+                    <p className="rh-help">
+                      첫 실행에는 모델 약 91MB를 받고, 이 브라우저에서 로컬 AI를 처음 쓴다면 실행 파일 약 23MB도
+                      추가로 받을 수 있어요. 최대 12개 후보에서 후보당 최대 3개의 약 10초 구간만 처리하며,
+                      영상·음성·채팅은 어디에도 보내지 않아요.
+                    </p>
+                  </div>
+                  <div className="rh-passb-actions">
+                    {!candidateAudioEventBusy && (
+                      <button
+                        className="btn btn-primary"
+                        type="button"
+                        disabled={
+                          sourceFile === null ||
+                          !candidateAudioEventRuntimeAvailable ||
+                          selectionResult.audioGapReasonCode === "NO_AUDIO_TRACK" ||
+                          candidatePassBBusy
+                        }
+                        onClick={() => void runCandidateAudioEvent()}
+                      >
+                        {candidateAudioEventRun === null
+                          ? "반응 종류 AI로 확인"
+                          : "반응 종류 다시 찾기"}
+                      </button>
+                    )}
+                    {candidateAudioEventBusy && (
+                      <button
+                        className="btn btn-secondary"
+                        type="button"
+                        disabled={
+                          candidateAudioEventStartPending ||
+                          candidateAudioEventRun?.status === "cancelling"
+                        }
+                        onClick={cancelCandidateAudioEvent}
+                      >
+                        {candidateAudioEventStartPending
+                          ? "실행 준비 중…"
+                          : candidateAudioEventRun?.status === "cancelling"
+                            ? "멈추는 중…"
+                            : "반응 종류 찾기 멈추기"}
+                      </button>
+                    )}
+                    {sourceFile === null && (
+                      <button className="btn btn-secondary" type="button" onClick={focusSourceSection}>
+                        원본 연결하러 가기
+                      </button>
+                    )}
+                  </div>
+                  <div className="rh-passb-status" role="status" aria-live="polite">
+                    <strong>{candidateAudioEventStatusText}</strong>
+                    {candidateAudioEventRun !== null && (
+                      <progress
+                        className="rh-analysis-progress"
+                        max={1}
+                        value={candidateAudioEventProgressRatio}
+                        aria-label="후보 반응 종류 찾기 진행률"
+                      />
+                    )}
+                    {candidatePassBBusy && !candidateAudioEventBusy && (
+                      <p>대사 단서를 찾는 중이에요. 끝난 뒤 반응 종류 AI를 시작할 수 있어요.</p>
+                    )}
+                    {selectionResult.audioGapReasonCode === "NO_AUDIO_TRACK" && (
+                      <p>이 원본에는 읽을 소리가 없어 반응 종류 AI를 사용할 수 없어요.</p>
+                    )}
+                    {!candidateAudioEventRuntimeAvailable && (
+                      <p>이 브라우저에서는 기기 안에서 반응 종류 AI를 실행할 수 없어요. 최신 Chrome이나 Edge에서 다시 열어 주세요.</p>
+                    )}
+                    {candidateAudioEventError !== null && <p role="alert">{candidateAudioEventError}</p>}
+                    {candidateAudioEventWorkStarted && (
+                      <p>
+                        이 결과는 현재 탭에서 재생 확인을 돕는 임시 단서예요. 후보 점수·순서·구간·검토 상태를
+                        바꾸지 않으며, 새로고침하면 사라지고 현재 내보내기 결과에도 포함되지 않아요.
+                      </p>
+                    )}
+                  </div>
+                </section>
+              )}
+
+              {candidates.length > 0 && (
                 <section className="rh-passb-panel" aria-labelledby="pass-b-title">
                   <div className="rh-passb-copy">
                     <p className="rh-eyebrow">선택 기능 · 후보 대사만 자세히</p>
@@ -3259,7 +3911,8 @@ function App() {
                         disabled={
                           sourceFile === null ||
                           !candidatePassBRuntimeAvailable ||
-                          selectionResult.audioGapReasonCode === "NO_AUDIO_TRACK"
+                          selectionResult.audioGapReasonCode === "NO_AUDIO_TRACK" ||
+                          candidateAudioEventBusy
                         }
                         onClick={() => void runCandidatePassB()}
                       >
@@ -3322,7 +3975,7 @@ function App() {
 
               {candidates.length === 0 ? (
                 <div className="rh-empty-state">
-                  <strong>뚜렷한 스트리머·시청자 반응을 찾지 못했어요.</strong>
+                  <strong>뚜렷한 방송 오디오·시청자 반응을 찾지 못했어요.</strong>
                   가짜 후보를 만들지 않고 이번 분석을 마쳤습니다. 오디오가 있는 원본인지 확인하거나 채팅 시간을 맞춰 다시 시도해 주세요.
                 </div>
               ) : (
@@ -3397,6 +4050,56 @@ function App() {
                             ? "대사 확인 중"
                             : "대사 확인 대기"
                           : narrative.passBStatusLabel;
+                    const candidateAudioEventEvidence =
+                      candidateAudioEventEvidenceById[candidate.id];
+                    const audioEventPresentation =
+                      buildCandidateAudioEventPresentation(
+                        candidate.id,
+                        candidateAudioEventEvidence,
+                      );
+                    const candidateAudioEventOutcome =
+                      candidateAudioEventRun?.candidateOutcomes.find(
+                        ({ candidateId }) => candidateId === candidate.id,
+                      );
+                    const candidateAudioEventRunStoppedBeforeOutcome =
+                      candidateAudioEventRun !== null &&
+                      ["cancelled", "failed"].includes(
+                        candidateAudioEventRun.status,
+                      ) &&
+                      (candidateAudioEventOutcome?.status === "pending" ||
+                        candidateAudioEventOutcome?.status === "classifying");
+                    const candidateAudioEventStatusLabel =
+                      candidateAudioEventRunStoppedBeforeOutcome
+                        ? candidateAudioEventEvidence === undefined
+                          ? candidateAudioEventRun?.status === "cancelled"
+                            ? "반응 종류 확인 멈춤 · 후보 유지"
+                            : "반응 종류 확인 실패 · 후보 유지"
+                          : `${audioEventPresentation.statusLabel} · 기존 단서 유지`
+                        : candidateAudioEventOutcome?.status === "pending" &&
+                      candidateAudioEventBusy
+                        ? candidateAudioEventEvidence === undefined
+                          ? "반응 종류 확인 대기"
+                          : "반응 종류 재확인 대기 · 기존 단서 유지"
+                        : candidateAudioEventOutcome?.status === "classifying"
+                          ? candidateAudioEventEvidence === undefined
+                            ? "반응 종류 확인 중"
+                            : "반응 종류 재확인 중 · 기존 단서 유지"
+                          : candidateAudioEventOutcome?.status === "failed"
+                            ? candidateAudioEventEvidence === undefined
+                              ? candidateAudioEventGapStatusLabel(
+                                  candidateAudioEventOutcome.reasonCode,
+                                )
+                              : `${audioEventPresentation.statusLabel} · 기존 단서 유지`
+                            : candidateAudioEventOutcome?.status === "noClear" &&
+                                candidateAudioEventEvidence?.status === "detected"
+                              ? `${audioEventPresentation.statusLabel} · 이번 재확인 불분명, 기존 단서 유지`
+                            : audioEventPresentation.statusLabel;
+                    const candidateAudioEventBadgeStatus =
+                      candidateAudioEventEvidence?.status === "detected"
+                        ? "detected"
+                        : candidateAudioEventRunStoppedBeforeOutcome
+                          ? "failed"
+                        : candidateAudioEventOutcome?.status ?? "idle";
                     const boundaryRevision = boundaryRevisions[candidate.id] ?? null;
                     const effectiveRange = effectiveCandidateRange(
                       candidate,
@@ -3433,6 +4136,12 @@ function App() {
                           >
                             {candidatePassBStatusLabel}
                           </span>
+                          <span
+                            className="rh-audio-event-badge"
+                            data-status={candidateAudioEventBadgeStatus}
+                          >
+                            {candidateAudioEventStatusLabel}
+                          </span>
                           {boundaryTouched && (
                             <span className="rh-boundary-badge">
                               {boundaryRevision?.provenance === "userResetToAi"
@@ -3460,7 +4169,7 @@ function App() {
                               <dd>{narrative.event}</dd>
                             </div>
                             <div>
-                              <dt>스트리머 반응</dt>
+                              <dt>방송 오디오 반응 · 주체 확인 필요</dt>
                               <dd>{narrative.streamerReaction}</dd>
                             </div>
                             <div>
@@ -3471,8 +4180,70 @@ function App() {
                               <dt>왜 볼 만한가</dt>
                               <dd>{narrative.whyRecommended}</dd>
                             </div>
+                            <div>
+                              <dt>오디오 반응 종류 AI</dt>
+                              <dd>
+                                {audioEventPresentation.summary ??
+                                  candidateAudioEventStatusLabel}
+                              </dd>
+                            </div>
                           </dl>
                           <p className="rh-review-hint">{narrative.reviewHint}</p>
+                          {audioEventPresentation.caution !== null && (
+                            <p className="rh-audio-event-caution">
+                              {audioEventPresentation.caution}
+                            </p>
+                          )}
+                          {audioEventPresentation.cues.length > 0 && (
+                            <div
+                              className="rh-audio-event-cues"
+                              aria-label="시간 위치가 있는 오디오 반응 종류 AI 단서"
+                            >
+                              <strong>눌러서 실제 스트리머 반응인지 확인할 위치</strong>
+                              <ul>
+                                {audioEventPresentation.cues.map((cue) => {
+                                  const cueInsideCurrentRange =
+                                    cue.sourceStartMs >= effectiveRange.startMs &&
+                                    cue.sourceStartMs < effectiveRange.endMs;
+                                  const cueDisabled =
+                                    sourcePreviewUrl === null || !cueInsideCurrentRange;
+                                  return (
+                                    <li key={`${cue.kind}-${cue.sourceStartMs}-${cue.sourceEndMs}`}>
+                                      <button
+                                        className="rh-audio-event-cue"
+                                        type="button"
+                                        disabled={cueDisabled}
+                                        aria-label={`${formatDuration(cue.sourceStartMs)}부터 ${formatDuration(cue.sourceEndMs)}까지, 혼합 오디오에서 ${cue.kindLabel} ${cue.strengthLabel}${cueInsideCurrentRange ? " 재생해서 확인" : ", 현재 조정한 구간 밖"}`}
+                                        onClick={(event) =>
+                                          playCandidateCue(
+                                            candidate,
+                                            cue.sourceStartMs,
+                                            event.currentTarget,
+                                          )
+                                        }
+                                      >
+                                        <span>{cue.kindLabel} · {cue.strengthLabel}</span>
+                                        <time>
+                                          {formatDuration(cue.sourceStartMs)}–{formatDuration(cue.sourceEndMs)}
+                                        </time>
+                                        <small>혼합 오디오 단서 · 재생 확인 필요</small>
+                                      </button>
+                                      {!cueInsideCurrentRange && (
+                                        <small className="rh-transcript-cue-note">
+                                          현재 조정한 클립 구간 밖이라 재생하지 않아요.
+                                        </small>
+                                      )}
+                                    </li>
+                                  );
+                                })}
+                              </ul>
+                              {sourcePreviewUrl === null && (
+                                <p className="rh-help">
+                                  원본을 다시 연결하면 이 반응 위치로 바로 이동할 수 있어요.
+                                </p>
+                              )}
+                            </div>
+                          )}
                           {narrative.cues.length > 0 && (
                             <div className="rh-transcript-cues" aria-label="시간 위치가 있는 자동 전사 추정">
                               <strong>눌러서 바로 확인할 자동 전사 위치</strong>
@@ -3723,9 +4494,9 @@ function App() {
               </p>
               {unsavedSessionWorkStarted && (
                 <p className="rh-notice" data-tone="warning" role="status">
-                  이 승인·제외 판단, 시작·끝 조정, 자동 전사 추정은 아직 저장되지 않았어요. 다른 영상이나
-                  결과로 이동하면 확인을 먼저 물어봅니다. 자동 전사 추정은 현재 다운로드에도 포함되지
-                  않으니, 필요한 후보를 직접 재생해 확인한 뒤 승인해 주세요.
+                  이 승인·제외 판단, 시작·끝 조정, 자동 전사 추정과 오디오 반응 종류 단서는 아직 저장되지 않았어요.
+                  다른 영상이나 결과로 이동하면 확인을 먼저 물어봅니다. 두 AI 단서는 현재 다운로드에도
+                  포함되지 않으니, 필요한 후보를 직접 재생해 확인한 뒤 승인해 주세요.
                 </p>
               )}
 
@@ -3842,7 +4613,17 @@ function App() {
                   )}
                   {exportError !== null && <p className="rh-notice" data-tone="danger" role="alert">{exportError}</p>}
 
-                  <button className="btn btn-secondary rh-new-analysis" type="button" onClick={startFreshAnalysis}>
+                  {candidateRefinementBusy && (
+                    <p className="rh-help" role="status">
+                      후보의 자세한 AI 단서를 찾는 중이에요. 현재 작업을 먼저 멈추거나 끝까지 기다려 주세요.
+                    </p>
+                  )}
+                  <button
+                    className="btn btn-secondary rh-new-analysis"
+                    type="button"
+                    disabled={analysisBusy || candidateRefinementBusy}
+                    onClick={startFreshAnalysis}
+                  >
                     새 영상 분석하기
                   </button>
                 </section>

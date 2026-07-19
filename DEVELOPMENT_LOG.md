@@ -681,3 +681,40 @@
 - 로컬 Vite preview의 `/rettolight/`, hashed candidate Worker, hashed ONNX WASM에 각각 HTTP 200을 확인했다. production Worker 안의 고정 모델 revision `ff4177021cc41f7db950912b73ea4fdf7d01d8e7`, hashed WASM 경로, `wasmPaths` 설정도 확인했다.
 - 실제 한국어 media fixture가 workspace에 없어 모델 다운로드→범위 디코드→전사→cue seek의 브라우저 실기기 smoke는 아직 실행하지 않았다. README는 이 기능을 `구현 및 정적 검증 완료, 브라우저 성공 경로 검증 전`으로 명시하며 이를 출시 완료로 과장하지 않는다.
 - 이번 변경은 아직 commit·push·Pages 배포하지 않았다. 사용자 승인 전 로컬 working tree에만 둔다.
+
+## 2026-07-20 — 앱 0.3.3 배포와 0.3.4 오디오 반응 종류 AI 착수
+
+### `0.3.3` 배포 완료
+
+- 커밋 `a252cbc`를 `main`에 push했다.
+- GitHub Pages workflow `29694202268`이 `npm ci`, 316개 테스트를 포함한 `npm run check`, production build, artifact upload, deploy를 모두 통과했다.
+- 공개 주소 `https://11qaws.github.io/rettolight/`, hashed candidate Pass B Worker, hashed local ORT WASM을 각각 HTTP 200으로 확인했다.
+- 실제 한국어 media fixture 브라우저 종단 검증은 여전히 별도 비차단 증거로 남아 있으며 README의 제한 표현을 유지한다.
+
+### 다음 AI 기능 결정
+
+- 사용자 가치가 가장 큰 다음 기능을 후보 오디오의 `웃음 / 고함·외침 / 비명 / 박수·환호` 종류 단서로 정했다. 화려한 화면보다 스트리머 반응을 먼저 보려는 제품 원칙과 맞는다.
+- Transformers.js가 지원하는 AudioSet AST 변환 모델을 채택한다. 모델 ID는 `Xenova/ast-finetuned-audioset-10-10-0.4593`, 고정 revision은 `249a1fbf0286b40e7f1ed687a8ae396997bf7dc6`, dtype은 q8, 첫 런타임은 WASM이다. q8 가중치는 약 90.8MB이며 원 MIT AST 모델은 BSD-3-Clause다. 모델은 다중 라벨 raw logits를 내지만 Transformers.js 3.8.1 high-level audio pipeline은 softmax를 고정 적용하므로, `AutoProcessor`·`AutoModelForAudioClassification`으로 직접 추론하고 sigmoid를 적용하기로 했다.
+- 12시간 전체가 아니라 최대 12개 후보 각각의 reaction peak 전·중·후 10초 창 최대 3개, 합계 최대 약 6분만 분류한다.
+- source separation이 없으므로 특정 소리가 스트리머에게서 났다고 확정하지 않는다. allowlist 라벨만 정성적으로 묶어 `오디오에서 그렇게 들림 · 재생 확인 필요` overlay와 확인 위치를 제공한다.
+- AudioSet의 넓은 `Crowd` 문맥 라벨은 승인·환호를 뜻하지 않고 경기장·게임 배경음을 쉽게 포함하므로 positive allowlist에서 제외한다. `Clapping`, `Cheering`, `Applause`만 박수·환호 그룹에 남기고, ESC-50 박수 샘플에서 이 직접 라벨들만으로 강한 신호가 나온 것을 확인했다.
+- `CandidateAudioEventRun`은 전사 `CandidatePassBRun`과 독립시켜 한 모델 실패가 다른 근거·후보·사람 편집을 훼손하지 않게 한다. 자동 재랭킹은 다음 `0.3.5`의 별도 ranking proposal로 미룬다.
+
+### `0.3.4` 후보 오디오 반응 종류 AI 구현 결과
+
+- 별도 lazy Worker가 fast pass의 최대 12개 후보마다 reaction peak 전·중·후 10초 창을 최대 3개만 Mediabunny로 범위 디코드한다. 한 번에 한 창의 16kHz mono PCM만 유지하고 처리 직후 0으로 덮어 참조를 해제하므로, 12시간 원본 전체를 메모리에 올리지 않는다.
+- 고정 revision의 AudioSet AST q8 모델을 `AutoProcessor`·`AutoModelForAudioClassification`으로 직접 실행하고 multi-label logits에 sigmoid를 적용한다. high-level pipeline의 softmax는 사용하지 않는다. 디지털 무음·단발 click gate를 통과하지 못한 창은 모델을 호출하지 않고, 모든 창이 탈락한 후보는 명시적 `EMPTY_AUDIO` gap으로 끝낸다.
+- 제품 allowlist는 `웃음`, `고함·외침`, `비명`, `박수·환호`뿐이다. 넓은 배경 문맥인 `Crowd`는 긍정 반응으로 오인하지 않도록 제외했고, 결과는 최대 2개의 `strong | possible` 정성 단서와 약 10초 재생 확인 창만 App으로 보낸다. raw score·전체 527개 라벨·PCM은 경계 밖으로 보내지 않는다.
+- 독립 `CandidateAudioEventRun` reducer와 protocol/client fence가 source·analysis·run·Worker identity, 순서, 중복 event, 모델 준비 phase, 후보별 terminal outcome, 완료 envelope 집계를 검증한다. 마지막 후보 결과만으로 성공하지 않고 검증된 완료 envelope 뒤에만 `completed | completedWithGaps`가 된다.
+- 재시도 merge는 종류별 기존 `strong` 근거를 no-clear·possible·실패로 지우지 않는다. 새 strong 단서를 먼저 받아들이고 최대 2개만 유지하며, 후보 점수·순서·경계·승인/제외·전사 overlay는 바꾸지 않는다.
+- UI에는 `반응 종류 AI로 확인`, 최초 모델 약 91MB와 첫 로컬 AI 런타임 약 23MB 안내, 모델/후보 진행, 취소, 후보별 상태·쉬운 gap 문구와 cue seek를 추가했다. 혼합 방송 오디오라서 스트리머 반응 주체를 확정하지 않으며, 표시 범위가 사건의 정확한 시작·끝이 아닌 약 10초 확인 창임을 함께 알린다.
+- 전사 run과 오디오 사건 run을 동시에 시작하지 못하게 원자적인 start-pending fence를 두고, 분석 중 `새 영상 시작`·`결과 이어보기` 같은 입력 교체 행동을 잠근다. 정상 취소는 오류 경고로 표시하지 않고, Worker ACK 정리와 강제 종료를 서로 다른 terminal reason으로 기록한다.
+
+### `0.3.4` 배포 전 검증
+
+- `npm run check`: TypeScript, ESLint, 33개 파일의 413개 Vitest 테스트 통과.
+- `npm run build`: 51 modules, 메인 JavaScript 459.88kB, candidate audio-event Worker 1,226.70kB, candidate Pass B Worker 1,217.79kB, 로컬 ONNX WASM 21,596.01kB로 production build 성공.
+- 로컬 production preview의 `/rettolight/`, hashed candidate audio-event Worker, hashed ORT WASM이 각각 올바른 `text/html`, `text/javascript`, `application/wasm` 형식과 HTTP 200으로 응답했다.
+- 직접 모델 smoke에서 공식 ESC-50 웃음 샘플은 Snicker/Chuckle/Laughter, 박수 샘플은 Clapping/Applause로 검출됐고, 440Hz 단일 사인파는 제품 allowlist 점수가 모두 매우 낮았다. Worker 안의 고정 model revision, sigmoid 경로, hashed WASM 참조와 filename 미조회도 확인했다.
+- 두 차례 독립 감사에서 배포 차단 P0/P1은 남지 않았다. Graphify 갱신 뒤 `App() → runCandidateAudioEventWorker()`와 `App() → mergeCandidateAudioEventEvidence()`가 각각 직접 EXTRACTED call edge이며, evidence merge가 전용 모듈·테스트에 연결된 구조를 재확인했다.
+- 100초 합성 MP4에 30초 웃음과 70초 박수를 넣어 브라우저 종단 smoke를 시도했다. Chrome 확장의 `Allow access to file URLs`를 켜고 확장 연결·새 탭을 다시 만든 뒤에도 자동화 API가 native file chooser event를 내지 않아 fixture 주입 단계에서 멈췄다. 앱의 preflight나 Worker가 실패한 증거가 아니므로 정적·모델·단위 검증과 구분하며, `파일 선택 → fast pass → 모델 다운로드 → 분류 → cue seek` 브라우저 완주는 아직 확인하지 않았다고 기록한다.

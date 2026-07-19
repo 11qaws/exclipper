@@ -99,7 +99,7 @@ function streamerReactionExplanation(candidate: UnifiedHighlightCandidate): stri
   const liftText = lift === undefined ? "평소보다 두드러진" : `평소의 ${lift.toFixed(1)}배 수준인`;
   if (audio.eventKind === "sustained-vocal-reaction") {
     const sustained = audio.sustainedWindowCount;
-    return `${liftText} 음성형 반응이${sustained === undefined ? " 잠시 이어졌어요" : ` 약 ${sustained}개 분석 구간 동안 이어졌어요`}. 웃음·외침·놀람처럼 지속되는 반응일 가능성이 있어요.`;
+    return `${liftText} 음성형 반응이${sustained === undefined ? " 잠시 이어졌어요" : ` 약 ${sustained}개 분석 구간 동안 이어졌어요`}. 웃음·외침·놀람처럼 지속되는 소리일 수 있지만, 게임·영상 소리인지 스트리머 목소리인지는 재생 확인이 필요해요.`;
   }
   return `${liftText} 짧은 오디오 반응이 잡혔어요. 효과음과 구분하려고 한순간의 클릭성 피크는 감점했지만, 실제 목소리인지는 재생 확인이 필요해요.`;
 }
@@ -112,11 +112,11 @@ function audienceReactionExplanation(candidate: UnifiedHighlightCandidate): stri
   const relation = relationBetween(chatRange(candidate), audioRange(candidate));
   const timing =
     relation === "before"
-      ? "스트리머 오디오 반응보다 앞선 시간대에"
+      ? "방송 오디오 반응 신호보다 앞선 시간대에"
       : relation === "after"
-        ? "스트리머 오디오 반응 뒤 시간대에"
+        ? "방송 오디오 반응 신호 뒤 시간대에"
         : relation === "overlap"
-          ? "스트리머 오디오 반응과 겹치는 시간대에"
+          ? "방송 오디오 반응 신호와 겹치는 시간대에"
           : "이 후보 구간에서";
   const reactionSuffix =
     chat.reactionMessageCount > 0
@@ -131,23 +131,23 @@ function recommendationExplanation(candidate: UnifiedHighlightCandidate): string
   const hasVisual = candidate.evidence.visual !== undefined;
   if (hasAudio && hasChat) {
     return hasVisual
-      ? "화면 변화, 스트리머 오디오 반응, 시청자 채팅이 가까운 후보 구간에 함께 잡혔어요. 어느 신호가 원인인지는 단정하지 않고, 실제 사건과 반응 흐름을 먼저 확인할 가치가 높아요."
+      ? "화면 변화, 방송 오디오 반응 신호, 시청자 채팅이 가까운 후보 구간에 함께 잡혔어요. 오디오의 주체나 어느 신호가 원인인지는 단정하지 않고, 실제 사건과 반응 흐름을 먼저 확인할 가치가 높아요."
       : relationBetween(chatRange(candidate), audioRange(candidate)) === "after"
-        ? "스트리머 오디오 반응 뒤 시간대에 시청자 반응도 커져, 실제 흐름을 먼저 검토할 가치가 높아요."
+        ? "방송 오디오 반응 신호 뒤 시간대에 시청자 반응도 커져, 실제 흐름을 먼저 검토할 가치가 높아요."
         : relationBetween(chatRange(candidate), audioRange(candidate)) === "before"
-          ? "시청자 반응이 먼저 커진 뒤 시간대에 스트리머 오디오 반응도 잡혀, 실제 흐름을 먼저 검토할 가치가 높아요."
+          ? "시청자 반응이 먼저 커진 뒤 시간대에 방송 오디오 반응 신호도 잡혀, 실제 흐름을 먼저 검토할 가치가 높아요."
           : relationBetween(chatRange(candidate), audioRange(candidate)) === "overlap"
-            ? "스트리머 오디오 반응과 시청자 반응이 겹치는 시간대에 잡혀, 먼저 검토할 가치가 높아요."
-            : "스트리머 오디오 반응과 시청자 반응이 같은 후보 구간에 잡혀, 실제 순서를 재생으로 확인할 가치가 높아요.";
+            ? "방송 오디오 반응 신호와 시청자 반응이 겹치는 시간대에 잡혀, 먼저 검토할 가치가 높아요."
+            : "방송 오디오 반응 신호와 시청자 반응이 같은 후보 구간에 잡혀, 실제 순서와 반응 주체를 재생으로 확인할 가치가 높아요.";
   }
   if (hasAudio) {
     return hasVisual
-      ? "화면 변화와 스트리머의 오디오 반응이 가까워, 반응의 원인이 함께 담겼는지 먼저 확인할 후보예요."
-      : "스트리머의 오디오 반응이 두드러져, 말투·웃음·외침이 클립으로 쓸 만한지 먼저 확인할 후보예요.";
+      ? "화면 변화와 방송 오디오 반응 신호가 가까워, 실제 스트리머 반응과 그 원인이 함께 담겼는지 먼저 확인할 후보예요."
+      : "방송 오디오 반응 신호가 두드러져, 실제 스트리머의 말투·웃음·외침인지 먼저 확인할 후보예요.";
   }
   if (hasChat) {
     if (!hasVisual) {
-      return "시청자 반응이 평소보다 크게 몰려, 화면과 스트리머 반응을 먼저 확인할 후보예요.";
+      return "시청자 반응이 평소보다 크게 몰려, 화면과 실제 스트리머 반응을 먼저 확인할 후보예요.";
     }
     const relation = relationBetween(visualRange(candidate), chatRange(candidate));
     return relation === "before"
@@ -172,14 +172,14 @@ export function buildHighlightNarrative(
     ? "반응 근거가 부족한 화면 탐색 후보"
     : hasAudio && hasChat
       ? audioChatRelation === "after"
-        ? "스트리머 반응 뒤 시간대에 채팅도 커진 장면"
+        ? "오디오 반응 신호 뒤 시간대에 채팅도 커진 장면"
         : audioChatRelation === "before"
-          ? "채팅이 먼저 커지고 스트리머 반응도 잡힌 장면"
+          ? "채팅이 먼저 커지고 오디오 반응 신호도 잡힌 장면"
           : audioChatRelation === "overlap"
-            ? "스트리머 반응과 채팅이 겹치는 시간대의 장면"
-            : "스트리머 반응과 채팅이 같은 후보 구간에 잡힌 장면"
+            ? "오디오 반응 신호와 채팅이 겹치는 시간대의 장면"
+            : "오디오 반응 신호와 채팅이 같은 후보 구간에 잡힌 장면"
       : hasAudio
-        ? "스트리머 오디오 반응이 두드러진 장면"
+        ? "방송 오디오 반응 신호가 두드러진 장면"
         : "시청자 반응이 갑자기 모인 장면";
 
   return {

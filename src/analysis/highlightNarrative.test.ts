@@ -55,7 +55,7 @@ describe("buildHighlightNarrative", () => {
       ),
     );
 
-    expect(narrative.title).toContain("스트리머 반응");
+    expect(narrative.title).toContain("오디오 반응 신호");
     expect(narrative.event).toContain("종류는 아직 확인 전");
     expect(narrative.streamerReaction).toContain("3.2배");
     expect(narrative.audienceReaction).toContain("25명");
@@ -137,9 +137,9 @@ describe("buildHighlightNarrative", () => {
       ),
     );
 
-    expect(narrative.title).toContain("스트리머 반응 뒤 시간대");
-    expect(narrative.audienceReaction).toContain("오디오 반응 뒤 시간대");
-    expect(narrative.whyRecommended).toContain("오디오 반응 뒤 시간대");
+    expect(narrative.title).toContain("오디오 반응 신호 뒤 시간대");
+    expect(narrative.audienceReaction).toContain("오디오 반응 신호 뒤 시간대");
+    expect(narrative.whyRecommended).toContain("오디오 반응 신호 뒤 시간대");
     expect(
       [narrative.title, narrative.audienceReaction, narrative.whyRecommended].join(" "),
     ).not.toMatch(/(?:오디오|채팅).*(?:때문에|원인으로).*(?:오디오|채팅)/u);

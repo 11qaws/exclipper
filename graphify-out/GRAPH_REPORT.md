@@ -1,16 +1,16 @@
 # Graph Report - workspace  (2026-07-20)
 
 ## Corpus Check
-- 87 files · ~121,631 words
+- 99 files · ~143,549 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 1432 nodes · 3008 edges · 81 communities (70 shown, 11 thin omitted)
-- Extraction: 98% EXTRACTED · 2% INFERRED · 0% AMBIGUOUS · INFERRED: 52 edges (avg confidence: 0.61)
+- 1729 nodes · 3738 edges · 93 communities (81 shown, 12 thin omitted)
+- Extraction: 98% EXTRACTED · 2% INFERRED · 0% AMBIGUOUS · INFERRED: 61 edges (avg confidence: 0.6)
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `e0eca447`
+- Built from commit: `a252cbce`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -92,18 +92,30 @@
 - Q: Candidate Pass B 구조가 App, Worker, provisional evidence, finalizing 완료 fence를 어떻게 연결하는가?
 - appendHiddenElement
 - @eslint/js
+- candidateAudioEventWorkerClient.ts
+- candidateAudioEventEvidenceState.test.ts
+- candidateBoundaryRevision.ts
+- candidateAudioEventWorkerProtocol.ts
+- highlightNarrative.ts
+- fakeEvent
+- highlightFusion.test.ts
+- candidateAudioEventEvidenceState.ts
+- createReactionUnifiedCandidate
+- AudioFeatureAccumulator
+- EventFenceRejectionReason
+- MAX_CANDIDATE_AUDIO_EVENT_CANDIDATES
 
 ## God Nodes (most connected - your core abstractions)
-1. `App()` - 57 edges
+1. `App()` - 67 edges
 2. `analyzeLocalVideoVisuals()` - 24 edges
 3. `IndexedDbAnalysisResultStore` - 23 edges
 4. `invalid()` - 23 edges
 5. `compilerOptions` - 23 edges
-6. `fuseReactionHighlightCandidates()` - 19 edges
-7. `runCandidatePassBWorker()` - 18 edges
-8. `inspectLocalMedia()` - 18 edges
-9. `InMemoryAnalysisResultStore` - 18 edges
-10. `asPlainRecord()` - 18 edges
+6. `runCandidateAudioEventWorker()` - 20 edges
+7. `runCandidatePassBWorker()` - 19 edges
+8. `fuseReactionHighlightCandidates()` - 19 edges
+9. `inspectLocalMedia()` - 18 edges
+10. `InMemoryAnalysisResultStore` - 18 edges
 
 ## Surprising Connections (you probably didn't know these)
 - `불변 StreamSaver CSS 기준과 Retto 오버라이드` --conceptually_related_to--> `개인용 제품 production 출시 기준`  [INFERRED]
@@ -123,7 +135,7 @@
 ## Hyperedges (group relationships)
 - **계층형 AI 하이라이트 분석 파이프라인** — product_plan_analysis_orchestrator, product_plan_fast_pass, product_plan_candidate_recall, product_plan_deep_pass, product_plan_multimodal_fusion, product_plan_boundary_refinement, product_plan_candidate_diversity [EXTRACTED 1.00]
 
-## Communities (81 total, 11 thin omitted)
+## Communities (93 total, 12 thin omitted)
 
 ### Community 0 - "운영·릴리스 안전성"
 Cohesion: 0.14
@@ -162,12 +174,12 @@ Cohesion: 0.13
 Nodes (35): ALL_OBJECT_STORES, AnalysisPayloadByKind, AnalysisRecord, AnalysisRecordKind, AnalysisResultStoreErrorCode, analysisSchemaFamily(), AnalysisStoreName, AnalysisTerminalRecordCatalog (+27 more)
 
 ### Community 9 - "초심자 UI·스타일"
-Cohesion: 0.19
-Nodes (12): ChatAnalysisWorkerError, createEventFence(), CreateEventFenceInput, EventFenceOutcome, EventFenceRejectionReason, EventFenceState, FenceableEvent, fenceEvent() (+4 more)
+Cohesion: 0.15
+Nodes (14): createEventFence(), CreateEventFenceInput, EventFenceOutcome, EventFenceState, FenceableEvent, fenceEvent(), reject(), makeFence() (+6 more)
 
 ### Community 10 - "후보 수정·안전 경계"
-Cohesion: 0.06
-Nodes (67): attachVisualContext(), AUDIO_EVENT_KINDS, AudioHighlightCandidate, AudioHighlightCandidateEvidence, AudioReactionEventKind, canonicalSignalKinds(), clamp(), compareDrafts() (+59 more)
+Cohesion: 0.09
+Nodes (47): attachVisualContext(), AUDIO_EVENT_KINDS, AudioReactionEventKind, canonicalSignalKinds(), clamp(), compareDrafts(), comparePairProposals(), comparePreparedCandidates() (+39 more)
 
 ### Community 11 - "저장·복구 커밋"
 Cohesion: 0.11
@@ -195,11 +207,11 @@ Nodes (8): abortedError(), attemptCleanup(), cleanupResources(), defaultYieldCon
 
 ### Community 22 - "analyzeLocalVideoVisuals"
 Cohesion: 0.10
-Nodes (36): amplitudeToDb(), AUDIO_REACTION_CANDIDATE_WINDOW_MS, AudioReactionCandidate, AudioReactionCandidateEvidence, AudioReactionEventKind, buildClusters(), clamp(), clampInteger() (+28 more)
+Nodes (38): amplitudeToDb(), AUDIO_REACTION_CANDIDATE_WINDOW_MS, AudioReactionCandidate, AudioReactionCandidateEvidence, AudioReactionEventKind, AudioReactionFeatureWindow, buildClusters(), clamp() (+30 more)
 
 ### Community 23 - "fakeEvent"
-Cohesion: 0.08
-Nodes (23): ANALYSIS_RESULT_OBJECT_STORES, AnalysisFailureRecord, AnalysisResultStoreError, ProvisionalAnalysisResultRecord, AUDIO_CANDIDATE, ControlledOpenRequest, ControlledRequest, ControlledTransaction (+15 more)
+Cohesion: 0.12
+Nodes (18): ANALYSIS_RESULT_OBJECT_STORES, AnalysisFailureRecord, AnalysisResultStoreError, ProvisionalAnalysisResultRecord, AUDIO_CANDIDATE, expectStoreError(), FakeEventHandler, FakeFileSystemHandle (+10 more)
 
 ### Community 24 - "localVideoVisualAnalysis.test.ts"
 Cohesion: 0.16
@@ -207,19 +219,19 @@ Nodes (10): captureDefaultLumaFingerprint(), LocalVideoVisualCanvas, createVisua
 
 ### Community 26 - "inspectLocalMedia"
 Cohesion: 0.23
-Nodes (17): hasExactKeys(), isCandidate(), isCompletedResult(), isFenceEnvelope(), isFiniteNumber(), isNonNegativeInteger(), isProgress(), isRecord() (+9 more)
+Nodes (17): LocalAudioReactionAnalysisStage, hasExactKeys(), isCandidate(), isCompletedResult(), isFenceEnvelope(), isFiniteNumber(), isNonNegativeInteger(), isProgress() (+9 more)
 
 ### Community 27 - "FakeVideoProbe"
 Cohesion: 0.13
 Nodes (5): expectCoreCleanup(), FakeVideoProbe, Harness, ProbeEventType, ProbeListener
 
 ### Community 28 - "localMediaPreflight.test.ts"
-Cohesion: 0.16
-Nodes (6): cloneJson(), InMemoryAnalysisResultStore, rejectedOperation(), validateAndCloneAnalysisRecord(), validateAndCloneSourceSnapshot(), validateAndCloneTerminalRecord()
+Cohesion: 0.22
+Nodes (7): assertIdentifier(), cloneJson(), InMemoryAnalysisResultStore, rejectedOperation(), validateAndCloneAnalysisRecord(), validateAndCloneSourceSnapshot(), validateAndCloneTerminalRecord()
 
 ### Community 30 - "LocalMediaPreflightAdapters"
-Cohesion: 0.20
-Nodes (9): assertIdentifier(), IndexedDbAnalysisResultStore, keyPathFor(), normalizeStoreFailure(), requestError(), sortTerminalRecordsNewestFirst(), storeClosedError(), terminalConflictError() (+1 more)
+Cohesion: 0.17
+Nodes (8): IndexedDbAnalysisResultStore, keyPathFor(), normalizeStoreFailure(), requestError(), sortTerminalRecordsNewestFirst(), storeClosedError(), terminalConflictError(), terminalRecordsAreEquivalent()
 
 ### Community 31 - "createContentFingerprint"
 Cohesion: 0.10
@@ -230,28 +242,28 @@ Cohesion: 0.18
 Nodes (19): baselineValues(), BUCKET_SIZE_MS, clamp(), compareScoredBuckets(), createBucket(), createCandidate(), emptyResult(), finiteNonNegativeInteger() (+11 more)
 
 ### Community 33 - "AnalysisResultStore"
-Cohesion: 0.10
-Nodes (18): AnalysisManifestRecord, AnalysisResultStore, AnalysisTerminalOutcome, AnalysisTerminalRecord, FinalAnalysisResultRecord, durableCoverageDisposition(), auditRecoverableAnalysisResults(), immutableIdentityMatches() (+10 more)
+Cohesion: 0.09
+Nodes (17): AnalysisManifestRecord, AnalysisResultStore, AnalysisTerminalOutcome, AnalysisTerminalRecord, FinalAnalysisResultRecord, auditRecoverableAnalysisResults(), immutableIdentityMatches(), isCompletedTerminal() (+9 more)
 
 ### Community 34 - "durableAnalysisPayload.ts"
-Cohesion: 0.10
-Nodes (54): HighlightSignalKind, UnifiedHighlightEvidence, ANALYSIS_INPUT_KEYS, asPlainRecord(), assertAudioEvidence(), assertAudioGapReason(), assertBoolean(), assertCandidate() (+46 more)
+Cohesion: 0.11
+Nodes (52): ANALYSIS_INPUT_KEYS, asPlainRecord(), assertAudioEvidence(), assertAudioGapReason(), assertBoolean(), assertCandidate(), assertChatEvidence(), assertChatInput() (+44 more)
 
 ### Community 35 - "App.tsx"
-Cohesion: 0.08
-Nodes (37): AnalysisCoverageSummary, AnalysisGapApprovalEvidence, analysisRunLabel(), AnalysisSelectionSummary, App(), applyAnalysisEvent(), applySourceEvent(), assessLink() (+29 more)
+Cohesion: 0.07
+Nodes (46): highlightReasonForSignalKinds(), AnalysisCoverageSummary, AnalysisGapApprovalEvidence, analysisRunLabel(), AnalysisSelectionSummary, App(), applyAnalysisEvent(), applySourceEvent() (+38 more)
 
 ### Community 36 - "sourceCheck.ts"
-Cohesion: 0.06
-Nodes (64): UnifiedHighlightCandidate, audienceReactionExplanation(), audioRange(), buildHighlightNarrative(), chatRange(), eventExplanation(), HighlightInterpretationBasis, recommendationExplanation() (+56 more)
+Cohesion: 0.13
+Nodes (31): UnifiedHighlightCandidate, CandidateBoundaryProvenance, CandidateBoundaryRevision, CandidateTimeRange, ApprovedHighlightExportCandidate, assertMilliseconds(), chronologicalCandidates(), createCsv() (+23 more)
 
 ### Community 37 - "chatAnalysisWorkerClient.ts"
 Cohesion: 0.28
 Nodes (11): ChatAnalysisWorkerFactory, hasFiniteNumberFields(), isChatCandidate(), isFenceEnvelope(), isFiniteNumber(), isHighlightSelectionResult(), isNonNegativeInteger(), isRecord() (+3 more)
 
 ### Community 38 - "runChatAnalysisWorker"
-Cohesion: 0.17
-Nodes (11): ChatAnalysisWorkerLike, normalizeWorkerTimeout(), runChatAnalysisWorker(), emptyResult, identity, startWith(), WorkerEventType, WorkerListener (+3 more)
+Cohesion: 0.20
+Nodes (9): ChatAnalysisWorkerLike, normalizeWorkerTimeout(), runChatAnalysisWorker(), emptyResult, identity, startWith(), WorkerEventType, WorkerListener (+1 more)
 
 ### Community 39 - "chatAnalysisWorkerProtocol.ts"
 Cohesion: 0.20
@@ -270,12 +282,12 @@ Cohesion: 0.83
 Nodes (3): addCollectiveSpike(), message(), quietBaseline()
 
 ### Community 44 - "IndexedDbAnalysisResultStore"
-Cohesion: 0.15
-Nodes (8): AudioReactionWorkerRequest, analyzeLocalAudioReactions(), LocalAudioReactionWorkerLike, normalizeCancelAcknowledgementTimeout(), normalizeWorkerTimeout(), emitResponse(), FakeWorker, validateInput()
+Cohesion: 0.07
+Nodes (53): CANDIDATE_AUDIO_EVENT_PROTOCOL_VERSION, accept(), assertCandidateAudioEventRunInvariant(), baseAfterWorkerEvent(), baseOf(), CANDIDATE_AUDIO_EVENT_TERMINAL_STATUSES, CandidateAudioEventCancelTerminationKind, CandidateAudioEventCandidateOutcome (+45 more)
 
 ### Community 45 - "localAudioReactionAnalysis.ts"
-Cohesion: 0.14
-Nodes (17): AudioFeatureAccumulator, clamp(), clampInteger(), createEventId(), decodeAndScore(), disposeInputOnce(), handleCancel(), isUnsupportedAudioCodecError() (+9 more)
+Cohesion: 0.13
+Nodes (24): ActiveAudioTask, clampInteger(), createEventId(), decodeAndScore(), disposeInputOnce(), handleCancel(), isUnsupportedAudioCodecError(), MutableFeatureWindow (+16 more)
 
 ### Community 46 - "sourceCheck.ts"
 Cohesion: 0.19
@@ -286,12 +298,12 @@ Cohesion: 0.40
 Nodes (4): Answer, Outcome, Q: 0.3 오디오 반응부터 설명·저장·내보내기까지의 경로, Source Nodes
 
 ### Community 48 - "AudioFeatureAccumulator"
-Cohesion: 0.11
-Nodes (23): AudioAnalysisOutcome, ActiveAudioTask, AUDIO_REACTION_FEATURE_WINDOW_MS, AudioReactionWorkerIdentity, AudioReactionWorkerResponse, AudioReactionWorkerResponsePayload, LocalAudioReactionAnalysisOutcome, LocalAudioReactionAnalysisProgress (+15 more)
+Cohesion: 0.12
+Nodes (14): AudioAnalysisOutcome, AudioReactionWorkerRequest, completeResult, decodingProgress, emitResponse(), fakeVideoFile(), FakeWorker, identity (+6 more)
 
 ### Community 49 - "analyzeLocalAudioReactions"
 Cohesion: 0.07
-Nodes (33): CANDIDATE_PASS_B_TERMINAL_STATUSES, candidateEventRejection(), CandidatePassBCancelTerminationKind, CandidatePassBCandidateFailureReasonCode, CandidatePassBCandidateOutcome, CandidatePassBCandidateSnapshot, CandidatePassBCompletionEnvelope, CandidatePassBModelSnapshot (+25 more)
+Nodes (56): accept(), assertCandidatePassBRunInvariant(), baseAfterWorkerEvent(), baseOf(), CANDIDATE_PASS_B_TERMINAL_STATUSES, candidateEventRejection(), CandidatePassBCancelTerminationKind, CandidatePassBCandidateFailureReasonCode (+48 more)
 
 ### Community 50 - "HighlightSelectionResult"
 Cohesion: 0.15
@@ -306,8 +318,8 @@ Cohesion: 0.22
 Nodes (9): scripts, build, check, dev, lint, preview, test, test:watch (+1 more)
 
 ### Community 53 - "highlightExport.test.ts"
-Cohesion: 0.12
-Nodes (32): AnalyzeRequest, BUNDLED_ORT_WASM_URL, candidateGap(), clampInteger(), configureBundledOrtWasm(), createEventId(), DecodedCandidate, disposeInputOnce() (+24 more)
+Cohesion: 0.14
+Nodes (30): AnalyzeRequest, BUNDLED_ORT_WASM_URL, candidateGap(), clampInteger(), configureBundledOrtWasm(), createEventId(), DecodedCandidate, disposeInputOnce() (+22 more)
 
 ### Community 54 - "inspectLocalMedia"
 Cohesion: 0.20
@@ -342,16 +354,16 @@ Cohesion: 0.18
 Nodes (26): CandidatePassBEventFenceRejectionReason, CandidatePassBWorkerErrorCode, CandidatePassBWorkerFactory, FenceOutcome, hasExactKeys(), hasResponseKeys(), isCandidateGap(), isCandidateProgress() (+18 more)
 
 ### Community 63 - "@types/react"
-Cohesion: 0.38
-Nodes (11): assertCandidatePassBRunInvariant(), CandidatePassBRunState, createCandidatePassBRun(), summarizeCandidatePassBRun(), apply(), makeFinalizing(), makeInput(), makeLoadingModel() (+3 more)
+Cohesion: 0.08
+Nodes (43): aggregateCandidateAudioEventScores(), aggregationQuality(), aggregationQualityTuple(), assertAndIndexWindowScores(), assertScoreVector(), assertTarget(), assertTargetSet(), baseResult() (+35 more)
 
 ### Community 65 - "@vitejs/plugin-react"
 Cohesion: 0.11
 Nodes (13): CandidatePassBWorkerLike, fenceEvent(), hasValidSegmentTimeline(), matchesTargetRange(), normalizeCancelAcknowledgementTimeout(), normalizeWorkerTimeout(), rejectFence(), runCandidatePassBWorker() (+5 more)
 
 ### Community 66 - "vitest"
-Cohesion: 0.25
-Nodes (8): byteCount(), CandidatePassBModelDownloadAggregate, CandidatePassBModelDownloadTracker, DownloadFileState, isRecord(), nonEmptyBoundedString(), safeSum(), event()
+Cohesion: 0.06
+Nodes (60): CandidateAudioEventWindow, acknowledgeAfterLoadedModelCleanup(), ANALYZE_REQUEST_KEYS, analyzeCandidate(), AnalyzeRequest, assertPinnedId2Label(), BUNDLED_ORT_WASM_URL, CancelRequest (+52 more)
 
 ### Community 67 - "localMediaPreflight.test.ts"
 Cohesion: 0.24
@@ -362,8 +374,8 @@ Cohesion: 0.22
 Nodes (3): createDefaultObjectURL(), LocalMediaPreflightAdapters, revokeDefaultObjectURL()
 
 ### Community 69 - "AudioReactionWorkerIdentity"
-Cohesion: 0.31
-Nodes (11): accept(), baseAfterWorkerEvent(), baseOf(), completeRun(), isWorkerEvent(), reduceCandidatePassBRun(), reject(), settleCandidate() (+3 more)
+Cohesion: 0.06
+Nodes (24): CandidateAudioEventWorkerError, CandidateAudioEventWorkerLike, fenceEvent(), hasValidDetectionTimeline(), isPreModelSourceGapReason(), matchesTarget(), normalizeCancelAcknowledgementTimeout(), normalizeWorkerTimeout() (+16 more)
 
 ### Community 70 - "candidatePassBRuntime.ts"
 Cohesion: 0.32
@@ -389,32 +401,76 @@ Nodes (4): Answer, Outcome, Q: Candidate Pass B 구조가 App, Worker, provision
 Cohesion: 0.83
 Nodes (4): appendHiddenElement(), createDefaultCanvas(), createDefaultVideoProbe(), requireDocument()
 
+### Community 81 - "candidateAudioEventWorkerClient.ts"
+Cohesion: 0.12
+Nodes (37): CandidateAudioEventFenceRejectionReason, CandidateAudioEventRunResult, CandidateAudioEventWorkerErrorCode, CandidateAudioEventWorkerFactory, FenceOutcome, hasExactKeys(), hasResponseKeys(), hasValidResultBase() (+29 more)
+
+### Community 82 - "candidateAudioEventEvidenceState.test.ts"
+Cohesion: 0.13
+Nodes (20): CandidateAudioEventAggregation, DetectionDraft, base, result(), buildCandidateAudioEventPresentation(), CandidateAudioEventCuePresentation, candidateAudioEventKindLabel(), CandidateAudioEventPresentation (+12 more)
+
+### Community 83 - "candidateBoundaryRevision.ts"
+Cohesion: 0.18
+Nodes (19): applyCandidateBoundaryCommand(), BoundaryCommandBase, CandidateBoundaryAdjustmentReason, CandidateBoundaryCommand, CandidateBoundaryIgnoreReason, CandidateBoundaryProposalInput, CandidateBoundaryRejectionReason, CandidateBoundaryTransition (+11 more)
+
+### Community 84 - "candidateAudioEventWorkerProtocol.ts"
+Cohesion: 0.15
+Nodes (16): ActiveTask, FenceState, NormalizedRunInput, RunCandidateAudioEventWorkerOptions, CANDIDATE_AUDIO_EVENT_WINDOW_DURATION_MS, CandidateAudioEventCandidateProgress, CandidateAudioEventDetectedResult, CandidateAudioEventModelDescriptor (+8 more)
+
+### Community 85 - "highlightNarrative.ts"
+Cohesion: 0.29
+Nodes (14): audienceReactionExplanation(), audioRange(), buildHighlightNarrative(), chatRange(), eventExplanation(), HighlightInterpretationBasis, recommendationExplanation(), relationBetween() (+6 more)
+
+### Community 86 - "fakeEvent"
+Cohesion: 0.18
+Nodes (5): ControlledOpenRequest, ControlledRequest, ControlledTransaction, fakeEvent(), FakeIndexedDbHarness
+
+### Community 87 - "highlightFusion.test.ts"
+Cohesion: 0.16
+Nodes (11): AudioHighlightCandidate, AudioHighlightCandidateEvidence, NormalizedSignalEvidence, chatCandidate(), chatEvidence(), TestVisualEvidence, UnifiedAudioEvidence, UnifiedChatEvidence (+3 more)
+
+### Community 88 - "candidateAudioEventEvidenceState.ts"
+Cohesion: 0.36
+Nodes (9): CandidateAudioEventEvidenceById, chronologicalDetectionOrder(), mergeCandidateAudioEventEvidence(), mergeDetectedResults(), sameBinding(), sameDetection(), sameDetectionList(), strengthRank() (+1 more)
+
+### Community 89 - "createReactionUnifiedCandidate"
+Cohesion: 0.31
+Nodes (10): createAudioEvidence(), createChatEvidence(), createReactionUnifiedCandidate(), createUnifiedCandidate(), createVisualEvidence(), finiteNumberOrDefault(), normalizedEvidence(), reactionReasonForSignalKinds() (+2 more)
+
+### Community 90 - "AudioFeatureAccumulator"
+Cohesion: 0.31
+Nodes (3): AudioFeatureAccumulator, clamp(), nextPowerOfTwo()
+
+### Community 91 - "EventFenceRejectionReason"
+Cohesion: 0.60
+Nodes (3): ChatAnalysisWorkerError, EventFenceRejectionReason, LocalAudioReactionAnalysisError
+
 ## Knowledge Gaps
-- **296 isolated node(s):** `name`, `private`, `version`, `type`, `node` (+291 more)
+- **352 isolated node(s):** `name`, `private`, `version`, `type`, `node` (+347 more)
   These have ≤1 connection - possible missing edges or undocumented components.
-- **11 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
+- **12 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
 ## Work-memory lessons
 
 **Preferred sources** — corroborated by past sessions; start here.
-- `App()` (6× useful, score=5.977856685) _(code changed — re-verify)_
-- `fuseHighlightCandidates()` (3× useful, score=2.987320908)
-- `selectChatHighlights()` (3× useful, score=2.987320908)
-- `selectVisualHighlightsFromSamples()` (3× useful, score=2.987320908)
+- `App()` (6× useful, score=5.976996166) _(code changed — re-verify)_
+- `fuseHighlightCandidates()` (3× useful, score=2.98689088)
+- `selectChatHighlights()` (3× useful, score=2.98689088)
+- `selectVisualHighlightsFromSamples()` (3× useful, score=2.98689088)
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
-- **Why does `IndexedDbAnalysisResultStore` connect `LocalMediaPreflightAdapters` to `AnalysisResultStore`, `App.tsx`, `이벤트 식별·펜싱`, `fakeEvent`, `localMediaPreflight.test.ts`?**
-  _High betweenness centrality (0.027) - this node is a cross-community bridge._
 - **Why does `analyzeLocalVideoVisuals()` connect `localVideoVisualAnalysis.ts` to `App.tsx`, `InMemoryAnalysisResultStore`, `eventFence.ts`, `loadVideoMetadata`, `localVideoVisualAnalysis.test.ts`?**
-  _High betweenness centrality (0.026) - this node is a cross-community bridge._
-- **Why does `LocalAudioReactionAnalysisProgress` connect `AudioFeatureAccumulator` to `inspectLocalMedia`, `App.tsx`, `localAudioReactionAnalysis.ts`?**
-  _High betweenness centrality (0.024) - this node is a cross-community bridge._
-- **Are the 5 inferred relationships involving `App()` (e.g. with `event()` and `initialTheme()`) actually correct?**
-  _`App()` has 5 INFERRED edges - model-reasoned connections that need verification._
+  _High betweenness centrality (0.037) - this node is a cross-community bridge._
+- **Why does `IndexedDbAnalysisResultStore` connect `LocalMediaPreflightAdapters` to `AnalysisResultStore`, `App.tsx`, `이벤트 식별·펜싱`, `fakeEvent`, `localMediaPreflight.test.ts`?**
+  _High betweenness centrality (0.023) - this node is a cross-community bridge._
+- **Why does `FakeVideoProbe` connect `FakeVideoProbe` to `localVideoVisualAnalysis.test.ts`, `loadVideoMetadata`?**
+  _High betweenness centrality (0.022) - this node is a cross-community bridge._
+- **Are the 6 inferred relationships involving `App()` (e.g. with `result()` and `event()`) actually correct?**
+  _`App()` has 6 INFERRED edges - model-reasoned connections that need verification._
 - **What connects `name`, `private`, `version` to the rest of the system?**
-  _296 weakly-connected nodes found - possible documentation gaps or missing edges._
+  _352 weakly-connected nodes found - possible documentation gaps or missing edges._
 - **Should `운영·릴리스 안전성` be split into smaller, more focused modules?**
   _Cohesion score 0.14130434782608695 - nodes in this community are weakly interconnected._
 - **Should `개인용 Pages 제품 경계` be split into smaller, more focused modules?**
