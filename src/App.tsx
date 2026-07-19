@@ -22,7 +22,10 @@ import {
   mergeCandidateAudioEventEvidence,
   type CandidateAudioEventEvidenceById,
 } from "./analysis/candidateAudioEventEvidenceState";
-import { buildCandidateAudioEventPresentation } from "./analysis/candidateAudioEventPresentation";
+import {
+  buildCandidateAudioEventPresentation,
+  candidateAudioEventKindLabel,
+} from "./analysis/candidateAudioEventPresentation";
 import {
   CANDIDATE_AUDIO_EVENT_MODEL_DTYPE,
   CANDIDATE_AUDIO_EVENT_MODEL_ID,
@@ -66,6 +69,12 @@ import {
 } from "./analysis/highlightFusion";
 import { buildHighlightNarrative } from "./analysis/highlightNarrative";
 import {
+  buildCandidateRankingProposal,
+  createCandidateRankingFingerprints,
+  type CandidateRankingEntry,
+  type CandidateRankingFingerprints,
+} from "./analysis/candidateRanking";
+import {
   createAnalysisRun,
   reduceAnalysisRun,
   type AnalysisRunEvent,
@@ -102,6 +111,12 @@ import {
   type CandidateBoundaryRejectionReason,
   type CandidateBoundaryRevision,
 } from "./domain/candidateBoundaryRevision";
+import {
+  candidateRankingViewHasSessionWork,
+  createCandidateRankingViewState,
+  projectCandidateOrder,
+  transitionCandidateRankingView,
+} from "./domain/candidateRankingView";
 import {
   createSourceCheck,
   reduceSourceCheck,
@@ -182,6 +197,11 @@ interface CandidateBoundaryFeedback {
   readonly message: string;
 }
 
+interface CandidateRankingFeedback {
+  readonly tone: "success" | "warning";
+  readonly message: string;
+}
+
 type AnalysisSelectionSummary = DurableAnalysisSelectionSummary;
 type AnalysisCoverageSummary = DurableAnalysisCoverageSummary;
 type AnalysisGapApprovalEvidence = DurableAnalysisGapApprovalEvidence;
@@ -199,7 +219,7 @@ interface AudioAnalysisOutcome {
   readonly coverageComplete: boolean;
 }
 
-const APP_VERSION = "0.3.4";
+const APP_VERSION = "0.3.5";
 const PERSISTENCE_SCHEMA_VERSION = "0.3.0";
 const SIGNAL_ENGINE_VERSION = "streamer-reaction-fast-pass-v1";
 const MAX_CHAT_FILE_BYTES = 32 * 1024 * 1024;
@@ -341,6 +361,56 @@ function candidateAudioEventGapStatusLabel(
     case "CLASSIFICATION_FAILED":
       return "이 후보 반응 분류 실패 · 후보 유지";
   }
+}
+
+function candidateElementId(prefix: string, candidateId: string): string {
+  return `${prefix}-${encodeURIComponent(candidateId)}`;
+}
+
+function candidateRankingReasonText(
+  entry: CandidateRankingEntry,
+  audioEventEvidence: CandidateAudioEventEvidenceById[string] | undefined,
+): string {
+  const hasStrongAudioEvent = entry.reasonCodes.includes("strong-audio-event");
+  const hasPossibleAudioEvent = entry.reasonCodes.includes("possible-audio-event");
+  if (
+    (hasStrongAudioEvent || hasPossibleAudioEvent) &&
+    audioEventEvidence?.status === "detected"
+  ) {
+    const labels = [
+      ...new Set(
+        audioEventEvidence.detections
+          .filter(({ strength }) =>
+            hasStrongAudioEvent ? strength === "strong" : strength === "possible",
+          )
+          .map(({ kind }) => candidateAudioEventKindLabel(kind)),
+      ),
+    ];
+    const reactionLabel = labels.length > 0 ? labels.join("·") : "반응 종류";
+    return hasStrongAudioEvent
+      ? `혼합 오디오에서 ${reactionLabel} 단서가 뚜렷해 먼저 확인하도록 제안했어요.`
+      : `혼합 오디오에서 ${reactionLabel} 가능성이 있어 조금 먼저 확인하도록 제안했어요.`;
+  }
+  if (entry.reasonCodes.includes("audio-chat-agreement")) {
+    return "방송 오디오 반응과 채팅 반응이 같은 구간에 모였어요.";
+  }
+  if (entry.reasonCodes.includes("fast-audio-reaction")) {
+    return "방송 오디오의 반응 정점이 잡혀 먼저 재생해 볼 가치가 있어요.";
+  }
+  if (entry.reasonCodes.includes("fast-chat-reaction")) {
+    return "채팅 반응이 평소보다 몰린 구간이에요.";
+  }
+  return "화면 변화만 남은 탐색 후보라 다른 반응 후보 뒤에서 확인하도록 제안했어요.";
+}
+
+function candidateRankingTranscriptNote(entry: CandidateRankingEntry): string | null {
+  if (entry.reasonCodes.includes("grounded-transcript-cue")) {
+    return "재생해 볼 대사 위치도 있어요. 대사 유무 자체는 순위 점수에 더하지 않았어요.";
+  }
+  if (entry.reasonCodes.includes("provisional-transcript-cue")) {
+    return "자동 전사 추정 위치도 있지만 틀릴 수 있어 순위 점수에는 더하지 않았어요.";
+  }
+  return null;
 }
 
 function toDurableCandidate(candidate: UnifiedHighlightCandidate): DurableHighlightCandidate {
@@ -620,6 +690,16 @@ function App() {
     useState<string | null>(null);
   const [candidateAudioEventStartPending, setCandidateAudioEventStartPending] =
     useState(false);
+  const [candidateRankingView, setCandidateRankingView] = useState(() =>
+    createCandidateRankingViewState({
+      rankingSessionId: createOperationId("ranking-session"),
+      candidateSetFingerprint: "candidate-set-empty",
+      evidenceFingerprint: "ranking-evidence-empty",
+      canonicalOrderIds: [],
+    }),
+  );
+  const [candidateRankingFeedback, setCandidateRankingFeedback] =
+    useState<CandidateRankingFeedback | null>(null);
   const [lastExportFormat, setLastExportFormat] =
     useState<HighlightExportFormat | null>(null);
   const [copyStatus, setCopyStatus] = useState<"idle" | "copied" | "failed">("idle");
@@ -646,6 +726,7 @@ function App() {
   const candidateAudioEventStartPendingRef = useRef(false);
   const candidateAudioEventMachine = useRef<CandidateAudioEventRunState | null>(null);
   const candidateAudioEventIdentity = useRef<CandidateAudioEventWorkerIdentity | null>(null);
+  const candidateRankingRevision = useRef(0);
   const recoveryOperationEpoch = useRef(0);
   const [appSessionId] = useState(() => createOperationId("session"));
   const [writerEpoch] = useState(() => Date.now());
@@ -908,6 +989,57 @@ function App() {
     preflight.capabilities.worker &&
     preflight.capabilities.webAssembly;
   const candidateRefinementBusy = candidatePassBBusy || candidateAudioEventBusy;
+  const candidateAudioEventRankingCoverage =
+    candidateAudioEventRun?.status === "completed" &&
+    candidateAudioEventRun.snapshot.candidates.length === candidates.length &&
+    candidates.every((candidate) =>
+      candidateAudioEventRun.snapshot.candidates.some(
+        ({ candidateId }) => candidateId === candidate.id,
+      ) && candidateAudioEventEvidenceById[candidate.id] !== undefined,
+    )
+      ? "complete"
+      : "incomplete";
+  const candidateRankingFingerprints = useMemo<CandidateRankingFingerprints | null>(() => {
+    if (candidates.length === 0) {
+      return null;
+    }
+    try {
+      return createCandidateRankingFingerprints(
+        candidates,
+        candidatePassBEvidenceById,
+        candidateAudioEventEvidenceById,
+        candidateAudioEventRankingCoverage,
+      );
+    } catch {
+      return null;
+    }
+  }, [
+    candidateAudioEventEvidenceById,
+    candidateAudioEventRankingCoverage,
+    candidatePassBEvidenceById,
+    candidates,
+  ]);
+  const canonicalCandidateIds = useMemo(
+    () => candidates.map(({ id }) => id),
+    [candidates],
+  );
+  const rankingCandidateSetMatches =
+    candidateRankingFingerprints !== null &&
+    candidateRankingView.candidateSetFingerprint ===
+      candidateRankingFingerprints.candidateSetFingerprint &&
+    candidateRankingView.canonicalOrderIds.length === canonicalCandidateIds.length &&
+    candidateRankingView.canonicalOrderIds.every(
+      (candidateId, index) => candidateId === canonicalCandidateIds[index],
+    );
+  const rankingEvidenceMatches =
+    candidateRankingFingerprints !== null &&
+    candidateRankingView.evidenceFingerprint ===
+      candidateRankingFingerprints.evidenceFingerprint;
+
+  const orderedCandidates = useMemo(
+    () => projectCandidateOrder(candidates, candidateRankingView),
+    [candidateRankingView, candidates],
+  );
   const sourceCheckBusy =
     sourceCheck !== null && ["checking", "committing", "cancelling"].includes(sourceCheck.status);
   const showStatusBar =
@@ -936,7 +1068,7 @@ function App() {
   const previewCandidateNumber =
     previewCandidateId === null
       ? 0
-      : candidates.findIndex(({ id }) => id === previewCandidateId) + 1;
+      : orderedCandidates.findIndex(({ id }) => id === previewCandidateId) + 1;
   const reviewStarted = candidates.some(({ reviewState }) => reviewState !== "unreviewed");
   const boundaryWorkStarted = Object.values(boundaryRevisions).some(
     ({ revision }) => revision > 0,
@@ -945,8 +1077,13 @@ function App() {
   const candidatePassBWorkStarted = Object.keys(candidatePassBEvidenceById).length > 0;
   const candidateAudioEventWorkStarted =
     Object.keys(candidateAudioEventEvidenceById).length > 0;
+  const candidateRankingWorkStarted =
+    candidateRankingViewHasSessionWork(candidateRankingView);
   const unsavedSessionWorkStarted =
-    reviewWorkStarted || candidatePassBWorkStarted || candidateAudioEventWorkStarted;
+    reviewWorkStarted ||
+    candidatePassBWorkStarted ||
+    candidateAudioEventWorkStarted ||
+    candidateRankingWorkStarted;
   const reviewCompleted =
     candidates.length > 0 && candidates.every(({ reviewState }) => reviewState !== "unreviewed");
   const analysisFinishedWithoutCandidates =
@@ -1000,7 +1137,7 @@ function App() {
       return true;
     }
     return window.confirm(
-      "승인·제외 판단, 시작·끝 조정, 자세히 찾은 반응 종류와 대사 단서는 현재 탭에만 있어요. 지금 이동하면 방금 한 작업이 사라집니다. 그래도 계속할까요?",
+      "승인·제외 판단, 시작·끝 조정, 자세히 찾은 반응 종류·대사 단서와 추천 검토 순서는 현재 탭에만 있어요. 지금 이동하면 방금 한 작업이 사라집니다. 그래도 계속할까요?",
     );
   }, [analysisBusy, candidateRefinementBusy, unsavedSessionWorkStarted]);
 
@@ -1042,6 +1179,34 @@ function App() {
     setCandidateAudioEventStartPending(false);
   }, []);
 
+  const resetCandidateRanking = useCallback(
+    (nextCandidates: readonly ReviewedCandidate[] = []): void => {
+      const fingerprints =
+        nextCandidates.length === 0
+          ? {
+              candidateSetFingerprint: "candidate-set-empty",
+              evidenceFingerprint: "ranking-evidence-empty",
+            }
+          : createCandidateRankingFingerprints(
+              nextCandidates,
+              {},
+              {},
+              "incomplete",
+            );
+      candidateRankingRevision.current = 0;
+      setCandidateRankingView(
+        createCandidateRankingViewState({
+          rankingSessionId: createOperationId("ranking-session"),
+          candidateSetFingerprint: fingerprints.candidateSetFingerprint,
+          evidenceFingerprint: fingerprints.evidenceFingerprint,
+          canonicalOrderIds: nextCandidates.map(({ id }) => id),
+        }),
+      );
+      setCandidateRankingFeedback(null);
+    },
+    [],
+  );
+
   const resetDownstream = useCallback(() => {
     analysisOperationEpoch.current += 1;
     analysisStartOperation.current = null;
@@ -1053,6 +1218,7 @@ function App() {
     setAnalysisRun(null);
     setSelectionResult(null);
     setCandidates([]);
+    resetCandidateRanking();
     resetBoundarySession();
     resetCandidatePassB();
     resetCandidateAudioEvent();
@@ -1064,7 +1230,12 @@ function App() {
     setExportError(null);
     setPreviewCandidateId(null);
     setOpenedRecoveredResult(null);
-  }, [resetBoundarySession, resetCandidateAudioEvent, resetCandidatePassB]);
+  }, [
+    resetBoundarySession,
+    resetCandidateAudioEvent,
+    resetCandidatePassB,
+    resetCandidateRanking,
+  ]);
 
   const inspectSelectedFile = useCallback(
     async (file: File) => {
@@ -1406,6 +1577,7 @@ function App() {
 
     setSelectionResult(null);
     setCandidates([]);
+    resetCandidateRanking();
     resetBoundarySession();
     setAnalysisError(null);
     setAnalysisCancelPending(false);
@@ -1898,14 +2070,14 @@ function App() {
           "The reopened analysis result did not prove complete coverage.",
         );
       }
-      setSelectionResult(reopenedPayload.summary);
-      setCandidates(
-        reopenedPayload.candidates.map((candidate) => ({
+      const reopenedCandidates = reopenedPayload.candidates.map((candidate) => ({
           ...hydrateDurableCandidate(candidate),
           reviewState: "unreviewed" as const,
           approvedBoundaryRevision: null,
-        })),
-      );
+        }));
+      setSelectionResult(reopenedPayload.summary);
+      setCandidates(reopenedCandidates);
+      resetCandidateRanking(reopenedCandidates);
       setAnalysisRun(machine);
       setAnalysisProgress(null);
       setAudioAnalysisProgress(null);
@@ -1949,14 +2121,15 @@ function App() {
               completedMachine.status === "completed" ||
               completedMachine.status === "completedWithGaps"
             ) {
-              setSelectionResult(durableCompletion.finalResult.result.summary);
-              setCandidates(
+              const completedCandidates =
                 durableCompletion.finalResult.result.candidates.map((candidate) => ({
                   ...hydrateDurableCandidate(candidate),
                   reviewState: "unreviewed" as const,
                   approvedBoundaryRevision: null,
-                })),
-              );
+                }));
+              setSelectionResult(durableCompletion.finalResult.result.summary);
+              setCandidates(completedCandidates);
+              resetCandidateRanking(completedCandidates);
               setAnalysisRun(completedMachine);
               setAnalysisProgress(null);
               setAudioAnalysisProgress(null);
@@ -2867,6 +3040,167 @@ function App() {
     }
   };
 
+  const createCandidateRankingProposalForReview = (): void => {
+    if (
+      candidates.length === 0 ||
+      currentAnalysisRunId === null ||
+      candidateRankingFingerprints === null ||
+      !rankingCandidateSetMatches ||
+      candidateRefinementBusy ||
+      candidateRankingView.appliedProposalId !== null
+    ) {
+      setCandidateRankingFeedback({
+        tone: "warning",
+        message:
+          candidateRefinementBusy
+            ? "자세한 AI 분석이 끝난 뒤 최신 단서로 추천 순서를 만들 수 있어요."
+            : candidateRankingView.appliedProposalId !== null
+              ? "먼저 이전 순서로 되돌린 뒤 최신 추천을 다시 만들어 주세요."
+              : "현재 후보와 단서를 안전하게 확인한 뒤 다시 시도해 주세요.",
+      });
+      return;
+    }
+
+    try {
+      let rankingViewForProposal = candidateRankingView;
+      if (!rankingEvidenceMatches) {
+        const evidenceTransition = transitionCandidateRankingView(
+          rankingViewForProposal,
+          {
+            type: "EVIDENCE_CHANGED",
+            rankingSessionId: rankingViewForProposal.rankingSessionId,
+            candidateSetFingerprint: rankingViewForProposal.candidateSetFingerprint,
+            evidenceFingerprint: candidateRankingFingerprints.evidenceFingerprint,
+          },
+        );
+        if (!evidenceTransition.accepted) {
+          throw new Error("The ranking evidence snapshot could not be synchronized.");
+        }
+        rankingViewForProposal = evidenceTransition.state;
+      }
+      const nextRevision = candidateRankingRevision.current + 1;
+      const proposal = buildCandidateRankingProposal({
+        proposalId: createOperationId("ranking-proposal"),
+        rankingSessionId: rankingViewForProposal.rankingSessionId,
+        rankingRevision: nextRevision,
+        analysisRunId: currentAnalysisRunId,
+        expectedViewOrderRevision: rankingViewForProposal.viewOrderRevision,
+        candidates: orderedCandidates,
+        passBEvidenceById: candidatePassBEvidenceById,
+        audioEventEvidenceById: candidateAudioEventEvidenceById,
+        audioEventCoverage: candidateAudioEventRankingCoverage,
+      });
+      const transition = transitionCandidateRankingView(rankingViewForProposal, {
+        type: "PROPOSAL_READY",
+        proposal,
+      });
+      if (!transition.accepted) {
+        setCandidateRankingFeedback({
+          tone: "warning",
+          message:
+            "후보 단서가 방금 바뀌어 이 제안을 열지 않았어요. 최신 상태에서 한 번 더 눌러 주세요.",
+        });
+        return;
+      }
+      candidateRankingRevision.current = nextRevision;
+      setCandidateRankingView(transition.state);
+      setCandidateRankingFeedback({
+        tone: "success",
+        message:
+          proposal.changedPositionCount > 0
+            ? `후보 ${proposal.changedPositionCount}개의 검토 위치가 달라지는 제안을 만들었어요. 아직 목록은 바뀌지 않았어요.`
+            : "현재 목록이 이미 최신 추천 순서와 같아요. 후보별 근거를 펼쳐 확인할 수 있어요.",
+      });
+    } catch {
+      setCandidateRankingFeedback({
+        tone: "warning",
+        message:
+          "추천 순서를 안전하게 만들지 못했어요. 기존 후보와 검토 순서는 그대로예요.",
+      });
+    }
+  };
+
+  const applyCandidateRankingProposalForReview = (): void => {
+    const proposalView = candidateRankingView.latestProposal;
+    if (
+      proposalView === null ||
+      proposalView.disposition !== "fresh" ||
+      candidateRankingFingerprints === null ||
+      !rankingCandidateSetMatches ||
+      !rankingEvidenceMatches ||
+      proposalView.proposal.changedPositionCount === 0
+    ) {
+      return;
+    }
+    const transition = transitionCandidateRankingView(candidateRankingView, {
+      type: "APPLY_PROPOSAL",
+      rankingSessionId: candidateRankingView.rankingSessionId,
+      proposalId: proposalView.proposal.proposalId,
+      candidateSetFingerprint: candidateRankingFingerprints.candidateSetFingerprint,
+      evidenceFingerprint: candidateRankingFingerprints.evidenceFingerprint,
+      expectedViewOrderRevision: candidateRankingView.viewOrderRevision,
+    });
+    if (!transition.accepted) {
+      setCandidateRankingFeedback({
+        tone: "warning",
+        message:
+          "단서나 목록이 방금 바뀌어 이전 제안은 적용하지 않았어요. 최신 추천을 다시 만들어 주세요.",
+      });
+      return;
+    }
+    setCandidateRankingView(transition.state);
+    setCandidateRankingFeedback({
+      tone: "success",
+      message:
+        "추천 검토 순서를 적용했어요. 승인·제외 판단, 다듬은 시작·끝과 재생 위치는 그대로예요.",
+    });
+  };
+
+  const undoCandidateRankingOrder = (): void => {
+    if (candidateRankingView.appliedProposalId === null) {
+      return;
+    }
+    const transition = transitionCandidateRankingView(candidateRankingView, {
+      type: "UNDO_APPLIED_ORDER",
+      rankingSessionId: candidateRankingView.rankingSessionId,
+      appliedProposalId: candidateRankingView.appliedProposalId,
+      expectedViewOrderRevision: candidateRankingView.viewOrderRevision,
+    });
+    if (!transition.accepted) {
+      setCandidateRankingFeedback({
+        tone: "warning",
+        message: "이전 순서를 안전하게 복원하지 못했어요. 현재 목록은 바꾸지 않았어요.",
+      });
+      return;
+    }
+    setCandidateRankingView(transition.state);
+    setCandidateRankingFeedback({
+      tone: "success",
+      message:
+        "추천 적용 전 순서로 돌아왔어요. 승인·제외와 시작·끝은 그대로예요.",
+    });
+  };
+
+  const dismissCandidateRankingProposal = (): void => {
+    const proposalView = candidateRankingView.latestProposal;
+    if (proposalView === null || candidateRankingView.appliedProposalId !== null) {
+      return;
+    }
+    const transition = transitionCandidateRankingView(candidateRankingView, {
+      type: "DISMISS_PROPOSAL",
+      rankingSessionId: candidateRankingView.rankingSessionId,
+      proposalId: proposalView.proposal.proposalId,
+      expectedViewOrderRevision: candidateRankingView.viewOrderRevision,
+    });
+    if (transition.accepted) {
+      setCandidateRankingView(transition.state);
+      setCandidateRankingFeedback({
+        tone: "success",
+        message: "현재 검토 순서를 그대로 유지할게요.",
+      });
+    }
+  };
+
   const updateReview = (candidateId: string, reviewState: CandidateReviewState): void => {
     const currentBoundaryRevision = boundaryRevisions[candidateId]?.revision ?? 0;
     setCandidates((current) =>
@@ -3066,11 +3400,11 @@ function App() {
       });
       return;
     }
-    if (previewCandidateNumber <= 0) {
+    if (previewCandidateId === null || previewCandidateNumber <= 0) {
       return;
     }
     const summary = document.getElementById(
-      `candidate-boundary-summary-${previewCandidateNumber - 1}`,
+      candidateElementId("candidate-boundary-summary", previewCandidateId),
     );
     summary?.focus({ preventScroll: true });
     summary?.scrollIntoView({
@@ -3121,14 +3455,14 @@ function App() {
     setChatError(null);
     setChatImportStatus("idle");
     setChatOffsetSeconds(recovered.finalResult.result.input.chat.offsetMs / 1_000);
-    setSelectionResult(recovered.finalResult.result.summary);
-    setCandidates(
-      recovered.finalResult.result.candidates.map((candidate) => ({
+    const recoveredCandidates = recovered.finalResult.result.candidates.map((candidate) => ({
         ...hydrateDurableCandidate(candidate),
         reviewState: "unreviewed" as const,
         approvedBoundaryRevision: null,
-      })),
-    );
+      }));
+    setSelectionResult(recovered.finalResult.result.summary);
+    setCandidates(recoveredCandidates);
+    resetCandidateRanking(recoveredCandidates);
     setLastExportFormat(null);
     setCopyStatus("idle");
     setExportError(null);
@@ -3249,6 +3583,30 @@ function App() {
   const firstChatWarning = useMemo(
     () => chatImport?.diagnostics.find(({ severity }) => severity === "warning")?.message ?? null,
     [chatImport],
+  );
+  const candidateRankingProposalView = candidateRankingView.latestProposal;
+  const candidateRankingProposal = candidateRankingProposalView?.proposal ?? null;
+  const candidateRankingProposalDisposition =
+    candidateRankingProposalView === null
+      ? null
+      : candidateRankingProposalView.disposition === "stale" ||
+          !rankingCandidateSetMatches ||
+          !rankingEvidenceMatches
+        ? "stale"
+        : "fresh";
+  const candidateRankingApplied = candidateRankingView.appliedProposalId !== null;
+  const candidateRankingPreviewEntries = useMemo(
+    () =>
+      candidateRankingProposal === null
+        ? []
+        : [...candidateRankingProposal.entries]
+            .sort(
+              (left, right) =>
+                left.proposedOrdinal - right.proposedOrdinal ||
+                left.candidateId.localeCompare(right.candidateId),
+            )
+            .slice(0, 5),
+    [candidateRankingProposal],
   );
 
   return (
@@ -3798,7 +4156,7 @@ function App() {
                 </div>
               )}
 
-              {candidates.length > 0 && (
+              {candidates.length > 1 && (
                 <section
                   className="rh-passb-panel rh-audio-event-panel"
                   aria-labelledby="audio-event-title"
@@ -3973,6 +4331,179 @@ function App() {
                 </section>
               )}
 
+              {candidates.length > 0 && (
+                <section
+                  className="rh-ranking-panel"
+                  aria-labelledby="candidate-ranking-title"
+                >
+                  <div className="rh-ranking-heading">
+                    <div>
+                      <p className="rh-eyebrow">AI 검토 도우미 · 여러 후보 우선순위</p>
+                      <h4 id="candidate-ranking-title">
+                        {candidateRankingProposalView === null
+                          ? "어떤 후보부터 볼지 다시 정리할까요?"
+                          : candidateRankingProposalDisposition === "stale"
+                            ? candidateRankingApplied
+                              ? "새 단서가 생겼지만 목록은 그대로 두었어요"
+                              : "이 추천은 새 단서보다 오래됐어요"
+                            : candidateRankingApplied
+                              ? "추천 검토 순서를 적용했어요"
+                              : "AI가 후보 순서를 다시 살펴봤어요"}
+                      </h4>
+                      <p>
+                        방송 오디오와 채팅 반응을 중심으로 보고 화면 변화는 문맥으로만 낮게
+                        반영해요. 모든 후보를 빠짐없이 끝낸 반응 종류 분석만 오디오 근거를 조금
+                        보강하고, 자동 전사 문구는 순위 점수에 넣지 않아요.
+                      </p>
+                    </div>
+                    <span className="rh-ranking-count" aria-hidden="true">
+                      {candidates.length}
+                    </span>
+                  </div>
+
+                  <div className="rh-ranking-actions">
+                    {candidateRankingApplied ? (
+                      <button
+                        className="btn btn-secondary"
+                        type="button"
+                        onClick={undoCandidateRankingOrder}
+                      >
+                        이전 순서로 되돌리기
+                      </button>
+                    ) : candidateRankingProposalDisposition === "fresh" ? (
+                      <>
+                        <button
+                          className="btn btn-primary"
+                          type="button"
+                          disabled={
+                            candidateRefinementBusy ||
+                            candidateRankingProposal?.changedPositionCount === 0
+                          }
+                          onClick={applyCandidateRankingProposalForReview}
+                        >
+                          {candidateRankingProposal?.changedPositionCount === 0
+                            ? "이미 추천 순서예요"
+                            : "추천 순서 적용"}
+                        </button>
+                        <button
+                          className="btn btn-secondary"
+                          type="button"
+                          onClick={dismissCandidateRankingProposal}
+                        >
+                          지금 순서 유지
+                        </button>
+                      </>
+                    ) : (
+                      <button
+                        className="btn btn-primary"
+                        type="button"
+                        disabled={
+                          candidateRefinementBusy ||
+                          candidateRankingFingerprints === null ||
+                          !rankingCandidateSetMatches
+                        }
+                        onClick={createCandidateRankingProposalForReview}
+                      >
+                        {candidateRefinementBusy
+                          ? "자세한 분석이 끝나면 가능"
+                          : candidateRankingProposalDisposition === "stale"
+                            ? "최신 단서로 다시 정리"
+                            : "AI 추천 순서 만들기"}
+                      </button>
+                    )}
+                    {!candidateRankingApplied &&
+                      candidateRankingProposalDisposition === "stale" && (
+                        <button
+                          className="btn btn-secondary"
+                          type="button"
+                          onClick={dismissCandidateRankingProposal}
+                        >
+                          이 제안 닫기
+                        </button>
+                      )}
+                  </div>
+
+                  <div
+                    className="rh-ranking-status"
+                    data-tone={candidateRankingFeedback?.tone ?? "neutral"}
+                    role="status"
+                    aria-live="polite"
+                  >
+                    <strong>
+                      {candidateRankingProposal === null
+                        ? "추천을 만들어도 현재 카드 순서는 바로 바뀌지 않아요."
+                        : candidateRankingProposalDisposition === "stale"
+                          ? "오래된 제안은 새로 적용할 수 없어요."
+                          : candidateRankingApplied
+                            ? "현재 카드만 추천 검토 순서로 보이고 있어요."
+                            : candidateRankingProposal.changedPositionCount > 0
+                              ? `${candidateRankingProposal.changedPositionCount}개 후보의 위치가 달라질 수 있어요.`
+                              : "현재 카드 순서가 이미 최신 추천과 같아요."}
+                    </strong>
+                    {candidateRankingFeedback !== null && (
+                      <p>{candidateRankingFeedback.message}</p>
+                    )}
+                    <p>
+                      추천은 검토 차례만 바꿉니다. 승인·제외, 시작·끝, 재생 위치는 후보 ID로
+                      그대로 이어지고 다운로드 결과는 편집하기 쉬운 시간순을 유지해요.
+                    </p>
+                    {candidateAudioEventRankingCoverage !== "complete" && (
+                      <p>
+                        반응 종류 AI가 모든 후보를 빠짐없이 끝내지 않았다면 일부 후보만 유리해지지
+                        않도록 그 결과는 이번 순위에 더하지 않아요.
+                      </p>
+                    )}
+                  </div>
+
+                  {candidateRankingProposal !== null && (
+                    <details className="rh-ranking-preview">
+                      <summary>추천 상위 장면과 순서가 바뀌는 이유 보기</summary>
+                      <ol>
+                        {candidateRankingPreviewEntries.map((entry) => {
+                          const candidate = candidates.find(
+                            ({ id }) => id === entry.candidateId,
+                          );
+                          if (candidate === undefined) {
+                            return null;
+                          }
+                          const transcriptNote = candidateRankingTranscriptNote(entry);
+                          const movement =
+                            entry.previousOrdinal === entry.proposedOrdinal
+                              ? `현재 ${entry.previousOrdinal}번째 유지`
+                              : `현재 ${entry.previousOrdinal}번째 → 추천 ${entry.proposedOrdinal}번째`;
+                          return (
+                            <li key={entry.candidateId}>
+                              <div>
+                                <strong>{formatDuration(candidate.peakMs)} 부근</strong>
+                                <span>{movement}</span>
+                              </div>
+                              <p>
+                                {candidateRankingReasonText(
+                                  entry,
+                                  candidateAudioEventEvidenceById[entry.candidateId],
+                                )}
+                              </p>
+                              {transcriptNote !== null && <small>{transcriptNote}</small>}
+                            </li>
+                          );
+                        })}
+                      </ol>
+                      {candidateRankingProposal.entries.length > 5 && (
+                        <p className="rh-help">
+                          먼저 볼 5개를 보여드렸어요. 적용하면 나머지 후보도 빠짐없이 새 순서로
+                          이어집니다.
+                        </p>
+                      )}
+                      <p className="rh-ranking-caution">
+                        이 값은 확률이나 정확도가 아니라 하루치 후보끼리 비교한 상대 순서예요.
+                        오디오 종류는 스트리머 마이크와 게임·영상 소리를 분리하지 못하므로 직접
+                        재생해 확인해 주세요.
+                      </p>
+                    </details>
+                  )}
+                </section>
+              )}
+
               {candidates.length === 0 ? (
                 <div className="rh-empty-state">
                   <strong>뚜렷한 방송 오디오·시청자 반응을 찾지 못했어요.</strong>
@@ -4032,7 +4563,7 @@ function App() {
                     role="list"
                     aria-label="AI가 찾은 클립 후보들"
                   >
-                  {candidates.map((candidate, index) => {
+                  {orderedCandidates.map((candidate, index) => {
                     const narrative = buildCandidatePassBPresentation(
                       candidate.id,
                       buildHighlightNarrative(candidate),
@@ -4116,7 +4647,7 @@ function App() {
                       className="rh-candidate-card rh-candidate-card--signal"
                       data-review-state={candidate.reviewState}
                       role="listitem"
-                      aria-labelledby={`candidate-title-${index}`}
+                      aria-labelledby={candidateElementId("candidate-title", candidate.id)}
                       key={candidate.id}
                     >
                       <div className="rh-candidate-number" aria-hidden="true">#{index + 1}</div>
@@ -4127,6 +4658,9 @@ function App() {
                           <span className="rh-review-badge" data-state={candidate.reviewState}>
                             {candidate.reviewState === "approved" ? "사용하기로 함" : candidate.reviewState === "rejected" ? "제외함" : "검토 전"}
                           </span>
+                          {candidateRankingApplied && (
+                            <span className="rh-ranking-badge">추천 검토 순서</span>
+                          )}
                           <span className="rh-interpretation-badge" data-basis={narrative.basis}>
                             {narrative.basisLabel}
                           </span>
@@ -4155,7 +4689,10 @@ function App() {
                             </span>
                           )}
                         </div>
-                        <p className="rh-candidate-title" id={`candidate-title-${index}`}>
+                        <p
+                          className="rh-candidate-title"
+                          id={candidateElementId("candidate-title", candidate.id)}
+                        >
                           후보 {index + 1} · {narrative.title}
                         </p>
                         <p className="rh-candidate-reason">{narrative.whyRecommended}</p>
@@ -4329,7 +4866,10 @@ function App() {
                         </details>
                         <details className="rh-boundary-editor">
                           <summary
-                            id={`candidate-boundary-summary-${index}`}
+                            id={candidateElementId(
+                              "candidate-boundary-summary",
+                              candidate.id,
+                            )}
                             aria-label={`후보 ${index + 1} 시작·끝 다듬기`}
                           >
                             시작·끝 다듬기
@@ -4494,9 +5034,10 @@ function App() {
               </p>
               {unsavedSessionWorkStarted && (
                 <p className="rh-notice" data-tone="warning" role="status">
-                  이 승인·제외 판단, 시작·끝 조정, 자동 전사 추정과 오디오 반응 종류 단서는 아직 저장되지 않았어요.
-                  다른 영상이나 결과로 이동하면 확인을 먼저 물어봅니다. 두 AI 단서는 현재 다운로드에도
-                  포함되지 않으니, 필요한 후보를 직접 재생해 확인한 뒤 승인해 주세요.
+                  이 승인·제외 판단, 시작·끝 조정, 자동 전사 추정, 오디오 반응 종류 단서와 추천 검토
+                  순서는 아직 저장되지 않았어요. 다른 영상이나 결과로 이동하면 확인을 먼저 물어봅니다.
+                  정밀 AI 단서와 검토 순서는 현재 다운로드에도 포함되지 않으니, 필요한 후보를 직접
+                  재생해 확인한 뒤 승인해 주세요.
                 </p>
               )}
 

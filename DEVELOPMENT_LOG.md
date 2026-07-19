@@ -718,3 +718,31 @@
 - 직접 모델 smoke에서 공식 ESC-50 웃음 샘플은 Snicker/Chuckle/Laughter, 박수 샘플은 Clapping/Applause로 검출됐고, 440Hz 단일 사인파는 제품 allowlist 점수가 모두 매우 낮았다. Worker 안의 고정 model revision, sigmoid 경로, hashed WASM 참조와 filename 미조회도 확인했다.
 - 두 차례 독립 감사에서 배포 차단 P0/P1은 남지 않았다. Graphify 갱신 뒤 `App() → runCandidateAudioEventWorker()`와 `App() → mergeCandidateAudioEventEvidence()`가 각각 직접 EXTRACTED call edge이며, evidence merge가 전용 모듈·테스트에 연결된 구조를 재확인했다.
 - 100초 합성 MP4에 30초 웃음과 70초 박수를 넣어 브라우저 종단 smoke를 시도했다. Chrome 확장의 `Allow access to file URLs`를 켜고 확장 연결·새 탭을 다시 만든 뒤에도 자동화 API가 native file chooser event를 내지 않아 fixture 주입 단계에서 멈췄다. 앱의 preflight나 Worker가 실패한 증거가 아니므로 정적·모델·단위 검증과 구분하며, `파일 선택 → fast pass → 모델 다운로드 → 분류 → cue seek` 브라우저 완주는 아직 확인하지 않았다고 기록한다.
+
+## 2026-07-20 — 앱 0.3.5 설명 가능한 검토 우선순위 제안 착수
+
+### 구현 전 계약
+
+- 기존 후보 배열을 정렬해 덮어쓰지 않고, 후보 ID의 완전한 permutation을 가진 별도 `CandidateRankingProposal`과 화면 projection 상태를 둔다. 제안 생성, 적용, 되돌리기를 서로 다른 사용자 행동으로 만든다.
+- fast-pass 점수 위에 이미 결합된 방송 오디오·채팅·화면 수치를 다시 가산하지 않는다. 후보가 보존한 normalized evidence를 0~10,000 정수 basis points의 `audioFamily 6,000 + chat 3,000 + visual 500 + audio·chat 합의 500`으로 한 번만 다시 조합하고 기존 점수순은 동률 안정화에만 쓴다. 후보 전용 오디오 사건의 가장 강한 `strong | possible` 하나는 별도 모달리티가 아니라 같은 audioFamily 안에서만 제한적으로 보강하며, 현재 run이 모든 후보를 gap 없이 완료했을 때만 전 후보에 적용한다.
+- provisional transcript는 재생 위치와 설명 보조일 뿐 하이라이트 가치 점수로 쓰지 않는다. 전사 문구로 확인되지 않은 사건·승패·감정·원인을 만들지 않는다.
+- 적용은 검토 카드 순서만 바꾼다. review·boundary·preview는 candidate ID로 보존하고, 승인 시간표와 모든 export는 계속 effective start time 순이다.
+- proposal은 session·후보 집합·근거·화면 순서 revision에 묶는다. 새 정밀 근거가 생기면 stale 처리하되 이미 적용한 순서를 자동으로 되돌리지 않는다. 새 분석·복구 결과를 열면 ranking session을 초기화한다.
+- 로컬 성공 경로 검증에는 사용자가 허용한 다운로드 폴더의 약 2시간짜리 H.264/AAC MP4를 읽기 전용으로 사용할 수 있다. 파일은 저장소로 복사하거나 외부로 업로드하지 않고, 브라우저 선택→fast pass→여러 후보→추천 순서 제안까지만 확인한다.
+
+### `0.3.5` 구현 결과
+
+- `candidateRanking`은 최대 12개 후보의 ID를 빠짐없이 한 번씩만 담은 결정적 제안을 만든다. 점수는 확률이나 절대 품질이 아니라 같은 하루 방송 안에서 먼저 검토할 상대적 근거량이며, UI에는 숫자 경쟁 대신 오디오 반응·채팅·화면 변화·교차 신호의 쉬운 이유를 보여 준다.
+- 후보별 normalized evidence는 오디오 60%, 채팅 30%, 화면 5%, 오디오·채팅 동시 신호 5%로 한 번만 조합한다. 오디오 사건 AI는 동일 오디오 계열의 남은 여지만 작게 보강하고, 모든 후보를 gap 없이 완료한 run이 아닐 때는 성공한 일부 후보만 이득을 보지 않도록 전부 0으로 통일한다. provisional transcript의 랭킹 기여는 항상 0이다.
+- 별도 `CandidateRankingViewState`가 canonical 후보 순서와 화면의 active 순서를 분리한다. 제안 도착만으로 목록을 바꾸지 않고 사용자의 `추천 순서 적용`과 `이전 순서로 되돌리기`만 화면 순서를 변경한다. session·후보 집합·근거 fingerprint·ranking/view revision·완전한 permutation을 모두 검사하며 늦거나 오래된 제안은 적용하지 않는다.
+- 후보 카드·미리보기 번호만 active 순서를 따르고, 검토 상태·사용자 경계 수정·현재 미리보기 후보·정밀 AI 입력·저장 결과는 후보 ID 기반 canonical 상태를 유지한다. 승인 시간표와 CSV·Markdown·JSON·클립보드 출력은 계속 실제 시작 시각순이다.
+- 후보 목록 위에 초심자용 제안 패널을 추가했다. `후보 순서 추천 만들기`로 먼저 결과를 살펴보고, 상위 5개 이동과 근거를 확인한 뒤 적용하거나 현재 순서를 유지할 수 있다. 적용 뒤에는 되돌리기를 제공하고, 정밀 근거가 바뀐 오래된 제안은 이유와 함께 다시 만들도록 안내한다.
+- 랭킹 적용은 세션 작업으로 간주해 새 원본·복구 결과를 열 때 확인하며, 새 분석 결과가 후보 집합을 교체하면 proposal·undo·active order를 함께 초기화한다. StreamSaver 참고 CSS는 수정하지 않고 전용 `retto-highlight.css`에만 패널 스타일을 추가했다.
+
+### `0.3.5` 배포 전 검증
+
+- `npm run check`: TypeScript, ESLint, 35개 파일의 466개 Vitest 테스트 통과. 신규 랭킹 계산 9개와 화면 순서 상태 44개 테스트가 결정성, 정확한 permutation, transcript 0점, 부분 오디오 사건 결과 무시, stale/revision/session fence, 명시적 적용·되돌리기, malformed 순서 fallback을 포함한다.
+- `npm run build`: 53 modules, 메인 JavaScript 482.22kB, CSS 52.96kB, audio Worker 333.57kB, candidate Pass B Worker 1,217.79kB, candidate audio-event Worker 1,226.70kB, 로컬 ONNX WASM 21,596.01kB로 production build 성공.
+- 로컬 production preview의 `/rettolight/`에서 초심자용 4단계 시작 화면, 최대 12시간·로컬 처리·여러 후보 안내가 정상 렌더링되고 브라우저 warning/error 로그가 없음을 확인했다.
+- 허용된 폴더의 가장 짧은 약 2시간 H.264/AAC MP4로 종단 smoke를 시도했지만, 앱 내 브라우저 자동화의 native file chooser event가 숨은 입력과 보이는 버튼 모두에서 열리지 않아 파일 주입 단계에서 중단했다. 앱 preflight나 분석 Worker 실패의 증거는 아니며, 실제 `파일 선택 → fast pass → 여러 후보 → 추천 순서 제안` 완주는 아직 별도 비차단 검증 항목으로 남긴다. 파일은 복사하거나 외부로 전송하지 않았다.
+- 최종 독립 감사에서 채팅 신호가 한 작성자의 여러 메시지일 수도 있는데 `여러 시청자`라고 단정하던 설명을 중립적인 `채팅 반응`으로 고쳤다. 내부 가중치는 초심자 기본 화면에서 숨기고, 비교할 순서가 없는 후보 1개에는 랭킹 패널을 표시하지 않는다. 코드·UX 감사 모두 배포 차단 P0/P1이 남지 않았다고 확인했다.

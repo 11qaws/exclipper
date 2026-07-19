@@ -5,23 +5,23 @@
     "semantic_hash": "c1c4de8f281bed5c23fcac7d3d7f52ad"
   },
   "DEVELOPMENT_LOG.md": {
-    "mtime": 1784479411.3198686,
-    "ast_hash": "da7ca6169111ae1f627ab456b36a270d",
+    "mtime": 1784486054.4721012,
+    "ast_hash": "f2c2748e57d90243cbf7fa3748ef08c1",
     "semantic_hash": ""
   },
   "OPERATIONS.md": {
-    "mtime": 1784479790.6199865,
-    "ast_hash": "af0b5aa1e39ac35707092bffd20f62ed",
+    "mtime": 1784484297.5930445,
+    "ast_hash": "00af552d217911389f036924972b396f",
     "semantic_hash": ""
   },
   "PRODUCT_PLAN.md": {
-    "mtime": 1784479790.6179872,
-    "ast_hash": "2e521cbbeb832bd1c27dc5830bb1db6b",
+    "mtime": 1784484297.5860364,
+    "ast_hash": "9ee250b2701ec0f5e64bbc3477e6472a",
     "semantic_hash": ""
   },
   "STATE_LIFECYCLE.md": {
-    "mtime": 1784477690.4883134,
-    "ast_hash": "a3aa26ba166570d84601b55a575ccb50",
+    "mtime": 1784484297.5900455,
+    "ast_hash": "f357e832aa565d2f1e893ccf818e143d",
     "semantic_hash": ""
   },
   "eslint.config.js": {
@@ -30,13 +30,13 @@
     "semantic_hash": ""
   },
   "package.json": {
-    "mtime": 1784477871.1391785,
-    "ast_hash": "5bd2962f15f5bd7498cd9873f464d9f2",
+    "mtime": 1784484927.6656451,
+    "ast_hash": "25557e6f467ea526e29a325e86f481e4",
     "semantic_hash": ""
   },
   "src/App.tsx": {
-    "mtime": 1784480755.8267345,
-    "ast_hash": "eefefe366e2116d3a05348a6c5c5e798",
+    "mtime": 1784486054.4655733,
+    "ast_hash": "4785b68da9b83cf6cbf5bb0116d77d88",
     "semantic_hash": ""
   },
   "src/analysis/chatImport.test.ts": {
@@ -155,8 +155,8 @@
     "semantic_hash": ""
   },
   "README.md": {
-    "mtime": 1784480375.3234715,
-    "ast_hash": "1061096c1f120fcc235f7c1152297b57",
+    "mtime": 1784486054.4675753,
+    "ast_hash": "4a7b3b2cb36fc9867b41988697f2238f",
     "semantic_hash": ""
   },
   "index.html": {
@@ -502,6 +502,36 @@
   "src/domain/candidateAudioEventRun.ts": {
     "mtime": 1784478113.468397,
     "ast_hash": "e2730b2c290775f9a2a7d6d65f5bd023",
+    "semantic_hash": ""
+  },
+  "src/analysis/candidateRanking.test.ts": {
+    "mtime": 1784484227.1063044,
+    "ast_hash": "a6f81b67bd19cbf17c110fbf9d80f3fa",
+    "semantic_hash": ""
+  },
+  "src/analysis/candidateRanking.ts": {
+    "mtime": 1784484227.1043048,
+    "ast_hash": "ce18622f9cd244fbafb35ec219b4c7be",
+    "semantic_hash": ""
+  },
+  "src/domain/candidateRankingView.test.ts": {
+    "mtime": 1784484642.0821865,
+    "ast_hash": "fd97a4726f6b6b63c25166e69c726ef1",
+    "semantic_hash": ""
+  },
+  "src/domain/candidateRankingView.ts": {
+    "mtime": 1784484642.0801885,
+    "ast_hash": "abb60e1917e610ed843dbba1ce12391a",
+    "semantic_hash": ""
+  },
+  "graphify-out/memory/query_20260719_175402_trace_candidate_array_order_consumers_and_design_c.md": {
+    "mtime": 1784483642.6194167,
+    "ast_hash": "5a0a1683b8319eabb968543145f34aa5",
+    "semantic_hash": ""
+  },
+  "graphify-out/memory/query_20260719_182646_0_3_5_\ud6c4\ubcf4_\uc7ac\uc815\ub82c_\uc81c\uc548\uc740_canonical_\ud6c4\ubcf4__\uc815\ubc00_\uadfc\uac70__\uac80\ud1a0_\uacbd\uacc4_\ubbf8\ub9ac\ubcf4\uae30_e.md": {
+    "mtime": 1784485606.5138593,
+    "ast_hash": "2de09da3560d55dd217439030e90ee2d",
     "semantic_hash": ""
   }
 }
