@@ -1,11 +1,21 @@
 import type { UnifiedHighlightCandidate } from "../analysis/highlightFusion";
 import { buildHighlightNarrative } from "../analysis/highlightNarrative";
 import type {
+  CandidateBoundaryProvenance,
+  CandidateBoundaryRevision,
+  CandidateTimeRange,
+} from "../domain/candidateBoundaryRevision";
+import type {
   DurableAnalysisInputDescriptor,
   DurableAnalysisSelectionSummary,
 } from "../storage/durableAnalysisPayload";
 
 export type HighlightExportFormat = "csv" | "markdown" | "json";
+
+export interface ApprovedHighlightExportCandidate {
+  readonly proposal: UnifiedHighlightCandidate;
+  readonly boundaryRevision: CandidateBoundaryRevision | null;
+}
 
 export interface HighlightExportRequest {
   readonly appVersion: string;
@@ -13,7 +23,7 @@ export interface HighlightExportRequest {
   readonly generatedAt: string;
   readonly input: DurableAnalysisInputDescriptor;
   readonly selection: DurableAnalysisSelectionSummary;
-  readonly candidates: readonly UnifiedHighlightCandidate[];
+  readonly candidates: readonly ApprovedHighlightExportCandidate[];
 }
 
 export interface HighlightExportFile {
@@ -22,7 +32,7 @@ export interface HighlightExportFile {
   readonly content: string;
 }
 
-const EXPORT_SCHEMA_VERSION = "0.3.0";
+const EXPORT_SCHEMA_VERSION = "0.4.0";
 
 function assertMilliseconds(value: number): void {
   if (!Number.isFinite(value) || value < 0) {
@@ -41,14 +51,57 @@ export function formatHighlightTimecode(milliseconds: number): string {
     .join(":");
 }
 
+interface ExportRangeProjection {
+  readonly proposalRange: CandidateTimeRange;
+  readonly effectiveRange: CandidateTimeRange;
+  readonly provenance: CandidateBoundaryProvenance;
+  readonly userRevision: number;
+}
+
+function exportRangeProjection(
+  candidate: ApprovedHighlightExportCandidate,
+): ExportRangeProjection {
+  const proposalRange = {
+    startMs: candidate.proposal.startMs,
+    endMs: candidate.proposal.endMs,
+  };
+  const boundary = candidate.boundaryRevision;
+  if (boundary === null) {
+    return {
+      proposalRange,
+      effectiveRange: proposalRange,
+      provenance: "aiProposal",
+      userRevision: 0,
+    };
+  }
+  if (
+    boundary.candidateId !== candidate.proposal.id ||
+    boundary.proposalRange.startMs !== proposalRange.startMs ||
+    boundary.proposalRange.endMs !== proposalRange.endMs
+  ) {
+    throw new TypeError("Boundary revision does not belong to its AI proposal.");
+  }
+  return {
+    proposalRange,
+    effectiveRange: boundary.effectiveRange,
+    provenance: boundary.provenance,
+    userRevision: boundary.revision,
+  };
+}
+
 function chronologicalCandidates(
-  candidates: readonly UnifiedHighlightCandidate[],
-): readonly UnifiedHighlightCandidate[] {
+  candidates: readonly ApprovedHighlightExportCandidate[],
+): readonly ApprovedHighlightExportCandidate[] {
   return [...candidates].sort(
-    (left, right) =>
-      left.startMs - right.startMs ||
-      left.endMs - right.endMs ||
-      left.id.localeCompare(right.id),
+    (left, right) => {
+      const leftRange = exportRangeProjection(left).effectiveRange;
+      const rightRange = exportRangeProjection(right).effectiveRange;
+      return (
+        leftRange.startMs - rightRange.startMs ||
+        leftRange.endMs - rightRange.endMs ||
+        left.proposal.id.localeCompare(right.proposal.id)
+      );
+    },
   );
 }
 
@@ -111,7 +164,7 @@ function csvCell(value: string | number): string {
   return `"${safeValue.replace(/"/gu, '""')}"`;
 }
 
-function createCsv(candidates: readonly UnifiedHighlightCandidate[]): string {
+function createCsv(candidates: readonly ApprovedHighlightExportCandidate[]): string {
   const header = [
     "순서",
     "시작",
@@ -127,14 +180,21 @@ function createCsv(candidates: readonly UnifiedHighlightCandidate[]): string {
     "시청자 반응",
     "추천 이유",
     "해석 수준",
+    "구간 기준",
+    "AI 제안 시작",
+    "AI 제안 끝",
   ];
-  const rows = chronologicalCandidates(candidates).map((candidate, index) => {
+  const rows = chronologicalCandidates(candidates).map((exportCandidate, index) => {
+    const candidate = exportCandidate.proposal;
+    const range = exportRangeProjection(exportCandidate);
     const narrative = buildHighlightNarrative(candidate);
     return [
       index + 1,
-      formatHighlightTimecode(candidate.startMs),
-      formatHighlightTimecode(candidate.endMs),
-      formatHighlightTimecode(candidate.endMs - candidate.startMs),
+      formatHighlightTimecode(range.effectiveRange.startMs),
+      formatHighlightTimecode(range.effectiveRange.endMs),
+      formatHighlightTimecode(
+        range.effectiveRange.endMs - range.effectiveRange.startMs,
+      ),
       formatHighlightTimecode(candidate.peakMs),
       candidate.reason,
       signalLabel(candidate),
@@ -145,6 +205,13 @@ function createCsv(candidates: readonly UnifiedHighlightCandidate[]): string {
       narrative.audienceReaction,
       narrative.whyRecommended,
       narrative.basisLabel,
+      range.provenance === "aiProposal"
+        ? "AI 제안"
+        : range.provenance === "userResetToAi"
+          ? "사용자가 AI 제안으로 되돌림"
+          : "사용자 조정",
+      formatHighlightTimecode(range.proposalRange.startMs),
+      formatHighlightTimecode(range.proposalRange.endMs),
     ];
   });
 
@@ -170,12 +237,20 @@ function createMarkdown(request: HighlightExportRequest): string {
     "",
   ];
 
-  for (const [index, candidate] of candidates.entries()) {
+  for (const [index, exportCandidate] of candidates.entries()) {
+    const candidate = exportCandidate.proposal;
+    const range = exportRangeProjection(exportCandidate);
     const narrative = buildHighlightNarrative(candidate);
     lines.push(
-      `## ${index + 1}. ${formatHighlightTimecode(candidate.startMs)}–${formatHighlightTimecode(candidate.endMs)}`,
+      `## ${index + 1}. ${formatHighlightTimecode(range.effectiveRange.startMs)}–${formatHighlightTimecode(range.effectiveRange.endMs)}`,
       "",
-      `- 길이: ${formatHighlightTimecode(candidate.endMs - candidate.startMs)}`,
+      `- 길이: ${formatHighlightTimecode(range.effectiveRange.endMs - range.effectiveRange.startMs)}`,
+      ...(range.provenance === "aiProposal"
+        ? []
+        : [
+            `- AI 제안 구간: ${formatHighlightTimecode(range.proposalRange.startMs)}–${formatHighlightTimecode(range.proposalRange.endMs)}`,
+            `- 구간 조정: ${range.provenance === "userResetToAi" ? "AI 제안으로 되돌림" : "사용자가 시작·끝을 다듬음"}`,
+          ]),
       `- 가장 강한 순간: ${formatHighlightTimecode(candidate.peakMs)}`,
       `- 해석 수준: ${narrative.basisLabel}`,
       `- 무슨 일이 있었나: ${markdownText(narrative.event)}`,
@@ -253,12 +328,16 @@ function createJson(request: HighlightExportRequest): string {
     },
     audio: exportedAudioSummary(request.selection),
     candidates: chronologicalCandidates(request.candidates).map(
-      (candidate) => {
-        const { id, startMs, endMs, peakMs, score, signalKinds, evidence } = candidate;
+      (exportCandidate) => {
+        const candidate = exportCandidate.proposal;
+        const { id, peakMs, score, signalKinds, evidence } = candidate;
+        const range = exportRangeProjection(exportCandidate);
         return {
           id,
-          startMs,
-          endMs,
+          proposalRange: range.proposalRange,
+          effectiveRange: range.effectiveRange,
+          rangeProvenance: range.provenance,
+          userRevision: range.userRevision,
           peakMs,
           score,
           signalKinds,
@@ -298,15 +377,23 @@ export function createHighlightExportFile(
 }
 
 export function createHighlightClipboardText(
-  candidates: readonly UnifiedHighlightCandidate[],
+  candidates: readonly ApprovedHighlightExportCandidate[],
 ): string {
   const orderedCandidates = chronologicalCandidates(candidates);
   return [
     `Retto Highlight · 승인한 장면 ${orderedCandidates.length}개`,
     ...orderedCandidates.map(
-      (candidate, index) => {
+      (exportCandidate, index) => {
+        const candidate = exportCandidate.proposal;
+        const range = exportRangeProjection(exportCandidate);
         const narrative = buildHighlightNarrative(candidate);
-        return `${index + 1}. ${formatHighlightTimecode(candidate.startMs)}–${formatHighlightTimecode(candidate.endMs)} · ${normalizedText(narrative.whyRecommended)}`;
+        const rangeNote =
+          range.provenance === "aiProposal"
+            ? ""
+            : range.provenance === "userResetToAi"
+              ? " (AI 제안으로 되돌림)"
+              : ` (AI 제안 ${formatHighlightTimecode(range.proposalRange.startMs)}–${formatHighlightTimecode(range.proposalRange.endMs)}에서 조정)`;
+        return `${index + 1}. ${formatHighlightTimecode(range.effectiveRange.startMs)}–${formatHighlightTimecode(range.effectiveRange.endMs)}${rangeNote} · ${normalizedText(narrative.whyRecommended)}`;
       },
     ),
   ].join("\n");

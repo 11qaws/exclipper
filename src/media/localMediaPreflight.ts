@@ -1,4 +1,5 @@
 export const DEFAULT_LOCAL_MEDIA_PREFLIGHT_TIMEOUT_MS = 15_000;
+export const MAX_LOCAL_MEDIA_DURATION_MS = 12 * 60 * 60 * 1_000;
 
 export type LocalMediaKind = "video" | "audio" | "unknown";
 
@@ -47,6 +48,7 @@ export type LocalMediaPreflightErrorCode =
   | "METADATA_TIMEOUT"
   | "METADATA_LOAD_FAILED"
   | "INVALID_DURATION"
+  | "DURATION_LIMIT_EXCEEDED"
   | "CLEANUP_FAILED"
   | "UNEXPECTED_ERROR";
 
@@ -613,6 +615,18 @@ export async function inspectLocalMedia(
       options.signal,
     );
     const durationMs = durationSecondsToMilliseconds(durationSeconds);
+    if (durationMs > MAX_LOCAL_MEDIA_DURATION_MS) {
+      throw new LocalMediaPreflightError(
+        "DURATION_LIMIT_EXCEEDED",
+        "The selected recording is longer than the supported 12-hour maximum.",
+        {
+          details: {
+            durationMs,
+            maximumDurationMs: MAX_LOCAL_MEDIA_DURATION_MS,
+          },
+        },
+      );
+    }
     const mimeType = file.type.trim().toLowerCase();
     const extension = extensionFromName(file.name);
 

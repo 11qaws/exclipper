@@ -589,3 +589,43 @@
 - CI와 같은 npm 11.16으로 lockfile을 다시 생성해 top-level 1.11.2와 Rolldown WASI 하위 1.11.1 항목을 모두 고정했다.
 - `npx npm@11.16.0 ci`를 로컬에서 그대로 재현해 181개 패키지 설치와 취약점 0건을 확인했다.
 - Graphify의 로컬 Python 절대 경로, 캐시, 날짜별 임시 스냅샷은 공개 저장소에서 제외하고 `graph.json`·`graph.html`·보고서·portable manifest·질의 메모만 handoff artifact로 유지했다.
+
+## 2026-07-19 — 최초 Pages 배포 완료와 앱 0.3.2 여러 후보 구간 다듬기
+
+이번 작업은 상세 오류 조합보다 `하루치 원본 한 개 → 서로 다른 여러 후보 → 후보별 검토·구간 조정 → 최종 시간표` 성공 경로를 먼저 고정했다.
+
+### 최초 공개 배포
+
+- `11qaws/rettolight`의 GitHub Pages workflow 실행 `29688747238`이 install, 213개 테스트, build, artifact upload, deploy를 모두 통과했다.
+- 공개 주소 `https://11qaws.github.io/rettolight/`의 HTTP 200, `/rettolight/assets/` base path, HTTPS 강제, 데스크톱 폭 수평 overflow 없음, console error·warning 0개를 확인했다.
+- 첫 workflow의 npm 11 lockfile 실패는 CI와 같은 npm 11.16으로 lockfile을 다시 만든 뒤 재현 가능한 `npm ci`로 해결했다.
+
+### 여러 후보 성공 경로
+
+- UI 첫 설명을 `하루치 영상 전체에서 서로 다른 여러 클립 후보`로 명확히 바꾸고 결과 제목도 항상 실제 후보 개수와 함께 표시한다.
+- 4시간 원본 타임라인에 서로 떨어진 스트리머 반응 8개를 둔 회귀 테스트에서 후보 8개가 서로 다른 ID와 45초 범위로 반환되는지 확인했다.
+- 현재 fast pass는 겹친 같은 사건만 NMS로 억제하고 정상 반응 후보는 최대 12개까지 유지한다. 장시간 표본의 시간당 recall과 후보량 자동 조정은 실제 방송 평가 단계에서 별도로 다룬다.
+
+### AI 제안 보존형 시작·끝 다듬기
+
+- AI `UnifiedHighlightCandidate.startMs/endMs`는 수정하지 않고 세션 전용 `CandidateBoundaryRevision`에 proposal/effective range, user revision, provenance를 분리했다.
+- 후보마다 시작·끝 `5초 앞/뒤`, 활성 미리보기의 `재생 위치를 시작/끝으로`, `AI 제안으로 되돌리기`를 제공한다.
+- 미리보기 시작·자동 정지, 후보 카드, 승인 시간표, clipboard, CSV·Markdown·JSON이 모두 같은 effective range를 사용한다.
+- 여러 후보 revision은 candidate ID별로 독립적이며, 새 분석·복구 결과마다 boundary session ID를 교체한다.
+- 승인 뒤 구간을 바꾸면 승인은 유지하고 `승인 유지 · 수정 구간 반영`을 표시한다. 최종 시간표는 최신 구간을 즉시 사용하며, 기존 `승인 취소` 행동의 의미를 바꾸지 않는다.
+- 복수 후보 영역에 list/listitem 의미와 후보별 accessible name을 부여하고, 반복되는 조정·재생·승인 버튼의 스크린리더 이름에 후보 번호를 포함했다. 장면 재생 때 영상으로 키보드 초점을 옮기고 선택 후보 편집기로 돌아오는 버튼을 제공한다.
+- 구간 편집도 미저장 작업으로 취급해 내부 이동과 페이지 이탈 전에 안내한다. 이번 단계에서는 새로고침 뒤 구간 revision을 복구하지 않는다.
+- JSON export schema를 `0.4.0`으로 올려 `proposalRange`, `effectiveRange`, `rangeProvenance`, `userRevision`을 구분하고 모호한 최상위 start/end를 제거했다. persistence schema는 `0.3.0`을 유지한다.
+
+### 검증
+
+- `npm run check`: TypeScript, ESLint, 20개 파일의 221개 Vitest 테스트 통과.
+- 새 테스트는 4시간 원본의 여러 후보, 후보별 독립 revision, 5초 네 방향 조정, 재생 위치 지정, AI 범위 복원, 모든 export의 effective range 일치를 먼저 검증한다.
+- Chrome 확장 자동화에서 로컬 파일 chooser는 확장의 `Allow access to file URLs` 설정이 꺼져 있어 합성 MP4 주입이 차단됐다. 앱 오류로 취급하지 않았으며, 세부 브라우저 업로드 환경 검증은 기본 코드 성공 경로 뒤에 진행한다.
+
+### 12시간 원본 상한 확정
+
+- YouTube 업로드 조건을 제품 경계로 삼아 한 원본의 최대 길이를 정확히 12시간으로 고정했다. 12시간 초과 단일 파일은 상정하지 않는다.
+- `LocalMediaPreflight`가 메타데이터를 읽은 직후 `43,200,000ms`까지 허용하고 1ms라도 초과하면 `DURATION_LIMIT_EXCEEDED`로 중단한다. 전체 fingerprint·Worker 분석보다 먼저 실패하므로 긴 작업을 뒤늦게 버리지 않는다.
+- UI는 파일 선택 전 `최대 12시간`, 초과 뒤 `12시간 이하의 파일로 나눠 주세요`를 기술 용어 없이 안내한다.
+- 정확히 12시간 성공과 12시간+1ms 거부·자원 정리를 각각 테스트한다.

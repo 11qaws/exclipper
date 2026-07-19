@@ -453,4 +453,31 @@ describe("fuseReactionHighlightCandidates", () => {
       first.every(({ id }) => /^highlight-audio-[0-9a-f]{8}$/u.test(id)),
     ).toBe(true);
   });
+
+  it("returns several distinct clip candidates from one four-hour daily recording", () => {
+    const reactionTimes = [
+      12 * 60_000,
+      37 * 60_000,
+      61 * 60_000,
+      89 * 60_000,
+      124 * 60_000,
+      158 * 60_000,
+      197 * 60_000,
+      226 * 60_000,
+    ];
+    const result = fuseReactionHighlightCandidates(
+      {
+        audioCandidates: reactionTimes.map((peakMs, index) =>
+          audioCandidate(`daily-reaction-${index + 1}`, peakMs, 100 - index),
+        ),
+      },
+      { sourceDurationMs: 4 * 60 * 60 * 1_000, maxCandidates: 12 },
+    );
+
+    expect(result).toHaveLength(8);
+    expect(new Set(result.map(({ id }) => id)).size).toBe(8);
+    expect(
+      result.every(({ startMs, endMs }) => endMs - startMs === 45_000),
+    ).toBe(true);
+  });
 });

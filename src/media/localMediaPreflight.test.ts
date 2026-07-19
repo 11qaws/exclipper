@@ -4,6 +4,7 @@ import {
   formatBytes,
   formatDuration,
   inspectLocalMedia,
+  MAX_LOCAL_MEDIA_DURATION_MS,
   type BrowserCapabilitySupport,
   type LocalMediaPreflightAdapters,
   type LocalMediaVideoProbe,
@@ -310,6 +311,36 @@ describe("inspectLocalMedia", () => {
     harness.probe.emit("loadedmetadata");
 
     await expect(pending).rejects.toMatchObject({ code: "INVALID_DURATION" });
+    expectCoreCleanup(harness);
+  });
+
+  it("accepts a recording that is exactly 12 hours long", async () => {
+    const harness = createHarness();
+    const pending = inspectLocalMedia(fakeFile(), { adapters: harness.adapters });
+
+    harness.probe.duration = MAX_LOCAL_MEDIA_DURATION_MS / 1_000;
+    harness.probe.emit("loadedmetadata");
+
+    await expect(pending).resolves.toMatchObject({
+      metadata: { durationMs: MAX_LOCAL_MEDIA_DURATION_MS },
+    });
+    expectCoreCleanup(harness);
+  });
+
+  it("rejects a recording longer than 12 hours before analysis starts", async () => {
+    const harness = createHarness();
+    const pending = inspectLocalMedia(fakeFile(), { adapters: harness.adapters });
+
+    harness.probe.duration = MAX_LOCAL_MEDIA_DURATION_MS / 1_000 + 0.001;
+    harness.probe.emit("loadedmetadata");
+
+    await expect(pending).rejects.toMatchObject({
+      code: "DURATION_LIMIT_EXCEEDED",
+      details: {
+        durationMs: MAX_LOCAL_MEDIA_DURATION_MS + 1,
+        maximumDurationMs: MAX_LOCAL_MEDIA_DURATION_MS,
+      },
+    });
     expectCoreCleanup(harness);
   });
 

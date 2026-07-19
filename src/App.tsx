@@ -32,6 +32,16 @@ import {
 } from "./domain/analysisRun";
 import { deriveAnalysisControlState } from "./domain/analysisControlState";
 import {
+  applyCandidateBoundaryCommand,
+  BOUNDARY_NUDGE_MS,
+  candidateRangeWasAdjusted,
+  createCandidateBoundaryRevision,
+  effectiveCandidateRange,
+  type CandidateBoundaryCommand,
+  type CandidateBoundaryRejectionReason,
+  type CandidateBoundaryRevision,
+} from "./domain/candidateBoundaryRevision";
+import {
   createSourceCheck,
   reduceSourceCheck,
   type SourceCheckEvent,
@@ -41,6 +51,7 @@ import {
 import {
   createHighlightClipboardText,
   createHighlightExportFile,
+  type ApprovedHighlightExportCandidate,
   type HighlightExportFormat,
   type HighlightExportRequest,
 } from "./exports/highlightExport";
@@ -101,7 +112,14 @@ type Theme = "light" | "dark";
 type CandidateReviewState = "unreviewed" | "approved" | "rejected";
 type ReviewedCandidate = UnifiedHighlightCandidate & {
   readonly reviewState: CandidateReviewState;
+  readonly approvedBoundaryRevision: number | null;
 };
+
+interface CandidateBoundaryFeedback {
+  readonly candidateId: string;
+  readonly tone: "success" | "warning";
+  readonly message: string;
+}
 
 type AnalysisSelectionSummary = DurableAnalysisSelectionSummary;
 type AnalysisCoverageSummary = DurableAnalysisCoverageSummary;
@@ -120,7 +138,7 @@ interface AudioAnalysisOutcome {
   readonly coverageComplete: boolean;
 }
 
-const APP_VERSION = "0.3.1";
+const APP_VERSION = "0.3.2";
 const PERSISTENCE_SCHEMA_VERSION = "0.3.0";
 const SIGNAL_ENGINE_VERSION = "streamer-reaction-fast-pass-v1";
 const MAX_CHAT_FILE_BYTES = 32 * 1024 * 1024;
@@ -287,6 +305,7 @@ function explainPreflightError(error: unknown): string {
     METADATA_TIMEOUT: "영상 정보를 읽는 데 너무 오래 걸렸어요. 파일이 손상되지 않았는지 확인해 주세요.",
     METADATA_LOAD_FAILED: "이 브라우저가 영상 정보를 열지 못했어요. MP4 또는 WebM 파일을 먼저 권장해요.",
     INVALID_DURATION: "영상 길이를 확인하지 못했어요. 다른 형식으로 변환한 파일을 시도해 주세요.",
+    DURATION_LIMIT_EXCEEDED: "한 원본은 최대 12시간까지 분석할 수 있어요. 12시간 이하의 파일로 나눠서 다시 골라 주세요.",
     CLEANUP_FAILED: "검사는 끝났지만 임시 자원을 완전히 정리하지 못했어요. 페이지를 새로 열고 다시 시도해 주세요.",
   };
   return (
@@ -337,6 +356,26 @@ function assessLink(value: string): string {
   }
 }
 
+function boundaryRejectionMessage(reason: CandidateBoundaryRejectionReason): string {
+  const messages: Record<CandidateBoundaryRejectionReason, string> = {
+    player_time_unavailable:
+      "먼저 ‘이 장면 보기’를 누르고 영상에서 원하는 위치로 이동해 주세요.",
+    player_time_out_of_source:
+      "현재 재생 위치를 원본 안에서 확인하지 못했어요. 영상을 다시 재생해 주세요.",
+    range_out_of_source:
+      "시작은 끝보다 앞이어야 하고, 두 위치 모두 원본 영상 안에 있어야 해요.",
+    would_exclude_peak:
+      "AI가 찾은 반응 정점이 빠지지 않도록 이 변경은 적용하지 않았어요.",
+    duration_below_minimum:
+      "클립이 30초보다 짧아져 적용하지 않았어요. 반대쪽 경계를 먼저 늘려 주세요.",
+    duration_above_maximum:
+      "클립이 1분보다 길어져 적용하지 않았어요. 반대쪽 경계를 먼저 줄여 주세요.",
+    already_at_proposal: "이미 AI가 처음 제안한 시작·끝을 사용하고 있어요.",
+    no_effective_change: "현재 조건에서는 더 움직일 수 없어요.",
+  };
+  return messages[reason];
+}
+
 function App() {
   const [theme, setTheme] = useState<Theme>(initialTheme);
   const [isDragging, setIsDragging] = useState(false);
@@ -363,6 +402,14 @@ function App() {
   const [analysisRun, setAnalysisRun] = useState<AnalysisRunState | null>(null);
   const [selectionResult, setSelectionResult] = useState<AnalysisSelectionSummary | null>(null);
   const [candidates, setCandidates] = useState<readonly ReviewedCandidate[]>([]);
+  const [boundarySessionId, setBoundarySessionId] = useState(() =>
+    createOperationId("boundary-session"),
+  );
+  const [boundaryRevisions, setBoundaryRevisions] = useState<
+    Readonly<Record<string, CandidateBoundaryRevision>>
+  >({});
+  const [boundaryFeedback, setBoundaryFeedback] =
+    useState<CandidateBoundaryFeedback | null>(null);
   const [analysisProgress, setAnalysisProgress] = useState<LocalVideoVisualAnalysisProgress | null>(null);
   const [audioAnalysisProgress, setAudioAnalysisProgress] =
     useState<LocalAudioReactionAnalysisProgress | null>(null);
@@ -515,11 +562,29 @@ function App() {
     openedRecoveredResult !== null ||
     recoveryCatalog.status === "failed" ||
     (recoveryCatalog.status === "ready" && recoveryCatalog.audit.results.length > 0);
+  const boundarySourceDurationMs = Math.round(
+    preflight?.metadata.durationMs ??
+      openedRecoveredResult?.finalResult.result.input.source.durationMs ??
+      0,
+  );
   const approvedCandidates = candidates.filter(
     ({ reviewState }) => reviewState === "approved",
   );
+  const approvedExportCandidates: readonly ApprovedHighlightExportCandidate[] =
+    approvedCandidates.map((proposal) => ({
+      proposal,
+      boundaryRevision: boundaryRevisions[proposal.id] ?? null,
+    }));
   const approvedCount = approvedCandidates.length;
+  const previewCandidateNumber =
+    previewCandidateId === null
+      ? 0
+      : candidates.findIndex(({ id }) => id === previewCandidateId) + 1;
   const reviewStarted = candidates.some(({ reviewState }) => reviewState !== "unreviewed");
+  const boundaryWorkStarted = Object.values(boundaryRevisions).some(
+    ({ revision }) => revision > 0,
+  );
+  const reviewWorkStarted = reviewStarted || boundaryWorkStarted;
   const reviewCompleted =
     candidates.length > 0 && candidates.every(({ reviewState }) => reviewState !== "unreviewed");
   const analysisFinishedWithoutCandidates =
@@ -553,7 +618,7 @@ function App() {
           : "영상 파일 고르기";
 
   useEffect(() => {
-    if (!analysisBusy && !reviewStarted) {
+    if (!analysisBusy && !reviewWorkStarted) {
       return;
     }
     const warnBeforeLeaving = (event: BeforeUnloadEvent): void => {
@@ -562,19 +627,25 @@ function App() {
     };
     window.addEventListener("beforeunload", warnBeforeLeaving);
     return () => window.removeEventListener("beforeunload", warnBeforeLeaving);
-  }, [analysisBusy, reviewStarted]);
+  }, [analysisBusy, reviewWorkStarted]);
 
   const confirmDiscardCurrentWork = useCallback((): boolean => {
     if (analysisBusy) {
       return false;
     }
-    if (!reviewStarted) {
+    if (!reviewWorkStarted) {
       return true;
     }
     return window.confirm(
-      "승인·제외 판단은 아직 이 브라우저에 저장되지 않았어요. 지금 이동하면 방금 한 판단이 사라집니다. 그래도 계속할까요?",
+      "승인·제외 판단과 시작·끝 조정은 아직 이 브라우저에 저장되지 않았어요. 지금 이동하면 방금 한 작업이 사라집니다. 그래도 계속할까요?",
     );
-  }, [analysisBusy, reviewStarted]);
+  }, [analysisBusy, reviewWorkStarted]);
+
+  const resetBoundarySession = useCallback((): void => {
+    setBoundarySessionId(createOperationId("boundary-session"));
+    setBoundaryRevisions({});
+    setBoundaryFeedback(null);
+  }, []);
 
   const resetDownstream = useCallback(() => {
     analysisOperationEpoch.current += 1;
@@ -587,6 +658,7 @@ function App() {
     setAnalysisRun(null);
     setSelectionResult(null);
     setCandidates([]);
+    resetBoundarySession();
     setAnalysisProgress(null);
     setAudioAnalysisProgress(null);
     setAnalysisError(null);
@@ -595,7 +667,7 @@ function App() {
     setExportError(null);
     setPreviewCandidateId(null);
     setOpenedRecoveredResult(null);
-  }, []);
+  }, [resetBoundarySession]);
 
   const inspectSelectedFile = useCallback(
     async (file: File) => {
@@ -937,6 +1009,7 @@ function App() {
 
     setSelectionResult(null);
     setCandidates([]);
+    resetBoundarySession();
     setAnalysisError(null);
     setAnalysisCancelPending(false);
     setAnalysisCommitPending(false);
@@ -1433,6 +1506,7 @@ function App() {
         reopenedPayload.candidates.map((candidate) => ({
           ...hydrateDurableCandidate(candidate),
           reviewState: "unreviewed" as const,
+          approvedBoundaryRevision: null,
         })),
       );
       setAnalysisRun(machine);
@@ -1483,6 +1557,7 @@ function App() {
                 durableCompletion.finalResult.result.candidates.map((candidate) => ({
                   ...hydrateDurableCandidate(candidate),
                   reviewState: "unreviewed" as const,
+                  approvedBoundaryRevision: null,
                 })),
               );
               setAnalysisRun(completedMachine);
@@ -1655,14 +1730,138 @@ function App() {
   };
 
   const updateReview = (candidateId: string, reviewState: CandidateReviewState): void => {
+    const currentBoundaryRevision = boundaryRevisions[candidateId]?.revision ?? 0;
     setCandidates((current) =>
       current.map((candidate) =>
-        candidate.id === candidateId ? { ...candidate, reviewState } : candidate,
+        candidate.id === candidateId
+          ? {
+              ...candidate,
+              reviewState,
+              approvedBoundaryRevision:
+                reviewState === "approved" ? currentBoundaryRevision : null,
+            }
+          : candidate,
       ),
     );
     setLastExportFormat(null);
     setCopyStatus("idle");
     setExportError(null);
+  };
+
+  const updateCandidateBoundary = (
+    candidate: ReviewedCandidate,
+    createCommand: (state: CandidateBoundaryRevision) => CandidateBoundaryCommand,
+  ): void => {
+    if (boundarySourceDurationMs <= 0) {
+      setBoundaryFeedback({
+        candidateId: candidate.id,
+        tone: "warning",
+        message: "원본 길이를 확인한 뒤 시작·끝을 조정할 수 있어요.",
+      });
+      return;
+    }
+
+    let currentState = boundaryRevisions[candidate.id];
+    try {
+      currentState ??= createCandidateBoundaryRevision({
+        boundarySessionId,
+        candidateId: candidate.id,
+        proposalRange: { startMs: candidate.startMs, endMs: candidate.endMs },
+        peakMs: candidate.peakMs,
+        sourceDurationMs: boundarySourceDurationMs,
+      });
+    } catch {
+      setBoundaryFeedback({
+        candidateId: candidate.id,
+        tone: "warning",
+        message: "이 후보의 시작·끝 정보를 확인하지 못했어요. 다른 후보를 먼저 검토해 주세요.",
+      });
+      return;
+    }
+
+    const command = createCommand(currentState);
+    const transition = applyCandidateBoundaryCommand(currentState, command);
+    if (transition.status === "ignored") {
+      return;
+    }
+    if (transition.status === "rejected") {
+      setBoundaryFeedback({
+        candidateId: candidate.id,
+        tone: "warning",
+        message: boundaryRejectionMessage(transition.reason),
+      });
+      return;
+    }
+
+    setBoundaryRevisions((current) => ({
+      ...current,
+      [candidate.id]: transition.state,
+    }));
+    setLastExportFormat(null);
+    setCopyStatus("idle");
+    setExportError(null);
+    const range = transition.state.effectiveRange;
+    const limitedMessage =
+      transition.adjustmentReasons.length > 0
+        ? " 원본 범위와 30초~1분 기준에 맞춰 가능한 만큼만 움직였어요."
+        : "";
+    setBoundaryFeedback({
+      candidateId: candidate.id,
+      tone: "success",
+      message:
+        command.kind === "RESET_TO_AI"
+          ? "AI가 처음 고른 시작·끝으로 되돌렸어요."
+          : `현재 사용할 구간을 ${formatDuration(range.startMs)}–${formatDuration(range.endMs)}로 바꿨어요.${limitedMessage}`,
+    });
+  };
+
+  const setBoundaryFromPlayerPosition = (
+    candidate: ReviewedCandidate,
+    kind: "SET_START_FROM_PLAYER" | "SET_END_FROM_PLAYER",
+  ): void => {
+    const player = previewVideo.current;
+    if (
+      sourcePreviewUrl === null ||
+      player === null ||
+      previewCandidateId !== candidate.id
+    ) {
+      setBoundaryFeedback({
+        candidateId: candidate.id,
+        tone: "warning",
+        message: "먼저 이 후보의 ‘이 장면 보기’를 누르고 원하는 위치로 이동해 주세요.",
+      });
+      return;
+    }
+    updateCandidateBoundary(candidate, (state) => ({
+      boundarySessionId: state.boundarySessionId,
+      candidateId: state.candidateId,
+      expectedRevision: state.revision,
+      kind,
+      playerMs: player.currentTime * 1_000,
+    }));
+  };
+
+  const nudgeCandidateBoundary = (
+    candidate: ReviewedCandidate,
+    kind: "SHIFT_START" | "SHIFT_END",
+    deltaMs: -5_000 | 5_000,
+  ): void => {
+    updateCandidateBoundary(candidate, (state) => ({
+      boundarySessionId: state.boundarySessionId,
+      candidateId: state.candidateId,
+      expectedRevision: state.revision,
+      kind,
+      deltaMs,
+    }));
+  };
+
+  const resetCandidateBoundary = (candidate: ReviewedCandidate): void => {
+    updateCandidateBoundary(candidate, (state) => ({
+      boundarySessionId: state.boundarySessionId,
+      candidateId: state.candidateId,
+      expectedRevision: state.revision,
+      kind: "RESET_TO_AI",
+    }));
   };
 
   const playCandidate = (candidate: ReviewedCandidate): void => {
@@ -1671,15 +1870,36 @@ function App() {
     if (player === null) {
       return;
     }
-    player.currentTime = candidate.startMs / 1_000;
+    const range = effectiveCandidateRange(
+      candidate,
+      boundaryRevisions[candidate.id],
+    );
+    player.currentTime = range.startMs / 1_000;
     player.scrollIntoView({
       behavior: globalThis.matchMedia?.("(prefers-reduced-motion: reduce)").matches
         ? "auto"
         : "smooth",
       block: "center",
     });
+    player.focus({ preventScroll: true });
     void player.play().catch(() => {
       // Browser autoplay policy may require the user to press the native play control.
+    });
+  };
+
+  const focusPreviewCandidateEditor = (): void => {
+    if (previewCandidateNumber <= 0) {
+      return;
+    }
+    const summary = document.getElementById(
+      `candidate-boundary-summary-${previewCandidateNumber - 1}`,
+    );
+    summary?.focus({ preventScroll: true });
+    summary?.scrollIntoView({
+      behavior: globalThis.matchMedia?.("(prefers-reduced-motion: reduce)").matches
+        ? "auto"
+        : "smooth",
+      block: "center",
     });
   };
 
@@ -1697,6 +1917,7 @@ function App() {
     if (!confirmDiscardCurrentWork()) {
       return;
     }
+    resetBoundarySession();
     sourceSelectionEpoch.current += 1;
     sourceAbortController.current?.abort();
     sourceAbortController.current = null;
@@ -1725,6 +1946,7 @@ function App() {
       recovered.finalResult.result.candidates.map((candidate) => ({
         ...hydrateDurableCandidate(candidate),
         reviewState: "unreviewed" as const,
+        approvedBoundaryRevision: null,
       })),
     );
     setLastExportFormat(null);
@@ -1788,7 +2010,7 @@ function App() {
       generatedAt: new Date().toISOString(),
       input,
       selection: selectionResult,
-      candidates: approvedCandidates,
+      candidates: approvedExportCandidates,
     };
   };
 
@@ -1833,7 +2055,7 @@ function App() {
         throw new Error("Clipboard API is unavailable.");
       }
       await navigator.clipboard.writeText(
-        createHighlightClipboardText(approvedCandidates),
+        createHighlightClipboardText(approvedExportCandidates),
       );
       setCopyStatus("copied");
       setLastExportFormat(null);
@@ -1927,9 +2149,9 @@ function App() {
 
         <section className="rh-page-heading" aria-labelledby="page-title">
           <p className="rh-eyebrow">개인 편집 어시스턴트</p>
-          <h2 id="page-title">몇 시간짜리 방송, 먼저 볼 장면부터 줄여드릴게요.</h2>
+          <h2 id="page-title">몇 시간짜리 방송에서, 먼저 볼 클립 후보들을 찾아드릴게요.</h2>
           <p>
-            AI가 영상 전체를 먼저 훑어 30초~1분 후보를 고릅니다. 사람은 짧은 후보만 보고 마지막 결정을 내리면 됩니다.
+            AI가 하루치 영상 전체를 먼저 훑어 서로 다른 30초~1분 클립 후보들을 찾아봅니다. 사람은 발견된 짧은 후보들만 보고 마지막 결정을 내리면 됩니다.
           </p>
           <details className="rh-inline-details">
             <summary>지금 AI가 보는 기준</summary>
@@ -2061,7 +2283,7 @@ function App() {
                   <div className="rh-drop-zone-copy">
                     <p className="rh-eyebrow">추천 · 가장 정확함</p>
                     <strong>{pendingFileName ?? "영상 파일을 여기에 놓아도 돼요"}</strong>
-                    <p className="rh-help">MP4·WebM 권장 · 선택하면 길이와 분석 가능 여부를 바로 확인해요.</p>
+                    <p className="rh-help">MP4·WebM 권장 · 최대 12시간 · 선택하면 길이와 분석 가능 여부를 바로 확인해요.</p>
                     <span className="btn btn-primary rh-drop-zone-button">
                       {sourceFileActionLabel}
                     </span>
@@ -2245,7 +2467,8 @@ function App() {
               <p className="rh-eyebrow">2단계</p>
               <h3 id="analysis-title">AI가 먼저 하이라이트를 찾습니다</h3>
               <p>
-                영상 전체의 스트리머 오디오 반응을 먼저 훑고 30초~1분 후보를 정리해요. 채팅이 없어도 시작할 수 있습니다.
+                영상 전체의 스트리머 오디오 반응을 먼저 훑고 서로 다른 30초~1분 클립 후보들을 정리해요. 채팅이 없어도 시작할 수 있습니다.
+                분명한 반응이 여러 번 있으면 별도 카드로 나누며, 현재 기본판은 겹치지 않는 상위 후보를 최대 12개까지 보여 줍니다.
               </p>
               <details className="rh-inline-details">
                 <summary>현재 분석 방식과 제한</summary>
@@ -2339,7 +2562,7 @@ function App() {
               <div className="rh-results-header">
                 <div>
                   <p className="rh-eyebrow">3단계 · 사람이 마지막 결정</p>
-                  <h3 id="candidate-title" ref={candidateHeading} tabIndex={-1}>먼저 볼 후보 {candidates.length}개</h3>
+                  <h3 id="candidate-title" ref={candidateHeading} tabIndex={-1}>먼저 볼 클립 후보 {candidates.length}개</h3>
                   <p className="rh-help">
                     AI가 영상 맥락 {selectionResult.sampledFrameCount.toLocaleString("ko-KR")}개 지점과
                     {selectionResult.analyzedAudioWindowCount === undefined
@@ -2400,6 +2623,15 @@ function App() {
                             ? "후보의 ‘이 장면 보기’를 눌러 주세요"
                             : "선택한 후보 위치로 이동했어요"}
                         </strong>
+                        {previewCandidateNumber > 0 && (
+                          <button
+                            className="btn btn-secondary rh-preview-return"
+                            type="button"
+                            onClick={focusPreviewCandidateEditor}
+                          >
+                            후보 {previewCandidateNumber} 시작·끝으로 돌아가기
+                          </button>
+                        )}
                       </div>
                       <video
                         ref={previewVideo}
@@ -2410,9 +2642,16 @@ function App() {
                         src={sourcePreviewUrl}
                         onTimeUpdate={(event) => {
                           const activeCandidate = candidates.find(({ id }) => id === previewCandidateId);
+                          const activeRange =
+                            activeCandidate === undefined
+                              ? null
+                              : effectiveCandidateRange(
+                                  activeCandidate,
+                                  boundaryRevisions[activeCandidate.id],
+                                );
                           if (
-                            activeCandidate !== undefined &&
-                            event.currentTarget.currentTime * 1_000 >= activeCandidate.endMs
+                            activeRange !== null &&
+                            event.currentTarget.currentTime * 1_000 >= activeRange.endMs
                           ) {
                             event.currentTarget.pause();
                           }
@@ -2422,19 +2661,36 @@ function App() {
                       </video>
                     </div>
                   )}
-                  <div className="rh-candidate-list">
+                  <div
+                    className="rh-candidate-list"
+                    role="list"
+                    aria-label="AI가 찾은 클립 후보들"
+                  >
                   {candidates.map((candidate, index) => {
                     const narrative = buildHighlightNarrative(candidate);
+                    const boundaryRevision = boundaryRevisions[candidate.id] ?? null;
+                    const effectiveRange = effectiveCandidateRange(
+                      candidate,
+                      boundaryRevision,
+                    );
+                    const rangeAdjusted = candidateRangeWasAdjusted(boundaryRevision);
+                    const boundaryTouched = (boundaryRevision?.revision ?? 0) > 0;
+                    const approvedAfterEdit =
+                      candidate.reviewState === "approved" &&
+                      candidate.approvedBoundaryRevision !== null &&
+                      (boundaryRevision?.revision ?? 0) > candidate.approvedBoundaryRevision;
                     return (
                     <article
                       className="rh-candidate-card rh-candidate-card--signal"
                       data-review-state={candidate.reviewState}
+                      role="listitem"
+                      aria-labelledby={`candidate-title-${index}`}
                       key={candidate.id}
                     >
                       <div className="rh-candidate-number" aria-hidden="true">#{index + 1}</div>
                       <div className="rh-candidate-main">
                         <div className="rh-candidate-meta">
-                          <strong>{formatDuration(candidate.startMs)}–{formatDuration(candidate.endMs)}</strong>
+                          <strong>{formatDuration(effectiveRange.startMs)}–{formatDuration(effectiveRange.endMs)}</strong>
                           <span>상대 신호 {Math.round(candidate.score * 100)}점</span>
                           <span className="rh-review-badge" data-state={candidate.reviewState}>
                             {candidate.reviewState === "approved" ? "사용하기로 함" : candidate.reviewState === "rejected" ? "제외함" : "검토 전"}
@@ -2442,11 +2698,27 @@ function App() {
                           <span className="rh-interpretation-badge" data-basis={narrative.basis}>
                             {narrative.basisLabel}
                           </span>
+                          {boundaryTouched && (
+                            <span className="rh-boundary-badge">
+                              {boundaryRevision?.provenance === "userResetToAi"
+                                ? "AI 제안 다시 적용"
+                                : "시작·끝 직접 조정"}
+                            </span>
+                          )}
+                          {approvedAfterEdit && (
+                            <span className="rh-boundary-badge" data-tone="warning">
+                              승인 유지 · 수정 구간 반영
+                            </span>
+                          )}
                         </div>
-                        <p className="rh-candidate-title">{narrative.title}</p>
+                        <p className="rh-candidate-title" id={`candidate-title-${index}`}>
+                          후보 {index + 1} · {narrative.title}
+                        </p>
                         <p className="rh-candidate-reason">{narrative.whyRecommended}</p>
                         <details className="rh-candidate-evidence">
-                          <summary>무슨 일이 있었고 왜 반응했는지 보기</summary>
+                          <summary aria-label={`후보 ${index + 1}의 사건과 반응 설명 보기`}>
+                            무슨 일이 있었고 왜 반응했는지 보기
+                          </summary>
                           <dl className="rh-narrative-grid">
                             <div>
                               <dt>무슨 일이 있었나</dt>
@@ -2506,10 +2778,124 @@ function App() {
                           )}
                           </div>
                         </details>
+                        <details className="rh-boundary-editor">
+                          <summary
+                            id={`candidate-boundary-summary-${index}`}
+                            aria-label={`후보 ${index + 1} 시작·끝 다듬기`}
+                          >
+                            시작·끝 다듬기
+                          </summary>
+                          <div className="rh-boundary-editor-body">
+                            <div className="rh-boundary-range-summary">
+                              <span>
+                                현재 사용할 구간
+                                <strong>
+                                  {formatDuration(effectiveRange.startMs)}–{formatDuration(effectiveRange.endMs)}
+                                </strong>
+                              </span>
+                              <span>
+                                AI 제안
+                                <strong>
+                                  {formatDuration(candidate.startMs)}–{formatDuration(candidate.endMs)}
+                                </strong>
+                              </span>
+                            </div>
+                            <p className="rh-help">
+                              이 후보만 바뀌며 AI가 처음 고른 구간은 그대로 보관돼요. 클립은 30초~1분 안에서 반응 정점을 포함합니다.
+                            </p>
+                            <div className="rh-boundary-control-grid">
+                              <fieldset>
+                                <legend>시작 위치</legend>
+                                <div className="rh-boundary-buttons">
+                                  <button
+                                    className="btn btn-secondary"
+                                    type="button"
+                                    aria-label={`후보 ${index + 1} 시작을 5초 앞으로`}
+                                    onClick={() => nudgeCandidateBoundary(candidate, "SHIFT_START", -5_000)}
+                                  >
+                                    {BOUNDARY_NUDGE_MS / 1_000}초 앞
+                                  </button>
+                                  <button
+                                    className="btn btn-secondary"
+                                    type="button"
+                                    aria-label={`후보 ${index + 1} 시작을 5초 뒤로`}
+                                    onClick={() => nudgeCandidateBoundary(candidate, "SHIFT_START", 5_000)}
+                                  >
+                                    {BOUNDARY_NUDGE_MS / 1_000}초 뒤
+                                  </button>
+                                  <button
+                                    className="btn btn-secondary"
+                                    type="button"
+                                    aria-label={`후보 ${index + 1}의 현재 재생 위치를 시작으로`}
+                                    disabled={sourcePreviewUrl === null}
+                                    onClick={() => setBoundaryFromPlayerPosition(candidate, "SET_START_FROM_PLAYER")}
+                                  >
+                                    재생 위치를 시작으로
+                                  </button>
+                                </div>
+                              </fieldset>
+                              <fieldset>
+                                <legend>끝 위치</legend>
+                                <div className="rh-boundary-buttons">
+                                  <button
+                                    className="btn btn-secondary"
+                                    type="button"
+                                    aria-label={`후보 ${index + 1} 끝을 5초 앞으로`}
+                                    onClick={() => nudgeCandidateBoundary(candidate, "SHIFT_END", -5_000)}
+                                  >
+                                    {BOUNDARY_NUDGE_MS / 1_000}초 앞
+                                  </button>
+                                  <button
+                                    className="btn btn-secondary"
+                                    type="button"
+                                    aria-label={`후보 ${index + 1} 끝을 5초 뒤로`}
+                                    onClick={() => nudgeCandidateBoundary(candidate, "SHIFT_END", 5_000)}
+                                  >
+                                    {BOUNDARY_NUDGE_MS / 1_000}초 뒤
+                                  </button>
+                                  <button
+                                    className="btn btn-secondary"
+                                    type="button"
+                                    aria-label={`후보 ${index + 1}의 현재 재생 위치를 끝으로`}
+                                    disabled={sourcePreviewUrl === null}
+                                    onClick={() => setBoundaryFromPlayerPosition(candidate, "SET_END_FROM_PLAYER")}
+                                  >
+                                    재생 위치를 끝으로
+                                  </button>
+                                </div>
+                              </fieldset>
+                            </div>
+                            <div className="rh-boundary-footer">
+                              <button
+                                className="btn btn-secondary"
+                                type="button"
+                                aria-label={`후보 ${index + 1}을 AI 제안 구간으로 되돌리기`}
+                                disabled={!boundaryTouched || !rangeAdjusted}
+                                onClick={() => resetCandidateBoundary(candidate)}
+                              >
+                                AI 제안으로 되돌리기
+                              </button>
+                              {sourcePreviewUrl === null && (
+                                <span>재생 위치 지정은 원본을 다시 연결하면 사용할 수 있어요.</span>
+                              )}
+                            </div>
+                            {boundaryFeedback?.candidateId === candidate.id && (
+                              <p
+                                className="rh-boundary-feedback"
+                                data-tone={boundaryFeedback.tone}
+                                role="status"
+                                aria-live="polite"
+                              >
+                                {boundaryFeedback.message}
+                              </p>
+                            )}
+                          </div>
+                        </details>
                         <div className="rh-inline-actions">
                           <button
                             className="btn btn-secondary"
                             type="button"
+                            aria-label={`후보 ${index + 1} 장면 보기`}
                             disabled={sourcePreviewUrl === null}
                             onClick={() => playCandidate(candidate)}
                           >
@@ -2518,6 +2904,11 @@ function App() {
                           <button
                             className="btn btn-primary"
                             type="button"
+                            aria-label={
+                              candidate.reviewState === "approved"
+                                ? `후보 ${index + 1} 승인 취소`
+                                : `후보 ${index + 1} 사용하기`
+                            }
                             onClick={() => updateReview(candidate.id, candidate.reviewState === "approved" ? "unreviewed" : "approved")}
                           >
                             {candidate.reviewState === "approved" ? "승인 취소" : "사용할게요"}
@@ -2525,6 +2916,11 @@ function App() {
                           <button
                             className="btn btn-secondary"
                             type="button"
+                            aria-label={
+                              candidate.reviewState === "rejected"
+                                ? `후보 ${index + 1} 다시 검토`
+                                : `후보 ${index + 1} 제외`
+                            }
                             onClick={() => updateReview(candidate.id, candidate.reviewState === "rejected" ? "unreviewed" : "rejected")}
                           >
                             {candidate.reviewState === "rejected" ? "다시 검토" : "빼기"}
@@ -2547,10 +2943,10 @@ function App() {
                 승인 {approvedCount}개 · 제외 {candidates.filter(({ reviewState }) => reviewState === "rejected").length}개
                 {" · 언제든 판단을 바꿀 수 있어요."}
               </p>
-              {reviewStarted && (
+              {reviewWorkStarted && (
                 <p className="rh-notice" data-tone="warning" role="status">
-                  이 승인·제외 판단은 아직 브라우저에 저장되지 않았어요. 다른 영상이나 결과로 이동하면 확인을 먼저 물어봅니다.
-                  필요한 후보를 승인한 뒤 아래에서 편집용 시간표를 받아 주세요.
+                  이 승인·제외 판단과 시작·끝 조정은 아직 브라우저에 저장되지 않았어요. 다른 영상이나 결과로 이동하면 확인을 먼저 물어봅니다.
+                  필요한 후보들을 승인한 뒤 아래에서 편집용 시간표를 받아 주세요.
                 </p>
               )}
 
@@ -2574,13 +2970,30 @@ function App() {
 
                   {approvedCount > 0 && (
                     <ol className="rh-approved-timeline" aria-label="승인한 장면 시간표">
-                      {[...approvedCandidates]
-                        .sort((left, right) => left.startMs - right.startMs || left.id.localeCompare(right.id))
-                        .map((candidate) => {
+                      {[...approvedExportCandidates]
+                        .sort((left, right) => {
+                          const leftRange = effectiveCandidateRange(
+                            left.proposal,
+                            left.boundaryRevision,
+                          );
+                          const rightRange = effectiveCandidateRange(
+                            right.proposal,
+                            right.boundaryRevision,
+                          );
+                          return (
+                            leftRange.startMs - rightRange.startMs ||
+                            left.proposal.id.localeCompare(right.proposal.id)
+                          );
+                        })
+                        .map(({ proposal: candidate, boundaryRevision }) => {
                           const narrative = buildHighlightNarrative(candidate);
+                          const range = effectiveCandidateRange(
+                            candidate,
+                            boundaryRevision,
+                          );
                           return (
                             <li key={candidate.id}>
-                              <strong>{formatDuration(candidate.startMs)}–{formatDuration(candidate.endMs)}</strong>
+                              <strong>{formatDuration(range.startMs)}–{formatDuration(range.endMs)}</strong>
                               <span>{narrative.whyRecommended}</span>
                             </li>
                           );

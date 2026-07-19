@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import type { UnifiedHighlightCandidate } from "../analysis/highlightFusion";
+import {
+  applyCandidateBoundaryCommand,
+  createCandidateBoundaryRevision,
+  type CandidateBoundaryRevision,
+} from "../domain/candidateBoundaryRevision";
 import type {
   DurableAnalysisInputDescriptor,
   DurableAnalysisSelectionSummary,
@@ -9,6 +14,7 @@ import {
   createHighlightClipboardText,
   createHighlightExportFile,
   formatHighlightTimecode,
+  type ApprovedHighlightExportCandidate,
   type HighlightExportRequest,
 } from "./highlightExport";
 
@@ -68,6 +74,13 @@ const selection: DurableAnalysisSelectionSummary = {
   candidateCount: 2,
 };
 
+function approved(
+  proposal: UnifiedHighlightCandidate,
+  boundaryRevision: CandidateBoundaryRevision | null = null,
+): ApprovedHighlightExportCandidate {
+  return { proposal, boundaryRevision };
+}
+
 function request(candidates: readonly UnifiedHighlightCandidate[]): HighlightExportRequest {
   return {
     appVersion: "0.3.0",
@@ -75,7 +88,7 @@ function request(candidates: readonly UnifiedHighlightCandidate[]): HighlightExp
     generatedAt: "2026-07-19T12:00:00.000Z",
     input,
     selection,
-    candidates,
+    candidates: candidates.map((item) => approved(item)),
   };
 }
 
@@ -134,12 +147,15 @@ describe("highlight export", () => {
     expect(parsed).not.toHaveProperty("fileName");
     expect(parsed).not.toHaveProperty("chatMessages");
     expect(parsed).toMatchObject({
-      schemaVersion: "0.3.0",
+      schemaVersion: "0.4.0",
       appVersion: "0.3.0",
       audio: { plannedWindows: 7_265, analyzedWindows: 7_265 },
       candidates: [
         {
           id: "one",
+          proposalRange: { startMs: 5_000, endMs: 50_000 },
+          effectiveRange: { startMs: 5_000, endMs: 50_000 },
+          rangeProvenance: "aiProposal",
           reviewState: "approved",
           interpretation: { basis: "visual-exploration" },
         },
@@ -202,13 +218,59 @@ describe("highlight export", () => {
   it("creates a chronological copy-ready list", () => {
     expect(
       createHighlightClipboardText([
-        candidate("later", 70_000),
-        candidate("earlier", 5_000),
+        approved(candidate("later", 70_000)),
+        approved(candidate("earlier", 5_000)),
       ]),
     ).toBe(
       "Retto Highlight · 승인한 장면 2개\n" +
         "1. 00:00:05–00:00:50 · 오디오·채팅 반응 근거가 없어 화면 변화만으로 남긴 낮은 우선순위 탐색 후보예요.\n" +
         "2. 00:01:10–00:01:55 · 오디오·채팅 반응 근거가 없어 화면 변화만으로 남긴 낮은 우선순위 탐색 후보예요.",
     );
+  });
+
+  it("uses each approved candidate's effective range while preserving its AI proposal", () => {
+    const proposal = candidate("adjusted", 60_000);
+    const initialBoundary = createCandidateBoundaryRevision({
+      boundarySessionId: "session-1",
+      candidateId: proposal.id,
+      proposalRange: { startMs: proposal.startMs, endMs: proposal.endMs },
+      peakMs: proposal.peakMs,
+      sourceDurationMs: input.source.durationMs,
+    });
+    const transition = applyCandidateBoundaryCommand(initialBoundary, {
+      boundarySessionId: initialBoundary.boundarySessionId,
+      candidateId: initialBoundary.candidateId,
+      expectedRevision: 0,
+      kind: "SHIFT_START",
+      deltaMs: -5_000,
+    });
+    expect(transition.status).toBe("applied");
+    if (transition.status !== "applied") return;
+
+    const adjustedRequest: HighlightExportRequest = {
+      ...request([]),
+      candidates: [approved(proposal, transition.state)],
+    };
+    const csv = createHighlightExportFile("csv", adjustedRequest);
+    const markdown = createHighlightExportFile("markdown", adjustedRequest);
+    const json = JSON.parse(
+      createHighlightExportFile("json", adjustedRequest).content,
+    ) as {
+      candidates: Array<Record<string, unknown>>;
+    };
+    const clipboard = createHighlightClipboardText(adjustedRequest.candidates);
+
+    expect(csv.content).toContain('"00:00:55"');
+    expect(csv.content).toContain('"사용자 조정"');
+    expect(markdown.content).toContain("00:00:55–00:01:45");
+    expect(markdown.content).toContain("AI 제안 구간: 00:01:00–00:01:45");
+    expect(json.candidates[0]).toMatchObject({
+      proposalRange: { startMs: 60_000, endMs: 105_000 },
+      effectiveRange: { startMs: 55_000, endMs: 105_000 },
+      rangeProvenance: "userAdjusted",
+      userRevision: 1,
+    });
+    expect(clipboard).toContain("00:00:55–00:01:45");
+    expect(clipboard).toContain("AI 제안 00:01:00–00:01:45에서 조정");
   });
 });
