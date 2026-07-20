@@ -21,6 +21,12 @@ const IMPULSE_CREST_DB = 14;
 const IMPULSE_TEMPORAL_SUPPORT_LIFT_DB = 2.5;
 const STRONG_VOCAL_SUPPORT_RATIO = 0.55;
 const SUSTAINED_BACKGROUND_MS = 12_000;
+// Retain quiet but changing speech as a review lead. The stricter music and
+// edge gates below prevent harmonic beds from turning into false candidates.
+const DIALOGUE_SIGNAL_SPEECH_RATIO = 0.42;
+const DIALOGUE_SIGNAL_NOVELTY = 2.25;
+const DIALOGUE_SIGNAL_ZERO_CROSSING_NOVELTY = 1.05;
+const DIALOGUE_SIGNAL_MIN_CREST_DB = 6;
 const PROGRAM_EDGE_GUARD_MS = 90_000;
 // A long, steady vocal-band plateau is usually a song/MV or program bed,
 // not a streamer reaction. Keep this gate conservative so a changing laugh,
@@ -138,6 +144,7 @@ interface ScoredWindow extends NormalizedWindow {
   readonly clickPenalty: number;
   readonly silence: boolean;
   readonly impulseLike: boolean;
+  readonly dialogueLike: boolean;
   readonly active: boolean;
   readonly support: boolean;
   readonly score: number;
@@ -377,9 +384,19 @@ function scoreWindow(
     highCrestWithoutVocalAnchor &&
     window.endMs - window.startMs <= 2_000 &&
     !hasTemporalSupport;
+  const dialogueLike =
+    !silence &&
+    !candidateElevated &&
+    window.speechBandEnergyRatio !== undefined &&
+    speechBandEnergyRatio >= DIALOGUE_SIGNAL_SPEECH_RATIO &&
+    speechBandNovelty >= DIALOGUE_SIGNAL_NOVELTY &&
+    zeroCrossingNovelty >= DIALOGUE_SIGNAL_ZERO_CROSSING_NOVELTY &&
+    crestDb >= DIALOGUE_SIGNAL_MIN_CREST_DB &&
+    crestDb < IMPULSE_CREST_DB;
   // Sustained high-crest effects may extend a real reaction, but they cannot
   // seed a candidate without a lower-crest or strong vocal-band anchor.
-  const active = candidateElevated && !highCrestWithoutVocalAnchor;
+  const active =
+    (candidateElevated && !highCrestWithoutVocalAnchor) || dialogueLike;
   const support =
     active ||
     (!silence &&
@@ -391,7 +408,8 @@ function scoreWindow(
     Math.min(4, Math.max(0, robustPeakScore)) * 0.35 +
     vocalProxyStrength * 0.25 +
     Math.min(1, loudnessLiftDb / 12) -
-    clickPenalty;
+    clickPenalty +
+    (dialogueLike ? Math.min(2, speechBandNovelty) * 0.18 : 0);
 
   return {
     ...window,
@@ -406,6 +424,7 @@ function scoreWindow(
     clickPenalty,
     silence,
     impulseLike,
+    dialogueLike,
     active,
     support,
     score,
@@ -613,18 +632,21 @@ function evaluateCluster(
     (windows.at(-1)?.endMs ?? apex.endMs) - (windows[0]?.startMs ?? apex.startMs);
   const singleWindowHasVocalSupport =
     activeWindows.length === 1 &&
-    apex.vocalProxyStrength >= 1.5 &&
+    (apex.dialogueLike || apex.vocalProxyStrength >= 1.5) &&
     (apex.clickPenalty < 0.5 ||
       (apex.speechBandEnergyRatio ?? 0) >= STRONG_VOCAL_SUPPORT_RATIO);
   if (activeWindows.length < 2 && !singleWindowHasVocalSupport) {
     return null;
   }
   const eventKind: AudioReactionEventKind =
-    eventDurationMs >= 3_000 &&
-    activeWindows.length >= 3 &&
-    (vocalSupportRatio >= 0.4 || rmsRangeDb >= 2)
-      ? "sustained-vocal-reaction"
-      : "short-loudness-burst";
+    activeWindows.filter((window) => window.dialogueLike).length >=
+      Math.ceil(activeWindows.length / 2)
+      ? "dialogue-issue-signal"
+      : eventDurationMs >= 3_000 &&
+          activeWindows.length >= 3 &&
+          (vocalSupportRatio >= 0.4 || rmsRangeDb >= 2)
+        ? "sustained-vocal-reaction"
+        : "short-loudness-burst";
   const score =
     apex.score +
     Math.log1p(activeWindows.length) * 0.7 +
@@ -702,9 +724,11 @@ function createCandidate(
     speechBandEnergyRatio: round(event.apex.speechBandEnergyRatio ?? 0, 6),
   };
   const signalDescription =
-    event.eventKind === "sustained-vocal-reaction"
-      ? `${event.activeWindows.length}개 구간에 걸쳐 웃음·외침처럼 이어지는 음성 변화`
-      : "평소보다 크게 튄 짧은 음량 반응";
+    event.eventKind === "dialogue-issue-signal"
+      ? "대사 변화 신호"
+      : event.eventKind === "sustained-vocal-reaction"
+        ? `${event.activeWindows.length}개 구간에 걸쳐 웃음·외침처럼 이어지는 음성 변화`
+        : "평소보다 크게 튄 짧은 음량 반응";
   return {
     id: `audio-${event.eventKind}-${event.apex.startMs}-${startMs}-${endMs}`,
     peakMs,

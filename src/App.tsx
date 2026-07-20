@@ -234,9 +234,9 @@ interface AudioAnalysisOutcome {
   readonly coverageComplete: boolean;
 }
 
-const APP_VERSION = "0.3.17";
+const APP_VERSION = "0.3.18";
 const PERSISTENCE_SCHEMA_VERSION = "0.3.0";
-const SIGNAL_ENGINE_VERSION = "streamer-reaction-fast-pass-v2-reaction-only";
+const SIGNAL_ENGINE_VERSION = "streamer-reaction-fast-pass-v3-dialogue-music-edge-gates";
 const MAX_CHAT_FILE_BYTES = 32 * 1024 * 1024;
 const SIGNAL_GAP_POLICY_ID = DURABLE_SIGNAL_GAP_POLICY_ID;
 
@@ -246,6 +246,55 @@ type CandidateTimelineFrame = Awaited<ReturnType<typeof sampleCandidateVideoFram
 type CandidateTimelineFramesById = Readonly<
   Record<string, readonly CandidateTimelineFrame[]>
 >;
+type CandidateTimelineSignalKind = "audio" | "chat" | "visual" | "fused";
+interface CandidateTimelineScorePoint {
+  readonly id: string;
+  readonly peakMs: number;
+  readonly startMs: number;
+  readonly endMs: number;
+  readonly score: number;
+  readonly strength: number;
+  readonly signalKind: CandidateTimelineSignalKind;
+}
+
+interface CandidateTimelineScoreSource {
+  readonly signalKind: CandidateTimelineSignalKind;
+  readonly candidates: readonly Pick<
+    UnifiedHighlightCandidate,
+    "id" | "peakMs" | "startMs" | "endMs" | "score"
+  >[];
+}
+
+function buildCandidateTimelineScorePoints(
+  sources: readonly CandidateTimelineScoreSource[],
+): readonly CandidateTimelineScorePoint[] {
+  const rawPoints = sources.flatMap(({ signalKind, candidates }) =>
+    candidates.map((candidate) => ({ ...candidate, signalKind })),
+  );
+  const maximumBySignal = new Map<CandidateTimelineSignalKind, number>();
+  for (const point of rawPoints) {
+    const currentMaximum = maximumBySignal.get(point.signalKind) ?? 0;
+    maximumBySignal.set(point.signalKind, Math.max(currentMaximum, point.score));
+  }
+  return rawPoints
+    .filter(
+      (point) =>
+        Number.isFinite(point.peakMs) &&
+        Number.isFinite(point.startMs) &&
+        Number.isFinite(point.endMs) &&
+        point.endMs > point.startMs &&
+        Number.isFinite(point.score),
+    )
+    .map((point) => {
+      const maximum = maximumBySignal.get(point.signalKind) ?? 0;
+      const normalized = maximum > 0 ? point.score / maximum : 0;
+      return {
+        ...point,
+        strength: Math.min(1, Math.max(0.08, normalized)),
+      };
+    })
+    .sort((left, right) => left.peakMs - right.peakMs || right.strength - left.strength);
+}
 
 type RecoveryCatalogState =
   | { readonly status: "loading" }
@@ -758,6 +807,8 @@ function App() {
     useState<CandidateGeminiInsightById>({});
   const [candidateTimelineFramesById, setCandidateTimelineFramesById] =
     useState<CandidateTimelineFramesById>({});
+  const [candidateTimelineScorePoints, setCandidateTimelineScorePoints] =
+    useState<readonly CandidateTimelineScorePoint[]>([]);
   const candidatePassBEvidenceRef = useRef<CandidatePassBEvidenceById>({});
   const candidateGeminiInsightRef = useRef<CandidateGeminiInsightById>({});
   const candidatePassBInsightWriteChainRef = useRef<Promise<void>>(Promise.resolve());
@@ -950,6 +1001,7 @@ function App() {
     setInlinePreviewCandidateId(null);
     setInlinePreviewStartMs(null);
     setCandidateTimelineFramesById({});
+    setCandidateTimelineScorePoints([]);
     setClipDownloadStatusById({});
     setClipDownloadErrorById({});
     setClipDownloadProgressById({});
@@ -1407,6 +1459,7 @@ function App() {
     setAnalysisRun(null);
     setSelectionResult(null);
     setCandidates([]);
+    setCandidateTimelineScorePoints([]);
     resetCandidateRanking();
     resetBoundarySession();
     resetCandidatePassB();
@@ -1774,6 +1827,7 @@ function App() {
 
     setSelectionResult(null);
     setCandidates([]);
+    setCandidateTimelineScorePoints([]);
     resetCandidateRanking();
     resetBoundarySession();
     setAnalysisError(null);
@@ -2044,6 +2098,20 @@ function App() {
           allowUnanchoredVisualExploration: false,
         },
       );
+      setCandidateTimelineScorePoints(
+        buildCandidateTimelineScorePoints([
+          {
+            signalKind: "audio",
+            candidates: audioOutcome.result?.candidates ?? [],
+          },
+          {
+            signalKind: "chat",
+            candidates: chatResult?.candidates ?? [],
+          },
+          { signalKind: "visual", candidates: visualResult.candidates },
+          { signalKind: "fused", candidates: fusedCandidates },
+        ]),
+      );
       const summary: AnalysisSelectionSummary = {
         plannedFrameCount: visualResult.plannedSampleCount,
         sampledFrameCount: visualResult.sampledFrameCount,
@@ -2275,6 +2343,11 @@ function App() {
         }));
       setSelectionResult(reopenedPayload.summary);
       setCandidates(reopenedCandidates);
+      setCandidateTimelineScorePoints(
+        buildCandidateTimelineScorePoints([
+          { signalKind: "fused", candidates: reopenedCandidates },
+        ]),
+      );
       resetCandidateRanking(reopenedCandidates);
       setAnalysisRun(machine);
       setAnalysisProgress(null);
@@ -2327,6 +2400,11 @@ function App() {
                 }));
               setSelectionResult(durableCompletion.finalResult.result.summary);
               setCandidates(completedCandidates);
+              setCandidateTimelineScorePoints(
+                buildCandidateTimelineScorePoints([
+                  { signalKind: "fused", candidates: completedCandidates },
+                ]),
+              );
               resetCandidateRanking(completedCandidates);
               setAnalysisRun(completedMachine);
               setAnalysisProgress(null);
@@ -2620,11 +2698,16 @@ function App() {
           sourceFile,
           target.decodeStartMs,
           target.decodeEndMs,
-          { signal: controller.signal },
+          { signal: controller.signal, focusMs: target.reactionPeakMs },
         );
         videoFramesByCandidateId.set(target.candidateId, frames);
         if (!controller.signal.aborted && isMounted.current) {
-          const timelineFrame = frames[Math.min(1, Math.max(0, frames.length - 1))];
+          const relativePeakMs = target.reactionPeakMs - target.decodeStartMs;
+          const timelineFrame = [...frames].sort(
+            (left, right) =>
+              Math.abs(left.timestampMs - relativePeakMs) -
+              Math.abs(right.timestampMs - relativePeakMs),
+          )[0];
           setCandidateTimelineFramesById((current) => ({
             ...current,
             [target.candidateId]: timelineFrame === undefined ? [] : [timelineFrame],
@@ -3712,6 +3795,11 @@ function App() {
       }));
     setSelectionResult(recovered.finalResult.result.summary);
     setCandidates(recoveredCandidates);
+    setCandidateTimelineScorePoints(
+      buildCandidateTimelineScorePoints([
+        { signalKind: "fused", candidates: recoveredCandidates },
+      ]),
+    );
     const recoveredCandidateIds = new Set(recoveredCandidates.map((candidate) => candidate.id));
     const recoveredPassBInsights = recovered.candidatePassBInsights;
     const recoveredEvidence = Object.fromEntries(
@@ -4968,6 +5056,31 @@ function App() {
                       <span className="rh-timeline-count">{orderedCandidates.length}개 후보</span>
                     </div>
                     <div className="rh-timeline-track" aria-label="방송 안 후보 위치">
+                      <div className="rh-timeline-score-rail" aria-label="후보 점수로 보는 신호 가능성">
+                        {candidateTimelineScorePoints.map((point) => {
+                          const position =
+                            boundarySourceDurationMs > 0
+                              ? Math.min(100, Math.max(0, (((point.startMs + point.endMs) / 2) / boundarySourceDurationMs) * 100))
+                              : 0;
+                          const width =
+                            boundarySourceDurationMs > 0
+                              ? Math.max(0.35, Math.min(18, ((point.endMs - point.startMs) / boundarySourceDurationMs) * 100))
+                              : 0.35;
+                          return (
+                            <span
+                              className="rh-timeline-score-glow"
+                              key={`${point.signalKind}-${point.id}`}
+                              style={{
+                                left: `${position}%`,
+                                width: `${width}%`,
+                                height: `${8 + point.strength * 30}px`,
+                                opacity: 0.12 + point.strength * 0.3,
+                              }}
+                              title={`${point.signalKind} score ${Math.round(point.strength * 100)} · ${formatDuration(point.peakMs)}`}
+                            />
+                          );
+                        })}
+                      </div>
                       <span className="rh-timeline-line" aria-hidden="true" />
                       {orderedCandidates.map((candidate, index) => {
                         const position =
@@ -4993,10 +5106,18 @@ function App() {
                       <span>00:00</span>
                       <span>{formatDuration(boundarySourceDurationMs)}</span>
                     </div>
+                    <p className="rh-timeline-score-hint">
+                      흐릿한 막대는 오디오·채팅·화면 신호의 상대 점수예요. O가 없어도 막대가 있는 구간은 먼저 확인할 잠재 후보입니다.
+                    </p>
                     <ol className="rh-timeline-cards" aria-label="시간순 클립 후보 요약">
                       {orderedCandidates.map((candidate, index) => {
                         const frames = candidateTimelineFramesById[candidate.id] ?? [];
-                        const frame = frames[Math.min(1, Math.max(0, frames.length - 1))];
+                        const relativePeakMs = candidate.peakMs - candidate.startMs;
+                        const frame = [...frames].sort(
+                          (left, right) =>
+                            Math.abs(left.timestampMs - relativePeakMs) -
+                            Math.abs(right.timestampMs - relativePeakMs),
+                        )[0];
                         const insight = candidateGeminiInsightById[candidate.id];
                         const narrative = buildHighlightNarrative(candidate);
                         const oneLineSummary =

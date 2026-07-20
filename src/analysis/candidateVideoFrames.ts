@@ -11,6 +11,8 @@ const SEEK_TIMEOUT_MS = 8_000;
 
 export interface CandidateVideoFrameSamplingOptions {
   readonly signal?: AbortSignal;
+  /** Absolute source timestamp to prioritize for the impact thumbnail. */
+  readonly focusMs?: number;
   readonly document?: Document;
   readonly createObjectUrl?: (file: File) => string;
   readonly revokeObjectUrl?: (url: string) => void;
@@ -19,6 +21,7 @@ export interface CandidateVideoFrameSamplingOptions {
 export function candidateVideoFrameTimestamps(
   startMs: number,
   endMs: number,
+  focusMs?: number,
 ): readonly number[] {
   if (
     !Number.isSafeInteger(startMs) ||
@@ -29,9 +32,18 @@ export function candidateVideoFrameTimestamps(
   ) {
     return [];
   }
-  return CANDIDATE_VIDEO_FRAME_SAMPLE_RATIOS.map((ratio) =>
-    Math.round((endMs - startMs) * ratio),
-  );
+  const durationMs = endMs - startMs;
+  if (Number.isFinite(focusMs)) {
+    const relativeFocusMs = Math.min(durationMs, Math.max(0, Math.round((focusMs ?? startMs) - startMs)));
+    const offsets = [
+      relativeFocusMs - 6_000,
+      relativeFocusMs - 1_500,
+      relativeFocusMs + 1_500,
+      relativeFocusMs + 6_000,
+    ];
+    return [...new Set(offsets.map((offset) => Math.min(durationMs - 1, Math.max(0, offset))))];
+  }
+  return CANDIDATE_VIDEO_FRAME_SAMPLE_RATIOS.map((ratio) => Math.round(durationMs * ratio));
 }
 
 function abortIfRequested(signal: AbortSignal | undefined): void {
@@ -85,7 +97,8 @@ function dataUrlToBase64(dataUrl: string): string | null {
 }
 
 /**
- * Samples four small representative screenshots from a single candidate.
+ * Samples four small screenshots around the reaction peak when available;
+ * otherwise it falls back to evenly distributed representative screenshots.
  * Any browser codec/seek failure returns an empty list so audio-only analysis
  * can continue without making the whole candidate run fail.
  */
@@ -95,7 +108,7 @@ export async function sampleCandidateVideoFrames(
   endMs: number,
   options: CandidateVideoFrameSamplingOptions = {},
 ): Promise<readonly CandidatePassBVideoFrame[]> {
-  const timestamps = candidateVideoFrameTimestamps(startMs, endMs);
+  const timestamps = candidateVideoFrameTimestamps(startMs, endMs, options.focusMs);
   if (timestamps.length === 0 || typeof window === "undefined") return [];
   const documentImplementation = options.document ?? document;
   const createUrl = options.createObjectUrl ?? ((input: File) => URL.createObjectURL(input));

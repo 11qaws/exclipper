@@ -640,6 +640,33 @@
   border-radius: 999px;
   background: linear-gradient(90deg, var(--accent) 0%, var(--accentT) 100%);
   opacity: .72;
+  z-index: 1;
+}
+
+.rh-timeline-score-rail {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  border-radius: 999px;
+  pointer-events: none;
+}
+
+.rh-timeline-score-glow {
+  position: absolute;
+  bottom: 5px;
+  display: block;
+  min-width: 3px;
+  border-radius: 999px;
+  background: linear-gradient(180deg, var(--accentT), var(--accent));
+  filter: blur(7px);
+  transform: translateX(-50%);
+}
+
+.rh-timeline-score-hint {
+  margin: -4px 8px 12px;
+  color: var(--text4);
+  font-size: .6875rem;
+  line-height: 1.45;
 }
 
 .rh-timeline-marker {

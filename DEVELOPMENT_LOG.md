@@ -1,5 +1,12 @@
 # Development Log
 
+## 2026-07-21 `0.3.18` restore dialogue leads, score landscape, and impact thumbnails
+
+- Restored the previous quiet-but-novel dialogue lead so the known `2026 07 17 - 음식 토크[KzAW3yow80Q].mp4` sample returns three audio candidates again. The added filters remain limited to steady song/MV plateaus and non-distinctive opening/ending edges.
+- Added a faint score landscape behind the candidate timeline. It combines audio, chat, visual, and fused candidate signal ranges; an unmarked glow is now a review lead rather than an invisible discarded region.
+- Candidate video sampling now centers four screenshots around the reaction peak instead of using fixed arbitrary positions. Timeline thumbnails choose the nearest impact frame, while Gemini receives the same focused frame set.
+- Verification: the known sample produces three audio candidates, audio regression tests pass, and the full check/build remains required before release.
+
 ## 2026-07-21 `0.3.17` parallel candidate explanations
 
 - Pass B now starts Gemini requests as soon as each candidate is decoded instead of waiting for the previous candidate's explanation to finish. Multiple audio+frame requests can be in flight together, while existing candidate-ID fencing, partial persistence, gaps, and completion counts remain unchanged.

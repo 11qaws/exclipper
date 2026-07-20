@@ -52,7 +52,7 @@ describe("local audio reaction scoring core", () => {
     expect(result.coverageComplete).toBe(true);
   });
 
-  it("does not promote a quiet dialogue-band change without a reaction burst", () => {
+  it("surfaces a quiet but novel dialogue-band change for semantic review", () => {
     const windows = baseline(100);
     for (const [offset, speechBandEnergyRatio] of [0.68, 0.74].entries()) {
       const index = 46 + offset;
@@ -66,7 +66,8 @@ describe("local audio reaction scoring core", () => {
 
     const result = selectAudioReactionHighlights(windows, 100_000);
 
-    expect(result.candidates).toEqual([]);
+    expect(result.candidates[0]?.evidence.eventKind).toBe("dialogue-issue-signal");
+    expect(result.candidates[0]?.evidence.activeWindowCount).toBeGreaterThanOrEqual(2);
   });
 
   it("does not turn a quiet harmonic music change into a dialogue signal", () => {
