@@ -1,9 +1,9 @@
 /*
- * Retto Highlight application styles.
+ * ExClipper application styles.
  *
  * Load after streamsaver-reference.css. The StreamSaver snapshot supplies the
  * familiar visual grammar (neutral surfaces, blue emphasis, compact status UI),
- * while this file owns every Retto-specific component and future adaptation.
+ * while this file owns every ExClipper-specific component and future adaptation.
  */
 
 :root {

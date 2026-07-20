@@ -227,7 +227,7 @@ function markdownText(value: string): string {
 function createMarkdown(request: HighlightExportRequest): string {
   const candidates = chronologicalCandidates(request.candidates);
   const lines = [
-    "# Retto Highlight 편집 시간표",
+    "# ExClipper 편집 시간표",
     "",
     `- 만든 시각: ${request.generatedAt}`,
     `- 원본 길이: ${formatHighlightTimecode(request.input.source.durationMs)}`,
@@ -357,20 +357,20 @@ export function createHighlightExportFile(
 ): HighlightExportFile {
   if (format === "csv") {
     return {
-      fileName: "retto-highlight-timeline.csv",
+      fileName: "exclipper-timeline.csv",
       mimeType: "text/csv;charset=utf-8",
       content: createCsv(request.candidates),
     };
   }
   if (format === "markdown") {
     return {
-      fileName: "retto-highlight-timeline.md",
+      fileName: "exclipper-timeline.md",
       mimeType: "text/markdown;charset=utf-8",
       content: createMarkdown(request),
     };
   }
   return {
-    fileName: "retto-highlight-candidates.json",
+    fileName: "exclipper-candidates.json",
     mimeType: "application/json;charset=utf-8",
     content: createJson(request),
   };
@@ -381,7 +381,7 @@ export function createHighlightClipboardText(
 ): string {
   const orderedCandidates = chronologicalCandidates(candidates);
   return [
-    `Retto Highlight · 승인한 장면 ${orderedCandidates.length}개`,
+    `ExClipper · 승인한 장면 ${orderedCandidates.length}개`,
     ...orderedCandidates.map(
       (exportCandidate, index) => {
         const candidate = exportCandidate.proposal;

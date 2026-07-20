@@ -1,9 +1,9 @@
-# Retto Highlight 프로젝트 작업 지침
+# ExClipper 프로젝트 작업 지침
 
 ## 1. 공용 지침과 우선순위
 
 - 모든 개발 작업을 시작하기 전에 `C:\Users\Qumin\.claude\CLAUDE.md`를 끝까지 다시 읽는다.
-- 이 파일은 Retto Highlight에만 적용되는 더 구체적인 지침이다. 공용 지침과 충돌하면 이 파일을 우선하고, 충돌하지 않는 공용 지침은 계속 적용한다.
+- 이 파일은 ExClipper에만 적용되는 더 구체적인 지침이다. 공용 지침과 충돌하면 이 파일을 우선하고, 충돌하지 않는 공용 지침은 계속 적용한다.
 - 구현 전에 `PRODUCT_PLAN.md`, `STATE_LIFECYCLE.md`, `OPERATIONS.md`, `DEVELOPMENT_LOG.md`의 현재 버전을 확인한다.
 
 ## 2. 고정된 제품 정체성
@@ -51,8 +51,8 @@
 ## 6. StreamSaver 디자인 기준
 
 - `styles/streamsaver-reference.css`는 출처 보존용 불변 스냅샷이다. 직접 수정하지 않는다.
-- Retto 전용 스타일은 `styles/retto-highlight.css` 또는 기능별 자체 파일에서 `.rh-` 접두사로 작성한다.
-- 로드 순서는 StreamSaver reference CSS가 먼저, Retto override CSS가 다음이다.
+- ExClipper 전용 스타일은 호환 파일명인 `styles/retto-highlight.css` 또는 기능별 자체 파일에서 `.rh-` 접두사로 작성한다.
+- 로드 순서는 StreamSaver reference CSS가 먼저, ExClipper override CSS가 다음이다.
 - 원본 클래스 이름을 새 기능 의미로 억지 재사용하지 않는다.
 - 구현 전 StreamSaver CSS·asset의 재사용 권리와 필요한 고지를 확인한다.
 

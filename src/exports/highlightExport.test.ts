@@ -105,7 +105,7 @@ describe("highlight export", () => {
       request([candidate("later", 70_000), candidate("earlier", 5_000)]),
     );
 
-    expect(file.fileName).toBe("retto-highlight-timeline.csv");
+    expect(file.fileName).toBe("exclipper-timeline.csv");
     expect(file.content.startsWith("\uFEFF")).toBe(true);
     expect(file.content.indexOf("00:00:05")).toBeLessThan(
       file.content.indexOf("00:01:10"),
@@ -129,8 +129,8 @@ describe("highlight export", () => {
       request([candidate("one", 5_000)]),
     );
 
-    expect(file.fileName).toBe("retto-highlight-timeline.md");
-    expect(file.content).toContain("# Retto Highlight 편집 시간표");
+    expect(file.fileName).toBe("exclipper-timeline.md");
+    expect(file.content).toContain("# ExClipper 편집 시간표");
     expect(file.content).toContain("00:00:05–00:00:50");
     expect(file.content).toContain("영상 클립 파일은 포함하지 않습니다");
     expect(file.content).toContain("사건 단서");
@@ -263,7 +263,7 @@ describe("highlight export", () => {
         approved(candidate("earlier", 5_000)),
       ]),
     ).toBe(
-      "Retto Highlight · 승인한 장면 2개\n" +
+      "ExClipper · 승인한 장면 2개\n" +
         "1. 00:00:05–00:00:50 · 오디오·채팅 반응 근거가 없어 화면 변화만으로 남긴 낮은 우선순위 탐색 후보예요.\n" +
         "2. 00:01:10–00:01:55 · 오디오·채팅 반응 근거가 없어 화면 변화만으로 남긴 낮은 우선순위 탐색 후보예요.",
     );

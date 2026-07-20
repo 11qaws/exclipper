@@ -1371,7 +1371,7 @@ export class IndexedDbAnalysisResultStore implements AnalysisResultStore {
         rejectOnce(
           new AnalysisResultStoreError(
             "OPEN_BLOCKED",
-            "IndexedDB upgrade is blocked by another open Retto Highlight tab.",
+            "IndexedDB upgrade is blocked by another open ExClipper tab.",
           ),
         );
       };

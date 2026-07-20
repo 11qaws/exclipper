@@ -94,7 +94,7 @@ export function buildClipFileName(
   if (!Number.isSafeInteger(candidateNumber) || candidateNumber <= 0) {
     throw new RangeError("Candidate number must be a positive safe integer.");
   }
-  return `retto-highlight-${String(candidateNumber).padStart(2, "0")}-${clipTimePart(range.startMs)}-${clipTimePart(range.endMs)}.${outputKind}`;
+  return `exclipper-${String(candidateNumber).padStart(2, "0")}-${clipTimePart(range.startMs)}-${clipTimePart(range.endMs)}.${outputKind}`;
 }
 
 function throwIfAborted(signal: AbortSignal | undefined): void {

@@ -1,5 +1,29 @@
 # Development Log
 
+## 2026-07-20 — `0.3.11` 제품명 ExClipper 전환
+
+### 결정
+
+- 사용자에게 보이는 제품명과 새로 생성하는 클립·편집표·JSON 산출물의 브랜드를 `ExClipper`로 확정했다.
+- GitHub 저장소 이름 `rettolight`, Pages 경로 `/rettolight/`, 기존 IndexedDB/localStorage 키, CSS 파일명과 Worker endpoint는 기존 작업의 하위 호환을 위해 유지한다.
+- StreamSaver reference CSS는 불변 스냅샷이므로 수정하지 않고, ExClipper 전용 override 주석과 운영 문서만 갱신했다.
+
+### 적용
+
+- 앱 헤더·footer·문서 제목·HTML title·AI 오류 안내를 ExClipper로 변경했다.
+- 클립 파일과 편집표 내보내기 파일 이름을 `exclipper-*`로 변경했다.
+- package metadata와 `appVersion`을 `0.3.11`로 올렸다.
+
+### 검증 예정
+
+- TypeScript, lint, unit tests, production build와 Pages 하위 경로 smoke를 다시 실행한다.
+
+### 외부 평가 반영
+
+- ExClipper는 상용 클리퍼처럼 모든 판단을 자동 확정하는 제품이 아니라, 무료·로컬·외부 구성요소의 불확실성을 분리해 사람이 짧게 검토하도록 만드는 제품으로 평가 기준을 고정한다.
+- 외부 평가가 제안한 핵심 후속 과제는 개인화 모델을 먼저 추가하는 것이 아니라, 허용된 fixture와 사람 기준 구간으로 후보 recall·precision·승인율·경계 수정량을 측정하는 것이다.
+- Gemini는 상위 후보의 구조화된 해석과 확인 위치만 보조하고, 빠른 로컬 신호·채팅 신호·사람 승인과 독립된 revision으로 유지한다. 채팅이나 Gemini 실패가 영상 후보를 지우지 않는 현재 경계를 유지한다.
+
 ## 2026-07-19 — 제품 계획 수립
 
 ### 요청

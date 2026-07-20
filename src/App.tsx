@@ -225,7 +225,7 @@ interface AudioAnalysisOutcome {
   readonly coverageComplete: boolean;
 }
 
-const APP_VERSION = "0.3.10";
+const APP_VERSION = "0.3.11";
 const PERSISTENCE_SCHEMA_VERSION = "0.3.0";
 const SIGNAL_ENGINE_VERSION = "streamer-reaction-fast-pass-v2";
 const MAX_CHAT_FILE_BYTES = 32 * 1024 * 1024;
@@ -3916,8 +3916,8 @@ function App() {
       <header>
         <div className="header-inner rh-header-inner">
           <h1>
-            <span className="rh-brand-mark" aria-hidden="true">R</span>
-            Retto <span>Highlight</span>
+            <span className="rh-brand-mark" aria-hidden="true">E</span>
+            Ex<span>Clipper</span>
           </h1>
           <div className="rh-header-actions">
             <span className="rh-privacy-pill">개인 편집 어시스턴트</span>
@@ -5747,7 +5747,7 @@ function App() {
         </div>
 
         <footer className="rh-footer">
-          Retto Highlight는 수시간 방송에서 AI가 먼저 여러 클립 후보를 찾는 개인 편집 어시스턴트입니다.
+          ExClipper는 수시간 방송에서 AI가 먼저 여러 클립 후보를 찾는 개인 편집 어시스턴트입니다.
         </footer>
       </main>
     </div>

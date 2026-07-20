@@ -21,7 +21,7 @@ describe("clip renderer helpers", () => {
         { startMs: 3_661_000, endMs: 3_721_000 },
         "mp4",
       ),
-    ).toBe("retto-highlight-03-01-01-01-01-02-01.mp4");
+    ).toBe("exclipper-03-01-01-01-01-02-01.mp4");
   });
 
   it("rejects invalid ranges before opening media", () => {

@@ -142,17 +142,17 @@ export function candidatePassBWorkerFailureMessage(
     case "WORKER_BUSY":
       return "후보 정밀 분석 작업 공간이 이미 사용 중이에요.";
     case "PROXY_AUTH_REJECTED":
-      return "Retto AI 서비스 인증을 확인하지 못했어요.";
+      return "ExClipper AI 서비스 인증을 확인하지 못했어요.";
     case "PROXY_BAD_REQUEST":
-      return "Retto AI 서비스가 후보 분석 요청을 받아들이지 않았어요.";
+      return "ExClipper AI 서비스가 후보 분석 요청을 받아들이지 않았어요.";
     case "PROXY_RATE_LIMITED":
-      return "Retto AI 사용 한도에 도달했어요. 잠시 후 다시 시도해 주세요.";
+      return "ExClipper AI 사용 한도에 도달했어요. 잠시 후 다시 시도해 주세요.";
     case "PROXY_UNAVAILABLE":
-      return "Retto AI 서비스에 연결하지 못했어요. 인터넷 연결을 확인한 뒤 다시 시도해 주세요.";
+      return "ExClipper AI 서비스에 연결하지 못했어요. 인터넷 연결을 확인한 뒤 다시 시도해 주세요.";
     case "PROXY_INVALID_RESPONSE":
-      return "Retto AI 응답을 안전하게 읽지 못했어요. 다시 시도해 주세요.";
+      return "ExClipper AI 응답을 안전하게 읽지 못했어요. 다시 시도해 주세요.";
     case "PROXY_REQUEST_REJECTED":
-      return "Retto AI 서비스가 후보 분석 요청을 완료하지 못했어요.";
+      return "ExClipper AI 서비스가 후보 분석 요청을 완료하지 못했어요.";
     case "UNEXPECTED_WORKER_FAILURE":
       return "후보 정밀 분석 작업이 예기치 않게 멈췄어요.";
   }
