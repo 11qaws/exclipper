@@ -937,3 +937,4 @@
 - 프레임은 후보 상대 시각·JPEG MIME·Base64 길이를 검증하고, 프록시 요청 전체 크기를 제한한다. 화면 디코드·seek·캔버스 실패 또는 취소가 발생해도 해당 후보는 오디오만으로 계속한다.
 - Gemini 고정 prompt는 화면에서 실제로 보이는 장면과 스트리머 반응을 우선 설명하되 보이지 않는 사건·주체·인과를 추측하지 않도록 갱신했다. 기존 provisional transcript와 점수·ranking·경계·승인 분리는 유지한다.
 - `npm run check` 결과: 42개 test file, 571개 test 통과. 대표 프레임 timestamp 및 멀티모달 요청 builder 회귀 테스트를 추가했다.
+- 배포: GitHub Pages Actions `29739942282` 성공, 공개 번들에서 `videoFrames`·대표 화면 코드와 키 비노출을 확인했다. Cloudflare Worker `rettohighlight-gemini`도 새 프록시 계약으로 배포했고 `/healthz`가 정상 응답했다.
