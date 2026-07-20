@@ -14,9 +14,11 @@
 - 클립 파일과 편집표 내보내기 파일 이름을 `exclipper-*`로 변경했다.
 - package metadata와 `appVersion`을 `0.3.11`로 올렸다.
 
-### 검증 예정
+### 검증 결과
 
-- TypeScript, lint, unit tests, production build와 Pages 하위 경로 smoke를 다시 실행한다.
+- `npm run check`: 41개 테스트 파일, 568개 테스트가 통과했다.
+- `npm run build`와 `npm ci --dry-run`이 통과했다.
+- GitHub Actions `29731754780`의 build/deploy가 모두 성공했고, 공개 Pages에서 ExClipper title·헤더·footer와 오류 없는 콘솔을 확인했다.
 
 ### 외부 평가 반영
 
