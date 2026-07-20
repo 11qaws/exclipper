@@ -16,7 +16,7 @@ The default estimate assumes up to 12 candidates, 45–60 seconds of audio each,
 
 A YouTube link is useful for identifying a matching public video, but the official captions list/download API requires authorized access to caption tracks. ExClipper should accept an explicitly supplied `.vtt`, `.srt`, or transcript file as the first reliable script path; it must not pretend that a public URL alone guarantees a readable transcript.
 
-- 문서 상태: ExClipper 개인 편집 어시스턴트·상태/운영 모델을 확정한 초안 `0.3.13`
+- 문서 상태: ExClipper 개인 편집 어시스턴트·상태/운영 모델을 확정한 초안 `0.3.14`
 - 기준일: 2026-07-20 (Asia/Seoul)
 - 배포 원칙: GitHub Pages에서 빠른 분석·후보 검토·출력을 완주하고, Gemini 정밀 분석은 배포 Secret을 사용하는 전용 중계로 제공함
 - 제품 정체성: 공유 서비스가 아닌 1인용 AI 편집 어시스턴트

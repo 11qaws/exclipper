@@ -7,8 +7,10 @@
 - Candidate event kinds now include `dialogue-issue-signal`. It is a conservative speech-change lead and must be described as a lead, never as a confirmed event.
 - Cost display is advisory. Recalculate when candidate count or duration changes; do not use it as a billing guarantee.
 - YouTube caption retrieval is not silently scraped. If a user wants matching-video script context, provide an authorized caption export or a local VTT/SRT file and keep the source URL as context metadata.
+- Pass B evidence and Gemini insight snapshots are stored by analysis run in a dedicated IndexedDB object store. Recovery filters them to the recovered candidate IDs, and a new run epoch prevents late writes from an older source contaminating the current result.
+- Fixed non-vocal program-edge bursts (opening, ending, and break loops) are rejected by default. An edge segment can still survive when it has a distinctive vocal/dialogue anchor, while the central UI presents the automatic phase and candidate list without promotional copy.
 
-- 문서 버전: `0.3.13`
+- 문서 버전: `0.3.14`
 - 기준일: 2026-07-20 (Asia/Seoul)
 - 대상: GitHub Pages에서 실행되는 1인용 AI 편집 어시스턴트
 - 함께 읽을 문서: `PRODUCT_PLAN.md`, `STATE_LIFECYCLE.md`, `DEVELOPMENT_LOG.md`

@@ -1,5 +1,12 @@
 # Development Log
 
+## 2026-07-21 — `0.3.14` automatic phase, recovery, and fixed-segment guard
+
+- Candidate Pass B evidence and Gemini insights now use a dedicated IndexedDB record keyed by analysis run. Partial snapshots are serialized in order, recovered snapshots are filtered to the current candidate set, and a write epoch blocks late writes after a new source/run starts.
+- The candidate result area now exposes one compact automatic-phase status, places optional reaction/Gemini panels side by side, and centers the candidate list so the user can stay in the result context without scrolling back to setup copy.
+- Fixed non-vocal opening/ending bursts and recurring break segments are suppressed. A program-edge segment remains eligible only when it has a distinctive vocal/dialogue anchor; visual-only exploration is disabled for the fast-pass fusion used by the app.
+- Added regression tests for Pass B snapshot storage, visual-only suppression, and fixed non-vocal edge bursts.
+
 ## 2026-07-21 — desktop workspace and multimodal highlight pass
 
 - The first viewport is now a desktop-first editing workspace (`1440px` content width): source input and readiness summary share the top row, while the summary stays visible as the user reviews the file.

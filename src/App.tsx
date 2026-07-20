@@ -194,6 +194,10 @@ import {
   type RecoverableAnalysisAudit,
   type RecoverableAnalysisResult,
 } from "./storage/recoverableAnalysisResults";
+import {
+  CANDIDATE_PASS_B_INSIGHT_SCHEMA_VERSION,
+  type CandidatePassBInsightsRecord,
+} from "./storage/candidatePassBInsightStore";
 
 type Theme = "light" | "dark";
 type CandidateReviewState = "unreviewed" | "approved" | "rejected";
@@ -230,7 +234,7 @@ interface AudioAnalysisOutcome {
   readonly coverageComplete: boolean;
 }
 
-const APP_VERSION = "0.3.13";
+const APP_VERSION = "0.3.14";
 const PERSISTENCE_SCHEMA_VERSION = "0.3.0";
 const SIGNAL_ENGINE_VERSION = "streamer-reaction-fast-pass-v2";
 const MAX_CHAT_FILE_BYTES = 32 * 1024 * 1024;
@@ -748,6 +752,10 @@ function App() {
     useState<CandidatePassBEvidenceById>({});
   const [candidateGeminiInsightById, setCandidateGeminiInsightById] =
     useState<CandidateGeminiInsightById>({});
+  const candidatePassBEvidenceRef = useRef<CandidatePassBEvidenceById>({});
+  const candidateGeminiInsightRef = useRef<CandidateGeminiInsightById>({});
+  const candidatePassBInsightWriteChainRef = useRef<Promise<void>>(Promise.resolve());
+  const candidatePassBInsightWriteEpochRef = useRef(0);
   const [candidatePassBModelProgress, setCandidatePassBModelProgress] =
     useState<CandidatePassBModelProgress | null>(null);
   const [candidatePassBCandidateProgress, setCandidatePassBCandidateProgress] =
@@ -1318,12 +1326,15 @@ function App() {
 
   const resetCandidatePassB = useCallback((): void => {
     candidatePassBOperationEpoch.current += 1;
+    candidatePassBInsightWriteEpochRef.current += 1;
     candidatePassBAbortController.current?.abort();
     candidatePassBAbortController.current = null;
     candidatePassBMachine.current = null;
     candidatePassBIdentity.current = null;
     candidatePassBStartPendingRef.current = false;
     setCandidatePassBRun(null);
+    candidatePassBEvidenceRef.current = {};
+    candidateGeminiInsightRef.current = {};
     setCandidatePassBEvidenceById({});
     setCandidateGeminiInsightById({});
     setCandidatePassBStartPending(false);
@@ -2023,6 +2034,7 @@ function App() {
           sourceDurationMs: preflight.metadata.durationMs,
           candidateWindowMs: 45_000,
           maxCandidates: 12,
+          allowUnanchoredVisualExploration: false,
         },
       );
       const summary: AnalysisSelectionSummary = {
@@ -2495,6 +2507,46 @@ function App() {
     [],
   );
 
+  const queueCandidatePassBInsightPersistence = (
+    evidenceById: CandidatePassBEvidenceById,
+    insightById: CandidateGeminiInsightById,
+  ): void => {
+    const runId = currentAnalysisRunId;
+    const inputSignature =
+      openedRecoveredResult?.terminal.inputSignature ??
+      analysisRun?.inputSignature ??
+      sourceContentFingerprint;
+    if (runId === null || inputSignature === null) {
+      return;
+    }
+    const writeEpoch = candidatePassBInsightWriteEpochRef.current;
+    const record: CandidatePassBInsightsRecord = {
+      kind: "candidatePassBInsights",
+      runId,
+      schemaVersion: CANDIDATE_PASS_B_INSIGHT_SCHEMA_VERSION,
+      inputSignature,
+      modelManifestHash: CANDIDATE_PASS_B_MODEL_REVISION,
+      evidenceById,
+      insightById,
+      recordedAt: new Date().toISOString(),
+    };
+    candidatePassBInsightWriteChainRef.current = candidatePassBInsightWriteChainRef.current
+      .catch(() => undefined)
+      .then(async () => {
+        if (candidatePassBInsightWriteEpochRef.current !== writeEpoch) {
+          return;
+        }
+        await getResultStore().putCandidatePassBInsights(record);
+      })
+      .catch(() => {
+        if (isMounted.current && candidatePassBIdentity.current?.analysisRunId === runId) {
+          setCandidatePassBError(
+            "Gemini 결과를 브라우저 기록에 저장하지 못했어요. 현재 화면의 결과는 계속 확인할 수 있어요.",
+          );
+        }
+      });
+  };
+
   const runCandidatePassB = async (): Promise<void> => {
     const sourceBindingId =
       sourceContentFingerprint ??
@@ -2704,16 +2756,21 @@ function App() {
           if (!accepted) {
             throw new Error("The Pass B candidate result was rejected.");
           }
-          setCandidatePassBEvidenceById((current) =>
-            isCurrentOperation()
-              ? mergeCandidatePassBEvidence(current, evidence)
-              : current,
-          );
-          setCandidateGeminiInsightById((current) =>
-            isCurrentOperation()
-              ? { ...current, [result.candidateId]: result.insight }
-              : current,
-          );
+          if (isCurrentOperation()) {
+            const nextEvidence = mergeCandidatePassBEvidence(
+              candidatePassBEvidenceRef.current,
+              evidence,
+            );
+            const nextInsights = {
+              ...candidateGeminiInsightRef.current,
+              [result.candidateId]: result.insight,
+            };
+            candidatePassBEvidenceRef.current = nextEvidence;
+            candidateGeminiInsightRef.current = nextInsights;
+            setCandidatePassBEvidenceById(nextEvidence);
+            setCandidateGeminiInsightById(nextInsights);
+            queueCandidatePassBInsightPersistence(nextEvidence, nextInsights);
+          }
         },
         onCandidateGap: (gap: CandidatePassBCandidateGap) => {
           const target = targetById.get(gap.candidateId);
@@ -2753,11 +2810,18 @@ function App() {
             ) {
               throw new Error("The Pass B no-speech result was rejected.");
             }
-            setCandidatePassBEvidenceById((current) =>
-              isCurrentOperation()
-                ? mergeCandidatePassBEvidence(current, evidence)
-                : current,
-            );
+            if (isCurrentOperation()) {
+              const nextEvidence = mergeCandidatePassBEvidence(
+                candidatePassBEvidenceRef.current,
+                evidence,
+              );
+              candidatePassBEvidenceRef.current = nextEvidence;
+              setCandidatePassBEvidenceById(nextEvidence);
+              queueCandidatePassBInsightPersistence(
+                nextEvidence,
+                candidateGeminiInsightRef.current,
+              );
+            }
             return;
           }
           if (
@@ -3634,6 +3698,22 @@ function App() {
       }));
     setSelectionResult(recovered.finalResult.result.summary);
     setCandidates(recoveredCandidates);
+    const recoveredCandidateIds = new Set(recoveredCandidates.map((candidate) => candidate.id));
+    const recoveredPassBInsights = recovered.candidatePassBInsights;
+    const recoveredEvidence = Object.fromEntries(
+      Object.entries(recoveredPassBInsights?.evidenceById ?? {}).filter(([candidateId]) =>
+        recoveredCandidateIds.has(candidateId),
+      ),
+    ) as CandidatePassBEvidenceById;
+    const recoveredGeminiInsights = Object.fromEntries(
+      Object.entries(recoveredPassBInsights?.insightById ?? {}).filter(([candidateId]) =>
+        recoveredCandidateIds.has(candidateId),
+      ),
+    ) as CandidateGeminiInsightById;
+    candidatePassBEvidenceRef.current = recoveredEvidence;
+    candidateGeminiInsightRef.current = recoveredGeminiInsights;
+    setCandidatePassBEvidenceById(recoveredEvidence);
+    setCandidateGeminiInsightById(recoveredGeminiInsights);
     resetCandidateRanking(recoveredCandidates);
     setLastExportFormat(null);
     setCopyStatus("idle");
@@ -4051,19 +4131,7 @@ function App() {
         </ol>
 
         <section className="rh-page-heading" aria-labelledby="page-title">
-          <p className="rh-eyebrow">개인 편집 어시스턴트</p>
-          <h2 id="page-title">몇 시간짜리 방송에서, 먼저 볼 클립 후보들을 찾아드릴게요.</h2>
-          <p>
-            AI가 하루치 영상 전체를 먼저 훑어 서로 다른 30초~1분 클립 후보들을 찾아봅니다. 사람은 발견된 짧은 후보들만 보고 마지막 결정을 내리면 됩니다.
-          </p>
-          <details className="rh-inline-details">
-            <summary>지금 AI가 보는 기준</summary>
-            <p>
-              방송 오디오에서 웃음·외침처럼 이어지는 음성형·큰 반응 신호를 먼저 찾고, 선택한 CHZZK 채팅 반응을 함께 봅니다.
-              게임·영상 소리와 스트리머 마이크는 아직 분리하지 않으므로 실제 주체는 재생해 확인해 주세요.
-              화면 변화는 사건 전후 맥락을 보조하며, Gemini 대사 문구만으로 사건 이름이나 반응 원인을 확정하지 않아요.
-            </p>
-          </details>
+          <h2 id="page-title">클립 후보 분석 AI</h2>
         </section>
 
         {showRecoveryPanel && (
@@ -4458,19 +4526,9 @@ function App() {
             <section className="rh-panel" aria-labelledby="candidate-title">
               <div className="rh-results-header">
                 <div>
-                  <p className="rh-eyebrow">3단계 · 사람이 마지막 결정</p>
-                  <h3 id="candidate-title" ref={candidateHeading} tabIndex={-1}>먼저 볼 클립 후보 {candidates.length}개</h3>
-                  <p className="rh-help">
-                    AI가 영상 맥락 {selectionResult.sampledFrameCount.toLocaleString("ko-KR")}개 지점과
-                    {selectionResult.analyzedAudioWindowCount === undefined
-                      ? " 과거 버전의 화면·채팅 신호를 확인했고"
-                      : ` 오디오 ${selectionResult.analyzedAudioWindowCount.toLocaleString("ko-KR")}개 구간을 먼저 살폈고`}
-                    {selectionResult.analyzedChatMessageCount > 0
-                      ? ` 채팅 ${selectionResult.analyzedChatMessageCount.toLocaleString("ko-KR")}개를 함께 집계했어요.`
-                      : " 채팅 기록은 넣지 않았어요."}
-                    {" "}
-                    후보를 재생한 뒤 쓸 장면만 골라 주세요.
-                  </p>
+                  <p className="rh-eyebrow">자동 분석 페이즈</p>
+                  <h3 id="candidate-title" ref={candidateHeading} tabIndex={-1}>클립 후보 {candidates.length}개</h3>
+                  <p className="rh-help">빠른 탐색이 끝났고, 다음 AI 해석 페이즈가 자동으로 이어집니다.</p>
                   {selectionResult.audioGapReasonCode !== undefined && selectionResult.audioGapReasonCode !== null && (
                     <p className="rh-notice" data-tone="warning" role="status">
                       {selectionResult.audioGapReasonCode === "NO_AUDIO_TRACK"
@@ -4495,6 +4553,22 @@ function App() {
                 </div>
               </div>
 
+              <div className="rh-phase-status" role="status" aria-live="polite">
+                <div>
+                  <span className="rh-phase-kicker">현재 페이즈</span>
+                  <strong>{candidatePassBDetailAnalysisLabel}</strong>
+                  <p>{candidatePassBStatusText}</p>
+                </div>
+                {candidatePassBRun !== null && (
+                  <progress
+                    className="rh-analysis-progress"
+                    max={1}
+                    value={candidatePassBProgressRatio}
+                    aria-label="자동 후보 해석 진행률"
+                  />
+                )}
+              </div>
+
               {openedRecoveredResult !== null &&
                 sourcePreviewUrl === null &&
                 candidateReviewFeatureAvailability.hasCandidates && (
@@ -4506,23 +4580,16 @@ function App() {
                 </div>
               )}
 
+              <div className="rh-phase-panels">
               {candidateReviewFeatureAvailability.showAudioEvent && (
                 <section
                   className="rh-passb-panel rh-audio-event-panel"
                   aria-labelledby="audio-event-title"
                 >
                   <div className="rh-passb-copy">
-                    <p className="rh-eyebrow">권장 기능 · 후보 반응 종류 확인</p>
-                    <h4 id="audio-event-title">웃음·고함·비명·박수/환호를 더 찾아볼까요?</h4>
-                    <p>
-                      몇 시간짜리 원본 전체를 다시 보지 않고, 먼저 찾은 후보 {Math.min(12, candidates.length)}개에서
-                      반응 정점 주변의 짧은 구간만 AI가 들어요. 후보마다 재생할 위치를 붙이지만,
-                      스트리머 마이크와 게임·영상 소리가 섞여 있으므로 직접 들어 보고 판단해 주세요.
-                    </p>
-                    <p className="rh-help">
-                      첫 실행에는 AI 모델 약 91MB와 실행 파일 약 23MB를 받을 수 있어요. 최대 12개 후보에서
-                      후보당 최대 3개의 약 10초 구간을 확인합니다.
-                    </p>
+                    <p className="rh-eyebrow">자동 페이즈 · 반응 종류</p>
+                    <h4 id="audio-event-title">스트리머 반응 종류 확인</h4>
+                    <p>웃음·고함·비명·박수·환호 같은 반응을 후보별로 분류합니다.</p>
                   </div>
                   <div className="rh-passb-actions">
                     {!candidateAudioEventBusy && (
@@ -4598,16 +4665,9 @@ function App() {
               {candidateReviewFeatureAvailability.showPassB && (
                 <section className="rh-passb-panel rh-gemini-panel" aria-labelledby="pass-b-title">
                   <div className="rh-passb-copy">
-                    <p className="rh-eyebrow">권장 기능 · Gemini 한국어 정밀 분석</p>
-                    <h4 id="pass-b-title">후보의 한국어 대사와 사건 단서를 더 자세히 살펴볼까요?</h4>
-                    <p>
-                      AI가 먼저 찾은 후보 {Math.min(12, candidates.length)}개, 합계 약 {formatDuration(candidatePassBTransferDurationMs)}를
-                      Gemini가 차례로 살펴봐요.
-                      한국어 대사와 후보 구간의 대표 화면을 함께 보며 사건·스트리머 반응·클립으로 볼 이유를 후보마다 정리합니다.
-                    </p>
-                    <p className="rh-help">
-                      Gemini 문장은 틀릴 수 있으므로 시간 버튼을 눌러 실제 장면을 마지막으로 확인해 주세요.
-                    </p>
+                    <p className="rh-eyebrow">자동 페이즈 · Gemini 해석</p>
+                    <h4 id="pass-b-title">화면·오디오·대사 맥락 정리</h4>
+                    <p>Gemini가 후보마다 사건과 스트리머 반응을 한국어로 설명합니다.</p>
                     <p className="rh-cost-note">
                       현재 전송량 기준 예상 비용 {formatEstimatedUsd(candidatePassBCostEstimate.totalCostUsd)} ·
                       입력 약 {candidatePassBCostEstimate.inputTokens.toLocaleString()}토큰 + 후보별 화면 4장 기준
@@ -4686,6 +4746,7 @@ function App() {
                   </div>
                 </section>
               )}
+              </div>
 
               {candidateReviewFeatureAvailability.showRanking && (
                 <section

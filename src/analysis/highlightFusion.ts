@@ -83,6 +83,8 @@ export interface HighlightFusionOptions {
   readonly proximityMs?: number;
   /** Suppress a weaker window when this share of its shorter window overlaps. */
   readonly nmsOverlapThreshold?: number;
+  /** Keep the reaction-first contract when no audio/chat anchor exists. */
+  readonly allowUnanchoredVisualExploration?: boolean;
 }
 
 export interface NormalizedSignalEvidence {
@@ -384,8 +386,14 @@ export function fuseReactionHighlightCandidates(
   );
 
   let drafts: readonly ReactionDraftCandidate[];
-  if (rankedAudio.length === 0 && rankedChat.length === 0) {
+  if (
+    rankedAudio.length === 0 &&
+    rankedChat.length === 0 &&
+    options.allowUnanchoredVisualExploration !== false
+  ) {
     drafts = createVisualExplorationDrafts(rankedVisual, durationMs, windowMs);
+  } else if (rankedAudio.length === 0 && rankedChat.length === 0) {
+    drafts = [];
   } else {
     const anchors = createReactionAnchorDrafts(
       rankedAudio,

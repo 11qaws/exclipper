@@ -13,6 +13,11 @@ import {
   type DurableManifestPayload,
   type DurableSourceDescriptor,
 } from "./durableAnalysisPayload";
+import {
+  assertCandidatePassBInsightsRecord,
+  cloneCandidatePassBInsightsRecord,
+  type CandidatePassBInsightsRecord,
+} from "./candidatePassBInsightStore";
 
 export type JsonPrimitive = string | number | boolean | null;
 
@@ -99,6 +104,8 @@ export interface AnalysisResultStore {
   listTerminalRecords(): Promise<AnalysisTerminalRecordCatalog>;
   putSourceSnapshot(record: SourceCapabilitySnapshotRecord): Promise<void>;
   getSourceSnapshot(sourceCheckId: string): Promise<SourceCapabilitySnapshotRecord | null>;
+  putCandidatePassBInsights(record: CandidatePassBInsightsRecord): Promise<void>;
+  getCandidatePassBInsights(runId: string): Promise<CandidatePassBInsightsRecord | null>;
   close(): void;
 }
 
@@ -133,7 +140,7 @@ export class AnalysisResultStoreError extends Error {
 }
 
 export const DEFAULT_ANALYSIS_RESULT_DB_NAME = "retto-highlight-analysis-results";
-export const ANALYSIS_RESULT_DB_VERSION = 2;
+export const ANALYSIS_RESULT_DB_VERSION = 3;
 
 export const ANALYSIS_RESULT_OBJECT_STORES = {
   manifests: "analysisManifests",
@@ -142,6 +149,7 @@ export const ANALYSIS_RESULT_OBJECT_STORES = {
   failures: "analysisFailures",
   terminals: "analysisTerminalDispositions",
   sourceSnapshots: "sourceCapabilitySnapshots",
+  candidatePassBInsights: "candidatePassBInsights",
 } as const;
 
 type AnalysisStoreName =
@@ -580,6 +588,7 @@ export class InMemoryAnalysisResultStore implements AnalysisResultStore {
   private readonly failures = new Map<string, AnalysisFailureRecord>();
   private readonly terminals = new Map<string, AnalysisTerminalRecord>();
   private readonly sourceSnapshots = new Map<string, SourceCapabilitySnapshotRecord>();
+  private readonly candidatePassBInsights = new Map<string, CandidatePassBInsightsRecord>();
   private closed = false;
 
   public putManifest(record: AnalysisManifestRecord): Promise<void> {
@@ -668,6 +677,25 @@ export class InMemoryAnalysisResultStore implements AnalysisResultStore {
       assertIdentifier(sourceCheckId, "sourceCheckId");
       const record = this.sourceSnapshots.get(sourceCheckId);
       return record === undefined ? null : cloneJson(record);
+    });
+  }
+
+  public putCandidatePassBInsights(record: CandidatePassBInsightsRecord): Promise<void> {
+    return rejectedOperation(() => {
+      this.assertOpen();
+      const snapshot = cloneCandidatePassBInsightsRecord(record);
+      this.candidatePassBInsights.set(snapshot.runId, snapshot);
+    });
+  }
+
+  public getCandidatePassBInsights(
+    runId: string,
+  ): Promise<CandidatePassBInsightsRecord | null> {
+    return rejectedOperation(() => {
+      this.assertOpen();
+      assertIdentifier(runId, "runId");
+      const record = this.candidatePassBInsights.get(runId);
+      return record === undefined ? null : cloneCandidatePassBInsightsRecord(record);
     });
   }
 
@@ -859,6 +887,29 @@ export class IndexedDbAnalysisResultStore implements AnalysisResultStore {
         (value) => {
           assertSourceSnapshotRecord(value);
           return cloneJson(value);
+        },
+      );
+    }).then((operation) => operation);
+  }
+
+  public putCandidatePassBInsights(record: CandidatePassBInsightsRecord): Promise<void> {
+    return rejectedOperation(() => {
+      const snapshot = cloneCandidatePassBInsightsRecord(record);
+      return this.writeRecord(ANALYSIS_RESULT_OBJECT_STORES.candidatePassBInsights, snapshot);
+    }).then((operation) => operation);
+  }
+
+  public getCandidatePassBInsights(
+    runId: string,
+  ): Promise<CandidatePassBInsightsRecord | null> {
+    return rejectedOperation(() => {
+      assertIdentifier(runId, "runId");
+      return this.readRecord(
+        ANALYSIS_RESULT_OBJECT_STORES.candidatePassBInsights,
+        runId,
+        (value) => {
+          assertCandidatePassBInsightsRecord(value);
+          return cloneCandidatePassBInsightsRecord(value);
         },
       );
     }).then((operation) => operation);

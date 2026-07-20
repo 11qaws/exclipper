@@ -569,6 +569,8 @@
   display: flex;
   flex-direction: column;
   gap: 10px;
+  width: min(100%, 1280px);
+  margin: 0 auto;
 }
 
 .rh-candidate-card {
@@ -1318,6 +1320,58 @@
   justify-content: space-between;
   gap: 12px;
   margin-bottom: 14px;
+}
+
+.rh-phase-status {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(180px, .45fr);
+  gap: 12px 20px;
+  align-items: center;
+  margin: 0 0 16px;
+  padding: 14px 16px;
+  border: 1px solid var(--accentBd);
+  border-radius: var(--rh-radius-lg);
+  background: var(--accentBg);
+}
+
+.rh-phase-kicker {
+  display: block;
+  margin-bottom: 3px;
+  color: var(--accentT);
+  font-size: .7rem;
+  font-weight: 750;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.rh-phase-status strong {
+  display: block;
+  color: var(--text1);
+  font-size: .95rem;
+}
+
+.rh-phase-status p {
+  margin: 4px 0 0;
+  color: var(--text3);
+  font-size: .8125rem;
+  line-height: 1.45;
+}
+
+.rh-phase-status .rh-analysis-progress {
+  width: 100%;
+  margin-top: 0;
+}
+
+.rh-phase-panels {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 18px;
+}
+
+.rh-phase-panels .rh-passb-panel {
+  height: 100%;
+  margin: 0;
 }
 
 .rh-passb-panel {
@@ -2105,6 +2159,15 @@
 }
 
 @media (max-width: 840px) {
+  .rh-phase-status,
+  .rh-phase-panels {
+    grid-template-columns: 1fr;
+  }
+
+  .rh-phase-status .rh-analysis-progress {
+    margin-top: 2px;
+  }
+
   .rh-workspace-top {
     grid-template-columns: 1fr;
   }

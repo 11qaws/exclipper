@@ -5,6 +5,7 @@ import type {
   FinalAnalysisResultRecord,
 } from "./analysisResultStore";
 import { durableCoverageDisposition } from "./durableAnalysisPayload";
+import type { CandidatePassBInsightsRecord } from "./candidatePassBInsightStore";
 
 export interface RecoverableAnalysisResult {
   readonly terminal: AnalysisTerminalRecord & {
@@ -13,6 +14,7 @@ export interface RecoverableAnalysisResult {
   };
   readonly finalResult: FinalAnalysisResultRecord;
   readonly manifest: AnalysisManifestRecord;
+  readonly candidatePassBInsights: CandidatePassBInsightsRecord | null;
 }
 
 export interface RecoverableAnalysisAudit {
@@ -87,9 +89,10 @@ export async function auditRecoverableAnalysisResults(
     }
 
     try {
-      const [manifest, finalResult] = await Promise.all([
+      const [manifest, finalResult, candidatePassBInsights] = await Promise.all([
         store.getManifest(terminal.runId),
         store.getFinalResult(terminal.runId),
+        store.getCandidatePassBInsights(terminal.runId),
       ]);
       if (
         manifest === null ||
@@ -102,7 +105,7 @@ export async function auditRecoverableAnalysisResults(
         skippedCompletedResultCount += 1;
         continue;
       }
-      results.push({ terminal, manifest, finalResult });
+      results.push({ terminal, manifest, finalResult, candidatePassBInsights });
     } catch {
       skippedCompletedResultCount += 1;
     }

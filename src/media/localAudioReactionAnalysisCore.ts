@@ -27,6 +27,7 @@ const SUSTAINED_BACKGROUND_MS = 12_000;
 const DIALOGUE_SIGNAL_SPEECH_RATIO = 0.42;
 const DIALOGUE_SIGNAL_NOVELTY = 2.25;
 const DIALOGUE_SIGNAL_ZERO_CROSSING_NOVELTY = 1.05;
+const PROGRAM_EDGE_GUARD_MS = 90_000;
 
 export interface AudioReactionFeatureWindow {
   readonly startMs: number;
@@ -168,7 +169,7 @@ export function selectAudioReactionHighlights(
   let suppressedSustainedBackgroundCount = 0;
 
   for (const cluster of clusters) {
-    const evaluated = evaluateCluster(cluster, scored);
+    const evaluated = evaluateCluster(cluster, scored, durationMs);
     if (evaluated === "sustained-background") {
       suppressedSustainedBackgroundCount += 1;
     } else if (evaluated !== null) {
@@ -540,6 +541,7 @@ function buildClusters(windows: readonly ScoredWindow[]): readonly (readonly Sco
 function evaluateCluster(
   windows: readonly ScoredWindow[],
   allWindows: readonly ScoredWindow[],
+  sourceDurationMs: number,
 ): ReactionEvent | "sustained-background" | null {
   const activeWindows = windows.filter((window) => window.active);
   if (activeWindows.length === 0) {
@@ -575,6 +577,31 @@ function evaluateCluster(
     vocalSupportRatio < 0.4
   ) {
     return "sustained-background";
+  }
+
+  const hasVocalAnchor = activeWindows.some(
+    (window) =>
+      window.dialogueLike ||
+      (window.speechBandEnergyRatio === undefined
+        ? window.vocalProxyStrength >= 1
+        : window.speechBandEnergyRatio >= 0.4),
+  );
+  if (!hasVocalAnchor) {
+    return null;
+  }
+
+  const nearProgramEdge =
+    apex.centerMs < PROGRAM_EDGE_GUARD_MS ||
+    sourceDurationMs - apex.centerMs < PROGRAM_EDGE_GUARD_MS;
+  const hasDistinctiveEdgeVoice = activeWindows.some(
+    (window) =>
+      window.dialogueLike ||
+      (window.speechBandEnergyRatio === undefined
+        ? window.vocalProxyStrength >= 2
+        : window.speechBandEnergyRatio >= STRONG_VOCAL_SUPPORT_RATIO),
+  );
+  if (nearProgramEdge && !hasDistinctiveEdgeVoice) {
+    return null;
   }
 
   const eventDurationMs =

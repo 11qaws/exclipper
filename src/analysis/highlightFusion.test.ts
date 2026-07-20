@@ -355,6 +355,13 @@ describe("fuseReactionHighlightCandidates", () => {
     expect(exploration.every(({ reason }) => reason.includes("반응을 확인한 결과가 아니라"))).toBe(
       true,
     );
+
+    expect(
+      fuseReactionHighlightCandidates(
+        { visualCandidates: [visualCandidate("opening", 30_000, 100)] },
+        { sourceDurationMs: 260_000, allowUnanchoredVisualExploration: false },
+      ),
+    ).toEqual([]);
   });
 
   it("combines audio, delayed chat, and nearby visual context in canonical order", () => {

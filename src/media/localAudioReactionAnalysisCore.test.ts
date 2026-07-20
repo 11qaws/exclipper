@@ -70,6 +70,22 @@ describe("local audio reaction scoring core", () => {
     expect(result.candidates[0]?.evidence.activeWindowCount).toBeGreaterThanOrEqual(2);
   });
 
+  it("ignores a fixed non-vocal opening or ending burst", () => {
+    const windows = baseline(180);
+    for (const index of [4, 5, 6]) {
+      windows[index] = speechWindow(index, {
+        rms: 0.2,
+        peak: 0.42,
+        zeroCrossingRate: 0.2,
+        speechBandEnergyRatio: 0.12,
+      });
+    }
+
+    const result = selectAudioReactionHighlights(windows, 180_000);
+
+    expect(result.candidates).toEqual([]);
+  });
+
   it("does not report complete coverage when a decoded feature window is missing", () => {
     const windows = baseline(10).filter((_, index) => index !== 4);
 

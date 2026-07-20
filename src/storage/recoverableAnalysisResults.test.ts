@@ -8,6 +8,10 @@ import {
   type FinalAnalysisResultRecord,
 } from "./analysisResultStore";
 import type { DurableFinalResultPayload } from "./durableAnalysisPayload";
+import {
+  CANDIDATE_PASS_B_INSIGHT_SCHEMA_VERSION,
+  type CandidatePassBInsightsRecord,
+} from "./candidatePassBInsightStore";
 import { auditRecoverableAnalysisResults } from "./recoverableAnalysisResults";
 
 const INPUT_SIGNATURE = `sha256:${"c".repeat(64)}`;
@@ -148,6 +152,27 @@ async function putCompletedBundle(
 }
 
 describe("recoverable analysis audit", () => {
+  it("includes the latest Pass B snapshot when a completed run is reopened", async () => {
+    const store = new InMemoryAnalysisResultStore();
+    const runId = "run-with-pass-b";
+    await putCompletedBundle(store, runId);
+    const passB: CandidatePassBInsightsRecord = {
+      kind: "candidatePassBInsights",
+      runId,
+      schemaVersion: CANDIDATE_PASS_B_INSIGHT_SCHEMA_VERSION,
+      inputSignature: INPUT_SIGNATURE,
+      modelManifestHash: "gemini-3.1-pro-preview",
+      evidenceById: {},
+      insightById: {},
+      recordedAt: RECORDED_AT,
+    };
+    await store.putCandidatePassBInsights(passB);
+
+    const audit = await auditRecoverableAnalysisResults(store);
+
+    expect(audit.results[0]?.candidatePassBInsights).toEqual(passB);
+  });
+
   it.each([
     ["completed", false],
     ["completedWithGaps", true],
