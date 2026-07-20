@@ -1,7 +1,7 @@
 # Retto Highlight 상태·생애주기 명세
 
-- 문서 버전: 0.3.9
-- 기준 제품 계획: PRODUCT_PLAN.md 0.3.9
+- 문서 버전: 0.3.10
+- 기준 제품 계획: PRODUCT_PLAN.md 0.3.10
 - 기준일: 2026-07-20 (Asia/Seoul)
 - 적용 범위: GitHub Pages에서 실행되는 개인 편집 어시스턴트와 선택형 CHZZK 동반 수집기
 - 문서 지위: 구현 전 상태 모델의 기준 문서

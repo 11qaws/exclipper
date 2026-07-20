@@ -154,6 +154,7 @@ import {
   LocalVideoVisualAnalysisError,
   type LocalVideoVisualAnalysisProgress,
 } from "./media/localVideoVisualAnalysis";
+import type { ClipRenderProgress } from "./media/clipRenderer";
 import { createContentFingerprint } from "./security/contentFingerprint";
 import {
   createLocalFileFingerprint,
@@ -224,7 +225,7 @@ interface AudioAnalysisOutcome {
   readonly coverageComplete: boolean;
 }
 
-const APP_VERSION = "0.3.9";
+const APP_VERSION = "0.3.10";
 const PERSISTENCE_SCHEMA_VERSION = "0.3.0";
 const SIGNAL_ENGINE_VERSION = "streamer-reaction-fast-pass-v2";
 const MAX_CHAT_FILE_BYTES = 32 * 1024 * 1024;
@@ -237,6 +238,12 @@ type RecoveryCatalogState =
   | { readonly status: "loading" }
   | { readonly status: "ready"; readonly audit: RecoverableAnalysisAudit }
   | { readonly status: "failed" };
+
+type ClipDownloadStatus = "idle" | "rendering" | "completed" | "failed";
+type ClipDownloadStatusById = Readonly<Record<string, ClipDownloadStatus>>;
+type ClipDownloadErrorById = Readonly<Record<string, string>>;
+type ClipDownloadProgressById = Readonly<Record<string, number>>;
+type ClipBatchStatus = "idle" | "rendering" | "completed" | "failed";
 
 class SourceRebindMismatchError extends Error {
   public constructor() {
@@ -657,6 +664,41 @@ function boundaryRejectionMessage(reason: CandidateBoundaryRejectionReason): str
   return messages[reason];
 }
 
+function explainClipRenderError(error: unknown): string {
+  const code =
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    typeof error.code === "string"
+      ? error.code
+      : null;
+  if (code !== null) {
+    switch (code) {
+      case "ABORTED":
+        return "클립 만들기를 취소했어요.";
+      case "UNSUPPORTED_SOURCE":
+        return "이 영상 형식은 현재 브라우저에서 클립 파일로 만들 수 없어요. MP4 또는 WebM 원본으로 다시 시도해 주세요.";
+      case "NO_OUTPUT":
+        return "클립 파일이 비어 있어 저장하지 못했어요. 같은 구간을 다시 시도해 주세요.";
+      case "INVALID_RANGE":
+        return "클립 구간이 올바르지 않아요. 시작과 끝을 다시 확인해 주세요.";
+    }
+  }
+  return "클립 파일을 만들지 못했어요. 원본을 다시 연결한 뒤 한 번 더 시도해 주세요.";
+}
+
+function triggerClipDownload(blob: Blob, fileName: string): void {
+  const objectUrl = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = objectUrl;
+  anchor.download = fileName;
+  anchor.rel = "noopener";
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  globalThis.setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
+}
+
 function App() {
   const [theme, setTheme] = useState<Theme>(initialTheme);
   const [isDragging, setIsDragging] = useState(false);
@@ -734,6 +776,17 @@ function App() {
   const [copyStatus, setCopyStatus] = useState<"idle" | "copied" | "failed">("idle");
   const [exportError, setExportError] = useState<string | null>(null);
   const [previewCandidateId, setPreviewCandidateId] = useState<string | null>(null);
+  const [inlinePreviewCandidateId, setInlinePreviewCandidateId] = useState<string | null>(null);
+  const [inlinePreviewStartMs, setInlinePreviewStartMs] = useState<number | null>(null);
+  const [clipDownloadStatusById, setClipDownloadStatusById] =
+    useState<ClipDownloadStatusById>({});
+  const [clipDownloadErrorById, setClipDownloadErrorById] =
+    useState<ClipDownloadErrorById>({});
+  const [clipDownloadProgressById, setClipDownloadProgressById] =
+    useState<ClipDownloadProgressById>({});
+  const [clipBatchStatus, setClipBatchStatus] = useState<ClipBatchStatus>("idle");
+  const [clipBatchCompletedCount, setClipBatchCompletedCount] = useState(0);
+  const [clipBatchError, setClipBatchError] = useState<string | null>(null);
   const [recoveryCatalog, setRecoveryCatalog] = useState<RecoveryCatalogState>({
     status: "loading",
   });
@@ -762,6 +815,8 @@ function App() {
   const resultStore = useRef<AnalysisResultStore | null>(null);
   const sourcePreviewUrlRef = useRef<string | null>(null);
   const previewVideo = useRef<HTMLVideoElement | null>(null);
+  const inlinePreviewVideo = useRef<HTMLVideoElement | null>(null);
+  const clipRenderAbortController = useRef<AbortController | null>(null);
   const lastCandidateCueTrigger = useRef<HTMLButtonElement | null>(null);
   const sourceHeading = useRef<HTMLHeadingElement | null>(null);
   const candidateHeading = useRef<HTMLHeadingElement | null>(null);
@@ -799,6 +854,8 @@ function App() {
         candidateAudioEventAbortController.current = null;
         candidateAudioEventMachine.current = null;
         candidateAudioEventIdentity.current = null;
+        clipRenderAbortController.current?.abort();
+        clipRenderAbortController.current = null;
         resultStore.current?.close();
         resultStore.current = null;
         if (sourcePreviewUrlRef.current !== null) {
@@ -824,10 +881,59 @@ function App() {
     }
   }, [candidates.length, openedRecoveredResult, selectionResult, sourceFile]);
 
+  useEffect(() => {
+    const candidateId = inlinePreviewCandidateId;
+    const player = inlinePreviewVideo.current;
+    if (candidateId === null || player === null || sourcePreviewUrl === null) {
+      return;
+    }
+    const candidate = candidates.find(({ id }) => id === candidateId);
+    if (candidate === undefined) {
+      return;
+    }
+    const range = effectiveCandidateRange(
+      candidate,
+      boundaryRevisions[candidate.id],
+    );
+    const targetMs = Math.max(
+      range.startMs,
+      Math.min(range.endMs, inlinePreviewStartMs ?? range.startMs),
+    );
+    const seekAndPlay = (): void => {
+      player.currentTime = targetMs / 1_000;
+      player.focus({ preventScroll: true });
+      void player.play().catch(() => {
+        // Browser autoplay policy may require the user to press play.
+      });
+    };
+    if (player.readyState >= 1) {
+      seekAndPlay();
+      return;
+    }
+    player.addEventListener("loadedmetadata", seekAndPlay, { once: true });
+    return () => player.removeEventListener("loadedmetadata", seekAndPlay);
+  }, [
+    boundaryRevisions,
+    candidates,
+    inlinePreviewCandidateId,
+    inlinePreviewStartMs,
+    sourcePreviewUrl,
+  ]);
+
   const replaceSourceFile = useCallback((file: File | null): void => {
     if (!isMounted.current) {
       return;
     }
+    clipRenderAbortController.current?.abort();
+    clipRenderAbortController.current = null;
+    setInlinePreviewCandidateId(null);
+    setInlinePreviewStartMs(null);
+    setClipDownloadStatusById({});
+    setClipDownloadErrorById({});
+    setClipDownloadProgressById({});
+    setClipBatchStatus("idle");
+    setClipBatchCompletedCount(0);
+    setClipBatchError(null);
     if (sourcePreviewUrlRef.current !== null) {
       URL.revokeObjectURL(sourcePreviewUrlRef.current);
       sourcePreviewUrlRef.current = null;
@@ -1258,6 +1364,8 @@ function App() {
   );
 
   const resetDownstream = useCallback(() => {
+    clipRenderAbortController.current?.abort();
+    clipRenderAbortController.current = null;
     analysisOperationEpoch.current += 1;
     analysisStartOperation.current = null;
     setAnalysisStartPending(false);
@@ -1279,6 +1387,14 @@ function App() {
     setCopyStatus("idle");
     setExportError(null);
     setPreviewCandidateId(null);
+    setInlinePreviewCandidateId(null);
+    setInlinePreviewStartMs(null);
+    setClipDownloadStatusById({});
+    setClipDownloadErrorById({});
+    setClipDownloadProgressById({});
+    setClipBatchStatus("idle");
+    setClipBatchCompletedCount(0);
+    setClipBatchError(null);
     setOpenedRecoveredResult(null);
   }, [
     resetBoundarySession,
@@ -3318,11 +3434,16 @@ function App() {
     candidate: ReviewedCandidate,
     kind: "SET_START_FROM_PLAYER" | "SET_END_FROM_PLAYER",
   ): void => {
-    const player = previewVideo.current;
+    const player =
+      inlinePreviewCandidateId === candidate.id
+        ? inlinePreviewVideo.current
+        : previewCandidateId === candidate.id
+          ? previewVideo.current
+          : null;
     if (
       sourcePreviewUrl === null ||
       player === null ||
-      previewCandidateId !== candidate.id
+      (previewCandidateId !== candidate.id && inlinePreviewCandidateId !== candidate.id)
     ) {
       setBoundaryFeedback({
         candidateId: candidate.id,
@@ -3364,27 +3485,22 @@ function App() {
   };
 
   const playCandidate = (candidate: ReviewedCandidate): void => {
-    setPreviewCandidateId(candidate.id);
-    lastCandidateCueTrigger.current = null;
-    const player = previewVideo.current;
-    if (player === null) {
+    if (sourcePreviewUrl === null) {
       return;
     }
+    if (inlinePreviewCandidateId === candidate.id) {
+      setInlinePreviewCandidateId(null);
+      setInlinePreviewStartMs(null);
+      return;
+    }
+    setPreviewCandidateId(candidate.id);
+    lastCandidateCueTrigger.current = null;
     const range = effectiveCandidateRange(
       candidate,
       boundaryRevisions[candidate.id],
     );
-    player.currentTime = range.startMs / 1_000;
-    player.scrollIntoView({
-      behavior: globalThis.matchMedia?.("(prefers-reduced-motion: reduce)").matches
-        ? "auto"
-        : "smooth",
-      block: "center",
-    });
-    player.focus({ preventScroll: true });
-    void player.play().catch(() => {
-      // Browser autoplay policy may require the user to press the native play control.
-    });
+    setInlinePreviewStartMs(range.startMs);
+    setInlinePreviewCandidateId(candidate.id);
   };
 
   const playCandidateCue = (
@@ -3394,25 +3510,17 @@ function App() {
   ): void => {
     setPreviewCandidateId(candidate.id);
     lastCandidateCueTrigger.current = trigger;
-    const player = previewVideo.current;
-    if (player === null || !Number.isFinite(timestampMs)) {
+    if (sourcePreviewUrl === null || !Number.isFinite(timestampMs)) {
       return;
     }
     const range = effectiveCandidateRange(
       candidate,
       boundaryRevisions[candidate.id],
     );
-    player.currentTime = Math.max(range.startMs, Math.min(range.endMs, timestampMs)) / 1_000;
-    player.scrollIntoView({
-      behavior: globalThis.matchMedia?.("(prefers-reduced-motion: reduce)").matches
-        ? "auto"
-        : "smooth",
-      block: "center",
-    });
-    player.focus({ preventScroll: true });
-    void player.play().catch(() => {
-      // Browser autoplay policy may require the user to press the native play control.
-    });
+    setInlinePreviewStartMs(
+      Math.max(range.startMs, Math.min(range.endMs, timestampMs)),
+    );
+    setInlinePreviewCandidateId(candidate.id);
   };
 
   const focusPreviewCandidateEditor = (): void => {
@@ -3585,6 +3693,171 @@ function App() {
       setLastExportFormat(null);
       setExportError("정리표 다운로드를 요청하지 못했어요. 브라우저의 다운로드 허용 설정을 확인해 주세요.");
     }
+  };
+
+  const candidateNumberFor = (candidateId: string): number => {
+    const index = orderedCandidates.findIndex(({ id }) => id === candidateId);
+    return index >= 0 ? index + 1 : 1;
+  };
+
+  const renderAndDownloadClip = async (
+    candidate: ReviewedCandidate,
+    candidateNumber: number,
+    signal: AbortSignal,
+  ): Promise<boolean> => {
+    if (sourceFile === null) {
+      return false;
+    }
+    const isCurrentJob = (): boolean =>
+      isMounted.current && clipRenderAbortController.current?.signal === signal;
+    const range = effectiveCandidateRange(
+      candidate,
+      boundaryRevisions[candidate.id],
+    );
+    setClipDownloadStatusById((current) => ({
+      ...current,
+      [candidate.id]: "rendering",
+    }));
+    setClipDownloadErrorById((current) => {
+      const next = { ...current };
+      delete next[candidate.id];
+      return next;
+    });
+    setClipDownloadProgressById((current) => ({
+      ...current,
+      [candidate.id]: 0,
+    }));
+    try {
+      const { renderHighlightClip } = await import("./media/clipRenderer");
+      const result = await renderHighlightClip({
+        sourceFile,
+        range,
+        candidateNumber,
+        signal,
+        onProgress: ({ ratio }: ClipRenderProgress) => {
+          if (isCurrentJob()) {
+            setClipDownloadProgressById((current) => ({
+              ...current,
+              [candidate.id]: ratio,
+            }));
+          }
+        },
+      });
+      if (!isCurrentJob()) {
+        return false;
+      }
+      triggerClipDownload(result.blob, result.fileName);
+      setClipDownloadProgressById((current) => ({
+        ...current,
+        [candidate.id]: 1,
+      }));
+      setClipDownloadStatusById((current) => ({
+        ...current,
+        [candidate.id]: "completed",
+      }));
+      return true;
+    } catch (error) {
+      if (!isCurrentJob()) {
+        return false;
+      }
+      setClipDownloadStatusById((current) => ({
+        ...current,
+        [candidate.id]: "failed",
+      }));
+      setClipDownloadErrorById((current) => ({
+        ...current,
+        [candidate.id]: explainClipRenderError(error),
+      }));
+      return false;
+    }
+  };
+
+  const downloadCandidateClip = (candidate: ReviewedCandidate): void => {
+    if (sourceFile === null) {
+      setClipDownloadErrorById((current) => ({
+        ...current,
+        [candidate.id]: "원본 영상을 다시 연결해야 클립 파일을 만들 수 있어요.",
+      }));
+      return;
+    }
+    if (
+      clipBatchStatus === "rendering" ||
+      clipRenderAbortController.current !== null
+    ) {
+      return;
+    }
+    const controller = new AbortController();
+    clipRenderAbortController.current = controller;
+    setClipBatchError(null);
+    void renderAndDownloadClip(
+      candidate,
+      candidateNumberFor(candidate.id),
+      controller.signal,
+    ).finally(() => {
+      if (clipRenderAbortController.current?.signal === controller.signal) {
+        clipRenderAbortController.current = null;
+      }
+    });
+  };
+
+  const downloadApprovedClips = (): void => {
+    if (sourceFile === null) {
+      setClipBatchError("원본 영상을 다시 연결해야 클립 파일을 만들 수 있어요.");
+      return;
+    }
+    if (approvedCandidates.length === 0 || clipRenderAbortController.current !== null) {
+      return;
+    }
+    const chronologicalCandidates = [...approvedCandidates].sort((left, right) => {
+      const leftRange = effectiveCandidateRange(
+        left,
+        boundaryRevisions[left.id],
+      );
+      const rightRange = effectiveCandidateRange(
+        right,
+        boundaryRevisions[right.id],
+      );
+      return leftRange.startMs - rightRange.startMs || left.id.localeCompare(right.id);
+    });
+    const controller = new AbortController();
+    clipRenderAbortController.current = controller;
+    setClipBatchStatus("rendering");
+    setClipBatchCompletedCount(0);
+    setClipBatchError(null);
+    void (async () => {
+      let failedCount = 0;
+      let completedCount = 0;
+      for (const candidate of chronologicalCandidates) {
+        if (controller.signal.aborted) {
+          break;
+        }
+        const completed = await renderAndDownloadClip(
+          candidate,
+          candidateNumberFor(candidate.id),
+          controller.signal,
+        );
+        if (completed) {
+          completedCount += 1;
+          setClipBatchCompletedCount(completedCount);
+        } else {
+          failedCount += 1;
+        }
+        await new Promise<void>((resolve) => globalThis.setTimeout(resolve, 150));
+      }
+      if (controller.signal.aborted) {
+        return;
+      }
+      if (failedCount > 0) {
+        setClipBatchStatus("failed");
+        setClipBatchError(`${failedCount}개 클립을 만들지 못했어요. 실패한 후보의 안내를 확인해 주세요.`);
+      } else {
+        setClipBatchStatus("completed");
+      }
+    })().finally(() => {
+      if (clipRenderAbortController.current?.signal === controller.signal) {
+        clipRenderAbortController.current = null;
+      }
+    });
   };
 
   const copyApprovedTimecodes = async (): Promise<void> => {
@@ -5067,6 +5340,36 @@ function App() {
                           )}
                           </div>
                         </details>
+                        {inlinePreviewCandidateId === candidate.id && sourcePreviewUrl !== null && (
+                          <div className="rh-inline-preview" aria-label={`후보 ${index + 1} 구간 바로 확인`}>
+                            <div className="rh-inline-preview-heading">
+                              <strong>이 후보 구간 바로 확인</strong>
+                              <span>
+                                {formatDuration(effectiveRange.startMs)}–{formatDuration(effectiveRange.endMs)}
+                              </span>
+                            </div>
+                            <video
+                              ref={(element) => {
+                                inlinePreviewVideo.current = element;
+                              }}
+                              className="rh-inline-preview-video"
+                              controls
+                              playsInline
+                              preload="metadata"
+                              src={sourcePreviewUrl}
+                              onTimeUpdate={(event) => {
+                                if (event.currentTarget.currentTime * 1_000 >= effectiveRange.endMs) {
+                                  event.currentTarget.pause();
+                                }
+                              }}
+                            >
+                              브라우저가 이 영상 미리보기를 지원하지 않아요.
+                            </video>
+                            <p className="rh-help">
+                              조정한 시작점부터 재생하며, 끝점에서 자동으로 멈춥니다.
+                            </p>
+                          </div>
+                        )}
                         <details className="rh-boundary-editor">
                           <summary
                             id={candidateElementId(
@@ -5187,13 +5490,30 @@ function App() {
                           <button
                             className="btn btn-secondary"
                             type="button"
-                            aria-label={`후보 ${index + 1} 장면 처음부터 보기`}
+                            aria-label={`후보 ${index + 1} 구간 바로 보기`}
                             disabled={sourcePreviewUrl === null}
                             onClick={() => playCandidate(candidate)}
                           >
-                            {sourcePreviewUrl === null
-                              ? "원본 연결 필요"
-                              : "이 장면 처음부터 보기"}
+                            {inlinePreviewCandidateId === candidate.id
+                              ? "미리보기 닫기"
+                              : "이 구간 바로 보기"}
+                          </button>
+                          <button
+                            className="btn btn-secondary"
+                            type="button"
+                            aria-label={`후보 ${index + 1} 클립 파일 다운로드`}
+                            disabled={
+                              sourceFile === null ||
+                              clipBatchStatus === "rendering" ||
+                              clipDownloadStatusById[candidate.id] === "rendering"
+                            }
+                            onClick={() => downloadCandidateClip(candidate)}
+                          >
+                            {clipDownloadStatusById[candidate.id] === "rendering"
+                              ? `클립 만드는 중 ${Math.round((clipDownloadProgressById[candidate.id] ?? 0) * 100)}%`
+                              : clipDownloadStatusById[candidate.id] === "completed"
+                                ? "클립 다시 다운로드"
+                                : "이 구간 클립 다운로드"}
                           </button>
                           <button
                             className="btn btn-primary"
@@ -5220,6 +5540,16 @@ function App() {
                             {candidate.reviewState === "rejected" ? "다시 검토" : "빼기"}
                           </button>
                         </div>
+                        {clipDownloadStatusById[candidate.id] === "completed" && (
+                          <p className="rh-notice" data-tone="success" role="status">
+                            이 후보의 영상 클립 다운로드를 시작했어요.
+                          </p>
+                        )}
+                        {clipDownloadErrorById[candidate.id] !== undefined && (
+                          <p className="rh-notice" data-tone="danger" role="alert">
+                            {clipDownloadErrorById[candidate.id]}
+                          </p>
+                        )}
                       </div>
                       <div className="rh-confidence">
                         <span>{candidate.evidence.audio === undefined ? "가장 강한 순간" : "반응 정점"}</span>
@@ -5258,7 +5588,7 @@ function App() {
                       </h3>
                       <p>
                         시작·끝 시간이 담긴 편집용 시간표를 받습니다.
-                        현재 기본판은 아직 MP4·WebM 클립 파일을 만들지 않아요.
+                        승인한 구간은 MP4·WebM 클립 파일로 만들어 바로 다운로드할 수 있어요.
                       </p>
                     </div>
                     <span className="rh-export-count" aria-hidden="true">{approvedCount}</span>
@@ -5308,6 +5638,25 @@ function App() {
                     <button
                       className="btn btn-primary rh-primary-action"
                       type="button"
+                      disabled={
+                        sourceFile === null ||
+                        approvedCount === 0 ||
+                        clipBatchStatus === "rendering" ||
+                        clipRenderAbortController.current !== null
+                      }
+                      onClick={downloadApprovedClips}
+                    >
+                      {clipBatchStatus === "rendering"
+                        ? `승인 클립 ${clipBatchCompletedCount}/${approvedCount}개 만드는 중`
+                        : clipBatchStatus === "completed"
+                          ? "승인 클립 다시 전체 다운로드"
+                          : sourceFile === null
+                            ? "원본 연결 후 클립 전체 다운로드"
+                            : "승인한 클립 전체 다운로드"}
+                    </button>
+                    <button
+                      className="btn btn-primary rh-primary-action"
+                      type="button"
                       disabled={approvedCount === 0}
                       onClick={() => exportCandidates("csv")}
                     >
@@ -5330,6 +5679,22 @@ function App() {
                       읽기 좋은 목록 (.md)
                     </button>
                   </div>
+
+                  {clipBatchStatus === "rendering" && (
+                    <p className="rh-help" role="status">
+                      승인한 클립을 시간순으로 하나씩 만들고 있어요. 브라우저의 여러 다운로드 안내가 나오면 허용해 주세요.
+                    </p>
+                  )}
+                  {clipBatchStatus === "completed" && (
+                    <p className="rh-notice" data-tone="success" role="status">
+                      승인한 클립 {approvedCount}개를 모두 만들었어요. 다운로드 목록에서 확인해 주세요.
+                    </p>
+                  )}
+                  {clipBatchError !== null && (
+                    <p className="rh-notice" data-tone="danger" role="alert">
+                      {clipBatchError}
+                    </p>
+                  )}
 
                   <details className="rh-advanced-export">
                     <summary>백업·고급 형식</summary>
