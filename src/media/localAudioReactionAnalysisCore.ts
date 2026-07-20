@@ -21,6 +21,12 @@ const IMPULSE_CREST_DB = 14;
 const IMPULSE_TEMPORAL_SUPPORT_LIFT_DB = 2.5;
 const STRONG_VOCAL_SUPPORT_RATIO = 0.55;
 const SUSTAINED_BACKGROUND_MS = 12_000;
+// A quiet but changing speech band is a useful semantic lead even when the
+// streamer does not shout. Keep this deliberately conservative: Gemini gets
+// the final say on whether the words describe an actual highlight.
+const DIALOGUE_SIGNAL_SPEECH_RATIO = 0.42;
+const DIALOGUE_SIGNAL_NOVELTY = 2.25;
+const DIALOGUE_SIGNAL_ZERO_CROSSING_NOVELTY = 1.05;
 
 export interface AudioReactionFeatureWindow {
   readonly startMs: number;
@@ -37,7 +43,8 @@ export interface AudioReactionFeatureWindow {
 
 export type AudioReactionEventKind =
   | "short-loudness-burst"
-  | "sustained-vocal-reaction";
+  | "sustained-vocal-reaction"
+  | "dialogue-issue-signal";
 
 /**
  * Privacy-safe aggregates only. Raw PCM, filenames, transcripts, and speaker
@@ -129,6 +136,7 @@ interface ScoredWindow extends NormalizedWindow {
   readonly clickPenalty: number;
   readonly silence: boolean;
   readonly impulseLike: boolean;
+  readonly dialogueLike: boolean;
   readonly active: boolean;
   readonly support: boolean;
   readonly score: number;
@@ -361,6 +369,14 @@ function scoreWindow(
   );
   const hasStrongVocalSupport =
     speechBandEnergyRatio >= STRONG_VOCAL_SUPPORT_RATIO;
+  const dialogueLike =
+    !silence &&
+    !candidateElevated &&
+    window.speechBandEnergyRatio !== undefined &&
+    speechBandEnergyRatio >= DIALOGUE_SIGNAL_SPEECH_RATIO &&
+    speechBandNovelty >= DIALOGUE_SIGNAL_NOVELTY &&
+    zeroCrossingNovelty >= DIALOGUE_SIGNAL_ZERO_CROSSING_NOVELTY &&
+    crestDb < IMPULSE_CREST_DB;
   const highCrestWithoutVocalAnchor =
     crestDb >= IMPULSE_CREST_DB && !hasStrongVocalSupport;
   const impulseLike =
@@ -370,7 +386,8 @@ function scoreWindow(
     !hasTemporalSupport;
   // Sustained high-crest effects may extend a real reaction, but they cannot
   // seed a candidate without a lower-crest or strong vocal-band anchor.
-  const active = candidateElevated && !highCrestWithoutVocalAnchor;
+  const active =
+    (candidateElevated && !highCrestWithoutVocalAnchor) || dialogueLike;
   const support =
     active ||
     (!silence &&
@@ -381,7 +398,8 @@ function scoreWindow(
     Math.max(0, robustLoudnessScore) * 1.1 +
     Math.min(4, Math.max(0, robustPeakScore)) * 0.35 +
     vocalProxyStrength * 0.25 +
-    Math.min(1, loudnessLiftDb / 12) -
+    Math.min(1, loudnessLiftDb / 12) +
+    (dialogueLike ? Math.min(2, speechBandNovelty) * 0.18 : 0) -
     clickPenalty;
 
   return {
@@ -397,6 +415,7 @@ function scoreWindow(
     clickPenalty,
     silence,
     impulseLike,
+    dialogueLike,
     active,
     support,
     score,
@@ -562,18 +581,21 @@ function evaluateCluster(
     (windows.at(-1)?.endMs ?? apex.endMs) - (windows[0]?.startMs ?? apex.startMs);
   const singleWindowHasVocalSupport =
     activeWindows.length === 1 &&
-    apex.vocalProxyStrength >= 1.5 &&
+    (apex.dialogueLike || apex.vocalProxyStrength >= 1.5) &&
     (apex.clickPenalty < 0.5 ||
       (apex.speechBandEnergyRatio ?? 0) >= STRONG_VOCAL_SUPPORT_RATIO);
   if (activeWindows.length < 2 && !singleWindowHasVocalSupport) {
     return null;
   }
   const eventKind: AudioReactionEventKind =
-    eventDurationMs >= 3_000 &&
-    activeWindows.length >= 3 &&
-    (vocalSupportRatio >= 0.4 || rmsRangeDb >= 2)
-      ? "sustained-vocal-reaction"
-      : "short-loudness-burst";
+    activeWindows.filter((window) => window.dialogueLike).length >=
+      Math.ceil(activeWindows.length / 2)
+      ? "dialogue-issue-signal"
+      : eventDurationMs >= 3_000 &&
+          activeWindows.length >= 3 &&
+          (vocalSupportRatio >= 0.4 || rmsRangeDb >= 2)
+        ? "sustained-vocal-reaction"
+        : "short-loudness-burst";
   const score =
     apex.score +
     Math.log1p(activeWindows.length) * 0.7 +
@@ -651,9 +673,11 @@ function createCandidate(
     speechBandEnergyRatio: round(event.apex.speechBandEnergyRatio ?? 0, 6),
   };
   const signalDescription =
-    event.eventKind === "sustained-vocal-reaction"
-      ? `${event.activeWindows.length}개 구간에 걸쳐 웃음·외침처럼 이어지는 음성 변화`
-      : "평소보다 크게 튄 짧은 음량 반응";
+    event.eventKind === "dialogue-issue-signal"
+      ? "대사 변화 신호"
+      : event.eventKind === "sustained-vocal-reaction"
+        ? `${event.activeWindows.length}개 구간에 걸쳐 웃음·외침처럼 이어지는 음성 변화`
+        : "평소보다 크게 튄 짧은 음량 반응";
   return {
     id: `audio-${event.eventKind}-${event.apex.startMs}-${startMs}-${endMs}`,
     peakMs,

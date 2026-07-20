@@ -52,6 +52,24 @@ describe("local audio reaction scoring core", () => {
     expect(result.coverageComplete).toBe(true);
   });
 
+  it("surfaces a quiet but novel dialogue change for semantic review", () => {
+    const windows = baseline(100);
+    for (const [offset, speechBandEnergyRatio] of [0.68, 0.74].entries()) {
+      const index = 46 + offset;
+      windows[index] = speechWindow(index, {
+        rms: 0.06 + offset * 0.002,
+        peak: 0.19 + offset * 0.004,
+        zeroCrossingRate: 0.2 + offset * 0.04,
+        speechBandEnergyRatio,
+      });
+    }
+
+    const result = selectAudioReactionHighlights(windows, 100_000);
+
+    expect(result.candidates[0]?.evidence.eventKind).toBe("dialogue-issue-signal");
+    expect(result.candidates[0]?.evidence.activeWindowCount).toBeGreaterThanOrEqual(2);
+  });
+
   it("does not report complete coverage when a decoded feature window is missing", () => {
     const windows = baseline(10).filter((_, index) => index !== 4);
 

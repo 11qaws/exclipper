@@ -128,7 +128,9 @@ function evidenceLabel(candidate: UnifiedHighlightCandidate): string {
   if (candidate.evidence.audio !== undefined) {
     const audio = candidate.evidence.audio;
     evidence.push(
-      audio.eventKind === "sustained-vocal-reaction"
+      audio.eventKind === "dialogue-issue-signal"
+        ? "대사 변화 신호"
+        : audio.eventKind === "sustained-vocal-reaction"
         ? "지속되는 음성형 반응"
         : "짧고 큰 오디오 반응",
       `오디오 반응 상위 ${topPercent(audio.rankPercentile)}%`,

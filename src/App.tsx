@@ -51,6 +51,10 @@ import {
   type CandidatePassBTarget as CandidatePassBCoreTarget,
 } from "./analysis/candidatePassB";
 import { buildCandidatePassBPresentation } from "./analysis/candidatePassBPresentation";
+import {
+  estimateCandidatePassBCost,
+  formatEstimatedUsd,
+} from "./analysis/candidatePassBCost";
 import { sampleCandidateVideoFrames } from "./analysis/candidateVideoFrames";
 import {
   mergeCandidatePassBEvidence,
@@ -803,6 +807,8 @@ function App() {
   const analysisOperationEpoch = useRef(0);
   const candidatePassBOperationEpoch = useRef(0);
   const candidatePassBStartPendingRef = useRef(false);
+  const autoCandidatePassBSourceRef = useRef<string | null>(null);
+  const runCandidatePassBRef = useRef<() => Promise<void>>(() => Promise.resolve());
   const candidatePassBMachine = useRef<CandidatePassBRunState | null>(null);
   const candidatePassBIdentity = useRef<CandidatePassBWorkerIdentity | null>(null);
   const candidateAudioEventOperationEpoch = useRef(0);
@@ -1141,6 +1147,12 @@ function App() {
   const candidatePassBTransferDurationMs = candidates
     .slice(0, 12)
     .reduce((total, candidate) => total + candidate.endMs - candidate.startMs, 0);
+  const candidatePassBCostEstimate = estimateCandidatePassBCost(
+    Math.min(12, candidates.length),
+    candidates.length === 0
+      ? 0
+      : Math.round(candidatePassBTransferDurationMs / Math.min(12, candidates.length)),
+  );
   const candidateAudioEventRuntimeAvailable =
     preflight !== null &&
     preflight.capabilities.worker &&
@@ -2833,6 +2845,8 @@ function App() {
     }
   };
 
+  runCandidatePassBRef.current = runCandidatePassB;
+
   const cancelCandidatePassB = (): void => {
     const controller = candidatePassBAbortController.current;
     if (
@@ -3883,6 +3897,32 @@ function App() {
     });
   };
 
+  useEffect(() => {
+    if (
+      !analysisComplete ||
+      candidates.length === 0 ||
+      sourceFile === null ||
+      sourceContentFingerprint === null ||
+      openedRecoveredResult !== null ||
+      candidatePassBRun !== null ||
+      autoCandidatePassBSourceRef.current === sourceContentFingerprint
+    ) {
+      return;
+    }
+    autoCandidatePassBSourceRef.current = sourceContentFingerprint;
+    const timer = window.setTimeout(() => {
+      void runCandidatePassBRef.current();
+    }, 450);
+    return () => window.clearTimeout(timer);
+  }, [
+    analysisComplete,
+    candidates.length,
+    candidatePassBRun,
+    openedRecoveredResult,
+    sourceContentFingerprint,
+    sourceFile,
+  ]);
+
   const copyApprovedTimecodes = async (): Promise<void> => {
     if (approvedCandidates.length === 0) {
       return;
@@ -4120,6 +4160,7 @@ function App() {
         )}
 
         <div className="rh-section-stack">
+          <div className="rh-workspace-top">
           <section aria-labelledby="source-title">
             <div className="rh-section-heading">
               <div>
@@ -4234,9 +4275,43 @@ function App() {
               )}
             </section>
           )}
+          </div>
 
           {sourceReady && !analysisComplete && (
           <>
+          <section className="rh-analysis-cta rh-analysis-cta--quick" aria-labelledby="analysis-title">
+            <div>
+              <p className="rh-eyebrow">2단계 · 바로 시작</p>
+              <h3 id="analysis-title">영상 준비 완료 — AI가 먼저 하이라이트를 찾을까요?</h3>
+              <p>
+                지금 바로 분석을 시작할 수 있어요. 채팅 파일은 선택 사항이며, 나중에 추가할 수도 있습니다.
+                AI는 몇 시간짜리 원본을 짧은 조각으로 나눠 여러 개의 30초~1분 후보를 찾아요.
+              </p>
+            </div>
+            <div className="rh-analysis-actions">
+              <button
+                className="btn btn-primary rh-primary-action"
+                type="button"
+                disabled={!sourceReady || analysisBusy || analysisComplete || chatImportStatus === "reading"}
+                onClick={() => void runSignalAnalysis()}
+              >
+                {chatImportStatus === "reading"
+                  ? "채팅 읽는 중…"
+                  : analysisCommitPending
+                    ? "결과 저장 중…"
+                    : analysisCancelPending
+                      ? "안전하게 멈추는 중…"
+                      : analysisBusy
+                        ? "반응 찾는 중…"
+                        : "AI로 하이라이트 찾기"}
+              </button>
+              {analysisCanBeCancelled && (
+                <button className="btn btn-secondary" type="button" onClick={cancelAnalysis}>
+                  안전하게 취소
+                </button>
+              )}
+            </div>
+          </section>
           <section className="rh-panel rh-chat-panel" aria-labelledby="chat-title">
             <div className="rh-chat-row">
               <div className="rh-chat-copy">
@@ -4336,58 +4411,6 @@ function App() {
             {chatError !== null && <p className="rh-notice" data-tone="danger" role="alert">{chatError}</p>}
           </section>
 
-          <section className="rh-analysis-cta" aria-labelledby="analysis-title">
-            <div>
-              <p className="rh-eyebrow">2단계</p>
-              <h3 id="analysis-title">AI가 먼저 하이라이트를 찾습니다</h3>
-              <p>
-                영상 전체의 방송 오디오에서 음성형·큰 반응 신호를 먼저 훑고 서로 다른 30초~1분 클립 후보들을 정리해요. 채팅이 없어도 시작할 수 있습니다.
-                분명한 반응이 여러 번 있으면 별도 카드로 나누며, 현재 기본판은 겹치지 않는 상위 후보를 최대 12개까지 보여 줍니다.
-              </p>
-              <details className="rh-inline-details">
-                <summary>현재 분석 방식과 제한</summary>
-                <p>
-                  오디오 반응과 선택한 채팅 반응을 함께 계산하고, 화면 변화는 사건 맥락에만 작게 반영합니다.
-                  아직 대사를 받아쓰지 않으므로 사건의 구체적인 이름은 추정하지 않고 확인이 필요하다고 표시해요.
-                </p>
-              </details>
-            </div>
-            <div className="rh-analysis-actions">
-              <button
-                className="btn btn-primary rh-primary-action"
-                type="button"
-                disabled={!sourceReady || analysisBusy || analysisComplete || chatImportStatus === "reading"}
-                onClick={() => void runSignalAnalysis()}
-              >
-                {analysisComplete
-                  ? "후보 찾기 완료"
-                  : chatImportStatus === "reading"
-                    ? "채팅 읽는 중…"
-                    : analysisCommitPending
-                      ? "결과 저장 중…"
-                      : analysisCancelPending
-                        ? "안전하게 멈추는 중…"
-                        : analysisBusy
-                          ? "반응 찾는 중…"
-                          : "AI로 하이라이트 찾기"}
-              </button>
-              {analysisCanBeCancelled && (
-                <button className="btn btn-secondary" type="button" onClick={cancelAnalysis}>
-                  안전하게 취소
-                </button>
-              )}
-              {analysisCommitPending && (
-                <p className="rh-help" role="status">
-                  찾은 후보를 안전하게 저장하고 있어요. 잠시만 기다려 주세요.
-                </p>
-              )}
-              {analysisCancelPending && (
-                <p className="rh-help" role="status">
-                  진행 중인 조각을 정리하고 있어요. 안전하게 멈출 때까지 잠시만 기다려 주세요.
-                </p>
-              )}
-            </div>
-          </section>
           </>
           )}
 
@@ -4584,6 +4607,10 @@ function App() {
                     </p>
                     <p className="rh-help">
                       Gemini 문장은 틀릴 수 있으므로 시간 버튼을 눌러 실제 장면을 마지막으로 확인해 주세요.
+                    </p>
+                    <p className="rh-cost-note">
+                      현재 전송량 기준 예상 비용 {formatEstimatedUsd(candidatePassBCostEstimate.totalCostUsd)} ·
+                      입력 약 {candidatePassBCostEstimate.inputTokens.toLocaleString()}토큰 + 후보별 화면 4장 기준
                     </p>
                   </div>
                   <div className="rh-passb-actions">
@@ -5103,10 +5130,10 @@ function App() {
                         {candidateGeminiInsight !== undefined && (
                           <div
                             className="rh-gemini-quick-summary"
-                            aria-label={`후보 ${index + 1}의 Gemini 오디오 요약`}
+                            aria-label={`후보 ${index + 1}의 Gemini 화면·오디오 요약`}
                           >
                             <div>
-                            <strong>Gemini가 오디오에서 추정한 사건 단서</strong>
+                            <strong>Gemini가 화면·오디오에서 해석한 사건 단서</strong>
                               <span>재생 확인 필요</span>
                             </div>
                             <p>{candidateGeminiInsight.eventSummaryKo}</p>
@@ -5154,10 +5181,10 @@ function App() {
                           {candidateGeminiInsight !== undefined && (
                             <section
                               className="rh-gemini-insight"
-                              aria-label={`후보 ${index + 1}의 Gemini 오디오 해석`}
+                              aria-label={`후보 ${index + 1}의 Gemini 화면·오디오 해석`}
                             >
                               <div className="rh-gemini-insight-heading">
-                                <strong>Gemini 오디오 해석</strong>
+                                <strong>Gemini 화면·오디오 해석</strong>
                                 <span>직접 재생 확인 필요</span>
                               </div>
                               <p>
@@ -5167,11 +5194,11 @@ function App() {
                               <dl>
                                 <div>
                                   <dt>들린 사건 단서</dt>
-                                  <dd>{candidateGeminiInsight.eventSummaryKo || "오디오만으로 사건을 구체적으로 나누기 어려워요."}</dd>
+                                  <dd>{candidateGeminiInsight.eventSummaryKo || "화면과 오디오만으로 사건을 구체적으로 나누기 어려워요."}</dd>
                                 </div>
                                 <div>
                                   <dt>들린 반응 단서</dt>
-                                  <dd>{candidateGeminiInsight.reactionSummaryKo || "반응의 주체와 종류를 오디오만으로 확인하기 어려워요."}</dd>
+                                  <dd>{candidateGeminiInsight.reactionSummaryKo || "반응의 주체와 종류를 화면·오디오만으로 확인하기 어려워요."}</dd>
                                 </div>
                                 <div>
                                   <dt>클립으로 검토할 이유</dt>
@@ -5327,7 +5354,9 @@ function App() {
                           {candidate.evidence.audio !== undefined && (
                             <>
                               <span className="rh-evidence" data-signal="audio">
-                                {candidate.evidence.audio.eventKind === "sustained-vocal-reaction"
+                                {candidate.evidence.audio.eventKind === "dialogue-issue-signal"
+                                  ? "대사 변화 신호"
+                                  : candidate.evidence.audio.eventKind === "sustained-vocal-reaction"
                                   ? "이어지는 음성형 반응"
                                   : "짧고 큰 오디오 반응"}
                               </span>

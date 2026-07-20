@@ -97,6 +97,9 @@ function streamerReactionExplanation(candidate: UnifiedHighlightCandidate): stri
   }
   const lift = audio.rmsLiftRatio;
   const liftText = lift === undefined ? "평소보다 두드러진" : `평소의 ${lift.toFixed(1)}배 수준인`;
+  if (audio.eventKind === "dialogue-issue-signal") {
+    return `${liftText} 대사 대역 변화가 커서 말의 내용이 바뀌는 후보예요. 실제 사건과 반응은 영상을 재생해 확인해야 해요.`;
+  }
   if (audio.eventKind === "sustained-vocal-reaction") {
     const sustained = audio.sustainedWindowCount;
     return `${liftText} 음성형 반응이${sustained === undefined ? " 잠시 이어졌어요" : ` 약 ${sustained}개 분석 구간 동안 이어졌어요`}. 웃음·외침·놀람처럼 지속되는 소리일 수 있지만, 게임·영상 소리인지 스트리머 목소리인지는 재생 확인이 필요해요.`;

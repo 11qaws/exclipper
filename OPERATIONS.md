@@ -1,5 +1,13 @@
 # ExClipper 개인용 운영·배포·복구 계획
 
+## 2026-07-21 release notes
+
+- Desktop-first workspace: verify the source summary and the primary analysis action are visible in the first viewport at a maximized browser width. At widths below 840px the columns collapse to one column.
+- Phase contract: fast-pass completion may automatically start Gemini Pass B. A cancelled or failed Pass B must leave the fast candidates usable.
+- Candidate event kinds now include `dialogue-issue-signal`. It is a conservative speech-change lead and must be described as a lead, never as a confirmed event.
+- Cost display is advisory. Recalculate when candidate count or duration changes; do not use it as a billing guarantee.
+- YouTube caption retrieval is not silently scraped. If a user wants matching-video script context, provide an authorized caption export or a local VTT/SRT file and keep the source URL as context metadata.
+
 - 문서 버전: `0.3.13`
 - 기준일: 2026-07-20 (Asia/Seoul)
 - 대상: GitHub Pages에서 실행되는 1인용 AI 편집 어시스턴트

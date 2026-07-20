@@ -381,6 +381,9 @@ function audioObservation(candidate: UnifiedHighlightCandidate): string | null {
     audio.rmsLiftRatio === undefined
       ? "상대적으로 두드러진"
       : `분석 기준의 ${audio.rmsLiftRatio.toFixed(1)}배 수준인`;
+  if (audio.eventKind === "dialogue-issue-signal") {
+    return `${liftText} 대사 대역의 변화가 커서 말의 내용이 바뀌는 지점일 가능성이 있어요. 실제 사건과 반응은 영상을 재생해 확인해 주세요.`;
+  }
   if (audio.eventKind === "sustained-vocal-reaction") {
     const durationText =
       audio.sustainedWindowCount === undefined

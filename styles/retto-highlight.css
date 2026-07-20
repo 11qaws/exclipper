@@ -31,7 +31,7 @@
   --rh-radius-lg: 12px;
   --rh-radius-xl: 16px;
   --rh-focus: 0 0 0 3px rgba(37, 99, 235, .22);
-  --rh-content: 1120px;
+  --rh-content: 1440px;
 }
 
 [data-theme="dark"] {
@@ -995,6 +995,45 @@
   flex-direction: column;
   gap: 16px;
   padding-bottom: 28px;
+}
+
+/* Desktop-first editing workspace: source context and readiness summary share
+   the first viewport; narrow screens collapse back to the reading flow below. */
+.rh-workspace-top {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(360px, .85fr);
+  gap: 18px;
+  align-items: start;
+}
+
+.rh-workspace-top > section {
+  min-width: 0;
+}
+
+.rh-workspace-top > .rh-source-summary {
+  position: sticky;
+  top: 18px;
+}
+
+.rh-analysis-cta--quick {
+  min-height: 150px;
+  padding: 24px 28px;
+  border-width: 2px;
+  box-shadow: 0 12px 30px rgba(37, 99, 235, .08);
+}
+
+.rh-analysis-cta--quick h3 {
+  font-size: clamp(1.15rem, 1.2vw, 1.45rem);
+}
+
+.rh-analysis-cta--quick .rh-analysis-actions {
+  min-width: 260px;
+}
+
+.rh-cost-note {
+  margin: 12px 0 0;
+  color: var(--rh-muted);
+  font-size: .82rem;
 }
 
 .rh-section-heading {
@@ -2066,6 +2105,14 @@
 }
 
 @media (max-width: 840px) {
+  .rh-workspace-top {
+    grid-template-columns: 1fr;
+  }
+
+  .rh-workspace-top > .rh-source-summary {
+    position: static;
+  }
+
   .rh-source-grid,
   .rh-analysis-layout {
     grid-template-columns: 1fr;

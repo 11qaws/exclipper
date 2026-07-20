@@ -1,5 +1,21 @@
 # ExClipper 제품·UX·기술 계획서
 
+## 2026-07-21 implementation update
+
+The working assumption for the clip page is a maximized desktop window. The top of the page therefore uses a wide two-column workspace: source input and an always-visible readiness summary. The primary analysis action is placed immediately below that row so a beginner does not have to scroll to start.
+
+The analysis pipeline is phased: fast local audio/visual/chat signals scan the full source (up to 12 hours) and produce multiple non-overlapping 30–60 second candidates, then Candidate Pass B starts automatically for the top candidates and sends candidate audio plus representative frames to Gemini 3.1 Pro. Gemini returns Korean transcript cues and a 200–300 character scene/event/reaction explanation; the explanation is a verification aid, not an automatic truth claim.
+
+The fast pass includes a conservative dialogue-led signal. A novel speech-band and articulation change can become a candidate even without a loudness spike. It is a review lead, not semantic understanding; Gemini and playback confirmation remain authoritative.
+
+### Gemini planning estimate
+
+The default estimate assumes up to 12 candidates, 45–60 seconds of audio each, four representative JPEG frames per candidate, approximately 900 prompt tokens and 700 output tokens per candidate. Google documents 32 tokens/second for audio and Gemini 3.1 Pro Preview pricing of $2/M input and $12/M output below 200k input tokens (higher tier: $4/M and $18/M). Under those assumptions, one 12-candidate run is roughly `$0.26` before retries or provider-side thinking-token variation. The UI shows this as an estimate only.
+
+### YouTube script boundary
+
+A YouTube link is useful for identifying a matching public video, but the official captions list/download API requires authorized access to caption tracks. ExClipper should accept an explicitly supplied `.vtt`, `.srt`, or transcript file as the first reliable script path; it must not pretend that a public URL alone guarantees a readable transcript.
+
 - 문서 상태: ExClipper 개인 편집 어시스턴트·상태/운영 모델을 확정한 초안 `0.3.13`
 - 기준일: 2026-07-20 (Asia/Seoul)
 - 배포 원칙: GitHub Pages에서 빠른 분석·후보 검토·출력을 완주하고, Gemini 정밀 분석은 배포 Secret을 사용하는 전용 중계로 제공함

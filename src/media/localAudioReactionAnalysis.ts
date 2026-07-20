@@ -204,7 +204,8 @@ function isCandidate(value: unknown): boolean {
       "speechBandEnergyRatio",
     ]) &&
     (evidence.eventKind === "short-loudness-burst" ||
-      evidence.eventKind === "sustained-vocal-reaction") &&
+      evidence.eventKind === "sustained-vocal-reaction" ||
+      evidence.eventKind === "dialogue-issue-signal") &&
     isFiniteNumber(evidence.baselineRms) &&
     isFiniteNumber(evidence.medianAbsoluteDeviation) &&
     isFiniteNumber(evidence.robustLoudnessScore) &&

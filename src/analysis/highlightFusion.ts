@@ -4,7 +4,8 @@ export type HighlightSignalKind = "audio" | "chat" | "visual";
 
 export type AudioReactionEventKind =
   | "short-loudness-burst"
-  | "sustained-vocal-reaction";
+  | "sustained-vocal-reaction"
+  | "dialogue-issue-signal";
 
 /**
  * Privacy-safe subset of the local audio reaction detector's evidence.
@@ -226,6 +227,7 @@ const PRE_REACTION_WINDOW_SHARE = 0.625;
 const AUDIO_EVENT_KINDS = new Set<AudioReactionEventKind>([
   "short-loudness-burst",
   "sustained-vocal-reaction",
+  "dialogue-issue-signal",
 ]);
 
 const AUDIO_NUMERIC_EVIDENCE_KEYS = [

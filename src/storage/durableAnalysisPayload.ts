@@ -779,6 +779,7 @@ function assertAudioEvidence(value: unknown, path: string): asserts value is Uni
     assertOneOf(record.eventKind, `${path}.eventKind`, [
       "short-loudness-burst",
       "sustained-vocal-reaction",
+      "dialogue-issue-signal",
     ]);
   }
   for (const key of AUDIO_EVIDENCE_OPTIONAL_NUMERIC_KEYS) {

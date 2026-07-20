@@ -1,5 +1,14 @@
 # Development Log
 
+## 2026-07-21 — desktop workspace and multimodal highlight pass
+
+- The first viewport is now a desktop-first editing workspace (`1440px` content width): source input and readiness summary share the top row, while the summary stays visible as the user reviews the file.
+- Once the fast signal pass completes, Pass B starts automatically for the top candidates. The user can still cancel it safely; chat import remains optional.
+- Gemini 3.1 Pro receives candidate audio plus representative video frames. The prompt now asks for a 200–300 Korean-character event summary covering the visible scene, event, streamer reaction, game/context, on-screen text, and reaction trigger.
+- The fast detector now has a conservative `dialogue-issue-signal` path for novel speech-band changes that are not loudness bursts. It is a review lead, not a semantic verdict; Gemini and playback confirmation remain authoritative.
+- The UI shows a planning-only Gemini cost estimate for the current candidate count and 45–60 second payloads.
+- A public YouTube URL alone is not treated as a transcript source. YouTube's official captions API requires authorized caption-track access, so the next safe integration is an explicit VTT/SRT import or an authorized connector rather than browser scraping.
+
 ## 2026-07-20 — `0.3.11` 제품명 ExClipper 전환
 
 ### 결정
