@@ -235,7 +235,7 @@ interface AudioAnalysisOutcome {
   readonly coverageComplete: boolean;
 }
 
-const APP_VERSION = "0.3.20";
+const APP_VERSION = "0.3.21";
 const PERSISTENCE_SCHEMA_VERSION = "0.3.0";
 const SIGNAL_ENGINE_VERSION = "streamer-reaction-fast-pass-v4-audio-primary-chat-context";
 const MAX_CHAT_FILE_BYTES = 32 * 1024 * 1024;
@@ -388,23 +388,27 @@ function candidatePassBRunFailureReason(
 
 function explainCandidatePassBError(error: unknown): string {
   if (error instanceof CandidatePassBWorkerError) {
+    const diagnosticSuffix = error.workerReasonCode
+      ? ` (오류 코드: ${error.workerReasonCode})`
+      : "";
     if (error.code === "ABORTED") {
-      return "Gemini 후보 분석을 멈췄어요. 이미 찾은 단서는 이 탭에서 그대로 볼 수 있어요.";
+      return `Gemini 후보 분석을 멈췄어요. 이미 찾은 단서는 이 탭에서 그대로 볼 수 있어요.${diagnosticSuffix}`;
     }
     switch (error.workerReasonCode) {
       case "PROXY_AUTH_REJECTED":
-        return "Gemini 연결 설정을 확인하지 못했어요. 잠시 뒤 다시 시도해 주세요. 기존 후보는 그대로 사용할 수 있어요.";
+        return `Gemini 연결 설정을 확인하지 못했어요. 잠시 뒤 다시 시도해 주세요. 기존 후보는 그대로 사용할 수 있어요.${diagnosticSuffix}`;
       case "PROXY_BAD_REQUEST":
-        return "Gemini가 앱의 요청 형식을 받을 수 없었어요. 자동 재시도하지 않았습니다. 앱을 새로고침하거나 최신 버전을 확인해 주세요. 기존 후보는 그대로 사용할 수 있어요.";
+        return `Gemini가 앱의 요청 형식을 받을 수 없었어요. 자동 재시도하지 않았습니다. 앱을 새로고침하거나 최신 버전을 확인해 주세요. 기존 후보는 그대로 사용할 수 있어요.${diagnosticSuffix}`;
       case "PROXY_RATE_LIMITED":
-        return "Gemini 분석 요청이 잠시 많아요. 1분 정도 기다린 뒤 직접 다시 시도해 주세요. 자동으로 반복 요청하지 않았어요.";
+        return `Gemini 분석 요청이 잠시 많아요. 1분 정도 기다린 뒤 직접 다시 시도해 주세요. 자동으로 반복 요청하지 않았어요.${diagnosticSuffix}`;
       case "PROXY_UNAVAILABLE":
-        return "Gemini에 연결하지 못했어요. 인터넷 연결을 확인한 뒤 원할 때 다시 시도해 주세요. 기존 후보는 그대로 사용할 수 있어요.";
+        return `Gemini에 연결하지 못했어요. 인터넷 연결을 확인한 뒤 원할 때 다시 시도해 주세요. 기존 후보는 그대로 사용할 수 있어요.${diagnosticSuffix}`;
       case "PROXY_INVALID_RESPONSE":
-        return "Gemini 답변을 안전한 후보 단서로 확인하지 못했어요. 잘못된 문장은 표시하지 않았고 기존 후보는 그대로예요.";
+        return `Gemini 답변을 안전한 후보 단서로 확인하지 못했어요. 잘못된 문장은 표시하지 않았고 기존 후보는 그대로예요.${diagnosticSuffix}`;
       case "PROXY_REQUEST_REJECTED":
-        return "Gemini가 후보 분석 요청을 완료하지 못했어요. 잠시 뒤 다시 시도해 주세요.";
+        return `Gemini가 후보 분석 요청을 완료하지 못했어요. 잠시 뒤 다시 시도해 주세요.${diagnosticSuffix}`;
     }
+    return `Gemini 후보 분석을 끝까지 마치지 못했어요.${diagnosticSuffix}`;
   }
   return "Gemini 후보 분석을 끝까지 마치지 못했어요. 기존 오디오·채팅 근거와 후보는 그대로 사용할 수 있어요.";
 }

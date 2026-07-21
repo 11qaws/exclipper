@@ -1,5 +1,10 @@
 # Development Log
 
+## 2026-07-21 `0.3.21` Gemini failure reason visibility
+
+- Gemini Pass B failures now retain the existing redacted provider reason code in the user-facing message (`PROXY_BAD_REQUEST`, `PROXY_RATE_LIMITED`, and similar), without exposing provider response text or secrets. This makes a failed analysis diagnosable instead of showing only a generic failure label.
+- Verification: full typecheck, lint, test, and production build required before release.
+
 ## 2026-07-21 `0.3.20` analysis-session material persistence
 
 - Treat each analysis `runId` as one durable analysis session bundle. Candidate Pass B snapshots now also retain one impact thumbnail per candidate, so a recovered session can show its visual material after refresh without re-running Gemini.
