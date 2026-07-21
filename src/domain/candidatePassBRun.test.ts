@@ -449,7 +449,7 @@ describe("CandidatePassBRun reducer", () => {
     expect(state.status).toBe("completed");
   });
 
-  it("rejects ineligible, out-of-order, stale-revision, repeated, and invalid clue results", () => {
+  it("accepts parallel candidate results while rejecting stale, repeated, and invalid results", () => {
     let state = makeTranscribing();
 
     expectRejected(
@@ -462,7 +462,7 @@ describe("CandidatePassBRun reducer", () => {
       }),
       "candidate_not_eligible",
     );
-    expectRejected(
+    const parallelState = apply(
       state,
       workerEvent("event-out-of-order", {
         type: "CANDIDATE_CLUE_FOUND",
@@ -470,8 +470,15 @@ describe("CandidatePassBRun reducer", () => {
         expectedProposalRevision: 7,
         clueCount: 1,
       }),
-      "candidate_not_active",
     );
+    expect(parallelState).toMatchObject({
+      status: "transcribing",
+      activeCandidateId: "candidate-1",
+    });
+    expect(parallelState.candidateOutcomes[1]).toMatchObject({
+      candidateId: "candidate-2",
+      status: "clueFound",
+    });
     expectRejected(
       state,
       workerEvent("event-stale-revision", {

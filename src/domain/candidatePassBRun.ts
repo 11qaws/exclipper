@@ -481,9 +481,6 @@ function candidateEventRejection(
   if (outcome?.status !== "pending") {
     return "candidate_already_terminal";
   }
-  if (state.activeCandidateId !== event.candidateId) {
-    return "candidate_not_active";
-  }
 
   const snapshot = findCandidateSnapshot(state, event.candidateId);
   if (snapshot?.proposalRevision !== event.expectedProposalRevision) {

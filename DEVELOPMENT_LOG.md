@@ -1,5 +1,11 @@
 # Development Log
 
+## 2026-07-21 `0.3.23` parallel Gemini state transition fix
+
+- Pass B's run state now accepts a valid terminal result or gap for any still-pending candidate. The previous single `activeCandidateId` guard could reject a normal Gemini response that arrived early from the bounded parallel pool.
+- The active candidate remains a UI progress hint, while candidate ID, proposal revision, and pending/terminal state remain the safety fences.
+- Verification: domain and Worker client regression tests cover out-of-order candidate results; full check and production build required before release.
+
 ## 2026-07-21 `0.3.22` parallel Gemini event ordering fix
 
 - Pass B now validates progress, transcript results, and candidate gaps by candidate ID instead of assuming terminal events arrive in candidate-list order. This fixes the failure that occurred when the bounded parallel requests returned candidate 2 before candidate 1.
