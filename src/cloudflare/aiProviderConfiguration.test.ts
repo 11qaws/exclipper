@@ -18,7 +18,7 @@ describe("aiProviderConfiguration", () => {
         provider: "gemini",
         descriptor: AI_PROVIDER_CATALOG.candidateInsight.gemini,
         endpoint:
-          "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent",
+          "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-pro-preview:generateContent",
         apiKey: "gemini-secret",
       },
     });
