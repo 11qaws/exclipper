@@ -213,8 +213,8 @@ interface VisualContextProposal {
 const DEFAULT_WINDOW_MS = 45_000;
 const MIN_WINDOW_MS = 30_000;
 const MAX_WINDOW_MS = 60_000;
-const DEFAULT_MAX_CANDIDATES = 12;
-const MAX_CANDIDATES = 12;
+const DEFAULT_MAX_RESERVOIR = 96;
+const MAX_RESERVOIR_CANDIDATES = 96;
 const DEFAULT_PROXIMITY_MS = 10_000;
 const DEFAULT_NMS_OVERLAP_THRESHOLD = 0.5;
 const NORMALIZATION_RANK_WEIGHT = 0.65;
@@ -223,7 +223,7 @@ const MULTI_SIGNAL_BONUS = 0.12;
 const REACTION_MULTI_SIGNAL_BONUS = 0.16;
 const VISUAL_CONTEXT_BONUS = 0.04;
 const VISUAL_EXPLORATION_SCORE_CEILING = 0.32;
-const MAX_VISUAL_EXPLORATION_CANDIDATES = 2;
+const MAX_VISUAL_EXPLORATION_CANDIDATES = 4;
 const PRE_REACTION_WINDOW_SHARE = 0.625;
 
 const AUDIO_EVENT_KINDS = new Set<AudioReactionEventKind>([
@@ -279,9 +279,9 @@ export function fuseHighlightCandidates(
   }
 
   const maxCandidates = clamp(
-    finiteIntegerOrDefault(options.maxCandidates, DEFAULT_MAX_CANDIDATES),
+    finiteIntegerOrDefault(options.maxCandidates, DEFAULT_MAX_RESERVOIR),
     0,
-    MAX_CANDIDATES,
+    MAX_RESERVOIR_CANDIDATES,
   );
   if (maxCandidates === 0) {
     return [];
@@ -355,9 +355,9 @@ export function fuseReactionHighlightCandidates(
   }
 
   const maxCandidates = clamp(
-    finiteIntegerOrDefault(options.maxCandidates, DEFAULT_MAX_CANDIDATES),
+    finiteIntegerOrDefault(options.maxCandidates, DEFAULT_MAX_RESERVOIR),
     0,
-    MAX_CANDIDATES,
+    MAX_RESERVOIR_CANDIDATES,
   );
   if (maxCandidates === 0) {
     return [];
@@ -413,7 +413,7 @@ export function fuseReactionHighlightCandidates(
       accepted.length >=
       Math.min(
         maxCandidates,
-        draft.exploration ? MAX_VISUAL_EXPLORATION_CANDIDATES : MAX_CANDIDATES,
+        draft.exploration ? MAX_VISUAL_EXPLORATION_CANDIDATES : MAX_RESERVOIR_CANDIDATES,
       )
     ) {
       break;

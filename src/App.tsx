@@ -76,6 +76,7 @@ import {
   highlightReasonForSignalKinds,
   type UnifiedHighlightCandidate,
 } from "./analysis/highlightFusion";
+import type { BroadcastContextSemanticChapter } from "./analysis/broadcastContextProtocol";
 import { buildHighlightNarrative } from "./analysis/highlightNarrative";
 import {
   buildCandidateRankingProposal,
@@ -829,6 +830,8 @@ function App() {
     useState<CandidateTimelineFramesById>({});
   const [candidateTimelineScorePoints, setCandidateTimelineScorePoints] =
     useState<readonly CandidateTimelineScorePoint[]>([]);
+  const [timelineSemanticChapters, setTimelineSemanticChapters] =
+    useState<readonly BroadcastContextSemanticChapter[]>([]);
   const candidatePassBEvidenceRef = useRef<CandidatePassBEvidenceById>({});
   const candidateGeminiInsightRef = useRef<CandidateGeminiInsightById>({});
   const candidateTimelineFramesRef = useRef<CandidateTimelineFramesById>({});
@@ -978,6 +981,7 @@ function App() {
     candidateTimelineFramesRef.current = {};
     setCandidateTimelineFramesById({});
     setCandidateTimelineScorePoints([]);
+    setTimelineSemanticChapters([]);
     setClipDownloadStatusById({});
     setClipDownloadErrorById({});
     setClipDownloadProgressById({});
@@ -1249,7 +1253,10 @@ function App() {
       candidateRankingFingerprints.evidenceFingerprint;
 
   const orderedCandidates = useMemo(
-    () => projectCandidateOrder(candidates, candidateRankingView),
+    () => {
+      const projected = projectCandidateOrder(candidates, candidateRankingView);
+      return [...projected].sort((a, b) => a.peakMs - b.peakMs);
+    },
     [candidateRankingView, candidates],
   );
   const focusedCandidateId =
@@ -1497,6 +1504,7 @@ function App() {
     setSelectionResult(null);
     setCandidates([]);
     setCandidateTimelineScorePoints([]);
+    setTimelineSemanticChapters([]);
     resetCandidateRanking();
     resetBoundarySession();
     resetCandidatePassB();
@@ -1863,6 +1871,7 @@ function App() {
     setSelectionResult(null);
     setCandidates([]);
     setCandidateTimelineScorePoints([]);
+    setTimelineSemanticChapters([]);
     resetCandidateRanking();
     resetBoundarySession();
     setAnalysisError(null);
@@ -5236,6 +5245,30 @@ function App() {
                         })}
                       </div>
                       <span className="rh-timeline-line" aria-hidden="true" />
+                      {timelineSemanticChapters.length > 0 && (
+                        <div className="rh-timeline-semantic-rail" aria-label="타임라인 주요 구간">
+                          {timelineSemanticChapters.map((chapter) => {
+                            const left =
+                              boundarySourceDurationMs > 0
+                                ? Math.min(100, Math.max(0, (chapter.startMs / boundarySourceDurationMs) * 100))
+                                : 0;
+                            const width =
+                              boundarySourceDurationMs > 0
+                                ? Math.max(0.35, Math.min(100 - left, ((chapter.endMs - chapter.startMs) / boundarySourceDurationMs) * 100))
+                                : 0;
+                            return (
+                              <div
+                                key={chapter.semanticChapterId}
+                                className="rh-timeline-semantic-chapter"
+                                style={{ left: `${left}%`, width: `${width}%` }}
+                                title={chapter.summaryKo}
+                              >
+                                <span className="rh-timeline-semantic-title">{chapter.titleKo}</span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
                       {orderedCandidates.map((candidate, index) => {
                         const position =
                           boundarySourceDurationMs > 0

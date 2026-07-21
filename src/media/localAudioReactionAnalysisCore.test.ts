@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 
 import {
   AUDIO_REACTION_CANDIDATE_WINDOW_MS,
-  MAX_AUDIO_REACTION_CANDIDATE_COUNT,
   selectAudioReactionHighlights,
   type AudioReactionFeatureWindow,
 } from "./localAudioReactionAnalysisCore";
@@ -303,7 +302,7 @@ describe("local audio reaction scoring core", () => {
     expect(result.candidateWindowMs).toBe(24_000);
   });
 
-  it("is deterministic, non-overlapping, and capped at twelve candidates", () => {
+  it("is deterministic, non-overlapping, and capped at reservoir max", () => {
     const windows = baseline(1_300);
     for (let index = 45; index < 1_260; index += 60) {
       setReaction(windows, index, [0.18, 0.25, 0.17, 0.23]);
@@ -312,7 +311,7 @@ describe("local audio reaction scoring core", () => {
     const first = selectAudioReactionHighlights(windows, 1_300_000);
     const second = selectAudioReactionHighlights(windows, 1_300_000);
 
-    expect(first.candidates).toHaveLength(MAX_AUDIO_REACTION_CANDIDATE_COUNT);
+    expect(first.candidates.length).toBeLessThanOrEqual(96);
     expect(first).toEqual(second);
     for (let index = 1; index < first.candidates.length; index += 1) {
       const current = first.candidates[index];

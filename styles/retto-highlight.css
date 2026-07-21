@@ -627,7 +627,7 @@
 
 .rh-timeline-track {
   position: relative;
-  height: 48px;
+  height: 68px;
   margin: 18px 8px 0;
 }
 
@@ -641,6 +641,39 @@
   background: linear-gradient(90deg, var(--accent) 0%, var(--accentT) 100%);
   opacity: .72;
   z-index: 1;
+}
+
+.rh-timeline-semantic-rail {
+  position: absolute;
+  top: 48px;
+  left: 0;
+  right: 0;
+  height: 20px;
+  overflow: hidden;
+  border-radius: 4px;
+  pointer-events: none;
+  background: var(--bg2);
+}
+
+.rh-timeline-semantic-chapter {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: color-mix(in srgb, var(--accent) 15%, transparent);
+  border-left: 1px solid color-mix(in srgb, var(--accent) 50%, transparent);
+  display: flex;
+  align-items: center;
+  padding: 0 4px;
+  box-sizing: border-box;
+}
+
+.rh-timeline-semantic-title {
+  color: var(--text2);
+  font-size: 0.65rem;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .rh-timeline-score-rail {

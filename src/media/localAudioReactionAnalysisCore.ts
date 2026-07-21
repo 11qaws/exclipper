@@ -184,31 +184,51 @@ export function selectAudioReactionHighlights(
     }
   }
 
-  events.sort(compareEvents);
   const requestedWindowMs = clampInteger(
     options.candidateWindowMs ?? AUDIO_REACTION_CANDIDATE_WINDOW_MS,
     MIN_CANDIDATE_WINDOW_MS,
     MAX_CANDIDATE_WINDOW_MS,
     AUDIO_REACTION_CANDIDATE_WINDOW_MS,
   );
+
+  const durationTarget = Math.ceil((durationMs / 3_600_000) * 6);
+  const detailAnalysisBudget = 12; // Will be passed into selector
+  const minimumReservoir = detailAnalysisBudget * 2;
+  const reservoirBudget = Math.max(minimumReservoir, Math.min(durationTarget, 96));
+  
   const maxCandidates = clampInteger(
-    options.maxCandidates ?? MAX_AUDIO_REACTION_CANDIDATE_COUNT,
-    0,
-    MAX_AUDIO_REACTION_CANDIDATE_COUNT,
-    MAX_AUDIO_REACTION_CANDIDATE_COUNT,
+    options.maxCandidates ?? reservoirBudget,
+    1,
+    96,
+    reservoirBudget,
   );
+
+  // 1. Signal Cluster
+  // We keep the existing events which are already clustered locally by peak search.
+  
+  // Sort events by score descending to form the reservoir
+  events.sort((left, right) => 
+    right.score - left.score ||
+    left.apex.centerMs - right.apex.centerMs ||
+    left.eventKind.localeCompare(right.eventKind)
+  );
+
   const candidates: LocalAudioReactionCandidate[] = [];
 
   for (const event of events) {
-    if (candidates.length >= maxCandidates) {
-      break;
-    }
+    if (candidates.length >= maxCandidates) break;
+
     const candidate = createCandidate(event, durationMs, requestedWindowMs);
+    
+    // Hard overlap check (deduplication of exactly identical signal ranges)
     if (candidates.some((accepted) => rangesOverlap(accepted, candidate))) {
       continue;
     }
     candidates.push(candidate);
   }
+
+  // Final chronological sort for the reservoir
+  candidates.sort((left, right) => left.peakMs - right.peakMs);
 
   const medianWindowDurationMs = Math.round(
     median(normalized.map((window) => window.endMs - window.startMs)),
@@ -740,13 +760,7 @@ function createCandidate(
   };
 }
 
-function compareEvents(left: ReactionEvent, right: ReactionEvent): number {
-  return (
-    right.score - left.score ||
-    left.apex.centerMs - right.apex.centerMs ||
-    left.eventKind.localeCompare(right.eventKind)
-  );
-}
+
 
 function compareScoredWindows(left: ScoredWindow, right: ScoredWindow): number {
   return right.score - left.score || left.centerMs - right.centerMs;

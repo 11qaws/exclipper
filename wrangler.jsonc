@@ -1,7 +1,7 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "rettohighlight-gemini",
-  "main": "src/cloudflare/geminiProxy.worker.ts",
+  "main": "src/cloudflare/aiProxy.worker.ts",
   "compatibility_date": "2026-07-20",
   "workers_dev": true,
   "placement": {

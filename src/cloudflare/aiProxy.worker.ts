@@ -11,11 +11,24 @@ import {
   type CandidatePassBVideoFrame,
 } from "../analysis/candidatePassBWorkerProtocol";
 import {
+  MAX_BROADCAST_CONTEXT_DEEPSEEK_RESPONSE_BYTES,
+  buildBroadcastContextDeepseekRequestBody,
+  extractBroadcastContextDeepseekResponse,
+} from "../analysis/broadcastContextDeepseek";
+import {
+  createBroadcastContextRequest,
+  BroadcastContextInputError,
+  type BroadcastContextRequestInput,
+} from "../analysis/broadcastContextProtocol";
+
+import {
   resolveCandidateInsightConnection,
+  resolveBroadcastContextConnection,
   type AiProviderEnvironment,
 } from "./aiProviderConfiguration";
 
 const ENDPOINT_PATH = "/v1/candidate-insights";
+const BROADCAST_CONTEXT_ENDPOINT_PATH = "/v1/broadcast-context";
 const HEALTH_PATH = "/healthz";
 const PRODUCTION_ORIGIN = "https://11qaws.github.io";
 const WAV_HEADER_BYTES = 44;
@@ -42,7 +55,7 @@ interface RateLimitBinding {
   ) => Promise<{ readonly success: boolean }>;
 }
 
-export interface GeminiProxyEnvironment extends AiProviderEnvironment {
+export interface AiProxyEnvironment extends AiProviderEnvironment {
   readonly RATE_LIMITER: RateLimitBinding;
   readonly IP_RATE_LIMITER: RateLimitBinding;
 }
@@ -58,7 +71,7 @@ type FetchImplementation = (
   init?: RequestInit,
 ) => Promise<Response>;
 
-export interface GeminiProxyDependencies {
+export interface AiProxyDependencies {
   readonly fetchImplementation?: FetchImplementation;
   readonly upstreamTimeoutMs?: number;
   readonly upstreamRetryDelaysMs?: readonly number[];
@@ -461,10 +474,10 @@ function healthResponse(request: Request): Response {
   return new Response(body, { status: 200, headers });
 }
 
-export async function handleGeminiProxyRequest(
+export async function handleCandidateInsightRequest(
   request: Request,
-  environment: GeminiProxyEnvironment,
-  dependencies: GeminiProxyDependencies = {},
+  environment: AiProxyEnvironment,
+  dependencies: AiProxyDependencies = {},
 ): Promise<Response> {
   const origin = request.headers.get("Origin");
   const url = new URL(request.url);
@@ -489,7 +502,7 @@ export async function handleGeminiProxyRequest(
     return jsonResponse(
       403,
       "ORIGIN_NOT_ALLOWED",
-      "이 페이지에서는 Gemini 분석을 시작할 수 없어요.",
+      "이 페이지에서는 AI 분석을 시작할 수 없어요.",
       origin,
     );
   }
@@ -523,7 +536,7 @@ export async function handleGeminiProxyRequest(
     return jsonResponse(
       503,
       "PROXY_NOT_CONFIGURED",
-      "Gemini 연결 준비가 아직 끝나지 않았어요.",
+      "AI 연결 준비가 아직 끝나지 않았어요.",
       origin,
     );
   }
@@ -704,7 +717,7 @@ export async function handleGeminiProxyRequest(
     return jsonResponse(
       502,
       "UPSTREAM_UNAVAILABLE",
-      "Gemini에 연결하지 못했어요. 잠시 뒤 다시 시도해 주세요.",
+      "AI에 연결하지 못했어요. 잠시 뒤 다시 시도해 주세요.",
       origin,
     );
   }
@@ -722,7 +735,7 @@ export async function handleGeminiProxyRequest(
       return jsonResponse(
         503,
         "PROXY_NOT_CONFIGURED",
-        "Gemini 연결 설정을 확인해야 해요.",
+        "AI 연결 설정을 확인해야 해요.",
         origin,
       );
     }
@@ -730,7 +743,7 @@ export async function handleGeminiProxyRequest(
       return jsonResponse(
         502,
         "UPSTREAM_UNAVAILABLE",
-        "Gemini에 연결하지 못했어요. 잠시 뒤 다시 시도해 주세요.",
+        "AI에 연결하지 못했어요. 잠시 뒤 다시 시도해 주세요.",
         origin,
       );
     }
@@ -740,7 +753,7 @@ export async function handleGeminiProxyRequest(
         return jsonResponse(
           503,
           "PROXY_NOT_CONFIGURED",
-          "Gemini 연결 설정을 확인해야 해요.",
+          "AI 연결 설정을 확인해야 해요.",
           origin,
         );
       }
@@ -748,7 +761,7 @@ export async function handleGeminiProxyRequest(
         return jsonResponse(
           502,
           "UPSTREAM_RESPONSE_FORMAT_REJECTED",
-          "Gemini 응답 형식 설정을 확인해야 해요.",
+          "AI 응답 형식 설정을 확인해야 해요.",
           origin,
         );
       }
@@ -756,7 +769,7 @@ export async function handleGeminiProxyRequest(
         return jsonResponse(
           502,
           "UPSTREAM_INVALID_ARGUMENT",
-          "Gemini가 후보 분석 요청을 받아들이지 않았어요.",
+          "AI가 후보 분석 요청을 받아들이지 않았어요.",
           origin,
         );
       }
@@ -764,7 +777,7 @@ export async function handleGeminiProxyRequest(
     return jsonResponse(
       502,
       "UPSTREAM_REJECTED",
-      "Gemini가 후보 분석 요청을 처리하지 못했어요.",
+      "AI가 후보 분석 요청을 처리하지 못했어요.",
       origin,
     );
   }
@@ -778,7 +791,7 @@ export async function handleGeminiProxyRequest(
     return jsonResponse(
       502,
       "UPSTREAM_INVALID_RESPONSE",
-      "Gemini 답변을 안전하게 확인하지 못했어요.",
+      "AI 답변을 안전하게 확인하지 못했어요.",
       origin,
     );
   }
@@ -793,7 +806,7 @@ export async function handleGeminiProxyRequest(
     return jsonResponse(
       502,
       "UPSTREAM_INVALID_RESPONSE",
-      "Gemini 답변을 안전하게 확인하지 못했어요.",
+      "AI 답변을 안전하게 확인하지 못했어요.",
       origin,
     );
   }
@@ -808,7 +821,7 @@ export async function handleGeminiProxyRequest(
     return jsonResponse(
       502,
       "UPSTREAM_INVALID_RESPONSE",
-      "Gemini 답변을 안전하게 확인하지 못했어요.",
+      "AI 답변을 안전하게 확인하지 못했어요.",
       origin,
     );
   }
@@ -820,15 +833,139 @@ export async function handleGeminiProxyRequest(
     return jsonResponse(
       502,
       "UPSTREAM_INVALID_RESPONSE",
-      "Gemini 답변을 안전하게 확인하지 못했어요.",
+      "AI 답변을 안전하게 확인하지 못했어요.",
       origin,
     );
   }
   return successResponse(upstreamPayload, origin);
 }
 
+
+export async function handleBroadcastContextRequest(
+  request: Request,
+  environment: AiProxyEnvironment,
+  dependencies: AiProxyDependencies = {},
+): Promise<Response> {
+  const origin = request.headers.get("Origin");
+  if (!isAllowedOrigin(origin)) {
+    return jsonResponse(403, "ORIGIN_NOT_ALLOWED", "이 페이지에서는 전체 맥락 분석을 시작할 수 없어요.", origin);
+  }
+  if (request.method === "OPTIONS") {
+    return preflightResponse(origin);
+  }
+  if (request.method !== "POST") {
+    return jsonResponse(405, "METHOD_NOT_ALLOWED", "지원하지 않는 요청 방식이에요.", origin, { Allow: "POST, OPTIONS" });
+  }
+  if (mediaType(request) !== "application/json") {
+    return jsonResponse(415, "UNSUPPORTED_MEDIA_TYPE", "JSON 형식으로 요청해 주세요.", origin);
+  }
+
+  const providerResolution = resolveBroadcastContextConnection(environment);
+  if (!providerResolution.ok || environment.RATE_LIMITER === undefined || environment.IP_RATE_LIMITER === undefined) {
+    return jsonResponse(503, "PROXY_NOT_CONFIGURED", "전체 맥락 분석 연결 준비가 아직 끝나지 않았어요.", origin);
+  }
+  if (providerResolution.connection.provider !== "deepseek") {
+    return jsonResponse(503, "PROVIDER_NOT_ACTIVE", "선택한 전체 맥락 분석 공급자는 아직 운영 경로가 활성화되지 않았어요.", origin);
+  }
+  const providerConnection = providerResolution.connection;
+
+  let requestBytes: Uint8Array;
+  try {
+    requestBytes = await readBodyWithLimit(request.body, MAX_REQUEST_BODY_BYTES);
+  } catch {
+    return jsonResponse(413, "PAYLOAD_TOO_LARGE", "요청이 허용 크기를 넘었어요.", origin);
+  }
+
+  let inputValue: unknown;
+  try {
+    const requestText = new TextDecoder("utf-8", { fatal: true }).decode(requestBytes);
+    inputValue = JSON.parse(requestText);
+  } catch {
+    return jsonResponse(400, "INVALID_REQUEST", "요청 형식을 확인해 주세요.", origin);
+  }
+
+  let broadcastContextRequest;
+  try {
+    broadcastContextRequest = createBroadcastContextRequest(inputValue as BroadcastContextRequestInput);
+  } catch (error) {
+    return jsonResponse(400, "INVALID_REQUEST", error instanceof BroadcastContextInputError ? error.message : "요청 형식을 확인해 주세요.", origin);
+  }
+
+  const clientRateLimit = await environment.IP_RATE_LIMITER.limit({ key: clientRateLimitKey(request) });
+  if (!clientRateLimit.success) {
+    return jsonResponse(429, "RATE_LIMITED", "잠시 요청이 많아요. 1분 뒤 다시 시도해 주세요.", origin, { "Retry-After": "60" });
+  }
+
+  const globalRateLimit = await environment.RATE_LIMITER.limit({ key: RATE_LIMIT_KEY });
+  if (!globalRateLimit.success) {
+    return jsonResponse(429, "RATE_LIMITED", "잠시 요청이 많아요. 1분 뒤 다시 시도해 주세요.", origin, { "Retry-After": "60" });
+  }
+
+  const upstreamRequestBody = JSON.stringify(
+    buildBroadcastContextDeepseekRequestBody(broadcastContextRequest, providerConnection.descriptor.modelId)
+  );
+
+  const fetchImplementation = dependencies.fetchImplementation ?? fetch;
+  const timeoutMs = dependencies.upstreamTimeoutMs ?? UPSTREAM_TIMEOUT_MS;
+  const retryDelaysMs = dependencies.upstreamRetryDelaysMs ?? DEFAULT_UPSTREAM_RETRY_DELAYS_MS;
+  
+  let upstreamResponse: Response;
+  try {
+    upstreamResponse = await fetchWithTransientRetries(
+      fetchImplementation,
+      providerConnection.endpoint,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${providerConnection.apiKey}`,
+        },
+        body: upstreamRequestBody,
+        cache: "no-store",
+        credentials: "omit",
+        referrerPolicy: "no-referrer",
+      },
+      timeoutMs,
+      retryDelaysMs,
+    );
+  } catch {
+    return jsonResponse(502, "UPSTREAM_UNAVAILABLE", "AI에 연결하지 못했어요.", origin);
+  }
+
+  if (!upstreamResponse.ok) {
+    return jsonResponse(502, "UPSTREAM_REJECTED", "AI가 요청을 처리하지 못했어요.", origin);
+  }
+
+  let upstreamBytes: Uint8Array;
+  try {
+    upstreamBytes = await readBodyWithLimit(upstreamResponse.body, MAX_BROADCAST_CONTEXT_DEEPSEEK_RESPONSE_BYTES);
+  } catch {
+    return jsonResponse(502, "UPSTREAM_INVALID_RESPONSE", "답변을 안전하게 확인하지 못했어요.", origin);
+  }
+
+  let upstreamPayload: unknown;
+  try {
+    const text = new TextDecoder("utf-8", { fatal: true }).decode(upstreamBytes);
+    upstreamPayload = JSON.parse(text);
+  } catch {
+    return jsonResponse(502, "UPSTREAM_INVALID_RESPONSE", "답변을 안전하게 확인하지 못했어요.", origin);
+  }
+
+  const parsed = extractBroadcastContextDeepseekResponse(upstreamPayload, broadcastContextRequest);
+  if (!parsed.ok) {
+    return jsonResponse(502, "UPSTREAM_INVALID_RESPONSE", "답변 형식을 확인할 수 없어요.", origin);
+  }
+
+  return successResponse(parsed.result, origin);
+}
+
 export default {
-  fetch(request: Request, environment: GeminiProxyEnvironment): Promise<Response> {
-    return handleGeminiProxyRequest(request, environment);
+  fetch(request: Request, environment: AiProxyEnvironment): Promise<Response> {
+    const url = new URL(request.url);
+    if (url.pathname === BROADCAST_CONTEXT_ENDPOINT_PATH) {
+      return handleBroadcastContextRequest(request, environment);
+    }
+    return handleCandidateInsightRequest(request, environment);
   },
 };
+

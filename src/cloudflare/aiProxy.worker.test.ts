@@ -5,15 +5,15 @@ import {
 } from "../analysis/candidatePassBGemini";
 import { CANDIDATE_PASS_B_SAMPLE_RATE_HZ } from "../analysis/candidatePassBWorkerProtocol";
 import {
-  handleGeminiProxyRequest,
-  type GeminiProxyEnvironment,
-} from "./geminiProxy.worker";
+  handleCandidateInsightRequest,
+  type AiProxyEnvironment,
+} from "./aiProxy.worker";
 
 const ENDPOINT = "https://rettohighlight-gemini.example/v1/candidate-insights";
 const PRODUCTION_ORIGIN = "https://11qaws.github.io";
 const API_KEY = "test-secret-key-that-must-never-be-returned";
 
-function createEnvironment(): GeminiProxyEnvironment {
+function createEnvironment(): AiProxyEnvironment {
   return {
     GEMINI_API_KEY: API_KEY,
     RATE_LIMITER: {
@@ -103,10 +103,10 @@ async function responseErrorCode(response: Response): Promise<string> {
   return payload.error.code;
 }
 
-describe("geminiProxy.worker", () => {
+describe("aiProxy.worker", () => {
   it("reports health without disclosing configuration or calling Gemini", async () => {
     const upstreamFetch = vi.fn();
-    const response = await handleGeminiProxyRequest(
+    const response = await handleCandidateInsightRequest(
       new Request("https://rettohighlight-gemini.example/healthz"),
       { ...createEnvironment(), GEMINI_API_KEY: "" },
       { fetchImplementation: upstreamFetch },
@@ -123,7 +123,7 @@ describe("geminiProxy.worker", () => {
 
   it("answers an allowed production preflight without invoking Gemini", async () => {
     const upstreamFetch = vi.fn();
-    const response = await handleGeminiProxyRequest(
+    const response = await handleCandidateInsightRequest(
       createRequest(null, { method: "OPTIONS", contentType: "" }),
       createEnvironment(),
       { fetchImplementation: upstreamFetch },
@@ -144,7 +144,7 @@ describe("geminiProxy.worker", () => {
   });
 
   it("allows localhost development origins but rejects lookalike and missing origins", async () => {
-    const localhost = await handleGeminiProxyRequest(
+    const localhost = await handleCandidateInsightRequest(
       createRequest(null, {
         method: "OPTIONS",
         origin: "http://localhost:5173",
@@ -158,7 +158,7 @@ describe("geminiProxy.worker", () => {
     );
 
     for (const origin of ["https://11qaws.github.io.evil.test", null]) {
-      const response = await handleGeminiProxyRequest(
+      const response = await handleCandidateInsightRequest(
         createRequest(createCandidateBody(), { origin }),
         createEnvironment(),
       );
@@ -171,7 +171,7 @@ describe("geminiProxy.worker", () => {
     const upstreamFetch = vi.fn();
     const dependencies = { fetchImplementation: upstreamFetch };
 
-    const wrongPath = await handleGeminiProxyRequest(
+    const wrongPath = await handleCandidateInsightRequest(
       createRequest(createCandidateBody(), {
         url: "https://rettohighlight-gemini.example/v1/other",
       }),
@@ -180,7 +180,7 @@ describe("geminiProxy.worker", () => {
     );
     expect(wrongPath.status).toBe(404);
 
-    const wrongMethod = await handleGeminiProxyRequest(
+    const wrongMethod = await handleCandidateInsightRequest(
       createRequest(null, { method: "GET", contentType: "" }),
       createEnvironment(),
       dependencies,
@@ -188,7 +188,7 @@ describe("geminiProxy.worker", () => {
     expect(wrongMethod.status).toBe(405);
     expect(wrongMethod.headers.get("Allow")).toBe("POST, OPTIONS");
 
-    const wrongType = await handleGeminiProxyRequest(
+    const wrongType = await handleCandidateInsightRequest(
       createRequest("payload", { contentType: "text/plain" }),
       createEnvironment(),
       dependencies,
@@ -209,7 +209,7 @@ describe("geminiProxy.worker", () => {
       { ...valid, audioBase64: "not-base64" },
     ];
     for (const body of cases) {
-      const response = await handleGeminiProxyRequest(
+      const response = await handleCandidateInsightRequest(
         createRequest(body),
         environment,
       );
@@ -220,7 +220,7 @@ describe("geminiProxy.worker", () => {
   });
 
   it("rejects a declared oversized body before reading it", async () => {
-    const response = await handleGeminiProxyRequest(
+    const response = await handleCandidateInsightRequest(
       createRequest(createCandidateBody(), {
         headers: { "Content-Length": "99999999" },
       }),
@@ -277,7 +277,7 @@ describe("geminiProxy.worker", () => {
     );
 
     const environment = createEnvironment();
-    const response = await handleGeminiProxyRequest(
+    const response = await handleCandidateInsightRequest(
       createRequest(candidate, {
         headers: { "CF-Connecting-IP": "203.0.113.42" },
       }),
@@ -301,7 +301,7 @@ describe("geminiProxy.worker", () => {
   });
 
   it("fails closed when the secret is unavailable", async () => {
-    const missingSecret = await handleGeminiProxyRequest(
+    const missingSecret = await handleCandidateInsightRequest(
       createRequest(createCandidateBody()),
       { ...createEnvironment(), GEMINI_API_KEY: "" },
     );
@@ -311,7 +311,7 @@ describe("geminiProxy.worker", () => {
 
   it("keeps a prepared provider fail-closed until its transport is activated", async () => {
     const upstreamFetch = vi.fn();
-    const response = await handleGeminiProxyRequest(
+    const response = await handleCandidateInsightRequest(
       createRequest(createCandidateBody()),
       {
         ...createEnvironment(),
@@ -342,7 +342,7 @@ describe("geminiProxy.worker", () => {
       });
       const upstreamFetch = vi.fn();
 
-      const response = await handleGeminiProxyRequest(
+      const response = await handleCandidateInsightRequest(
         createRequest(createCandidateBody()),
         environment,
         { fetchImplementation: upstreamFetch },
@@ -369,7 +369,7 @@ describe("geminiProxy.worker", () => {
           );
         }),
     );
-    const timeoutResponse = await handleGeminiProxyRequest(
+    const timeoutResponse = await handleCandidateInsightRequest(
       createRequest(createCandidateBody()),
       createEnvironment(),
       { fetchImplementation: timeoutFetch, upstreamTimeoutMs: 5 },
@@ -377,7 +377,7 @@ describe("geminiProxy.worker", () => {
     expect(timeoutResponse.status).toBe(504);
 
     const rawUpstreamError = "private upstream detail";
-    const rejectedResponse = await handleGeminiProxyRequest(
+    const rejectedResponse = await handleCandidateInsightRequest(
       createRequest(createCandidateBody()),
       createEnvironment(),
       {
@@ -395,7 +395,7 @@ describe("geminiProxy.worker", () => {
 
   it("maps a transient upstream service failure without exposing its body", async () => {
     const providerBody = `private transient detail ${API_KEY}`;
-    const response = await handleGeminiProxyRequest(
+    const response = await handleCandidateInsightRequest(
       createRequest(createCandidateBody()),
       createEnvironment(),
       {
@@ -424,7 +424,7 @@ describe("geminiProxy.worker", () => {
         new Response(JSON.stringify(geminiPayload), { status: 200 }),
       );
 
-    const response = await handleGeminiProxyRequest(
+    const response = await handleCandidateInsightRequest(
       createRequest(candidate),
       createEnvironment(),
       {
@@ -475,7 +475,7 @@ describe("geminiProxy.worker", () => {
   ])(
     "classifies $label without returning the provider message",
     async ({ upstreamError, expectedStatus, expectedCode }) => {
-      const response = await handleGeminiProxyRequest(
+      const response = await handleCandidateInsightRequest(
         createRequest(createCandidateBody()),
         createEnvironment(),
         {
@@ -508,7 +508,7 @@ describe("geminiProxy.worker", () => {
       );
       const upstreamFetch = vi.fn();
 
-      const response = await handleGeminiProxyRequest(
+      const response = await handleCandidateInsightRequest(
         createRequest(createCandidateBody()),
         environment,
         { fetchImplementation: upstreamFetch },
@@ -525,7 +525,7 @@ describe("geminiProxy.worker", () => {
   );
 
   it("rejects oversized or malformed successful Gemini responses", async () => {
-    const oversized = await handleGeminiProxyRequest(
+    const oversized = await handleCandidateInsightRequest(
       createRequest(createCandidateBody()),
       createEnvironment(),
       {
@@ -540,7 +540,7 @@ describe("geminiProxy.worker", () => {
     );
     expect(oversized.status).toBe(502);
 
-    const malformed = await handleGeminiProxyRequest(
+    const malformed = await handleCandidateInsightRequest(
       createRequest(createCandidateBody()),
       createEnvironment(),
       {

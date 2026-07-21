@@ -1,9 +1,10 @@
-export const BROADCAST_CONTEXT_SCHEMA_VERSION = "1.0.0" as const;
+export const BROADCAST_CONTEXT_SCHEMA_VERSION = "1.1.0" as const;
 export const MAX_BROADCAST_CONTEXT_SOURCE_DURATION_MS = 12 * 60 * 60_000;
 export const MAX_BROADCAST_CONTEXT_CHAPTERS = 144;
 export const MAX_BROADCAST_CONTEXT_CANDIDATES = 12;
 export const MAX_BROADCAST_CONTEXT_SUMMARY_LENGTH = 1_200;
 export const MAX_BROADCAST_CONTEXT_TRANSCRIPT_LENGTH = 12_000;
+export const MAX_SEMANTIC_CHAPTERS = 48;
 
 const MAX_IDENTIFIER_LENGTH = 256;
 
@@ -11,7 +12,6 @@ export interface BroadcastContextChapterInput {
   readonly chapterId: string;
   readonly startMs: number;
   readonly endMs: number;
-  /** Bounded phase/chapter summary produced before whole-context reduction. */
   readonly summaryKo: string;
 }
 
@@ -46,11 +46,6 @@ export type BroadcastContextCandidateCategory =
   | "context-dependent"
   | "uncertain";
 
-/**
- * Provider output may explain and classify an existing candidate only. It has
- * no score, rank, range, or approval fields, so it cannot mutate canonical
- * fast-pass decisions when a reducer is added later.
- */
 export interface BroadcastContextCandidateAnnotation {
   readonly candidateId: string;
   readonly category: BroadcastContextCandidateCategory;
@@ -60,11 +55,57 @@ export interface BroadcastContextCandidateAnnotation {
   readonly uncertaintiesKo: readonly string[];
 }
 
+export type BroadcastContextSemanticChapterKind =
+  | "main-event"
+  | "story-progress"
+  | "setup-and-payoff"
+  | "running-gag"
+  | "quiet-achievement"
+  | "reaction"
+  | "context-shift"
+  | "other";
+
+export type BroadcastContextSemanticChapterSalience =
+  | "primary"
+  | "secondary";
+
+export interface BroadcastContextSemanticChapterReference {
+  readonly startChapterId: string;
+  readonly endChapterId: string;
+  readonly titleKo: string;
+  readonly summaryKo: string;
+  readonly kind: BroadcastContextSemanticChapterKind;
+  readonly salience: BroadcastContextSemanticChapterSalience;
+  readonly relatedCandidateIds: readonly string[];
+  readonly uncertaintiesKo: readonly string[];
+}
+
+export interface BroadcastContextSemanticChapter extends BroadcastContextSemanticChapterReference {
+  readonly semanticChapterId: string;
+  readonly startMs: number;
+  readonly endMs: number;
+}
+
+export interface BroadcastContextCoverageGap {
+  readonly startMs: number;
+  readonly endMs: number;
+}
+
+export interface BroadcastContextCoverage {
+  readonly status: "complete" | "partial";
+  readonly coveredMs: number;
+  readonly coverageRatio: number;
+  readonly gaps: readonly BroadcastContextCoverageGap[];
+}
+
 export interface BroadcastContextResult {
-  readonly schemaVersion: typeof BROADCAST_CONTEXT_SCHEMA_VERSION;
+  readonly schemaVersion: typeof BROADCAST_CONTEXT_SCHEMA_VERSION | "1.0.0";
   readonly broadcastSummaryKo: string;
   readonly recurringThemesKo: readonly string[];
   readonly annotations: readonly BroadcastContextCandidateAnnotation[];
+  readonly semanticChaptersSupported: boolean;
+  readonly semanticChapters: readonly BroadcastContextSemanticChapter[];
+  readonly coverage: BroadcastContextCoverage;
 }
 
 export type BroadcastContextInputErrorCode =
@@ -75,7 +116,8 @@ export type BroadcastContextInputErrorCode =
   | "DUPLICATE_IDENTIFIER"
   | "INVALID_RANGE"
   | "OVERLAPPING_CHAPTERS"
-  | "INVALID_TEXT";
+  | "INVALID_TEXT"
+  | "INVALID_SEMANTIC_CHAPTER";
 
 export class BroadcastContextInputError extends Error {
   public readonly code: BroadcastContextInputErrorCode;
@@ -172,11 +214,6 @@ function assertUniqueIdentifiers(
   }
 }
 
-/**
- * Validates and snapshots the bounded, text-only payload that a future context
- * reducer may send. Files, raw audio/video, chat authors, scores, and review
- * state are deliberately absent.
- */
 export function createBroadcastContextRequest(
   input: BroadcastContextRequestInput,
 ): BroadcastContextRequest {
@@ -289,4 +326,107 @@ export function createBroadcastContextRequest(
     chapters,
     candidates,
   };
+}
+
+export function calculateCoverage(
+  chapters: readonly BroadcastContextChapterInput[],
+  sourceDurationMs: number,
+): BroadcastContextCoverage {
+  const gaps: BroadcastContextCoverageGap[] = [];
+  let coveredMs = 0;
+  let lastEnd = 0;
+
+  for (const chapter of chapters) {
+    if (chapter.startMs > lastEnd) {
+      gaps.push({ startMs: lastEnd, endMs: chapter.startMs });
+    }
+    coveredMs += chapter.endMs - chapter.startMs;
+    lastEnd = Math.max(lastEnd, chapter.endMs);
+  }
+
+  if (lastEnd < sourceDurationMs) {
+    gaps.push({ startMs: lastEnd, endMs: sourceDurationMs });
+  }
+
+  return {
+    status: gaps.length > 0 ? "partial" : "complete",
+    coveredMs,
+    coverageRatio: sourceDurationMs > 0 ? coveredMs / sourceDurationMs : 0,
+    gaps,
+  };
+}
+
+export function normalizeSemanticChapters(
+  rawSemanticChapters: readonly BroadcastContextSemanticChapterReference[],
+  chapters: readonly BroadcastContextChapterInput[],
+  coverageGaps: readonly BroadcastContextCoverageGap[]
+): readonly BroadcastContextSemanticChapter[] {
+  if (rawSemanticChapters.length > MAX_SEMANTIC_CHAPTERS) {
+    throw new BroadcastContextInputError(
+      "INVALID_SEMANTIC_CHAPTER",
+      `Too many semantic chapters. Max allowed is ${MAX_SEMANTIC_CHAPTERS}.`
+    );
+  }
+
+  const chapterMap = new Map<string, BroadcastContextChapterInput>();
+  for (const ch of chapters) {
+    chapterMap.set(ch.chapterId, ch);
+  }
+
+  let lastEndMs = -1;
+  const normalized: BroadcastContextSemanticChapter[] = [];
+
+  for (let i = 0; i < rawSemanticChapters.length; i++) {
+    const raw = rawSemanticChapters[i]!;
+    
+    assertText(raw.titleKo, 64, `chapter-${i}`);
+    assertText(raw.summaryKo, 1200, `chapter-${i}`);
+
+    const startCh = chapterMap.get(raw.startChapterId);
+    const endCh = chapterMap.get(raw.endChapterId);
+    
+    if (!startCh || !endCh) {
+      throw new BroadcastContextInputError(
+        "INVALID_SEMANTIC_CHAPTER",
+        "Semantic chapter references missing chapter ID."
+      );
+    }
+    
+    if (startCh.startMs >= endCh.endMs) {
+      throw new BroadcastContextInputError(
+        "INVALID_SEMANTIC_CHAPTER",
+        "startChapter must precede endChapter."
+      );
+    }
+    
+    if (startCh.startMs < lastEndMs) {
+      throw new BroadcastContextInputError(
+        "INVALID_SEMANTIC_CHAPTER",
+        "Semantic chapters must be chronologically ordered and non-overlapping."
+      );
+    }
+    
+    // Check if it crosses a coverage gap
+    for (const gap of coverageGaps) {
+      if (gap.startMs < endCh.endMs && gap.endMs > startCh.startMs) {
+        throw new BroadcastContextInputError(
+          "INVALID_SEMANTIC_CHAPTER",
+          "Semantic chapter cannot cross a coverage gap."
+        );
+      }
+    }
+
+    lastEndMs = endCh.endMs;
+    
+    const semanticChapterId = `sc-${raw.startChapterId}-${raw.endChapterId}-${raw.kind}`;
+    
+    normalized.push({
+      ...raw,
+      semanticChapterId,
+      startMs: startCh.startMs,
+      endMs: endCh.endMs,
+    });
+  }
+
+  return normalized;
 }
