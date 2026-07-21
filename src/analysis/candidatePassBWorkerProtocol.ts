@@ -1,6 +1,6 @@
-/** Google AI's official Gemini 3.1 Pro Preview model identifier. */
-export const CANDIDATE_PASS_B_MODEL_ID = "gemini-3.1-pro-preview" as const;
-export const CANDIDATE_PASS_B_MODEL_REVISION = "3.1-pro-preview-07-2026" as const;
+/** Google AI's official Gemini 3.5 Flash model identifier. */
+export const CANDIDATE_PASS_B_MODEL_ID = "gemini-3.5-flash" as const;
+export const CANDIDATE_PASS_B_MODEL_REVISION = "3.5-flash-07-2026" as const;
 export const CANDIDATE_PASS_B_DTYPE = "remote" as const;
 export const CANDIDATE_PASS_B_DEVICE = "remote" as const;
 export const CANDIDATE_PASS_B_LANGUAGE = "korean" as const;
