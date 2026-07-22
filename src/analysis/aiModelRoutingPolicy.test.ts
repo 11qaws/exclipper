@@ -46,7 +46,7 @@ describe("aiModelRoutingPolicy", () => {
     expect(
       plan.steps.find((step) => step.stage === "broadcast-context-reasoning")
         ?.maximumCalls,
-    ).toBe(1);
+    ).toBe(26);
     expect(
       plan.steps.find((step) => step.stage === "broadcast-context-reasoning"),
     ).toMatchObject({

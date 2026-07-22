@@ -51,6 +51,7 @@ import {
   type CandidatePassBTarget as CandidatePassBCoreTarget,
 } from "./analysis/candidatePassB";
 import { buildCandidatePassBPresentation } from "./analysis/candidatePassBPresentation";
+import { mapWithConcurrency } from "./analysis/boundedAsyncMap";
 import {
   estimateCandidatePassBCost,
   formatEstimatedUsd,
@@ -143,6 +144,7 @@ import type {
 import { buildHighlightNarrative } from "./analysis/highlightNarrative";
 import {
   BROADCAST_TOPICAL_DISCOVERY_VERSION,
+  MAX_TOPICAL_REFINEMENT_LEADS,
   createBroadcastTopicalLeadJuryPlan,
   createBroadcastTopicalDiscoverySlices,
   mergeBroadcastTopicalDiscoveryLeads,
@@ -313,7 +315,7 @@ interface AudioAnalysisOutcome {
   readonly coverageComplete: boolean;
 }
 
-const APP_VERSION = "0.3.35";
+const APP_VERSION = "0.3.36";
 const PERSISTENCE_SCHEMA_VERSION = "0.3.0";
 const SIGNAL_ENGINE_VERSION =
   "streamer-reaction-fast-pass-v5-chat-fallback-music-confirmation";
@@ -4693,7 +4695,7 @@ function App() {
       const availableLeadIds = new Set(result.discoveredLeads.map((lead) => lead.leadId));
       const safeRefinementLeadIds = [
         ...new Set(refinementLeadIds.filter((leadId) => availableLeadIds.has(leadId))),
-      ].slice(0, 6);
+      ].slice(0, MAX_TOPICAL_REFINEMENT_LEADS);
       setBroadcastContextResult(result);
       setBroadcastContextRefinementLeadIds(safeRefinementLeadIds);
       setTimelineSemanticChapters(result.semanticChapters);
@@ -5034,8 +5036,10 @@ function App() {
       const parentLeadById = new Map(
         broadcastContextResult.discoveredLeads.map((lead) => [lead.leadId, lead]),
       );
-      const refinementResults = await Promise.all(
-        plan.selectedLeadIds.map(async (leadId) => {
+      const refinementResults = await mapWithConcurrency(
+        plan.selectedLeadIds,
+        3,
+        async (leadId) => {
           const chapters = createDiscoveredLeadRefinementChapters(
             leadId,
             plan,
@@ -5067,7 +5071,7 @@ function App() {
           } catch {
             return { leadId, failed: true, leads: [] } as const;
           }
-        }),
+        },
       );
       if (controller.signal.aborted || !isMounted.current) return;
 

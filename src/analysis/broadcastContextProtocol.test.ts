@@ -69,21 +69,21 @@ describe("broadcastContextProtocol", () => {
     expect(request.candidates).toEqual([]);
   });
 
-  it("accepts a bounded 24-lead editorial jury but rejects a 25th item", () => {
+  it("accepts a bounded 32-lead editorial jury but rejects a 33rd item", () => {
     const input = validInput();
-    const candidates = Array.from({ length: 24 }, (_, index) => ({
+    const candidates = Array.from({ length: 32 }, (_, index) => ({
       ...input.candidates[0],
       candidateId: `candidate-${index + 1}`,
     }));
     expect(
       createBroadcastContextRequest({ ...input, candidates }).candidates,
-    ).toHaveLength(24);
+    ).toHaveLength(32);
     expect(() =>
       createBroadcastContextRequest({
         ...input,
         candidates: [
           ...candidates,
-          { ...input.candidates[0], candidateId: "candidate-25" },
+          { ...input.candidates[0], candidateId: "candidate-33" },
         ],
       }),
     ).toThrowError(

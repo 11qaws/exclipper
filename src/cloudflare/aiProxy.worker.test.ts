@@ -697,9 +697,9 @@ describe("aiProxy.worker", () => {
       ok: true,
       service: "rettohighlight-gemini",
       version: 2,
-      routingPolicyVersion: "1.8.0",
+      routingPolicyVersion: "1.9.0",
       contextModelRevision:
-        "qwen3.7-plus-context-editorial-jury-gameplay-calibrated-2026-07-22",
+        "qwen3.7-plus-context-editorial-jury-topic-balanced-2026-07-22",
     });
     expect(response.headers.get("Cache-Control")).toBe("no-store");
     expect(upstreamFetch).not.toHaveBeenCalled();

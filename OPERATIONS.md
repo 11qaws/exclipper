@@ -2,6 +2,12 @@
 
 ## 2026-07-22 release notes
 
+- `0.3.36`: whole-context comparison accepts up to 32 grounded meaning leads. The Qwen 3.7 jury may approve up to eight independent events; topic-balanced reserves expand caption-only text localization to at most 20 internal leads, while no-caption ASR remains capped at four, new semantic proposals remain capped at 12, and each multimodal detail run keeps its 12-target bound. Canonical ledger entries are not deleted to enforce those execution budgets.
+- Context routing/cache revision is `1.8.0`, topical discovery is `1.2.0`, caption refinement is `1.2.0`, and the jury model revision is `qwen3.7-plus-context-editorial-jury-topic-balanced-2026-07-22`. Do not reuse an older cached jury result as this revision.
+- Shared role policy is `1.9.0` and budget policy is `1.2.0`. The context stage advertises at most 26 client calls and reserves `$0.08` for compressed context/refinement text; the measured 20-refinement food run cost `$0.073543` for that text path.
+- The context endpoint's per-client and global limits are both 30 requests per 60 seconds. Caption refinement must use the three-request bounded pool. One normal maximum run uses at most 26 context requests (overview + four topical slices + jury + twenty refinements), leaving a small guard band; provider retries and a second analysis must not be launched speculatively in the same window.
+- Gameplay abstention is post-model and deterministic. It requires repeated whole-broadcast gameplay evidence plus candidate-local routine gameplay or generic banter, so a closing next-stream game announcement does not contaminate a food broadcast. Exact accountability, rare achievement, serious bug, consequential responsibility dispute, and long payoff exceptions remain reviewable.
+- Live release smoke contracts: food must reject all three opening fast candidates and retain 칼국수·껍데기·두바이 초콜릿 through caption refinement; subscription must retain the mistake/apology/responsibility/compensation chain; Minecraft relay must return zero refinement IDs. The full food context/refinement run completed 20/20 HTTP 200 calls at about `$0.073543` list-price text cost.
 - `0.3.35`: production transcript transport is limited to the live-proven 90-second Qwen Omni envelope. The 12-hour fragmented plan admits at most 240 requests while keeping the same `$0.42` duration budget. Each successful cell is checkpointed immediately; reload and transient failure recovery subtract already-covered source ranges and request only missing ranges, including compatible 210-second cells saved by `0.3.34`.
 - Candidate frame capture opens at most two browser decoders at once, while the existing two-request AI pool remains parallel. A missing frame still downgrades to the audio-only projection rather than inventing screen context.
 - Candidate perception may send only the fixed `chzzk-video-13996057-v1` roster ID, and only for a filename carrying replay `13996057` or the reviewed `교환학생/합격생/장학생` title. The Worker expands six reviewed public VTuber-avatar descriptions server-side. `provided-cast-reference` requires two distinct same-frame traits and confidence `>= 0.88`; arbitrary roster text, unrelated sources, unknown names, low-confidence matches, and voice resemblance fail closed. Identity remains display-only evidence.
@@ -37,7 +43,7 @@
 - Pass B evidence and AI insight snapshots are stored by analysis run in a dedicated IndexedDB object store. Recovery filters them to the recovered candidate IDs, and a new run epoch prevents late writes from an older source contaminating the current result.
 - Fixed non-vocal program-edge bursts (opening, ending, and break loops) are rejected by default. An edge segment can still survive when it has a distinctive vocal/dialogue anchor, while the central UI presents the automatic phase and candidate list without promotional copy.
 
-- 문서 버전: `0.3.35`
+- 문서 버전: `0.3.36`
 - 기준일: 2026-07-22 (Asia/Seoul)
 - 대상: GitHub Pages에서 실행되는 1인용 AI 편집 어시스턴트
 - 함께 읽을 문서: `PRODUCT_PLAN.md`, `STATE_LIFECYCLE.md`, `DEVELOPMENT_LOG.md`

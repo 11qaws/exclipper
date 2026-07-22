@@ -1,11 +1,11 @@
 import { createBroadcastContextSamplingPlan } from "./broadcastContextSamplingPlan";
 import { estimateCandidatePassBCost } from "./candidatePassBCost";
 
-export const ANALYSIS_BUDGET_POLICY_VERSION = "1.1.0" as const;
+export const ANALYSIS_BUDGET_POLICY_VERSION = "1.2.0" as const;
 export const ANALYSIS_BUDGET_LIMIT_USD = 1;
 
 const VISUAL_CHAPTERING_RESERVE_USD = 0.08;
-const CONTEXT_REASONING_RESERVE_USD = 0.06;
+const CONTEXT_REASONING_RESERVE_USD = 0.08;
 const SEMANTIC_LEAD_REFINEMENT_ASR_RESERVE_USD = 0.03;
 const PRO_ADJUDICATION_PER_CANDIDATE_USD = 0.04;
 const PRO_ADJUDICATION_LIMIT_USD = 0.12;

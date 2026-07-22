@@ -224,6 +224,183 @@ describe("broadcastContextDeepseek", () => {
       }
     });
 
+    it("does not let a later game chapter suppress an earlier non-game event", () => {
+      const mixedRequest: BroadcastContextRequest = {
+        ...dummyRequest,
+        chapters: [
+          {
+            ...dummyRequest.chapters[0]!,
+            summaryKo: "음식 이름 맞추기와 밸런스 게임에서 칼국수 답을 두고 논쟁한다.",
+          },
+          {
+            ...dummyRequest.chapters[1]!,
+            summaryKo: "다음 날 마인크래프트 건축 릴레이를 예고한다.",
+          },
+        ],
+        candidates: [{
+          ...dummyRequest.candidates[0]!,
+          transcriptKo: "누가 봐도 칼국수잖아요. 왜 바지락 칼국수만 정답이에요?",
+          eventSummaryKo: "음식 퀴즈 정답 범위를 두고 제작자와 논쟁한다.",
+          reactionSummaryKo: "억울함을 강하게 표현하며 자신의 답을 방어한다.",
+        }],
+      };
+      const payload = {
+        choices: [{
+          message: {
+            content: JSON.stringify({
+              summary: "음식 퀴즈의 대표 논쟁",
+              selected: [{
+                id: "can1",
+                p: 0.9,
+                reason: "오답 판정에 반박하는 사건과 반응이 완결된다.",
+              }],
+            }),
+          },
+        }],
+      };
+
+      const parsed = extractBroadcastContextQwenSelectionResponse(payload, mixedRequest);
+      expect(parsed.ok).toBe(true);
+      if (parsed.ok) {
+        expect(parsed.result.annotations[0]).toMatchObject({
+          clipDecision: "select",
+          confidence: 0.9,
+        });
+      }
+    });
+
+    it("rejects ordinary gameplay even when the editorial jury is overconfident", () => {
+      const gameplayRequest: BroadcastContextRequest = {
+        ...dummyRequest,
+        chapters: dummyRequest.chapters.map((chapter) => ({
+          ...chapter,
+          summaryKo: "마인크래프트 건축 릴레이에서 자원을 모아 기지를 확장한다.",
+        })),
+        candidates: [{
+          ...dummyRequest.candidates[0]!,
+          transcriptKo: "좌표를 잃었다가 기지를 다시 찾고 석탄을 캐러 간다.",
+          eventSummaryKo: "길을 잃은 뒤 기지와 석탄을 찾는다.",
+          reactionSummaryKo: "잠깐 당황한 뒤 평범한 채굴을 계속한다.",
+        }],
+      };
+      const payload = {
+        choices: [{
+          message: {
+            content: JSON.stringify({
+              summary: "건축 릴레이 중 자원 수집",
+              selected: [{
+                id: "can1",
+                p: 0.99,
+                reason: "기지를 극적으로 다시 찾고 석탄 채굴을 시작한다.",
+              }],
+            }),
+          },
+        }],
+      };
+
+      const parsed = extractBroadcastContextQwenSelectionResponse(
+        payload,
+        gameplayRequest,
+      );
+      expect(parsed.ok).toBe(true);
+      if (parsed.ok) {
+        expect(parsed.result.annotations[0]).toMatchObject({
+          clipDecision: "reject",
+          category: "not-clip-worthy",
+          rejectionReasons: ["no-distinct-event"],
+        });
+      }
+    });
+
+    it("rejects generic chat banter when the whole broadcast is gameplay", () => {
+      const relayRequest: BroadcastContextRequest = {
+        ...dummyRequest,
+        chapters: [
+          {
+            ...dummyRequest.chapters[0]!,
+            summaryKo: "마인크래프트 건축 방송에서 자원을 채굴한다.",
+          },
+          {
+            ...dummyRequest.chapters[1]!,
+            summaryKo: "베이스 구축과 시간 부족 속에서 마무리한다.",
+          },
+        ],
+        candidates: [{
+          ...dummyRequest.candidates[0]!,
+          startMs: 360_000,
+          endMs: 390_000,
+          transcriptKo: "채팅이 노래를 불러 달라고 하자 왜 갑자기 질문 폭탄이냐고 답한다.",
+          eventSummaryKo: "건축 중 들어온 노래 요청에 짧게 반발한다.",
+          reactionSummaryKo: "노래를 모른다며 당황하고 채팅과 장난스럽게 충돌한다.",
+        }],
+      };
+      const payload = {
+        choices: [{
+          message: {
+            content: JSON.stringify({
+              summary: "건축 중 채팅 반응",
+              selected: [{
+                id: "can1",
+                p: 0.99,
+                reason: "채팅 노래 요청에 당황하며 반발하는 충돌 반응이다.",
+              }],
+            }),
+          },
+        }],
+      };
+
+      const parsed = extractBroadcastContextQwenSelectionResponse(payload, relayRequest);
+      expect(parsed.ok).toBe(true);
+      if (parsed.ok) {
+        expect(parsed.result.annotations[0]).toMatchObject({
+          clipDecision: "reject",
+          rejectionReasons: ["no-distinct-event"],
+        });
+      }
+    });
+
+    it("keeps a consequential exception inside a gameplay broadcast", () => {
+      const gameplayRequest: BroadcastContextRequest = {
+        ...dummyRequest,
+        chapters: dummyRequest.chapters.map((chapter) => ({
+          ...chapter,
+          summaryKo: "마인크래프트 플레이 뒤 방송 운영 실수를 해명한다.",
+        })),
+        candidates: [{
+          ...dummyRequest.candidates[0]!,
+          transcriptKo: "기지로 돌아왔고, 제가 실수로 구독을 열었습니다. 정확히 사과드릴게요.",
+          eventSummaryKo: "게임 도중 발생한 구독 설정 실수를 인정한다.",
+          reactionSummaryKo: "경위를 설명하고 시청자에게 정확히 사과한다.",
+        }],
+      };
+      const payload = {
+        choices: [{
+          message: {
+            content: JSON.stringify({
+              summary: "게임 중 운영 실수 사과",
+              selected: [{
+                id: "can1",
+                p: 0.96,
+                reason: "구독 설정 실수를 명시적으로 인정하고 정확히 사과한다.",
+              }],
+            }),
+          },
+        }],
+      };
+
+      const parsed = extractBroadcastContextQwenSelectionResponse(
+        payload,
+        gameplayRequest,
+      );
+      expect(parsed.ok).toBe(true);
+      if (parsed.ok) {
+        expect(parsed.result.annotations[0]).toMatchObject({
+          clipDecision: "select",
+          confidence: 0.96,
+        });
+      }
+    });
+
     it("grounds compact whole-broadcast leads and fills every candidate decision", () => {
       const payload = {
         choices: [{ message: { content: JSON.stringify({

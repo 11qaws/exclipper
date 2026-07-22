@@ -4,9 +4,9 @@ import {
 } from "./broadcastContextSamplingPlan";
 import { MAX_BROADCAST_TRANSCRIPT_WORKER_CHUNKS } from "./broadcastTranscriptWorkerProtocol";
 
-export const AI_MODEL_ROUTING_POLICY_VERSION = "1.8.0" as const;
+export const AI_MODEL_ROUTING_POLICY_VERSION = "1.9.0" as const;
 /** Candidate fallback upgrades must not invalidate already-paid Qwen context results. */
-export const AI_BROADCAST_CONTEXT_ROUTING_REVISION = "1.6.0" as const;
+export const AI_BROADCAST_CONTEXT_ROUTING_REVISION = "1.8.0" as const;
 
 export const EXCLIPPER_MODEL_IDS = {
   candidatePerceptionPrimary: "qwen3.5-omni-flash",
@@ -53,6 +53,7 @@ const MAX_DETAIL_CANDIDATES = 12;
 const MAX_PRO_ADJUDICATION_CANDIDATES = 3;
 const QWEN_VISUAL_VIDEO_LIMIT_MS = 2 * 60 * 60_000;
 const MAX_EVENT_TRANSCRIPT_REQUEST_HEADROOM = 24;
+const MAX_BROADCAST_CONTEXT_REASONING_CALLS = 26;
 
 /**
  * Creates a bounded role-based plan; it does not make paid calls. Qwen Omni
@@ -132,9 +133,9 @@ export function createAiAnalysisRoutingPlan(
         stage: "broadcast-context-reasoning",
         primaryModelId: EXCLIPPER_MODEL_IDS.broadcastContextReasoning,
         fallbackModelId: EXCLIPPER_MODEL_IDS.broadcastContextReasoningFallback,
-        maximumCalls: 1,
+        maximumCalls: MAX_BROADCAST_CONTEXT_REASONING_CALLS,
         inputScope: "compressed-text-context",
-        purposeKo: "전체 챕터와 후보를 함께 보고 제외·선택 및 조용한 새 후보 결정",
+        purposeKo: "전체 개요·주제 탐색·비교 배심과 자막 의미 후보 위치 정밀화",
       },
       {
         stage: "candidate-adjudication",

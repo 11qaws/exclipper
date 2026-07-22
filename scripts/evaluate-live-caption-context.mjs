@@ -5,22 +5,29 @@ import {
   selectContextAwareCandidates,
 } from "../src/analysis/contextAwareCandidateSelection.ts";
 import { createBroadcastContextRequest } from "../src/analysis/broadcastContextProtocol.ts";
+import { mapWithConcurrency } from "../src/analysis/boundedAsyncMap.ts";
 import {
   createBroadcastTopicalLeadJuryPlan,
   createBroadcastTopicalDiscoverySlices,
   mergeBroadcastTopicalDiscoveryLeads,
   selectBroadcastTopicalRefinementLeadIds,
 } from "../src/analysis/broadcastTopicalDiscovery.ts";
+import {
+  createCaptionDiscoveredLeadRefinementPlan,
+  createDiscoveredLeadRefinementChapters,
+} from "../src/analysis/discoveredLeadRefinement.ts";
 import { calculateTemporalEventDensity } from "../src/analysis/temporalPointProcess.ts";
 import {
   YOUTUBE_VIDEO_ID_PATTERN,
   createYouTubeCaptionChapters,
+  createYouTubeCaptionRefinementTranscripts,
 } from "../src/analysis/youtubeCaptionTrack.ts";
 
 const videoId = process.argv[2] ?? "";
 const sourceDurationMs = Number(process.argv[3]);
 const fastPassPath = process.argv[4] === "-" ? null : (process.argv[4] ?? null);
 const outputPath = process.argv[5] ?? null;
+const runRefinement = process.argv[6] === "--refine";
 const workerOrigin = "https://rettohighlight-gemini.11qaws.workers.dev";
 const allowedOrigin = "https://11qaws.github.io";
 
@@ -31,7 +38,7 @@ if (
   sourceDurationMs > 12 * 60 * 60_000
 ) {
   throw new Error(
-    "Usage: tsx scripts/evaluate-live-caption-context.mjs <youtube-id> <duration-ms> [fast-pass.json|-] [output.json]",
+    "Usage: tsx scripts/evaluate-live-caption-context.mjs <youtube-id> <duration-ms> [fast-pass.json|-] [output.json] [--refine]",
   );
 }
 
@@ -266,12 +273,60 @@ const refinementLeadIds = jury === null
       jury.result.annotations,
       result.semanticChapters,
     );
+const refinementLeads = refinementLeadIds.flatMap((leadId) => {
+  const lead = result.discoveredLeads.find((item) => item.leadId === leadId);
+  return lead === undefined ? [] : [lead];
+});
+const refinementPlan = createCaptionDiscoveredLeadRefinementPlan(
+  refinementLeads,
+  { preserveInputOrder: true },
+);
+const refinementTranscripts = createYouTubeCaptionRefinementTranscripts(
+  captionPayload,
+  refinementPlan,
+);
+const refinementCalls = runRefinement
+  ? await mapWithConcurrency(refinementPlan.selectedLeadIds, 3, async (leadId) => {
+      const refinementChapters = createDiscoveredLeadRefinementChapters(
+        leadId,
+        refinementPlan,
+        refinementTranscripts,
+        (() => {
+          const parent = refinementLeads.find((lead) => lead.leadId === leadId);
+          return parent === undefined
+            ? ""
+            : `${parent.eventSummaryKo} / ${parent.evidenceCueKo}`;
+        })(),
+      );
+      if (refinementChapters.length === 0) {
+        return { leadId, skipped: true, metadata: null, leads: [] };
+      }
+      const refined = await requestContext(
+        {
+          sourceDurationMs,
+          chapters: refinementChapters,
+          candidates: [],
+        },
+        "refinement",
+      );
+      return {
+        leadId,
+        skipped: false,
+        metadata: refined.metadata,
+        leads: refined.result.discoveredLeads,
+      };
+    })
+  : [];
 const overviewCostUsd = estimatedTextCostUsd(overview.metadata);
 const topicalCostUsd = successfulDiscoveries.reduce(
   (sum, discovery) => sum + (estimatedTextCostUsd(discovery.metadata) ?? 0),
   0,
 );
 const juryCostUsd = jury === null ? 0 : (estimatedTextCostUsd(jury.metadata) ?? 0);
+const refinementCostUsd = refinementCalls.reduce(
+  (sum, call) => sum + (call.metadata === null ? 0 : (estimatedTextCostUsd(call.metadata) ?? 0)),
+  0,
+);
 
 const requestCharacterCount = chapters.reduce(
   (sum, chapter) => sum + Array.from(chapter.summaryKo).length,
@@ -291,20 +346,27 @@ const serializedResult = `${JSON.stringify(
         overview: overviewCostUsd,
         topicalDiscovery: Math.round(topicalCostUsd * 1_000_000) / 1_000_000,
         editorialJury: Math.round(juryCostUsd * 1_000_000) / 1_000_000,
+        refinement: Math.round(refinementCostUsd * 1_000_000) / 1_000_000,
         total:
           overviewCostUsd === null
             ? null
-            : Math.round((overviewCostUsd + topicalCostUsd + juryCostUsd) * 1_000_000) /
+            : Math.round(
+                (overviewCostUsd + topicalCostUsd + juryCostUsd + refinementCostUsd) *
+                  1_000_000,
+              ) /
               1_000_000,
       },
       topicalJury: {
         consideredCount: juryPlan.candidates.length,
         metadata: jury?.metadata ?? null,
+        annotations: jury?.result.annotations ?? [],
         refinementLeadIds,
-        refinementLeads: refinementLeadIds.flatMap((leadId) => {
-          const lead = result.discoveredLeads.find((item) => item.leadId === leadId);
-          return lead === undefined ? [] : [lead];
-        }),
+        refinementLeads,
+        refinement: {
+          requested: runRefinement,
+          selectedLeadCount: refinementPlan.selectedLeadIds.length,
+          calls: refinementCalls,
+        },
       },
       topicalDiscovery: {
         sliceCount: discoverySlices.length,

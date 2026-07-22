@@ -1,10 +1,18 @@
 # ExClipper 상태·생애주기 명세
 
-- 문서 버전: 0.3.35
-- 기준 제품 계획: PRODUCT_PLAN.md 0.3.35
+- 문서 버전: 0.3.36
+- 기준 제품 계획: PRODUCT_PLAN.md 0.3.36
 - 기준일: 2026-07-20 (Asia/Seoul)
 - 적용 범위: GitHub Pages에서 실행되는 개인 편집 어시스턴트와 선택형 CHZZK 동반 수집기
 - 문서 지위: 구현 전 상태 모델의 기준 문서
+
+## `0.3.36` topic-balanced 내부 refinement와 canonical projection 경계
+
+- whole-context 세션의 `refinementLeadIds`는 최종 후보 원장이 아니라 비용이 제한된 내부 위치 확인 계획이다. Qwen jury가 선택한 ID와 topic-balanced reserve를 순서대로 저장하며 최대 20개다. 자막이 없으면 실제 ASR plan이 다시 최대 4개로 줄이고, 자막 경로도 결과 후보를 중복 제거한 뒤 최대 12개만 canonical ledger에 제안한다.
+- jury 선택이 0개면 refinement ID와 semantic proposal은 모두 빈 배열로 정상 완료한다. 선택이 1개뿐이면 해당 선택과 reserve를 합쳐 최대 6개까지만 허용한다. 이 상태는 `failed`가 아니며 후보 수를 채우기 위한 추가 호출을 만들지 않는다.
+- context cache identity는 input signature, routing revision `1.8.0`, topical discovery `1.2.0`, jury model revision을 함께 요구한다. 이전 저장 결과는 삭제하지 않지만 새 run의 자동 결과로 가장하지 않는다. 저장된 refinement ID는 현재 result의 lead ID에 실제로 존재하고 현재 최대치 안에 있을 때만 복구한다.
+- 최대 20개 caption refinement 요청은 3개 bounded pool에서 안정된 입력 순서로 정착한다. 호출 하나가 transport failure면 해당 parent lead만 기존 source-fenced cue matcher로 내려가고, 성공했지만 빈 결과인 호출은 모델의 의도적 abstention으로 유지한다.
+- context annotation은 canonical candidate를 삭제하지 않는다. `recommended | needs-review | deprioritized | insufficient-evidence` projection과 유료 상세 queue eligibility만 갱신하며, 사용자의 `approved | rejected`, boundary revision, 원본 candidate ID와 source range는 계속 우선한다.
 
 ## `0.3.35` 검증된 전사 transport·청크 checkpoint·닫힌 출연진
 

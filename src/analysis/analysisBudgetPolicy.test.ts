@@ -11,6 +11,7 @@ describe("analysisBudgetPolicy", () => {
     const envelope = createAnalysisBudgetEnvelope(12 * HOUR_MS, 12, 3);
     expect(envelope.qwenAsrUsd).toBeLessThanOrEqual(0.42);
     expect(envelope.candidatePerceptionUsd).toBeLessThanOrEqual(0.08);
+    expect(envelope.contextReasoningReserveUsd).toBeGreaterThanOrEqual(0.073543);
     expect(envelope.projectedMaximumUsd).toBeLessThanOrEqual(
       ANALYSIS_BUDGET_LIMIT_USD,
     );

@@ -109,9 +109,9 @@ describe("broadcastTopicalDiscovery", () => {
     ]);
   });
 
-  it("builds one compact comparative jury for up to 24 meaning leads", () => {
+  it("builds one compact comparative jury for up to 32 meaning leads", () => {
     const semanticChapter = semantic("food-quiz", 0, 960_000);
-    const leads = Array.from({ length: 24 }, (_, index) =>
+    const leads = Array.from({ length: 32 }, (_, index) =>
       lead(`lead-${index + 1}`, index * 30_000),
     );
     const plan = createBroadcastTopicalLeadJuryPlan(
@@ -120,12 +120,12 @@ describe("broadcastTopicalDiscovery", () => {
       [semanticChapter],
       leads,
     );
-    expect(plan.candidates).toHaveLength(24);
+    expect(plan.candidates).toHaveLength(32);
     expect(plan.chapters).toHaveLength(1);
-    expect(plan.leadIdByCandidateId["topical-jury-24"]).toBe("lead-24");
+    expect(plan.leadIdByCandidateId["topical-jury-32"]).toBe("lead-32");
   });
 
-  it("reserves nearby context from the topic with the most jury selections", () => {
+  it("gives more reserve turns to the topic with fewer jury selections", () => {
     const semanticChapters = [
       semantic("food-quiz", 0, 1_800_000),
       semantic("talk", 1_800_000, 3_600_000),
@@ -181,8 +181,8 @@ describe("broadcastTopicalDiscovery", () => {
       "skin",
       "dubai",
       "talk-selected",
-      "broad-quiz-context",
       "talk-neighbor",
+      "broad-quiz-context",
     ]);
   });
 
@@ -214,6 +214,39 @@ describe("broadcastTopicalDiscovery", () => {
     ).toEqual([]);
   });
 
+  it("limits reserve fan-out when the jury approves only one event", () => {
+    const topic = semantic("single-seed", 0, 1_800_000);
+    const leads = Array.from({ length: 10 }, (_, index) =>
+      lead(`event-${index + 1}`, index * 150_000, 0.9 - index * 0.01),
+    );
+    const plan = createBroadcastTopicalLeadJuryPlan(
+      1_800_000,
+      "하나의 사건만 확실한 방송",
+      [topic],
+      leads,
+    );
+    const annotations = plan.candidates.map((candidate, index) => ({
+      candidateId: candidate.candidateId,
+      category: index === 0 ? "reaction" as const : "not-clip-worthy" as const,
+      clipDecision: index === 0 ? "select" as const : "reject" as const,
+      confidence: 0.95,
+      rejectionReasons: index === 0 ? [] : ["no-distinct-event" as const],
+      contextSummaryKo: "비교 결과",
+      whyThisMomentKo: "비교 결과",
+      relatedCandidateIds: [],
+      uncertaintiesKo: [],
+    }));
+
+    const selectedLeadIds = selectBroadcastTopicalRefinementLeadIds(
+      leads,
+      plan,
+      annotations,
+      [topic],
+    );
+    expect(selectedLeadIds[0]).toBe("event-1");
+    expect(selectedLeadIds).toHaveLength(6);
+  });
+
   it("keeps three later context events when the jury clusters on an early topic", () => {
     const topic = semantic("quiz", 0, 1_800_000);
     const leads = [
@@ -241,15 +274,24 @@ describe("broadcastTopicalDiscovery", () => {
       relatedCandidateIds: [],
       uncertaintiesKo: [],
     }));
-    expect(
-      selectBroadcastTopicalRefinementLeadIds(leads, plan, annotations, [topic]),
-    ).toEqual([
+    const selectedLeadIds = selectBroadcastTopicalRefinementLeadIds(
+      leads,
+      plan,
+      annotations,
+      [topic],
+    );
+    expect(selectedLeadIds.slice(0, 3)).toEqual([
       "early-a",
       "early-b",
       "early-c",
-      "kalguksu-context",
-      "skin-payoff",
-      "dubai-payoff",
     ]);
+    expect(selectedLeadIds).toHaveLength(6);
+    expect(selectedLeadIds).toEqual(
+      expect.arrayContaining([
+        "kalguksu-context",
+        "skin-payoff",
+        "dubai-payoff",
+      ]),
+    );
   });
 });

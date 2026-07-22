@@ -54,11 +54,11 @@ describe("discoveredLeadRefinement", () => {
     ).toBe(true);
   });
 
-  it("keeps six pre-ranked caption leads in jury order at no ASR cost", () => {
+  it("keeps twenty pre-ranked caption leads in jury order at no ASR cost", () => {
     const juryOrder = [
       lead("selected-low-signal", 1_200_000, 0.7),
       lead("selected-high-signal", 300_000, 0.95),
-      ...Array.from({ length: 5 }, (_, index) =>
+      ...Array.from({ length: 19 }, (_, index) =>
         lead(`reserve-${index + 1}`, 1_800_000 + index * 300_000, 0.8),
       ),
     ];
@@ -66,7 +66,7 @@ describe("discoveredLeadRefinement", () => {
       preserveInputOrder: true,
     });
     expect(plan.selectedLeadIds).toEqual(
-      juryOrder.slice(0, 6).map((item) => item.leadId),
+      juryOrder.slice(0, 20).map((item) => item.leadId),
     );
     expect(plan.estimatedAsrCostUsd).toBe(0);
   });

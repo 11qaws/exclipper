@@ -7,9 +7,9 @@ import type {
 } from "./broadcastContextProtocol";
 
 export const MAX_TOPICAL_DISCOVERY_CALLS = 4;
-export const MAX_MERGED_DISCOVERED_LEADS = 24;
-export const MAX_TOPICAL_REFINEMENT_LEADS = 6;
-export const BROADCAST_TOPICAL_DISCOVERY_VERSION = "1.1.0" as const;
+export const MAX_MERGED_DISCOVERED_LEADS = 32;
+export const MAX_TOPICAL_REFINEMENT_LEADS = 20;
+export const BROADCAST_TOPICAL_DISCOVERY_VERSION = "1.2.0" as const;
 
 export interface BroadcastTopicalDiscoverySlice {
   readonly sliceId: string;
@@ -230,20 +230,22 @@ function semanticChapterIndexForLead(
   );
 }
 
-function temporalDistanceMs(
+function midpointDistanceMs(
   left: BroadcastContextDiscoveredLead,
   right: BroadcastContextDiscoveredLead,
 ): number {
-  if (left.endMs < right.startMs) return right.startMs - left.endMs;
-  if (right.endMs < left.startMs) return left.startMs - right.endMs;
-  return 0;
+  const leftMidpointMs = left.startMs + (left.endMs - left.startMs) / 2;
+  const rightMidpointMs = right.startMs + (right.endMs - right.startMs) / 2;
+  return Math.abs(leftMidpointMs - rightMidpointMs);
 }
 
 /**
- * Keeps only jury-approved leads for paid refinement, plus one nearby context
- * reserve from the topic with the most approved events. The reserve protects a
- * setup or payoff hidden inside a broad transcript range without reopening the
- * entire high-recall reservoir.
+ * Keeps every bounded jury-approved lead, then spends the remaining ASR-free
+ * caption-refinement slots on topic-balanced context reserves. A topic with
+ * fewer jury selections receives proportionally more reserve turns, so one
+ * dominant late discussion cannot erase several different events from an
+ * earlier topic. Within a topic, farthest-midpoint sampling preserves temporal
+ * variety instead of retaining only adjacent high-confidence paraphrases.
  */
 export function selectBroadcastTopicalRefinementLeadIds(
   leads: readonly BroadcastContextDiscoveredLead[],
@@ -267,47 +269,70 @@ export function selectBroadcastTopicalRefinementLeadIds(
     );
   if (selected.length === 0) return [];
 
-  const contextReserveCount = 3;
-  const primarySelected = selected.slice(
-    0,
-    MAX_TOPICAL_REFINEMENT_LEADS - contextReserveCount,
-  );
+  const primarySelected = selected.slice(0, MAX_TOPICAL_REFINEMENT_LEADS);
   const selectedIds = new Set(primarySelected.map(({ lead }) => lead.leadId));
-  const selectedCountByChapter = new Map<number, number>();
+  const primaryLeadsByChapter = new Map<number, BroadcastContextDiscoveredLead[]>();
   for (const { lead } of primarySelected) {
     const chapterIndex = semanticChapterIndexForLead(lead, semanticChapters);
-    selectedCountByChapter.set(
-      chapterIndex,
-      (selectedCountByChapter.get(chapterIndex) ?? 0) + 1,
-    );
+    const chapterLeads = primaryLeadsByChapter.get(chapterIndex) ?? [];
+    chapterLeads.push(lead);
+    primaryLeadsByChapter.set(chapterIndex, chapterLeads);
   }
-  const supportLeads = leads
-    .filter((lead) => !selectedIds.has(lead.leadId))
-    .map((lead) => {
-      const chapterIndex = semanticChapterIndexForLead(lead, semanticChapters);
-      const selectedInChapter = selectedCountByChapter.get(chapterIndex) ?? 0;
-      const nearestSelectedMs = Math.min(
-        ...primarySelected
-          .filter(
-            ({ lead: selectedLead }) =>
-              semanticChapterIndexForLead(selectedLead, semanticChapters) === chapterIndex,
-          )
-          .map(({ lead: selectedLead }) => temporalDistanceMs(lead, selectedLead)),
+
+  const supportGroups = [...primaryLeadsByChapter.entries()].map(
+    ([chapterIndex, anchors]) => ({
+      chapterIndex,
+      primaryCount: anchors.length,
+      pickedCount: 0,
+      anchors: [...anchors],
+      remaining: leads.filter(
+        (lead) =>
+          !selectedIds.has(lead.leadId) &&
+          semanticChapterIndexForLead(lead, semanticChapters) === chapterIndex,
+      ),
+    }),
+  );
+  const supportLeads: BroadcastContextDiscoveredLead[] = [];
+  // A single possibly-wrong jury seed must not fan out into a large review
+  // queue. Multiple independent approvals progressively unlock the wider,
+  // caption-only evidence pass; final multimodal cards remain capped at 12.
+  const refinementBudget = Math.min(
+    MAX_TOPICAL_REFINEMENT_LEADS,
+    Math.max(6, primarySelected.length * 5),
+  );
+  const supportCapacity = refinementBudget - primarySelected.length;
+  while (supportLeads.length < supportCapacity) {
+    const group = supportGroups
+      .filter((item) => item.remaining.length > 0)
+      .sort(
+        (left, right) =>
+          left.pickedCount * left.primaryCount -
+            right.pickedCount * right.primaryCount ||
+          left.primaryCount - right.primaryCount ||
+          left.chapterIndex - right.chapterIndex,
+      )[0];
+    if (group === undefined) break;
+
+    group.remaining.sort((left, right) => {
+      const leftDistanceMs = Math.min(
+        ...group.anchors.map((anchor) => midpointDistanceMs(left, anchor)),
       );
-      return { lead, selectedInChapter, nearestSelectedMs };
-    })
-    .filter(
-      (item) => item.selectedInChapter > 0 && Number.isFinite(item.nearestSelectedMs),
-    )
-    .sort(
-      (left, right) =>
-        right.selectedInChapter - left.selectedInChapter ||
-        left.nearestSelectedMs - right.nearestSelectedMs ||
-        right.lead.confidence - left.lead.confidence ||
-        left.lead.startMs - right.lead.startMs,
-    )
-    .slice(0, contextReserveCount)
-    .map((item) => item.lead);
+      const rightDistanceMs = Math.min(
+        ...group.anchors.map((anchor) => midpointDistanceMs(right, anchor)),
+      );
+      return (
+        rightDistanceMs - leftDistanceMs ||
+        right.confidence - left.confidence ||
+        left.startMs - right.startMs ||
+        left.leadId.localeCompare(right.leadId)
+      );
+    });
+    const support = group.remaining.shift();
+    if (support === undefined) break;
+    group.pickedCount += 1;
+    group.anchors.push(support);
+    supportLeads.push(support);
+  }
 
   return [
     ...primarySelected.map(({ lead }) => lead.leadId),

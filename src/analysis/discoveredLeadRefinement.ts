@@ -5,10 +5,10 @@ import {
 } from "./broadcastContextProtocol";
 import { QWEN_ASR_FILETRANS_USD_PER_SECOND } from "./broadcastContextSamplingPlan";
 
-export const DISCOVERED_LEAD_REFINEMENT_VERSION = "1.1.0" as const;
+export const DISCOVERED_LEAD_REFINEMENT_VERSION = "1.2.0" as const;
 export const DISCOVERED_LEAD_REFINEMENT_BUDGET_USD = 0.03;
 export const MAX_DISCOVERED_LEADS_TO_REFINE = 4;
-export const MAX_CAPTION_DISCOVERED_LEADS_TO_REFINE = 6;
+export const MAX_CAPTION_DISCOVERED_LEADS_TO_REFINE = 20;
 export const REFINEMENT_SEGMENT_DURATION_MS = 60_000;
 export const CAPTION_REFINEMENT_SEGMENT_DURATION_MS = 30_000;
 export const REFINED_CLIP_DURATION_MS = 60_000;

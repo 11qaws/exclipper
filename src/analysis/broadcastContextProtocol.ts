@@ -1,14 +1,14 @@
 export const BROADCAST_CONTEXT_SCHEMA_VERSION = "1.4.0" as const;
 export const MAX_BROADCAST_CONTEXT_SOURCE_DURATION_MS = 12 * 60 * 60_000;
 export const MAX_BROADCAST_CONTEXT_CHAPTERS = 144;
-export const MAX_BROADCAST_CONTEXT_CANDIDATES = 24;
+export const MAX_BROADCAST_CONTEXT_CANDIDATES = 32;
 // A 210-second Korean ASR cell can legitimately exceed 1,200 characters.
 // Keeping 3,000 avoids deleting a short apology or payoff near the end while
 // still bounding a 12-hour sampled request well below the model context limit.
 export const MAX_BROADCAST_CONTEXT_SUMMARY_LENGTH = 3_000;
 export const MAX_BROADCAST_CONTEXT_TRANSCRIPT_LENGTH = 12_000;
 export const MAX_SEMANTIC_CHAPTERS = 48;
-export const MAX_BROADCAST_CONTEXT_DISCOVERED_LEADS = 24;
+export const MAX_BROADCAST_CONTEXT_DISCOVERED_LEADS = 32;
 
 const MAX_IDENTIFIER_LENGTH = 256;
 
@@ -314,7 +314,7 @@ export function createBroadcastContextRequest(
   if (input.candidates.length > MAX_BROADCAST_CONTEXT_CANDIDATES) {
     throw new BroadcastContextInputError(
       "INVALID_CANDIDATE_COUNT",
-      "Broadcast context accepts between 0 and 24 existing candidates.",
+      `Broadcast context accepts between 0 and ${MAX_BROADCAST_CONTEXT_CANDIDATES} existing candidates.`,
     );
   }
 
