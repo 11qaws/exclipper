@@ -50,6 +50,7 @@ export type BroadcastContextQwenMode =
   | "overview"
   | "discovery"
   | "refinement"
+  | "refinement-fast"
   | "selection";
 
 export type BroadcastContextDeepseekParseOutcome =
@@ -287,6 +288,7 @@ export function buildBroadcastContextQwenRequestBody(
   model = "qwen3.7-plus",
   mode: BroadcastContextQwenMode = "overview",
 ): BroadcastContextQwenRequestBody {
+  const isRefinementMode = mode === "refinement" || mode === "refinement-fast";
   let userContent = `총 방송 길이: ${formatDuration(request.sourceDurationMs)}\n\n`;
   userContent += buildBroadcastContextCastRosterBlock(request);
   userContent += "### 시간순 대사 챕터\n";
@@ -306,7 +308,7 @@ export function buildBroadcastContextQwenRequestBody(
       userContent += `  채팅: ${candidate.chatReactionSummaryKo}\n`;
     }
   }
-  if (mode === "refinement") {
+  if (isRefinementMode) {
     userContent += "\n### 정밀 라우팅 제한\n신뢰도 0.75 이상만 최대 3개 반환하세요.\n";
   } else if (mode === "discovery") {
     userContent += "\n### 주제 내부 탐색 제한\n입력한 모든 챕터를 훑고 서로 다른 사건만 최대 8개 반환하세요.\n";
@@ -319,7 +321,7 @@ export function buildBroadcastContextQwenRequestBody(
     messages: [
       {
         role: "system",
-        content: mode === "refinement"
+        content: isRefinementMode
           ? QWEN_REFINEMENT_SYSTEM_PROMPT
           : mode === "discovery"
             ? QWEN_TOPIC_DISCOVERY_SYSTEM_PROMPT

@@ -1,5 +1,18 @@
 # ExClipper 제품·UX·기술 계획서
 
+## `0.3.39` 공통 맥락 분석 가속과 Editorial Intent Profiles 원칙
+
+- 전체 방송 개요 1회와 전 구간을 빠짐없이 나눈 최대 4개의 chronological discovery를 같은 시점에 시작한다. discovery가 overview의 Semantic Chapter를 기다리지 않아도 모든 대사 chapter를 정확히 한 번씩 훑으며, 완료 뒤 overview의 요약·주제 구간과 합쳐 Qwen 3.7 비교 배심에 보낸다. 최종 의미 판단 계약과 최대 26회 호출 상한은 유지한다.
+- Qwen 3.7 Plus는 전체 개요와 abstention-sensitive 최종 배심을 계속 담당한다. 전 구간 고회수 탐색은 Qwen 3.6 Flash가 맡고, 배심이 이미 승인한 lead의 후속 호출도 위치 확인만 필요하므로 3.6을 쓴다. 반면 recall을 위해 더한 topic-balanced reserve는 아직 사건 진위 판단을 통과하지 않았으므로 Qwen 3.7 품질 계약을 유지한다. 최대 20개의 독립 refinement는 입력 순서를 보존하는 6개 bounded pool에서 실행하고, 각 transport 실패는 해당 lead만 기존 source-fenced cue matcher로 낮춘다. 성공한 빈 결과는 의도적 abstention으로 보존한다.
+- context cache identity는 routing revision `1.9.0`과 topical discovery `1.3.0`을 요구한다. 이미 저장된 이전 결과를 삭제하거나 새 모델 결과로 이름만 바꾸지 않으며, 새 분석만 병렬 scheduling과 refinement model identity를 사용한다.
+- 상세 GitHub 검토에서 처음 제안된 방향은 여러 검출 모드가 아니라 **Editorial Intent Profiles**다. 공통 Evidence Store와 Canonical Candidate Ledger를 한 번 만들고, 같은 후보를 편집 목적별 projection으로 다르게 정렬한다.
+  - `balanced`(기본): 품질, 시간 커버리지, 독립 이해 가능성, 전체 맥락 중요도를 고르게 반영한다.
+  - `main-story`: setup–payoff, 이야기 진행, 맥락 의존 관계, 장기 회수를 우선한다.
+  - `shorts`: 즉각적인 반응, 짧은 진입 시간, 단독 이해 가능성, 낮은 맥락 의존도를 우선한다.
+  - `recap`: 방송 전반의 대표성, 주요 전환점, 결과와 성취를 우선한다.
+- `사과·해명`, `조용한 성취`, `토크·논쟁`, `강한 반응`은 Profile이 아니라 모든 Profile에서 사용할 수 있는 사건 category다. 같은 후보가 `main-story`에서는 높고 `shorts`에서는 낮을 수 있지만, 어느 projection도 후보를 삭제하거나 사람의 승인·제외·경계를 덮어쓰지 않는다.
+- Profile 변경은 이미 결제한 전사·화면·채팅·전체 맥락을 다시 호출하지 않는 로컬 재정렬이어야 한다. 구현 시 `activeEditorialIntent`와 projection revision만 세션 보기 상태로 보존하고, evidence run identity·candidate membership·사용자 판단과 분리한다. 이번 `0.3.39`는 이 원칙과 공통 분석 속도 기반을 확정하며 Profile 선택 UI와 목적별 ranking 함수는 다음 수직 슬라이스로 둔다.
+
 ## `0.3.37` 저장 맥락 복구와 정직한 타임라인 상태
 
 - 저장 결과를 열 때 같은 run/input signature의 방송 맥락 세션이 있으면 원본 재연결 전에도 이미 결제한 방송 요약, 주제 구간, 의미 단서, AI 우선순위 projection, 의미 후보 정밀화 결과를 복구한다. 뒤늦게 끝난 이전 복구 요청은 현재 연 결과를 덮어쓰지 못한다.

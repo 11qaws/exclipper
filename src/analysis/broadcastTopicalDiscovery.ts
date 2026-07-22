@@ -9,7 +9,8 @@ import type {
 export const MAX_TOPICAL_DISCOVERY_CALLS = 4;
 export const MAX_MERGED_DISCOVERED_LEADS = 32;
 export const MAX_TOPICAL_REFINEMENT_LEADS = 20;
-export const BROADCAST_TOPICAL_DISCOVERY_VERSION = "1.2.0" as const;
+export const MAX_TOPICAL_REFINEMENT_CONCURRENCY = 6;
+export const BROADCAST_TOPICAL_DISCOVERY_VERSION = "1.3.0" as const;
 
 export interface BroadcastTopicalDiscoverySlice {
   readonly sliceId: string;
@@ -74,6 +75,17 @@ export function createBroadcastTopicalDiscoverySlices(
       chapters: chapters.slice(startIndex, Math.max(startIndex + 1, endIndex)),
     };
   });
+}
+
+/**
+ * Builds deterministic full-coverage slices without waiting for the overview
+ * model. These slices can start in parallel with the whole-broadcast overview;
+ * the later jury still receives the overview's semantic chapters and summary.
+ */
+export function createParallelBroadcastTopicalDiscoverySlices(
+  chapters: readonly BroadcastContextChapterInput[],
+): readonly BroadcastTopicalDiscoverySlice[] {
+  return createBroadcastTopicalDiscoverySlices(chapters, []);
 }
 
 function nearDuplicate(
@@ -239,6 +251,47 @@ function midpointDistanceMs(
   return Math.abs(leftMidpointMs - rightMidpointMs);
 }
 
+interface JuryApprovedLead {
+  readonly lead: BroadcastContextDiscoveredLead;
+  readonly confidence: number;
+}
+
+function juryApprovedLeads(
+  leads: readonly BroadcastContextDiscoveredLead[],
+  juryPlan: BroadcastTopicalLeadJuryPlan,
+  annotations: readonly BroadcastContextCandidateAnnotation[],
+): readonly JuryApprovedLead[] {
+  const leadById = new Map(leads.map((lead) => [lead.leadId, lead]));
+  return annotations
+    .filter((annotation) => annotation.clipDecision === "select")
+    .flatMap((annotation) => {
+      const leadId = juryPlan.leadIdByCandidateId[annotation.candidateId];
+      const lead = leadId === undefined ? undefined : leadById.get(leadId);
+      return lead === undefined ? [] : [{ lead, confidence: annotation.confidence }];
+    })
+    .sort(
+      (left, right) =>
+        right.confidence - left.confidence ||
+        right.lead.confidence - left.lead.confidence ||
+        left.lead.startMs - right.lead.startMs,
+    );
+}
+
+/**
+ * Returns the leads that the comparative jury already approved. Their follow-up
+ * call only has to localize a known event; topic-balanced reserves still need
+ * the quality tier to decide whether they are real events at all.
+ */
+export function selectBroadcastTopicalJuryApprovedLeadIds(
+  leads: readonly BroadcastContextDiscoveredLead[],
+  juryPlan: BroadcastTopicalLeadJuryPlan,
+  annotations: readonly BroadcastContextCandidateAnnotation[],
+): readonly string[] {
+  return juryApprovedLeads(leads, juryPlan, annotations)
+    .slice(0, MAX_TOPICAL_REFINEMENT_LEADS)
+    .map(({ lead }) => lead.leadId);
+}
+
 /**
  * Keeps every bounded jury-approved lead, then spends the remaining ASR-free
  * caption-refinement slots on topic-balanced context reserves. A topic with
@@ -253,20 +306,7 @@ export function selectBroadcastTopicalRefinementLeadIds(
   annotations: readonly BroadcastContextCandidateAnnotation[],
   semanticChapters: readonly BroadcastContextSemanticChapter[],
 ): readonly string[] {
-  const leadById = new Map(leads.map((lead) => [lead.leadId, lead]));
-  const selected = annotations
-    .filter((annotation) => annotation.clipDecision === "select")
-    .flatMap((annotation) => {
-      const leadId = juryPlan.leadIdByCandidateId[annotation.candidateId];
-      const lead = leadId === undefined ? undefined : leadById.get(leadId);
-      return lead === undefined ? [] : [{ lead, confidence: annotation.confidence }];
-    })
-    .sort(
-      (left, right) =>
-        right.confidence - left.confidence ||
-        right.lead.confidence - left.lead.confidence ||
-        left.lead.startMs - right.lead.startMs,
-    );
+  const selected = juryApprovedLeads(leads, juryPlan, annotations);
   if (selected.length === 0) return [];
 
   const primarySelected = selected.slice(0, MAX_TOPICAL_REFINEMENT_LEADS);

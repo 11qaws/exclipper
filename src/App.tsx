@@ -152,10 +152,12 @@ import type {
 import { buildHighlightNarrative } from "./analysis/highlightNarrative";
 import {
   BROADCAST_TOPICAL_DISCOVERY_VERSION,
+  MAX_TOPICAL_REFINEMENT_CONCURRENCY,
   MAX_TOPICAL_REFINEMENT_LEADS,
   createBroadcastTopicalLeadJuryPlan,
-  createBroadcastTopicalDiscoverySlices,
+  createParallelBroadcastTopicalDiscoverySlices,
   mergeBroadcastTopicalDiscoveryLeads,
+  selectBroadcastTopicalJuryApprovedLeadIds,
   selectBroadcastTopicalRefinementLeadIds,
 } from "./analysis/broadcastTopicalDiscovery";
 import {
@@ -323,7 +325,7 @@ interface AudioAnalysisOutcome {
   readonly coverageComplete: boolean;
 }
 
-const APP_VERSION = "0.3.38";
+const APP_VERSION = "0.3.39";
 const PERSISTENCE_SCHEMA_VERSION = "0.3.0";
 const SIGNAL_ENGINE_VERSION =
   "streamer-reaction-fast-pass-v5-chat-fallback-music-confirmation";
@@ -961,6 +963,8 @@ function App() {
   const [candidateAiProjectionById, setCandidateAiProjectionById] =
     useState<CandidateAiProjectionById>({});
   const [broadcastContextRefinementLeadIds, setBroadcastContextRefinementLeadIds] =
+    useState<readonly string[] | null>(null);
+  const [broadcastContextFastRefinementLeadIds, setBroadcastContextFastRefinementLeadIds] =
     useState<readonly string[] | null>(null);
   const [broadcastContextError, setBroadcastContextError] = useState<string | null>(null);
   const [semanticLeadRefinementStatus, setSemanticLeadRefinementStatus] = useState<
@@ -1904,6 +1908,7 @@ function App() {
     setBroadcastContextResult(null);
     setCandidateAiProjectionById({});
     setBroadcastContextRefinementLeadIds(null);
+    setBroadcastContextFastRefinementLeadIds(null);
     setBroadcastContextError(null);
     setSemanticLeadRefinementStatus("idle");
     setSemanticLeadRefinementError(null);
@@ -4315,6 +4320,7 @@ function App() {
     setBroadcastContextResult(null);
     setCandidateAiProjectionById({});
     setBroadcastContextRefinementLeadIds(null);
+    setBroadcastContextFastRefinementLeadIds(null);
     setBroadcastContextError(null);
     setSemanticLeadRefinementStatus("idle");
     setSemanticLeadRefinementError(null);
@@ -4458,6 +4464,14 @@ function App() {
           ),
         ),
       ].slice(0, MAX_TOPICAL_REFINEMENT_LEADS);
+      const restoredRefinementLeadIdSet = new Set(restoredRefinementLeadIds);
+      const restoredFastRefinementLeadIds = [
+        ...new Set(
+          (storedEnvelope.fastRefinementLeadIds ?? []).filter((leadId) =>
+            restoredRefinementLeadIdSet.has(leadId),
+          ),
+        ),
+      ];
       let nextCandidates = recoveredCandidates;
       if (savedSession.refinementCandidatesJson !== null) {
         let refinementPayload: unknown;
@@ -4518,6 +4532,7 @@ function App() {
       );
       setBroadcastContextResult(restoredContext);
       setBroadcastContextRefinementLeadIds(restoredRefinementLeadIds);
+      setBroadcastContextFastRefinementLeadIds(restoredFastRefinementLeadIds);
       setTimelineSemanticChapters(restoredContext.semanticChapters);
       setCandidateAiProjectionById(
         finalizeContextQualifiedCandidates(
@@ -4878,13 +4893,23 @@ function App() {
     const applyContextResult = (
       result: BroadcastContextResult,
       refinementLeadIds: readonly string[],
+      fastRefinementLeadIds: readonly string[],
     ): void => {
       const availableLeadIds = new Set(result.discoveredLeads.map((lead) => lead.leadId));
       const safeRefinementLeadIds = [
         ...new Set(refinementLeadIds.filter((leadId) => availableLeadIds.has(leadId))),
       ].slice(0, MAX_TOPICAL_REFINEMENT_LEADS);
+      const safeRefinementLeadIdSet = new Set(safeRefinementLeadIds);
+      const safeFastRefinementLeadIds = [
+        ...new Set(
+          fastRefinementLeadIds.filter((leadId) =>
+            safeRefinementLeadIdSet.has(leadId),
+          ),
+        ),
+      ];
       setBroadcastContextResult(result);
       setBroadcastContextRefinementLeadIds(safeRefinementLeadIds);
+      setBroadcastContextFastRefinementLeadIds(safeFastRefinementLeadIds);
       setTimelineSemanticChapters(result.semanticChapters);
       const qualified = finalizeContextQualifiedCandidates(candidates, result.annotations);
       setCandidateAiProjectionById(qualified.projectionById);
@@ -4936,35 +4961,39 @@ function App() {
         );
         if (savedResult !== null && savedEnvelope.refinementLeadIds !== null) {
           if (!controller.signal.aborted && isMounted.current) {
-            applyContextResult(savedResult, savedEnvelope.refinementLeadIds);
+            applyContextResult(
+              savedResult,
+              savedEnvelope.refinementLeadIds,
+              savedEnvelope.fastRefinementLeadIds ?? [],
+            );
           }
           return;
         }
       }
 
-      const overviewResult = await requestBroadcastContextDeepseek(contextInput, {
-        signal: controller.signal,
-      });
-      if (controller.signal.aborted || !isMounted.current) return;
-      const discoverySlices = createBroadcastTopicalDiscoverySlices(
+      const discoverySlices = createParallelBroadcastTopicalDiscoverySlices(
         broadcastTranscriptChapters,
-        overviewResult.semanticChapters,
       );
-      const discoveryResults = await Promise.allSettled(
-        discoverySlices.map((slice) =>
-          requestBroadcastContextDeepseek(
-            {
-              sourceDurationMs: boundarySourceDurationMs,
-              chapters: slice.chapters,
-              candidates: [],
-              ...(sourceCastRosterId === null
-                ? {}
-                : { castRosterId: sourceCastRosterId }),
-            },
-            { signal: controller.signal, analysisMode: "discovery" },
+      const [overviewResult, discoveryResults] = await Promise.all([
+        requestBroadcastContextDeepseek(contextInput, {
+          signal: controller.signal,
+        }),
+        Promise.allSettled(
+          discoverySlices.map((slice) =>
+            requestBroadcastContextDeepseek(
+              {
+                sourceDurationMs: boundarySourceDurationMs,
+                chapters: slice.chapters,
+                candidates: [],
+                ...(sourceCastRosterId === null
+                  ? {}
+                  : { castRosterId: sourceCastRosterId }),
+              },
+              { signal: controller.signal, analysisMode: "discovery" },
+            ),
           ),
         ),
-      );
+      ]);
       if (controller.signal.aborted || !isMounted.current) return;
       const result: BroadcastContextResult = {
         ...overviewResult,
@@ -4984,8 +5013,10 @@ function App() {
         result.discoveredLeads,
       );
       let refinementLeadIds: readonly string[];
+      let fastRefinementLeadIds: readonly string[];
       if (juryPlan.candidates.length === 0) {
         refinementLeadIds = [];
+        fastRefinementLeadIds = [];
       } else {
         try {
           const juryResult = await requestBroadcastContextDeepseek(
@@ -5005,6 +5036,12 @@ function App() {
             juryResult.annotations,
             result.semanticChapters,
           );
+          const refinementLeadIdSet = new Set(refinementLeadIds);
+          fastRefinementLeadIds = selectBroadcastTopicalJuryApprovedLeadIds(
+            result.discoveredLeads,
+            juryPlan,
+            juryResult.annotations,
+          ).filter((leadId) => refinementLeadIdSet.has(leadId));
         } catch {
           // The overview and discovery calls are already paid. Keep a bounded
           // high-recall fallback if only the inexpensive jury transport fails.
@@ -5015,6 +5052,9 @@ function App() {
             )
             .slice(0, 4)
             .map((lead) => lead.leadId);
+          // Jury transport failed, so none of these fallback leads has already
+          // earned the cheaper localization-only contract.
+          fastRefinementLeadIds = [];
         }
       }
       if (controller.signal.aborted || !isMounted.current) return;
@@ -5029,9 +5069,10 @@ function App() {
         ...transcriptSession,
         contextInputSignature,
         contextResultJson: JSON.stringify({
-          schemaVersion: "1.0.0",
+          schemaVersion: "1.1.0",
           result,
           refinementLeadIds,
+          fastRefinementLeadIds,
         }),
         recordedAt: new Date().toISOString(),
       });
@@ -5050,12 +5091,17 @@ function App() {
       );
       if (
         reopenedResult === null ||
-        reopenedEnvelope.refinementLeadIds === null
+        reopenedEnvelope.refinementLeadIds === null ||
+        reopenedEnvelope.fastRefinementLeadIds === null
       ) {
         throw new Error("저장한 방송 전체 맥락 결과 형식을 다시 확인하지 못했어요.");
       }
       if (!controller.signal.aborted && isMounted.current) {
-        applyContextResult(reopenedResult, reopenedEnvelope.refinementLeadIds);
+        applyContextResult(
+          reopenedResult,
+          reopenedEnvelope.refinementLeadIds,
+          reopenedEnvelope.fastRefinementLeadIds ?? [],
+        );
       }
     })()
       .catch((error: unknown) => {
@@ -5093,6 +5139,7 @@ function App() {
       broadcastContextStatus !== "completed" ||
       broadcastContextResult === null ||
       broadcastContextRefinementLeadIds === null ||
+      broadcastContextFastRefinementLeadIds === null ||
       sourceFile === null ||
       currentAnalysisRunId === null ||
       boundarySourceDurationMs <= 0
@@ -5186,6 +5233,7 @@ function App() {
       const refinementInputSignature = await createContentFingerprint([
         currentAnalysisRunId,
         JSON.stringify(plan),
+        JSON.stringify(broadcastContextFastRefinementLeadIds),
         JSON.stringify(broadcastContextResult.discoveredLeads),
         youtubeCaptionTrack === null
           ? BROADCAST_TRANSCRIPT_ACTIVE_MODEL_REVISION
@@ -5230,9 +5278,12 @@ function App() {
       const parentLeadById = new Map(
         broadcastContextResult.discoveredLeads.map((lead) => [lead.leadId, lead]),
       );
+      const fastRefinementLeadIdSet = new Set(
+        broadcastContextFastRefinementLeadIds,
+      );
       const refinementResults = await mapWithConcurrency(
         plan.selectedLeadIds,
-        3,
+        MAX_TOPICAL_REFINEMENT_CONCURRENCY,
         async (leadId) => {
           const chapters = createDiscoveredLeadRefinementChapters(
             leadId,
@@ -5258,7 +5309,12 @@ function App() {
                   ? {}
                   : { castRosterId: sourceCastRosterId }),
               },
-              { signal: controller.signal, analysisMode: "refinement" },
+              {
+                signal: controller.signal,
+                analysisMode: fastRefinementLeadIdSet.has(leadId)
+                  ? "refinement-fast"
+                  : "refinement",
+              },
             );
             return {
               leadId,
@@ -5381,6 +5437,7 @@ function App() {
   }, [
     boundarySourceDurationMs,
     broadcastContextRefinementLeadIds,
+    broadcastContextFastRefinementLeadIds,
     broadcastContextResult,
     broadcastContextStatus,
     candidateGeminiInsightById,

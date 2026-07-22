@@ -15,6 +15,7 @@ export type BroadcastContextAnalysisMode =
   | "overview"
   | "discovery"
   | "refinement"
+  | "refinement-fast"
   | "selection";
 
 type FetchImplementation = (

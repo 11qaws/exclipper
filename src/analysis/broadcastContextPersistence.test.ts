@@ -47,7 +47,25 @@ describe("broadcastContextPersistence", () => {
         result: storedResult,
         refinementLeadIds: ["lead-1"],
       }),
-    ).toEqual({ resultPayload: storedResult, refinementLeadIds: ["lead-1"] });
+    ).toEqual({
+      resultPayload: storedResult,
+      refinementLeadIds: ["lead-1"],
+      fastRefinementLeadIds: [],
+    });
+  });
+
+  it("preserves the jury-approved fast localization subset", () => {
+    expect(
+      unpackPersistedBroadcastContext({
+        schemaVersion: "1.1.0",
+        result: storedResult,
+        refinementLeadIds: ["lead-1", "lead-2"],
+        fastRefinementLeadIds: ["lead-1"],
+      }),
+    ).toMatchObject({
+      refinementLeadIds: ["lead-1", "lead-2"],
+      fastRefinementLeadIds: ["lead-1"],
+    });
   });
 
   it("preserves explicit legacy unsupported flags after strict parsing", () => {

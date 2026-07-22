@@ -1,10 +1,20 @@
 # ExClipper 상태·생애주기 명세
 
-- 문서 버전: 0.3.36
-- 기준 제품 계획: PRODUCT_PLAN.md 0.3.36
+- 문서 버전: 0.3.39
+- 기준 제품 계획: PRODUCT_PLAN.md 0.3.39
 - 기준일: 2026-07-20 (Asia/Seoul)
 - 적용 범위: GitHub Pages에서 실행되는 개인 편집 어시스턴트와 선택형 CHZZK 동반 수집기
 - 문서 지위: 구현 전 상태 모델의 기준 문서
+
+## `0.3.39` 병렬 맥락 run과 편집 목적 projection 경계
+
+- 같은 context run epoch 안에서 `overview`와 deterministic full-coverage `discovery[0..3]`를 동시에 시작한다. 각 작업은 같은 source fingerprint, input signature, abort signal을 사용한다. 어느 한쪽의 이전 run 응답도 현재 run을 확정하거나 덮어쓸 수 없다.
+- discovery 일부가 일시 실패해도 성공한 slice와 overview를 합쳐 비교 배심으로 진행한다. overview 실패는 공통 맥락 결과를 확정할 수 없으므로 기존 canonical candidate ledger와 사람 판단을 그대로 보존한 `failed` 종료다.
+- context cache identity는 routing `1.9.0`, topical discovery `1.3.0`, 실제 model revision을 포함한다. Qwen 3.7 overview·jury·quality refinement와 Qwen 3.6 discovery·fast refinement 결과를 서로 같은 모델 결과로 relabel하지 않는다.
+- whole-context session envelope `1.1.0`은 전체 `refinementLeadIds`와 그 부분집합인 `fastRefinementLeadIds`를 함께 저장한다. 비교 배심이 승인한 lead만 3.6 fast localization으로 가고, topic-balanced reserve는 3.7 quality refinement로 간다. 복구 시 fast ID가 refinement ID와 현재 result lead 양쪽에 속하지 않으면 제거한다.
+- 최대 20개 caption refinement는 6개 bounded pool에서 실행하되 결과 배열은 입력 lead 순서를 유지한다. 호출 하나의 transport 실패·성공한 빈 abstention·성공을 lead별로 구분하고, 전체 후보 원장이나 다른 lead 결과를 롤백하지 않는다.
+- 후속 `activeEditorialIntent`는 `balanced | main-story | shorts | recap` 중 하나인 presentation state다. 변경 이벤트는 저장된 공통 evidence와 candidate ledger를 다시 분석하지 않고 ranking projection만 교체한다. 후보 membership, AI priority annotation, user review state, boundary revision, export 승인 여부를 변경하는 전이는 금지한다.
+- 사건 category와 Editorial Intent는 독립 축이다. 예를 들어 `apology-accountability`나 `quiet-achievement`는 사건의 의미이고, `shorts`나 `main-story`는 그 사건을 어떤 편집 결과에 우선 배치할지 정하는 view다.
 
 ## `0.3.36` topic-balanced 내부 refinement와 canonical projection 경계
 

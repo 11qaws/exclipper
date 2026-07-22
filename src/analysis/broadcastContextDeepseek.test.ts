@@ -112,11 +112,14 @@ describe("broadcastContextDeepseek", () => {
       expect(body).not.toHaveProperty("reasoning_effort");
     });
 
-    it("bounds a selected event refinement to three concise leads", () => {
+    it.each([
+      ["refinement", "qwen3.7-plus"],
+      ["refinement-fast", "qwen3.6-flash"],
+    ] as const)("bounds %s to the same three-lead localization contract", (mode, model) => {
       const body = buildBroadcastContextQwenRequestBody(
         { ...dummyRequest, candidates: [] },
-        "qwen3.7-plus",
-        "refinement",
+        model,
+        mode,
       );
       expect(body.max_tokens).toBe(1_024);
       expect(body.messages[0].content).toContain("최대 3개");

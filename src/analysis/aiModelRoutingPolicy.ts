@@ -4,9 +4,9 @@ import {
 } from "./broadcastContextSamplingPlan";
 import { MAX_BROADCAST_TRANSCRIPT_WORKER_CHUNKS } from "./broadcastTranscriptWorkerProtocol";
 
-export const AI_MODEL_ROUTING_POLICY_VERSION = "1.10.0" as const;
-/** Candidate fallback upgrades must not invalidate already-paid Qwen context results. */
-export const AI_BROADCAST_CONTEXT_ROUTING_REVISION = "1.8.0" as const;
+export const AI_MODEL_ROUTING_POLICY_VERSION = "1.11.0" as const;
+/** Context scheduling or model-role changes must fence incompatible cached results. */
+export const AI_BROADCAST_CONTEXT_ROUTING_REVISION = "1.9.0" as const;
 
 export const EXCLIPPER_MODEL_IDS = {
   candidatePerceptionPrimary: "qwen3.5-omni-flash",
@@ -57,7 +57,9 @@ const MAX_BROADCAST_CONTEXT_REASONING_CALLS = 26;
 
 /**
  * Creates a bounded role-based plan; it does not make paid calls. Qwen Omni
- * perceives and transcribes, Qwen 3.7 Plus reasons over compressed evidence,
+ * perceives and transcribes, Qwen 3.7 Plus builds the overview and final jury,
+ * Qwen 3.6 Flash discovers events and localizes jury-approved events, while
+ * topic-balanced reserves retain the Qwen 3.7 quality gate,
  * and the expensive/optional adjudicator is restricted to a few uncertain
  * final cases. DeepSeek V4 Pro remains a credential-gated emergency transport,
  * not an automatic paid retry.
@@ -135,7 +137,7 @@ export function createAiAnalysisRoutingPlan(
         fallbackModelId: EXCLIPPER_MODEL_IDS.broadcastContextReasoningFallback,
         maximumCalls: MAX_BROADCAST_CONTEXT_REASONING_CALLS,
         inputScope: "compressed-text-context",
-        purposeKo: "전체 개요·주제 탐색·비교 배심과 자막 의미 후보 위치 정밀화",
+        purposeKo: "3.7 전체 개요·비교 배심·예비 단서 검증과 3.6 전 구간 탐색·승인 단서 위치 확인",
       },
       {
         stage: "candidate-adjudication",

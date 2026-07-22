@@ -29,6 +29,13 @@ export const QWEN_CONTEXT_DISCOVERY_MODEL_ID =
   EXCLIPPER_MODEL_IDS.broadcastContextReasoningFallback;
 export const QWEN_CONTEXT_DISCOVERY_MODEL_REVISION =
   "qwen3.6-flash-topical-discovery-reviewed-2026-07-22" as const;
+export const QWEN_CONTEXT_REFINEMENT_MODEL_ID =
+  EXCLIPPER_MODEL_IDS.broadcastContextReasoningFallback;
+export const QWEN_CONTEXT_REFINEMENT_MODEL_REVISION =
+  "qwen3.6-flash-caption-refinement-speed-v1-2026-07-22" as const;
+export const QWEN_CONTEXT_QUALITY_REFINEMENT_MODEL_ID = QWEN_CONTEXT_MODEL_ID;
+export const QWEN_CONTEXT_QUALITY_REFINEMENT_MODEL_REVISION =
+  "qwen3.7-plus-caption-refinement-quality-v1-2026-07-22" as const;
 
 export type CandidateInsightProviderId = "gemini" | "qwen";
 export type BroadcastContextProviderId = "disabled" | "deepseek" | "qwen";

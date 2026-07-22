@@ -516,6 +516,89 @@ describe("aiProxy.worker", () => {
     });
   });
 
+  it.each([
+    {
+      label: "jury-approved fast localization",
+      analysisMode: "refinement-fast",
+      modelId: "qwen3.6-flash",
+      modelRevision: "qwen3.6-flash-caption-refinement-speed-v1-2026-07-22",
+    },
+    {
+      label: "quality-gated reserve adjudication",
+      analysisMode: "refinement",
+      modelId: "qwen3.7-plus",
+      modelRevision: "qwen3.7-plus-caption-refinement-quality-v1-2026-07-22",
+    },
+  ] as const)("uses the bounded Qwen tier for $label", async ({
+    analysisMode,
+    modelId,
+    modelRevision,
+  }) => {
+    const contextInput = {
+      sourceDurationMs: 120_000,
+      chapters: [{
+        chapterId: "chapter-1",
+        startMs: 0,
+        endMs: 120_000,
+        evidenceMode: "complete-transcript",
+        evidenceCoverageRatio: 1,
+        summaryKo: "칼국수 이름을 틀린 뒤 강하게 항변한다.",
+      }],
+      candidates: [],
+      analysisMode,
+    };
+    const upstreamFetch = vi.fn(
+      (_input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+        const body = JSON.parse(
+          typeof init?.body === "string" ? init.body : "{}",
+        ) as { model: string; max_tokens: number };
+        expect(body.model).toBe(modelId);
+        expect(body.max_tokens).toBe(1_024);
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              choices: [{
+                message: {
+                  content: JSON.stringify({
+                    summary: "칼국수 오답 항변",
+                    leads: [{
+                      s: "chapter-1",
+                      e: "chapter-1",
+                      c: "reaction",
+                      p: 0.91,
+                      event: "칼국수 이름을 틀리고 항변한다.",
+                      cue: "내가 틀린 게 아니야",
+                    }],
+                  }),
+                },
+              }],
+            }),
+            { status: 200 },
+          ),
+        );
+      },
+    );
+    const response = await handleBroadcastContextRequest(
+      createRequest(contextInput, {
+        url: "https://rettohighlight-gemini.example/v1/broadcast-context",
+      }),
+      {
+        ...createEnvironment(),
+        BROADCAST_CONTEXT_PROVIDER: "qwen",
+        QWEN_API_KEY: "qwen-secret",
+      },
+      { fetchImplementation: upstreamFetch },
+    );
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      discoveredLeads: [expect.objectContaining({ confidence: 0.91 })],
+    });
+    expect(response.headers.get("X-ExClipper-Model-Id")).toBe(modelId);
+    expect(response.headers.get("X-ExClipper-Model-Revision")).toBe(
+      modelRevision,
+    );
+  });
+
   it("uses Qwen 3.7 Plus for the final abstention-sensitive editorial jury", async () => {
     const contextInput = {
       sourceDurationMs: 120_000,
@@ -822,7 +905,7 @@ describe("aiProxy.worker", () => {
       ok: true,
       service: "rettohighlight-gemini",
       version: 2,
-      routingPolicyVersion: "1.10.0",
+      routingPolicyVersion: "1.11.0",
       contextModelRevision:
         "qwen3.7-plus-context-editorial-jury-topic-balanced-2026-07-22",
       providers: {

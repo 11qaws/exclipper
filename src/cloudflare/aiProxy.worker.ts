@@ -62,6 +62,10 @@ import {
   QWEN_CONTEXT_MODEL_REVISION,
   QWEN_CONTEXT_DISCOVERY_MODEL_ID,
   QWEN_CONTEXT_DISCOVERY_MODEL_REVISION,
+  QWEN_CONTEXT_REFINEMENT_MODEL_ID,
+  QWEN_CONTEXT_REFINEMENT_MODEL_REVISION,
+  QWEN_CONTEXT_QUALITY_REFINEMENT_MODEL_ID,
+  QWEN_CONTEXT_QUALITY_REFINEMENT_MODEL_REVISION,
   createAiProviderReadinessManifest,
   isBoundedAiProviderFallbackEnabled,
   resolveCandidateInsightFallbackConnection,
@@ -1856,7 +1860,12 @@ function shouldAttemptBroadcastContextModelFallback(
 async function attemptBroadcastContextProvider(
   connection: Exclude<BroadcastContextConnection, { readonly provider: "disabled" }>,
   broadcastContextRequest: BroadcastContextRequest,
-  contextMode: "overview" | "discovery" | "refinement" | "selection",
+  contextMode:
+    | "overview"
+    | "discovery"
+    | "refinement"
+    | "refinement-fast"
+    | "selection",
   qwenModelId: string,
   qwenModelRevision: string,
   fetchImplementation: FetchImplementation,
@@ -1962,7 +1971,8 @@ async function attemptBroadcastContextProvider(
           upstreamPayload,
           broadcastContextRequest,
         )
-      : connection.provider === "qwen" && contextMode === "refinement"
+      : connection.provider === "qwen" &&
+          (contextMode === "refinement" || contextMode === "refinement-fast")
       ? extractBroadcastContextQwenRefinementResponse(
           upstreamPayload,
           broadcastContextRequest,
@@ -2091,7 +2101,9 @@ export async function handleBroadcastContextRequest(
     return jsonResponse(400, "INVALID_REQUEST", "요청 형식을 확인해 주세요.", origin);
   }
 
-  const contextMode = isRecord(inputValue) && inputValue.analysisMode === "refinement"
+  const contextMode = isRecord(inputValue) && inputValue.analysisMode === "refinement-fast"
+    ? "refinement-fast" as const
+    : isRecord(inputValue) && inputValue.analysisMode === "refinement"
     ? "refinement" as const
     : isRecord(inputValue) && inputValue.analysisMode === "discovery"
       ? "discovery" as const
@@ -2122,19 +2134,28 @@ export async function handleBroadcastContextRequest(
   const fetchImplementation = dependencies.fetchImplementation ?? fetch;
   const timeoutMs = dependencies.upstreamTimeoutMs ?? UPSTREAM_TIMEOUT_MS;
   const retryDelaysMs = dependencies.upstreamRetryDelaysMs ?? DEFAULT_UPSTREAM_RETRY_DELAYS_MS;
-  const primaryModelId =
+  const usesFastQwenContextModel =
     providerConnection.provider === "qwen" &&
-      contextMode === "discovery"
-      ? QWEN_CONTEXT_DISCOVERY_MODEL_ID
+    (contextMode === "discovery" || contextMode === "refinement-fast");
+  const primaryModelId =
+    usesFastQwenContextModel
+      ? contextMode === "refinement-fast"
+        ? QWEN_CONTEXT_REFINEMENT_MODEL_ID
+        : QWEN_CONTEXT_DISCOVERY_MODEL_ID
       : providerConnection.provider === "qwen"
-        ? QWEN_CONTEXT_MODEL_ID
+        ? contextMode === "refinement"
+          ? QWEN_CONTEXT_QUALITY_REFINEMENT_MODEL_ID
+          : QWEN_CONTEXT_MODEL_ID
         : providerConnection.descriptor.modelId;
   const primaryModelRevision =
-    providerConnection.provider === "qwen" &&
-      contextMode === "discovery"
-      ? QWEN_CONTEXT_DISCOVERY_MODEL_REVISION
+    usesFastQwenContextModel
+      ? contextMode === "refinement-fast"
+        ? QWEN_CONTEXT_REFINEMENT_MODEL_REVISION
+        : QWEN_CONTEXT_DISCOVERY_MODEL_REVISION
       : providerConnection.provider === "qwen"
-        ? QWEN_CONTEXT_MODEL_REVISION
+        ? contextMode === "refinement"
+          ? QWEN_CONTEXT_QUALITY_REFINEMENT_MODEL_REVISION
+          : QWEN_CONTEXT_MODEL_REVISION
         : providerConnection.descriptor.modelRevision;
   const primaryAttempt = await attemptBroadcastContextProvider(
     providerConnection,
@@ -2158,13 +2179,17 @@ export async function handleBroadcastContextRequest(
     fallbackUsed = true;
     primaryFailureKind = primaryAttempt.kind;
     const fallbackModelId =
-      contextMode === "discovery"
+      usesFastQwenContextModel
         ? QWEN_CONTEXT_MODEL_ID
         : QWEN_CONTEXT_DISCOVERY_MODEL_ID;
     const fallbackModelRevision =
-      contextMode === "discovery"
-        ? QWEN_CONTEXT_MODEL_REVISION
-        : QWEN_CONTEXT_DISCOVERY_MODEL_REVISION;
+      usesFastQwenContextModel
+        ? contextMode === "refinement-fast"
+          ? QWEN_CONTEXT_QUALITY_REFINEMENT_MODEL_REVISION
+          : QWEN_CONTEXT_MODEL_REVISION
+        : contextMode === "refinement"
+          ? QWEN_CONTEXT_REFINEMENT_MODEL_REVISION
+          : QWEN_CONTEXT_DISCOVERY_MODEL_REVISION;
     finalAttempt = await attemptBroadcastContextProvider(
       providerConnection,
       broadcastContextRequest,

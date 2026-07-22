@@ -1,5 +1,16 @@
 # Development Log
 
+## 2026-07-22 `0.3.39` 맥락 분석 임계 경로 단축과 편집 목적 원안 복원
+
+- 실측 저장 자료 `.qa/context-food-0336-full.json`을 단계별로 다시 계산했다. 기존 음식 토크 맥락 경로는 overview 44.327초 뒤 discovery 최대 15.755초, jury 26.097초를 순차로 기다려 약 86.179초였고, 20개 refinement는 Qwen 3.7 호출 누적 386.437초를 3개 pool로 처리해 이론상 약 128.813초를 더 소비했다. 입력은 2시간 15분/68개 자막 chapter에 불과했으므로 모델 품질보다 scheduling과 역할 배치가 주 병목이었다.
+- overview와 최대 4개의 deterministic chronological discovery를 동시에 시작하도록 App과 실제 live evaluation harness를 같은 코드 경계로 바꿨다. 각 discovery slice는 overview를 기다리지 않고 모든 chapter를 정확히 한 번씩 덮으며, 완료 뒤 overview Semantic Chapters·요약과 합쳐 기존 Qwen 3.7 jury를 그대로 사용한다.
+- `refinement`가 우연히 overview/jury와 같은 Qwen 3.7 route를 쓰던 문제를 분리했다. 첫 실험은 discovery와 모든 1분 자막 위치 보정을 Qwen 3.6 Flash로 보내 20/20 transport 성공, 약 104초 wall time, `$0.069836`을 기록했지만 두바이 초콜릿과 일부 껍데기 reserve가 성공한 빈 결과로 사라졌다. 비용 차이는 작고 recall 회귀는 커서 이 all-fast 경로를 최종안으로 채택하지 않았다.
+- 최종 하이브리드는 비교 배심이 이미 승인한 lead만 Qwen 3.6 `refinement-fast`로 위치를 찾고, recall을 위해 더한 topic-balanced reserve는 Qwen 3.7 `refinement`로 사건 진위와 위치를 함께 판단한다. refinement pool은 3개에서 6개로 올리되 최대 20개/전체 26개 호출·lead별 실패 격리·입력 순서 보존·canonical 후보 보존은 유지했다.
+- routing policy를 `1.11.0`, context cache fence를 `1.9.0`, topical discovery를 `1.3.0`, 앱을 `0.3.39`로 올렸다. fast identity는 `qwen3.6-flash-caption-refinement-speed-v1-2026-07-22`, quality identity는 `qwen3.7-plus-caption-refinement-quality-v1-2026-07-22`이며, whole-context envelope `1.1.0`이 fast 부분집합을 별도로 저장한다. 이전 유료 결과를 새 모델 결과로 relabel하지 않는다.
+- GitHub 상세 검토 원문을 다시 확인해 여러 용도의 클리핑 제안은 `반응/토크/사과/조용한 성취` 같은 검출 모드가 아니라 `balanced | main-story | shorts | recap` **Editorial Intent Profiles**였음을 복원했다. 앞의 항목들은 사건 category이고 뒤의 Profile은 하나의 공통 Candidate Ledger를 목적별로 재정렬하는 projection이다. Profile 변경으로 API를 다시 호출하거나 후보·사용자 결정을 덮어쓰지 않는 원칙을 제품·상태 문서에 확정했으며, 선택 UI와 ranking 함수는 별도 검증 가능한 수직 슬라이스로 남겼다.
+- 최종 음식 토크 hybrid smoke는 114.8초에 끝나 기존 약 215초보다 약 47% 빨라졌다. overview 38.666초, jury 20.913초였고 총 텍스트 비용은 `$0.069703`이다. 19개 refinement는 transport 실패 없이 모두 끝났으며, 배심 승인 6개는 Qwen 3.6 fast revision, topic-balanced reserve 13개는 Qwen 3.7 quality revision을 기록했다. 칼국수, 껍데기, 두바이 초콜릿은 각각 근거가 있는 source range로 복구됐고 오프닝 음악 fast-pass 3개는 모두 confidence 0.1 reject였다.
+- 관련 routing/topical/Worker 단위 테스트 82개와 전체 strict TypeScript·ESLint·71개 파일 764개 테스트가 통과했다. production build는 main JS 616.32 kB(178.26 kB gzip), CSS 84.99 kB이며 Wrangler dry-run은 205.93 KiB(39.74 KiB gzip)다. Worker `3cccd355-836b-4087-8e22-5ae7c2f79279`가 정책 `1.11.0`과 두 refinement revision을 운영한다. Pages commit·workflow·공개 smoke 결과는 배포 뒤 같은 항목에 기록한다.
+
 ## 2026-07-22 `0.3.38` 교환학생 출연진 전체 맥락·Gemini 경로 보강
 
 - 사용자 확인에 따라 교환학생 방송의 출연진 정답을 `세라 교수님`, `아모레또`, `유레카`, `세나 아르벨`, `토로리 코코`, `망징이`로 고정하고 기존 `교수님` 표기를 `세라 교수님`으로 교정했다. 짧은 호칭은 canonical 이름으로 정규화하되 음성 유사도만으로 화자를 단정하지 않는다.

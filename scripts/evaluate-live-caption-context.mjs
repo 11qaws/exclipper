@@ -7,9 +7,11 @@ import {
 import { createBroadcastContextRequest } from "../src/analysis/broadcastContextProtocol.ts";
 import { mapWithConcurrency } from "../src/analysis/boundedAsyncMap.ts";
 import {
+  MAX_TOPICAL_REFINEMENT_CONCURRENCY,
   createBroadcastTopicalLeadJuryPlan,
-  createBroadcastTopicalDiscoverySlices,
+  createParallelBroadcastTopicalDiscoverySlices,
   mergeBroadcastTopicalDiscoveryLeads,
+  selectBroadcastTopicalJuryApprovedLeadIds,
   selectBroadcastTopicalRefinementLeadIds,
 } from "../src/analysis/broadcastTopicalDiscovery.ts";
 import {
@@ -222,23 +224,22 @@ if (chapters.length === 0) {
   throw new Error("The production caption chapter builder returned no chapters.");
 }
 const fastPass = buildFastPassCandidates(captionPayload);
-const overview = await requestContext({
-  sourceDurationMs,
-  chapters,
-  candidates: fastPass.candidates,
-});
-const discoverySlices = createBroadcastTopicalDiscoverySlices(
-  chapters,
-  overview.result.semanticChapters,
-);
-const discoveryAttempts = await Promise.allSettled(
-  discoverySlices.map((slice) =>
-    requestContext(
-      { sourceDurationMs, chapters: slice.chapters, candidates: [] },
-      "discovery",
-    ).then((value) => ({ sliceId: slice.sliceId, ...value })),
+const discoverySlices = createParallelBroadcastTopicalDiscoverySlices(chapters);
+const [overview, discoveryAttempts] = await Promise.all([
+  requestContext({
+    sourceDurationMs,
+    chapters,
+    candidates: fastPass.candidates,
+  }),
+  Promise.allSettled(
+    discoverySlices.map((slice) =>
+      requestContext(
+        { sourceDurationMs, chapters: slice.chapters, candidates: [] },
+        "discovery",
+      ).then((value) => ({ sliceId: slice.sliceId, ...value })),
+    ),
   ),
-);
+]);
 const successfulDiscoveries = discoveryAttempts.flatMap((attempt) =>
   attempt.status === "fulfilled" ? [attempt.value] : [],
 );
@@ -273,6 +274,15 @@ const refinementLeadIds = jury === null
       jury.result.annotations,
       result.semanticChapters,
     );
+const refinementLeadIdSet = new Set(refinementLeadIds);
+const fastRefinementLeadIds = jury === null
+  ? []
+  : selectBroadcastTopicalJuryApprovedLeadIds(
+      result.discoveredLeads,
+      juryPlan,
+      jury.result.annotations,
+    ).filter((leadId) => refinementLeadIdSet.has(leadId));
+const fastRefinementLeadIdSet = new Set(fastRefinementLeadIds);
 const refinementLeads = refinementLeadIds.flatMap((leadId) => {
   const lead = result.discoveredLeads.find((item) => item.leadId === leadId);
   return lead === undefined ? [] : [lead];
@@ -286,36 +296,42 @@ const refinementTranscripts = createYouTubeCaptionRefinementTranscripts(
   refinementPlan,
 );
 const refinementCalls = runRefinement
-  ? await mapWithConcurrency(refinementPlan.selectedLeadIds, 3, async (leadId) => {
-      const refinementChapters = createDiscoveredLeadRefinementChapters(
-        leadId,
-        refinementPlan,
-        refinementTranscripts,
-        (() => {
-          const parent = refinementLeads.find((lead) => lead.leadId === leadId);
-          return parent === undefined
-            ? ""
-            : `${parent.eventSummaryKo} / ${parent.evidenceCueKo}`;
-        })(),
-      );
-      if (refinementChapters.length === 0) {
-        return { leadId, skipped: true, metadata: null, leads: [] };
-      }
-      const refined = await requestContext(
-        {
-          sourceDurationMs,
-          chapters: refinementChapters,
-          candidates: [],
-        },
-        "refinement",
-      );
-      return {
-        leadId,
-        skipped: false,
-        metadata: refined.metadata,
-        leads: refined.result.discoveredLeads,
-      };
-    })
+  ? await mapWithConcurrency(
+      refinementPlan.selectedLeadIds,
+      MAX_TOPICAL_REFINEMENT_CONCURRENCY,
+      async (leadId) => {
+        const refinementChapters = createDiscoveredLeadRefinementChapters(
+          leadId,
+          refinementPlan,
+          refinementTranscripts,
+          (() => {
+            const parent = refinementLeads.find((lead) => lead.leadId === leadId);
+            return parent === undefined
+              ? ""
+              : `${parent.eventSummaryKo} / ${parent.evidenceCueKo}`;
+          })(),
+        );
+        if (refinementChapters.length === 0) {
+          return { leadId, skipped: true, metadata: null, leads: [] };
+        }
+        const refined = await requestContext(
+          {
+            sourceDurationMs,
+            chapters: refinementChapters,
+            candidates: [],
+          },
+          fastRefinementLeadIdSet.has(leadId)
+            ? "refinement-fast"
+            : "refinement",
+        );
+        return {
+          leadId,
+          skipped: false,
+          metadata: refined.metadata,
+          leads: refined.result.discoveredLeads,
+        };
+      },
+    )
   : [];
 const overviewCostUsd = estimatedTextCostUsd(overview.metadata);
 const topicalCostUsd = successfulDiscoveries.reduce(
@@ -361,6 +377,7 @@ const serializedResult = `${JSON.stringify(
         metadata: jury?.metadata ?? null,
         annotations: jury?.result.annotations ?? [],
         refinementLeadIds,
+        fastRefinementLeadIds,
         refinementLeads,
         refinement: {
           requested: runRefinement,

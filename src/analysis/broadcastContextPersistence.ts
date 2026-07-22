@@ -7,6 +7,7 @@ import type {
 export interface PersistedBroadcastContextEnvelope {
   readonly resultPayload: unknown;
   readonly refinementLeadIds: readonly string[] | null;
+  readonly fastRefinementLeadIds: readonly string[] | null;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -23,12 +24,30 @@ export function unpackPersistedBroadcastContext(
     Array.isArray(payload.refinementLeadIds) &&
     payload.refinementLeadIds.every((value) => typeof value === "string")
   ) {
+    const fastRefinementLeadIds = "fastRefinementLeadIds" in payload
+      ? payload.fastRefinementLeadIds
+      : [];
+    if (
+      !Array.isArray(fastRefinementLeadIds) ||
+      !fastRefinementLeadIds.every((value) => typeof value === "string")
+    ) {
+      return {
+        resultPayload: payload,
+        refinementLeadIds: null,
+        fastRefinementLeadIds: null,
+      };
+    }
     return {
       resultPayload: payload.result,
       refinementLeadIds: payload.refinementLeadIds,
+      fastRefinementLeadIds,
     };
   }
-  return { resultPayload: payload, refinementLeadIds: null };
+  return {
+    resultPayload: payload,
+    refinementLeadIds: null,
+    fastRefinementLeadIds: null,
+  };
 }
 
 /**

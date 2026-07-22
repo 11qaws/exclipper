@@ -7,7 +7,9 @@ import type {
 import {
   createBroadcastTopicalLeadJuryPlan,
   createBroadcastTopicalDiscoverySlices,
+  createParallelBroadcastTopicalDiscoverySlices,
   mergeBroadcastTopicalDiscoveryLeads,
+  selectBroadcastTopicalJuryApprovedLeadIds,
   selectBroadcastTopicalRefinementLeadIds,
 } from "./broadcastTopicalDiscovery";
 
@@ -78,6 +80,20 @@ describe("broadcastTopicalDiscovery", () => {
     const slices = createBroadcastTopicalDiscoverySlices(chapters, []);
     expect(slices).toHaveLength(4);
     expect(slices.flatMap((slice) => slice.chapters)).toEqual(chapters);
+  });
+
+  it("builds deterministic parallel slices that cover every chapter exactly once", () => {
+    const slices = createParallelBroadcastTopicalDiscoverySlices(chapters);
+    expect(slices).toHaveLength(4);
+    expect(slices.map((slice) => slice.sliceId)).toEqual([
+      "coverage-01",
+      "coverage-02",
+      "coverage-03",
+      "coverage-04",
+    ]);
+    expect(slices.flatMap((slice) => slice.chapters)).toEqual(chapters);
+    expect(new Set(slices.flatMap((slice) => slice.chapters.map((chapter) => chapter.chapterId))).size)
+      .toBe(chapters.length);
   });
 
   it("round-robins topics and removes only near-identical ranges", () => {
@@ -170,6 +186,9 @@ describe("broadcastTopicalDiscovery", () => {
       relatedCandidateIds: [],
       uncertaintiesKo: [],
     }));
+    expect(
+      selectBroadcastTopicalJuryApprovedLeadIds(leads, plan, annotations),
+    ).toEqual(["skin", "dubai", "talk-selected"]);
     expect(
       selectBroadcastTopicalRefinementLeadIds(
         leads,
