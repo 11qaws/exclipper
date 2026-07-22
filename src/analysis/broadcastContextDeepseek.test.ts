@@ -8,11 +8,16 @@ import {
   extractBroadcastContextQwenSelectionResponse,
   extractBroadcastContextQwenOverviewResponse,
 } from "./broadcastContextDeepseek";
-import type { BroadcastContextRequest } from "./broadcastContextProtocol";
+import {
+  BROADCAST_CONTEXT_SCHEMA_VERSION,
+  type BroadcastContextRequest,
+} from "./broadcastContextProtocol";
+import { DEFAULT_CANDIDATE_PASS_B_CAST_ROSTER_ID } from "./participantRoster";
 
 const dummyRequest: BroadcastContextRequest = {
-  schemaVersion: "1.4.0",
+  schemaVersion: BROADCAST_CONTEXT_SCHEMA_VERSION,
   sourceDurationMs: 3600000,
+  castRosterId: null,
   chapters: [
     {
       chapterId: "c1",
@@ -44,7 +49,36 @@ const dummyRequest: BroadcastContextRequest = {
   ],
 };
 
+const EXCHANGE_CAST_NAMES = [
+  "세라 교수님",
+  "아모레또",
+  "유레카",
+  "세나 아르벨",
+  "토로리 코코",
+  "망징이",
+] as const;
+
 describe("broadcastContextDeepseek", () => {
+  it("adds the source-scoped closed cast to both context model prompts", () => {
+    const request: BroadcastContextRequest = {
+      ...dummyRequest,
+      castRosterId: DEFAULT_CANDIDATE_PASS_B_CAST_ROSTER_ID,
+    };
+    const prompts = [
+      buildBroadcastContextDeepseekRequestBody(request).messages[1].content,
+      buildBroadcastContextQwenRequestBody(request).messages[1].content,
+    ];
+    for (const prompt of prompts) {
+      for (const name of EXCHANGE_CAST_NAMES) expect(prompt).toContain(name);
+      expect(prompt).toContain("목소리 느낌만으로 발화자를 정하거나");
+      expect(prompt).toContain("canonical 전체 이름");
+      expect(prompt).not.toContain("은분홍색");
+    }
+    expect(
+      buildBroadcastContextQwenRequestBody(dummyRequest).messages[1].content,
+    ).not.toContain("세라 교수님");
+  });
+
   describe("buildBroadcastContextDeepseekRequestBody", () => {
     it("builds a correct prompt and request body", () => {
       const body = buildBroadcastContextDeepseekRequestBody(dummyRequest);

@@ -107,7 +107,10 @@ import {
   isExplicitMusicOnlyCaption,
 } from "./analysis/captionCandidateEvidence";
 import { sampleCandidateVideoFrames } from "./analysis/candidateVideoFrames";
-import { candidatePassBCastRosterIdForSourceName } from "./analysis/participantRoster";
+import {
+  candidatePassBCastRosterIdForSourceName,
+  canonicalCandidatePassBCastDisplayName,
+} from "./analysis/participantRoster";
 import {
   mergeCandidatePassBEvidence,
   type CandidatePassBEvidenceById,
@@ -320,7 +323,7 @@ interface AudioAnalysisOutcome {
   readonly coverageComplete: boolean;
 }
 
-const APP_VERSION = "0.3.37";
+const APP_VERSION = "0.3.38";
 const PERSISTENCE_SCHEMA_VERSION = "0.3.0";
 const SIGNAL_ENGINE_VERSION =
   "streamer-reaction-fast-pass-v5-chat-fallback-music-confirmation";
@@ -887,6 +890,14 @@ function App() {
   const [isDragging, setIsDragging] = useState(false);
   const [pendingFileName, setPendingFileName] = useState<string | null>(null);
   const [sourceFile, setSourceFile] = useState<File | null>(null);
+  const sourceCastRosterId = useMemo(
+    () => sourceFile === null && pendingFileName === null
+      ? null
+      : candidatePassBCastRosterIdForSourceName(
+        sourceFile?.name ?? pendingFileName ?? "",
+      ),
+    [pendingFileName, sourceFile],
+  );
   const [sourcePreviewUrl, setSourcePreviewUrl] = useState<string | null>(null);
   const [sourceCheck, setSourceCheck] = useState<SourceCheckState | null>(null);
   const [preflight, setPreflight] = useState<LocalMediaPreflightResult | null>(null);
@@ -4862,6 +4873,7 @@ function App() {
       sourceDurationMs: boundarySourceDurationMs,
       chapters: broadcastTranscriptChapters,
       candidates: broadcastContextCandidateInputs,
+      ...(sourceCastRosterId === null ? {} : { castRosterId: sourceCastRosterId }),
     };
     const applyContextResult = (
       result: BroadcastContextResult,
@@ -4945,6 +4957,9 @@ function App() {
               sourceDurationMs: boundarySourceDurationMs,
               chapters: slice.chapters,
               candidates: [],
+              ...(sourceCastRosterId === null
+                ? {}
+                : { castRosterId: sourceCastRosterId }),
             },
             { signal: controller.signal, analysisMode: "discovery" },
           ),
@@ -4978,6 +4993,9 @@ function App() {
               sourceDurationMs: boundarySourceDurationMs,
               chapters: juryPlan.chapters,
               candidates: juryPlan.candidates,
+              ...(sourceCastRosterId === null
+                ? {}
+                : { castRosterId: sourceCastRosterId }),
             },
             { signal: controller.signal, analysisMode: "selection" },
           );
@@ -5067,6 +5085,7 @@ function App() {
     explicitMusicOnlyCandidateIds,
     resetCandidateRanking,
     sourceContentFingerprint,
+    sourceCastRosterId,
   ]);
 
   useEffect(() => {
@@ -5235,6 +5254,9 @@ function App() {
                 sourceDurationMs: boundarySourceDurationMs,
                 chapters,
                 candidates: [],
+                ...(sourceCastRosterId === null
+                  ? {}
+                  : { castRosterId: sourceCastRosterId }),
               },
               { signal: controller.signal, analysisMode: "refinement" },
             );
@@ -5367,6 +5389,7 @@ function App() {
     currentAnalysisRunId,
     getResultStore,
     resetCandidateRanking,
+    sourceCastRosterId,
     sourceFile,
     youtubeCaptionTrack,
   ]);
@@ -7479,7 +7502,12 @@ function App() {
                               <p className="rh-identified-participant-line">
                                 <strong>이름 근거</strong>
                                 {candidateGeminiInsight.identifiedParticipants
-                                  ?.map((participant) => participant.displayName)
+                                  ?.map((participant) =>
+                                    canonicalCandidatePassBCastDisplayName(
+                                      sourceCastRosterId,
+                                      participant.displayName,
+                                    ),
+                                  )
                                   .join(" · ")}
                               </p>
                             )}
@@ -7557,9 +7585,15 @@ function App() {
                                 <div className="rh-identified-participants">
                                   <strong>확인 가능한 출연자 이름</strong>
                                   <ul>
-                                    {candidateGeminiInsight.identifiedParticipants?.map((participant) => (
-                                      <li key={`${participant.displayName}-${participant.evidenceBasis}`}>
-                                        <span>{participant.displayName}</span>
+                                    {candidateGeminiInsight.identifiedParticipants?.map((participant) => {
+                                      const participantDisplayName =
+                                        canonicalCandidatePassBCastDisplayName(
+                                          sourceCastRosterId,
+                                          participant.displayName,
+                                        );
+                                      return (
+                                      <li key={`${participantDisplayName}-${participant.evidenceBasis}`}>
+                                        <span>{participantDisplayName}</span>
                                         <small>
                                           {participant.evidenceBasis === "on-screen-name"
                                             ? "화면 이름"
@@ -7570,7 +7604,8 @@ function App() {
                                         </small>
                                         <p>{participant.evidenceKo}</p>
                                       </li>
-                                    ))}
+                                      );
+                                    })}
                                   </ul>
                                 </div>
                               )}

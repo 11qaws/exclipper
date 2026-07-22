@@ -4,6 +4,7 @@ import {
   BROADCAST_CONTEXT_PROXY_ENDPOINT,
   requestBroadcastContextDeepseek,
 } from "./broadcastContextDeepseekClient";
+import { DEFAULT_CANDIDATE_PASS_B_CAST_ROSTER_ID } from "./participantRoster";
 
 const input = {
   sourceDurationMs: 60_000,
@@ -133,5 +134,25 @@ describe("requestBroadcastContextDeepseek", () => {
 
     expect(response.broadcastSummaryKo).toContain("사과");
     expect(receivedBody).toEqual({ ...input, analysisMode: "refinement" });
+  });
+
+  it("forwards only a validated closed roster identifier", async () => {
+    let receivedBody: unknown;
+    await requestBroadcastContextDeepseek(
+      { ...input, castRosterId: DEFAULT_CANDIDATE_PASS_B_CAST_ROSTER_ID },
+      {
+        fetchImplementation: (_input, init) => {
+          if (typeof init?.body !== "string") {
+            throw new TypeError("Expected a serialized context request.");
+          }
+          receivedBody = JSON.parse(init.body) as unknown;
+          return Promise.resolve(new Response(JSON.stringify(result), { status: 200 }));
+        },
+      },
+    );
+    expect(receivedBody).toEqual({
+      ...input,
+      castRosterId: DEFAULT_CANDIDATE_PASS_B_CAST_ROSTER_ID,
+    });
   });
 });

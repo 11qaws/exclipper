@@ -5,6 +5,7 @@ import {
   createBroadcastContextRequest,
 } from "./broadcastContextProtocol";
 import type { BroadcastContextInputError } from "./broadcastContextProtocol";
+import { DEFAULT_CANDIDATE_PASS_B_CAST_ROSTER_ID } from "./participantRoster";
 
 function validInput() {
   return {
@@ -46,7 +47,8 @@ describe("broadcastContextProtocol", () => {
     const input = validInput();
     const request = createBroadcastContextRequest(input);
 
-    expect(request.schemaVersion).toBe("1.4.0");
+    expect(request.schemaVersion).toBe("1.5.0");
+    expect(request.castRosterId).toBeNull();
     expect(request.chapters).not.toBe(input.chapters);
     expect(request.candidates).not.toBe(input.candidates);
     expect(Object.keys(request.candidates[0] ?? {})).toEqual([
@@ -60,6 +62,26 @@ describe("broadcastContextProtocol", () => {
     ]);
     expect(JSON.stringify(request)).not.toMatch(
       /score|rank|approval|reviewState|boundary/iu,
+    );
+  });
+
+  it("accepts only the fixed server-known cast roster", () => {
+    const input = validInput();
+    expect(
+      createBroadcastContextRequest({
+        ...input,
+        castRosterId: DEFAULT_CANDIDATE_PASS_B_CAST_ROSTER_ID,
+      }).castRosterId,
+    ).toBe(DEFAULT_CANDIDATE_PASS_B_CAST_ROSTER_ID);
+    expect(() =>
+      createBroadcastContextRequest({
+        ...input,
+        castRosterId: "user-authored-roster" as never,
+      }),
+    ).toThrowError(
+      expect.objectContaining<Partial<BroadcastContextInputError>>({
+        code: "INVALID_CAST_ROSTER",
+      }),
     );
   });
 

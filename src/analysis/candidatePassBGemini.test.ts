@@ -164,7 +164,7 @@ describe("candidatePassBGemini", () => {
 
     const analysis = validAnalysis();
     analysis.identifiedParticipants = [{
-      displayName: "아모레또",
+      displayName: "레또",
       role: "unknown",
       evidenceBasis: "provided-cast-reference",
       evidenceKo: "긴 은분홍색 머리와 고양이형 귀가 같은 화면에서 함께 확인돼요.",

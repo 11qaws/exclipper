@@ -15,7 +15,7 @@ import {
   EXCLIPPER_MODEL_IDS,
 } from "../analysis/aiModelRoutingPolicy";
 
-export const AI_PROVIDER_CONFIGURATION_VERSION = "1.1.0" as const;
+export const AI_PROVIDER_CONFIGURATION_VERSION = "1.2.0" as const;
 
 export const QWEN_CANDIDATE_MODEL_ID = CANDIDATE_PASS_B_QWEN_MODEL_ID;
 export const QWEN_CANDIDATE_MODEL_REVISION = CANDIDATE_PASS_B_QWEN_MODEL_REVISION;
@@ -234,10 +234,13 @@ export interface AiProviderReadinessManifest {
     readonly configured: boolean;
     readonly active: boolean;
   };
+  /** Secret-free readiness for the two roles sharing GEMINI_API_KEY. */
+  readonly geminiRoutes: {
+    readonly candidateInsightConfigured: boolean;
+    readonly broadcastTranscriptConfigured: boolean;
+  };
 }
 
-const GEMINI_ENDPOINT =
-  `https://generativelanguage.googleapis.com/v1beta/models/${CANDIDATE_PASS_B_GEMINI_MODEL_ID}:generateContent`;
 const DEEPSEEK_ENDPOINT = "https://api.deepseek.com/chat/completions";
 const DEFAULT_QWEN_REGION: QwenRegion = "singapore";
 const MAX_API_KEY_LENGTH = 512;
@@ -311,6 +314,10 @@ function qwenEndpoint(workspaceId: string, region: QwenRegion): string {
   return `https://${workspaceId}.${QWEN_REGION_HOSTS[region]}/compatible-mode/v1/chat/completions`;
 }
 
+function geminiEndpoint(modelId: string): string {
+  return `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(modelId)}:generateContent`;
+}
+
 function isImplementationActive(
   descriptor: AiProviderDescriptor | null,
 ): boolean {
@@ -335,7 +342,9 @@ export function resolveCandidateInsightConnection(
       connection: {
         provider,
         descriptor: AI_PROVIDER_CATALOG.candidateInsight.gemini,
-        endpoint: GEMINI_ENDPOINT,
+        endpoint: geminiEndpoint(
+          AI_PROVIDER_CATALOG.candidateInsight.gemini.modelId,
+        ),
         apiKey,
       },
     };
@@ -468,7 +477,9 @@ export function resolveBroadcastTranscriptConnection(
       connection: {
         provider,
         descriptor: AI_PROVIDER_CATALOG.broadcastTranscript.gemini,
-        endpoint: GEMINI_ENDPOINT,
+        endpoint: geminiEndpoint(
+          AI_PROVIDER_CATALOG.broadcastTranscript.gemini.modelId,
+        ),
         apiKey,
       },
     };
@@ -497,6 +508,26 @@ export function resolveBroadcastTranscriptConnection(
       region,
     },
   };
+}
+
+/**
+ * Resolves the one alternate ASR provider. The Worker applies this only to
+ * explicit failures that are safe to replay; ambiguous duration-billed
+ * timeouts never call this route.
+ */
+export function resolveBroadcastTranscriptFallbackConnection(
+  environment: AiProviderEnvironment,
+  primaryProvider: Exclude<BroadcastTranscriptProviderId, "disabled">,
+): Exclude<BroadcastTranscriptConnection, { readonly provider: "disabled" }> | null {
+  if (!isBoundedAiProviderFallbackEnabled(environment)) return null;
+  const fallbackProvider = primaryProvider === "qwen" ? "gemini" : "qwen";
+  const resolution = resolveBroadcastTranscriptConnection({
+    ...environment,
+    BROADCAST_TRANSCRIPT_PROVIDER: fallbackProvider,
+  });
+  return resolution.ok && resolution.connection.provider !== "disabled"
+    ? resolution.connection
+    : null;
 }
 
 /**
@@ -533,6 +564,14 @@ export function createAiProviderReadinessManifest(
     : transcriptProvider === "qwen"
       ? AI_PROVIDER_CATALOG.broadcastTranscript.qwen
       : null;
+  const geminiCandidateResolution = resolveCandidateInsightConnection({
+    ...environment,
+    CANDIDATE_INSIGHT_PROVIDER: "gemini",
+  });
+  const geminiTranscriptResolution = resolveBroadcastTranscriptConnection({
+    ...environment,
+    BROADCAST_TRANSCRIPT_PROVIDER: "gemini",
+  });
 
   return {
     schemaVersion: AI_PROVIDER_CONFIGURATION_VERSION,
@@ -566,6 +605,10 @@ export function createAiProviderReadinessManifest(
       configured: transcriptResolution.ok,
       active:
         transcriptResolution.ok && isImplementationActive(transcriptDescriptor),
+    },
+    geminiRoutes: {
+      candidateInsightConfigured: geminiCandidateResolution.ok,
+      broadcastTranscriptConfigured: geminiTranscriptResolution.ok,
     },
   };
 }

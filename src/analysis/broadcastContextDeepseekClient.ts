@@ -82,6 +82,9 @@ export async function requestBroadcastContextDeepseek(
           sourceDurationMs: request.sourceDurationMs,
           chapters: request.chapters,
           candidates: request.candidates,
+          ...(request.castRosterId === null
+            ? {}
+            : { castRosterId: request.castRosterId }),
           ...(options.analysisMode === undefined || options.analysisMode === "overview"
             ? {}
             : { analysisMode: options.analysisMode }),

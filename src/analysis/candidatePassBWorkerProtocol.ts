@@ -2,27 +2,33 @@ import type { CandidatePassBCastRosterId } from "./participantRoster";
 
 /** Provider-specific IDs plus the currently deployed default. */
 export const CANDIDATE_PASS_B_GEMINI_MODEL_ID = "gemini-3.6-flash" as const;
-export const CANDIDATE_PASS_B_PREVIOUS_GEMINI_MODEL_REVISION =
+export const CANDIDATE_PASS_B_OLDER_GEMINI_MODEL_REVISION =
   "gemini-3.6-flash-grounded-frames-v3-2026-07-22" as const;
-export const CANDIDATE_PASS_B_GEMINI_MODEL_REVISION =
+export const CANDIDATE_PASS_B_PREVIOUS_GEMINI_MODEL_REVISION =
   "gemini-3.6-flash-grounded-frames-cast-v4-2026-07-22" as const;
+export const CANDIDATE_PASS_B_GEMINI_MODEL_REVISION =
+  "gemini-3.6-flash-grounded-frames-cast-v5-2026-07-22" as const;
 export const CANDIDATE_PASS_B_LEGACY_GEMINI_MODEL_ID =
   "gemini-3.5-flash" as const;
 export const CANDIDATE_PASS_B_LEGACY_GEMINI_MODEL_REVISION =
   "gemini-3.5-flash-grounded-frames-v2-2026-07-22" as const;
 export const CANDIDATE_PASS_B_QWEN_MODEL_ID = "qwen3.5-omni-flash" as const;
-export const CANDIDATE_PASS_B_PREVIOUS_QWEN_MODEL_REVISION =
+export const CANDIDATE_PASS_B_OLDER_QWEN_MODEL_REVISION =
   "qwen3.5-omni-flash-grounded-frames-v2-2026-07-22" as const;
-export const CANDIDATE_PASS_B_QWEN_MODEL_REVISION =
+export const CANDIDATE_PASS_B_PREVIOUS_QWEN_MODEL_REVISION =
   "qwen3.5-omni-flash-grounded-frames-cast-v3-2026-07-22" as const;
+export const CANDIDATE_PASS_B_QWEN_MODEL_REVISION =
+  "qwen3.5-omni-flash-grounded-frames-cast-v4-2026-07-22" as const;
 export const CANDIDATE_PASS_B_MODEL_ID = CANDIDATE_PASS_B_QWEN_MODEL_ID;
 export const CANDIDATE_PASS_B_MODEL_REVISION = CANDIDATE_PASS_B_QWEN_MODEL_REVISION;
 export const CANDIDATE_PASS_B_ROUTING_MODEL_ID =
   "exclipper-candidate-perception-route" as const;
 export const CANDIDATE_PASS_B_PREVIOUS_ROUTING_MODEL_REVISION =
+  "qwen3.5-omni-flash_then_gemini-3.6-flash_bounded-cast-v4" as const;
+export const CANDIDATE_PASS_B_OLDER_ROUTING_MODEL_REVISION =
   "qwen3.5-omni-flash_then_gemini-3.6-flash_bounded-v3" as const;
 export const CANDIDATE_PASS_B_ROUTING_MODEL_REVISION =
-  "qwen3.5-omni-flash_then_gemini-3.6-flash_bounded-cast-v4" as const;
+  "qwen3.5-omni-flash_then_gemini-3.6-flash_bounded-cast-v5" as const;
 export const CANDIDATE_PASS_B_LEGACY_ROUTING_MODEL_REVISION =
   "qwen3.5-omni-flash_then_gemini-3.5-flash_bounded-v2" as const;
 
@@ -32,10 +38,12 @@ export function isCompatibleCandidatePassBRoutingModelRevision(
 ): value is
   | typeof CANDIDATE_PASS_B_ROUTING_MODEL_REVISION
   | typeof CANDIDATE_PASS_B_PREVIOUS_ROUTING_MODEL_REVISION
+  | typeof CANDIDATE_PASS_B_OLDER_ROUTING_MODEL_REVISION
   | typeof CANDIDATE_PASS_B_LEGACY_ROUTING_MODEL_REVISION {
   return (
     value === CANDIDATE_PASS_B_ROUTING_MODEL_REVISION ||
     value === CANDIDATE_PASS_B_PREVIOUS_ROUTING_MODEL_REVISION ||
+    value === CANDIDATE_PASS_B_OLDER_ROUTING_MODEL_REVISION ||
     value === CANDIDATE_PASS_B_LEGACY_ROUTING_MODEL_REVISION
   );
 }

@@ -1,5 +1,16 @@
 # Development Log
 
+## 2026-07-22 `0.3.38` 교환학생 출연진 전체 맥락·Gemini 경로 보강
+
+- 사용자 확인에 따라 교환학생 방송의 출연진 정답을 `세라 교수님`, `아모레또`, `유레카`, `세나 아르벨`, `토로리 코코`, `망징이`로 고정하고 기존 `교수님` 표기를 `세라 교수님`으로 교정했다. 짧은 호칭은 canonical 이름으로 정규화하되 음성 유사도만으로 화자를 단정하지 않는다.
+- 기존 구현은 후보별 대표 화면 분석에만 닫힌 출연진 자료를 사용했고 전체 방송 맥락 요청에는 roster가 없었다. roster v2를 해당 치지직 다시보기 번호 또는 고유 제목에만 연결하고, overview·주제 discovery·최종 jury·정밀 refinement 전 단계가 같은 서버 고정 roster ID를 사용하도록 확장했다. Worker prompt에는 이름·역할·안전한 호칭만 넣고 외형 자료는 전체 텍스트 맥락에 보내지 않는다.
+- Cloudflare production에는 `GEMINI_API_KEY`와 `QWEN_API_KEY` Secret 이름이 모두 존재함을 값 노출 없이 확인했다. 후보 모델 ID에 묶인 단일 Gemini endpoint를 후보·대사 역할별 endpoint 구성으로 분리하고, `/healthz`가 키·workspace·endpoint 없이 두 Gemini 역할의 준비 boolean을 보고하도록 provider manifest를 `1.2.0`으로 올렸다.
+- 오류별 대체는 한 번으로 제한한다. 후보 해석은 provider 간, 전체 맥락은 Qwen 3.7/3.6 간 기존 bounded 전환을 유지한다. 긴 대사 분석은 명시적인 429·인증·404·5xx 응답에서만 Qwen↔Gemini를 한 번 전환하고, 이미 과금됐을 수 있는 timeout·network 단절·성공 후 malformed 응답과 공통 입력 오류는 자동 재전송하지 않는다.
+- GitHub review는 canonical 후보를 삭제하지 않는 projection 무결성, 사용자 판단 우선, 저장 결과 복구와 coverage 의미 구분을 계속 수용했다. 전면 state machine·진단 UI·단일 Runtime Manifest 재구성은 회귀 범위가 커 이번 패치에서는 보류했고, PR 강제 절차는 저장소 소유자가 이 세션에 main 배포를 명시적으로 허용한 운영 방식과 충돌해 적용하지 않았다.
+- roster·protocol·prompt·client·provider·Worker 단위 회귀 105개가 먼저 통과했다. 최종 release gate는 strict TypeScript, ESLint warning 0, 71 test files / 759 tests, production Vite build, Wrangler dry-run을 모두 통과했다. 메인 번들은 615.51 kB (178.01 kB gzip), CSS는 84.99 kB, Worker upload은 204.87 KiB (39.58 KiB gzip)다.
+- 기존 Cloudflare `GEMINI_API_KEY` 값은 준비 검사에서 유효하지 않았다. Google Cloud의 세 번째 `Eurekasong` 프로젝트에서 `사용 가능`으로 표시된 키만 값 노출 없이 `gemini-3.6-flash` 최소 호출 200을 확인했고, 이 키만 Cloudflare Secret으로 교체했다. AI Studio에 보이던 나머지 두 키는 401이어서 사용하지 않았다.
+- 잠시 Gemini를 production primary로 올린 10초 canonical WAV smoke에서 후보 화면·오디오 해석과 방송 대사 전사가 모두 HTTP 200, `gemini-3.6-flash`, fallback `false`, 한국어 출력으로 통과했다. 최종 Worker `82a60039-b605-464a-9dd1-fe640c1f9b0a`는 평상시 기본값을 Qwen/Qwen/Qwen으로 복구했고, 두 Gemini 역할 readiness는 모두 `true`다.
+
 ## 2026-07-22 `0.3.37` truthful context recovery and coverage-aware timeline
 
 - Accepted the narrow integrity portion of the GitHub context-pipeline review: a saved run that never produced whole-broadcast context must not be presented as an AI-confirmed `0 topics / 0 leads` result, and coverage gaps must not be interpreted as uneventful time.
@@ -1202,3 +1213,10 @@
 - 12시간 입력을 모든 10분 셀에서 고르게 표본화하고 사건 주변을 보강하면서 ASR `$0.42`, 의미 lead 재확인 `$0.03`, 전체 정책 약 `$0.997`의 상한을 적용했다.
 - 전체 문맥 계약은 0개 후보를 정상으로 허용하고 음악·노래·MV·오프닝·엔딩·쉬는 화면을 선택하지 않으며, 기존 후보 밖의 사과·조용한 성취·설정 회수 lead를 chapter ID에 근거해 제안하도록 제한했다.
 - transcript/context/refinement 유료 결과를 입력 서명·model revision과 함께 IndexedDB에 저장하고 readback 검증 뒤 재사용한다. 의미 후보의 저장된 Gemini 결과도 복구 초기에 보존해 새로고침 뒤 같은 후보를 재과금하지 않는다.
+## 2026-07-22 — `0.3.38` 교환학생 출연진 전체 맥락·Gemini 경로 보강 착수
+
+- 사용자 확인에 따라 교환학생 방송의 출연진 정답을 `세라 교수님`, `아모레또`, `유레카`, `세나 아르벨`, `토로리 코코`, `망징이`로 고정하고, 기존 `교수님` 표기를 `세라 교수님`으로 교정하기로 했다.
+- 기존 구현은 후보별 대표 화면 분석에만 닫힌 출연진 자료를 사용했고 전체 방송 맥락 요청에는 roster가 없었다. 이번 변경은 같은 방송 경계 안에서만 roster ID를 전체 맥락 overview·topic discovery·jury·refinement 전 단계에 전달하고, Worker가 canonical 이름과 안전한 호칭만 prompt로 확장한다.
+- Cloudflare production에는 `GEMINI_API_KEY`와 `QWEN_API_KEY` Secret 이름이 모두 존재함을 값 노출 없이 확인했다. 단일 `GEMINI_ENDPOINT`가 후보 모델 ID에 묶인 채 Gemini 대사 경로에도 재사용되는 결합을 발견해 역할별 model endpoint로 분리한다.
+- GitHub review는 canonical 후보를 삭제하지 않는 projection 무결성, 사용자 판단 우선, 저장 결과 복구와 coverage 의미 구분을 계속 수용한다. 전면 state machine·진단 UI·단일 manifest 재구성은 회귀 범위가 커 이번 패치에서는 보류한다. 리뷰의 PR 강제 절차는 저장소 소유자가 이 세션에 main 배포를 명시적으로 허용한 운영 방식과 충돌하므로 적용하지 않는다.
+- 구현 전 계약: roster v2는 해당 방송에만 새 캐시 서명을 만들고 다른 방송의 유료 결과는 그대로 재사용한다. 오류별 fallback은 최대 한 번이며 결정적 입력 오류와 시간 과금 ASR timeout에는 적용하지 않는다. 구현·테스트·실제 최소 Gemini smoke·Worker/Pages 공개 검증 결과는 이 항목에 이어 기록한다.

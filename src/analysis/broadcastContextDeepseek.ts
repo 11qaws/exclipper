@@ -17,6 +17,7 @@ import {
   type BroadcastContextSemanticChapterKind,
   type BroadcastContextSemanticChapterSalience,
 } from "./broadcastContextProtocol";
+import { candidatePassBCastReferences } from "./participantRoster";
 
 export const BROADCAST_CONTEXT_DEEPSEEK_ENDPOINT =
   "https://api.deepseek.com/chat/completions" as const;
@@ -229,11 +230,27 @@ function formatDuration(ms: number): string {
   return `${hours.toString().padStart(2, "0")}:${minutes.toString().padStart(2, "0")}:${seconds.toString().padStart(2, "0")}`;
 }
 
+function buildBroadcastContextCastRosterBlock(
+  request: BroadcastContextRequest,
+): string {
+  const references = candidatePassBCastReferences(request.castRosterId);
+  if (references.length === 0) return "";
+  const rosterLines = references.map((reference) => {
+    const aliases = reference.aliasesKo.length === 0
+      ? ""
+      : ` / 실제 호칭·ASR 변형: ${reference.aliasesKo.join(", ")}`;
+    const role = reference.role === "streamer" ? "진행 스트리머" : "게스트";
+    return `- ${reference.displayName} (${role}${aliases})`;
+  });
+  return `### 이 방송의 확인된 출연진(닫힌 명단)\n${rosterLines.join("\n")}\n이 명단은 입력 대사의 고유명사 표기와 이미 근거가 있는 관계 맥락을 교정하는 데만 사용하세요. 호칭·ASR 변형은 위 canonical 전체 이름으로 쓰되, 목소리 느낌만으로 발화자를 정하거나 해당 장면에 있었다고 추측하지 마세요. 챕터 대사·화면 이름·실제 호명·이미 근거화된 후보 설명이 뒷받침하지 않으면 주체를 특정하지 말고, 목록 밖 인물을 만들어내지 마세요.\n\n`;
+}
+
 export function buildBroadcastContextDeepseekRequestBody(
   request: BroadcastContextRequest,
   model: string = "deepseek-v4-pro",
 ): BroadcastContextDeepseekRequestBody {
   let userContent = `총 방송 길이: ${formatDuration(request.sourceDurationMs)}\n\n`;
+  userContent += buildBroadcastContextCastRosterBlock(request);
   userContent += `### 방송 챕터 요약 (시간순)\n`;
   for (const chapter of request.chapters) {
     userContent += `- [${formatDuration(chapter.startMs)} ~ ${formatDuration(chapter.endMs)}] (ID: ${chapter.chapterId}, 근거: ${chapter.evidenceMode}, 커버리지: ${Math.round(chapter.evidenceCoverageRatio * 100)}%): ${chapter.summaryKo}\n`;
@@ -270,7 +287,9 @@ export function buildBroadcastContextQwenRequestBody(
   model = "qwen3.7-plus",
   mode: BroadcastContextQwenMode = "overview",
 ): BroadcastContextQwenRequestBody {
-  let userContent = `총 방송 길이: ${formatDuration(request.sourceDurationMs)}\n\n### 시간순 대사 챕터\n`;
+  let userContent = `총 방송 길이: ${formatDuration(request.sourceDurationMs)}\n\n`;
+  userContent += buildBroadcastContextCastRosterBlock(request);
+  userContent += "### 시간순 대사 챕터\n";
   for (const chapter of request.chapters) {
     userContent += `- ${chapter.chapterId} [${formatDuration(chapter.startMs)}~${formatDuration(chapter.endMs)} / ${chapter.evidenceMode} / 근거 ${Math.round(chapter.evidenceCoverageRatio * 100)}%]: ${chapter.summaryKo}\n`;
   }

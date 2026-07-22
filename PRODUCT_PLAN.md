@@ -2438,3 +2438,14 @@ YouTube IFrame이 요구하는 Referer를 유지하고 `strict-origin-when-cross
 - `gemini-3.6-flash`는 후보 오디오·영상 지각 대체 경로와 맥락이 어려운 최대 3개 후보의 고급 재판정 대체 역할로 제한한다. 유효한 Google credential과 동일 회귀 검증이 없으면 자동 호출하지 않는다.
 - `deepseek-v4-pro`는 압축 텍스트 문맥의 비상 대체 경로다. 오디오·영상 원본을 직접 맡기지 않고 기본 자동 재시도로도 사용하지 않아 중복 과금을 막는다.
 - 현재 배포 기본값은 후보 지각·전사 `Qwen 3.5 Omni Flash`, 전체 문맥·의미 재확인 `Qwen 3.7 Plus`다. 모델별 결과는 provider·model revision을 포함해 분석 세션에 분리 저장하므로 다른 모델의 캐시로 가장하거나 새로고침 때 다시 결제하지 않는다.
+
+## 26. `0.3.38` 교환학생 출연진 맥락과 Gemini 운영 가시성
+
+- 치지직 다시보기 `13996057` 또는 `교환학생·합격생·장학생`이 함께 들어간 고유 제목에만 닫힌 출연진 명단을 연결한다. 명단의 canonical 이름은 `세라 교수님`, `아모레또`, `유레카`, `세나 아르벨`, `토로리 코코`, `망징이` 여섯 명이며 다른 방송에는 절대 전파하지 않는다.
+- 후보 화면·오디오 분석은 등록 출연진의 외형 특징이 한 화면에서 두 가지 이상 일치하거나 화면 이름·실제 호명이 있는 경우에만 이름을 붙인다. 짧은 호칭과 ASR 표기 흔들림은 canonical 이름으로 정규화하지만, 목소리 느낌만으로 발화자를 추측하지 않는다.
+- 방송 전체 맥락 분석에도 같은 서버 고정 roster ID를 전달한다. 전체 맥락 모델은 명단을 고유명사·관계 맥락 교정에만 사용하고, 각 장면에 실제로 누가 있었거나 누가 말했는지는 입력 챕터와 이미 근거화된 후보 정보가 없으면 단정하지 않는다.
+- roster ID는 사용자 자유 입력 prompt가 아니라 서버가 아는 닫힌 enum이다. 원본 파일명은 Worker로 보내지 않고, 클라이언트는 해당 방송에 매칭된 고정 ID만 전달하며 Worker가 실제 명단을 확장한다.
+- `GEMINI_API_KEY`는 Cloudflare Secret 한 개를 후보 멀티모달 해석과 Gemini 방송 대사 경로가 함께 사용한다. 두 역할의 endpoint는 각 역할의 model ID에서 별도로 구성해 향후 모델이 달라져도 잘못 결합되지 않게 한다.
+- `/healthz`에는 키·workspace·endpoint를 제외한 provider 선택값, 공개 model revision, Gemini 후보·대사 경로의 준비 boolean만 노출한다. 운영자는 Secret 값을 보지 않고도 배포 연결 상태를 확인할 수 있다.
+- 오류별 대체는 한 번으로 제한한다. 후보는 timeout·일시 장애·한도·인증·model unavailable·응답 형식 실패에서 다른 provider로, 전체 맥락은 동일 범주의 model 실패에서 Qwen 3.7/3.6 사이로만 전환한다. 시간 과금 ASR은 명시적인 429·인증·404·5xx 응답에서만 Qwen↔Gemini로 전환하고, 잘못된 공통 입력·정책 거절·모호한 timeout·network 단절·성공 후 malformed 응답은 중복 과금 위험 때문에 자동 재전송하지 않는다.
+- GitHub review의 Candidate Ledger 보존, 사람 판단 우선, coverage gap과 `no issue` 구분, 구버전 결과 복구 원칙은 계속 수용한다. App orchestration 전면 state machine 분리와 Runtime Manifest 전체 통합은 별도 migration 작업으로 유지한다.

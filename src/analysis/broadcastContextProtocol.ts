@@ -1,4 +1,9 @@
-export const BROADCAST_CONTEXT_SCHEMA_VERSION = "1.4.0" as const;
+import {
+  isCandidatePassBCastRosterId,
+  type CandidatePassBCastRosterId,
+} from "./participantRoster";
+
+export const BROADCAST_CONTEXT_SCHEMA_VERSION = "1.5.0" as const;
 export const MAX_BROADCAST_CONTEXT_SOURCE_DURATION_MS = 12 * 60 * 60_000;
 export const MAX_BROADCAST_CONTEXT_CHAPTERS = 144;
 export const MAX_BROADCAST_CONTEXT_CANDIDATES = 32;
@@ -38,6 +43,8 @@ export interface BroadcastContextRequestInput {
   readonly sourceDurationMs: number;
   readonly chapters: readonly BroadcastContextChapterInput[];
   readonly candidates: readonly BroadcastContextCandidateInput[];
+  /** Server-known closed roster only; arbitrary prompt text is never accepted. */
+  readonly castRosterId?: CandidatePassBCastRosterId;
 }
 
 export interface BroadcastContextRequest {
@@ -45,6 +52,7 @@ export interface BroadcastContextRequest {
   readonly sourceDurationMs: number;
   readonly chapters: readonly BroadcastContextChapterInput[];
   readonly candidates: readonly BroadcastContextCandidateInput[];
+  readonly castRosterId: CandidatePassBCastRosterId | null;
 }
 
 export type BroadcastContextCandidateCategory =
@@ -151,6 +159,7 @@ export interface BroadcastContextCoverage {
 export interface BroadcastContextResult {
   readonly schemaVersion:
     | typeof BROADCAST_CONTEXT_SCHEMA_VERSION
+    | "1.4.0"
     | "1.2.0"
     | "1.1.0"
     | "1.0.0";
@@ -192,6 +201,7 @@ export type BroadcastContextInputErrorCode =
   | "INVALID_RANGE"
   | "OVERLAPPING_CHAPTERS"
   | "INVALID_TEXT"
+  | "INVALID_CAST_ROSTER"
   | "INVALID_SEMANTIC_CHAPTER";
 
 export class BroadcastContextInputError extends Error {
@@ -292,6 +302,15 @@ function assertUniqueIdentifiers(
 export function createBroadcastContextRequest(
   input: BroadcastContextRequestInput,
 ): BroadcastContextRequest {
+  if (
+    input.castRosterId !== undefined &&
+    !isCandidatePassBCastRosterId(input.castRosterId)
+  ) {
+    throw new BroadcastContextInputError(
+      "INVALID_CAST_ROSTER",
+      "Broadcast context cast roster must be a server-known identifier.",
+    );
+  }
   if (
     !Number.isSafeInteger(input.sourceDurationMs) ||
     input.sourceDurationMs <= 0 ||
@@ -415,6 +434,7 @@ export function createBroadcastContextRequest(
     sourceDurationMs: input.sourceDurationMs,
     chapters,
     candidates,
+    castRosterId: input.castRosterId ?? null,
   };
 }
 

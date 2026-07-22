@@ -4,7 +4,7 @@ import {
 } from "./broadcastContextSamplingPlan";
 import { MAX_BROADCAST_TRANSCRIPT_WORKER_CHUNKS } from "./broadcastTranscriptWorkerProtocol";
 
-export const AI_MODEL_ROUTING_POLICY_VERSION = "1.9.0" as const;
+export const AI_MODEL_ROUTING_POLICY_VERSION = "1.10.0" as const;
 /** Candidate fallback upgrades must not invalidate already-paid Qwen context results. */
 export const AI_BROADCAST_CONTEXT_ROUTING_REVISION = "1.8.0" as const;
 

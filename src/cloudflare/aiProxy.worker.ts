@@ -62,13 +62,16 @@ import {
   QWEN_CONTEXT_MODEL_REVISION,
   QWEN_CONTEXT_DISCOVERY_MODEL_ID,
   QWEN_CONTEXT_DISCOVERY_MODEL_REVISION,
+  createAiProviderReadinessManifest,
   isBoundedAiProviderFallbackEnabled,
   resolveCandidateInsightFallbackConnection,
   resolveCandidateInsightConnection,
   resolveBroadcastContextConnection,
+  resolveBroadcastTranscriptFallbackConnection,
   resolveBroadcastTranscriptConnection,
   type AiProviderEnvironment,
   type BroadcastContextConnection,
+  type BroadcastTranscriptConnection,
   type CandidateInsightConnection,
   type CandidateInsightProviderId,
 } from "./aiProviderConfiguration";
@@ -663,7 +666,10 @@ function successResponse(
   return new Response(JSON.stringify(payload), { status: 200, headers });
 }
 
-function healthResponse(request: Request): Response {
+function healthResponse(
+  request: Request,
+  environment: AiProviderEnvironment,
+): Response {
   const headers = new Headers({
     "Cache-Control": "no-store",
     "Content-Type": JSON_CONTENT_TYPE,
@@ -677,6 +683,7 @@ function healthResponse(request: Request): Response {
         version: 2,
         routingPolicyVersion: AI_PROVIDER_ROUTING_POLICY_VERSION,
         contextModelRevision: QWEN_CONTEXT_MODEL_REVISION,
+        providers: createAiProviderReadinessManifest(environment),
       });
   return new Response(body, { status: 200, headers });
 }
@@ -990,7 +997,7 @@ export async function handleCandidateInsightRequest(
 
   if (url.pathname === HEALTH_PATH && url.search === "") {
     if (request.method === "GET" || request.method === "HEAD") {
-      return healthResponse(request);
+      return healthResponse(request, environment);
     }
     return jsonResponse(
       405,
@@ -1253,6 +1260,182 @@ export async function handleCandidateInsightRequest(
   });
 }
 
+type ActiveBroadcastTranscriptConnection = Exclude<
+  BroadcastTranscriptConnection,
+  { readonly provider: "disabled" }
+>;
+
+type BroadcastTranscriptProviderFailureKind =
+  | "timeout"
+  | "network"
+  | "rate-limited"
+  | "auth"
+  | "model-unavailable"
+  | "server-error"
+  | "payload-too-large"
+  | "response-format"
+  | "invalid-argument"
+  | "rejected"
+  | "invalid-response";
+
+type BroadcastTranscriptProviderAttempt =
+  | {
+      readonly ok: true;
+      readonly result: BroadcastTranscriptQwenResult;
+      readonly connection: ActiveBroadcastTranscriptConnection;
+    }
+  | {
+      readonly ok: false;
+      readonly kind: BroadcastTranscriptProviderFailureKind;
+    };
+
+function shouldAttemptBroadcastTranscriptProviderFallback(
+  kind: BroadcastTranscriptProviderFailureKind,
+): boolean {
+  return (
+    kind === "rate-limited" ||
+    kind === "auth" ||
+    kind === "model-unavailable" ||
+    kind === "server-error"
+  );
+}
+
+async function attemptBroadcastTranscriptProvider(
+  connection: ActiveBroadcastTranscriptConnection,
+  transcriptRequest: NonNullable<
+    ReturnType<typeof parseBroadcastTranscriptQwenProxyRequest>
+  >,
+  fetchImplementation: FetchImplementation,
+  timeoutMs: number,
+): Promise<BroadcastTranscriptProviderAttempt> {
+  let upstreamBody: string;
+  try {
+    upstreamBody = JSON.stringify(
+      connection.provider === "gemini"
+        ? buildBroadcastTranscriptGeminiRequestBody(transcriptRequest.audioBase64)
+        : buildBroadcastTranscriptQwenOmniRequestBody(transcriptRequest.audioBase64),
+    );
+  } catch {
+    return { ok: false, kind: "invalid-argument" };
+  }
+
+  let upstreamResponse: Response;
+  try {
+    upstreamResponse = await fetchWithTimeout(
+      fetchImplementation,
+      connection.endpoint,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(connection.provider === "gemini"
+            ? { "x-goog-api-key": connection.apiKey }
+            : { Authorization: `Bearer ${connection.apiKey}` }),
+        },
+        body: upstreamBody,
+        cache: "no-store",
+        credentials: "omit",
+        referrerPolicy: "no-referrer",
+      },
+      timeoutMs,
+    );
+  } catch (error) {
+    return {
+      ok: false,
+      kind: error instanceof UpstreamTimeoutError ? "timeout" : "network",
+    };
+  }
+
+  if (!upstreamResponse.ok) {
+    if (connection.provider === "qwen") {
+      const providerCode = await readSafeProviderErrorCode(upstreamResponse);
+      console.error("broadcast_transcript_upstream_rejected", {
+        status: upstreamResponse.status,
+        providerCode,
+      });
+    } else if (upstreamResponse.status === 400) {
+      const rejection = await classifyUpstreamRejection(upstreamResponse);
+      if (rejection === "api-key") return { ok: false, kind: "auth" };
+      if (rejection === "response-format") {
+        return { ok: false, kind: "response-format" };
+      }
+      if (rejection === "invalid-argument") {
+        return { ok: false, kind: "invalid-argument" };
+      }
+      return { ok: false, kind: "rejected" };
+    } else {
+      await upstreamResponse.body?.cancel().catch(() => undefined);
+    }
+    if (upstreamResponse.status === 401 || upstreamResponse.status === 403) {
+      return { ok: false, kind: "auth" };
+    }
+    if (upstreamResponse.status === 404) {
+      return { ok: false, kind: "model-unavailable" };
+    }
+    if (upstreamResponse.status === 413) {
+      return { ok: false, kind: "payload-too-large" };
+    }
+    if (upstreamResponse.status === 429) {
+      return { ok: false, kind: "rate-limited" };
+    }
+    if (upstreamResponse.status >= 500 && upstreamResponse.status <= 599) {
+      return { ok: false, kind: "server-error" };
+    }
+    return { ok: false, kind: "rejected" };
+  }
+
+  let result: BroadcastTranscriptQwenResult | null;
+  try {
+    const bytes = await readBodyWithLimit(
+      upstreamResponse.body,
+      MAX_BROADCAST_TRANSCRIPT_QWEN_RESPONSE_BYTES,
+    );
+    const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    bytes.fill(0);
+    result = connection.provider === "gemini"
+      ? extractBroadcastTranscriptGeminiResponse(JSON.parse(text), transcriptRequest)
+      : extractBroadcastTranscriptQwenOmniSseResponse(text, transcriptRequest);
+  } catch {
+    return { ok: false, kind: "invalid-response" };
+  }
+  return result === null
+    ? { ok: false, kind: "invalid-response" }
+    : { ok: true, result, connection };
+}
+
+function broadcastTranscriptProviderFailureResponse(
+  kind: BroadcastTranscriptProviderFailureKind,
+  origin: string,
+  additionalHeaders?: Readonly<Record<string, string>>,
+): Response {
+  switch (kind) {
+    case "timeout":
+      return jsonResponse(504, "UPSTREAM_TIMEOUT", "방송 대사 분석 응답을 받지 못했어요.", origin, additionalHeaders);
+    case "network":
+    case "server-error":
+      return jsonResponse(502, "UPSTREAM_UNAVAILABLE", "방송 대사 분석 응답을 받지 못했어요.", origin, additionalHeaders);
+    case "rate-limited":
+      return jsonResponse(429, "UPSTREAM_RATE_LIMITED", "방송 대사 분석 요청을 처리하지 못했어요.", origin, {
+        "Retry-After": "60",
+        ...additionalHeaders,
+      });
+    case "auth":
+      return jsonResponse(503, "PROXY_NOT_CONFIGURED", "방송 대사 분석 연결 설정을 확인해야 해요.", origin, additionalHeaders);
+    case "model-unavailable":
+      return jsonResponse(502, "UPSTREAM_MODEL_NOT_FOUND", "방송 대사 분석 모델을 찾지 못했어요.", origin, additionalHeaders);
+    case "payload-too-large":
+      return jsonResponse(502, "UPSTREAM_PAYLOAD_TOO_LARGE", "방송 대사 분석 조각이 모델의 허용 크기를 넘었어요.", origin, additionalHeaders);
+    case "response-format":
+      return jsonResponse(502, "UPSTREAM_RESPONSE_FORMAT_REJECTED", "방송 대사 응답 형식 설정을 확인해야 해요.", origin, additionalHeaders);
+    case "invalid-argument":
+      return jsonResponse(502, "UPSTREAM_INVALID_ARGUMENT", "AI가 방송 대사 분석 요청을 받아들이지 않았어요.", origin, additionalHeaders);
+    case "rejected":
+      return jsonResponse(502, "UPSTREAM_REJECTED", "방송 대사 분석 요청을 처리하지 못했어요.", origin, additionalHeaders);
+    case "invalid-response":
+      return jsonResponse(502, "UPSTREAM_INVALID_RESPONSE", "방송 대사 분석 응답을 안전하게 확인하지 못했어요.", origin, additionalHeaders);
+  }
+}
+
 
 export async function handleBroadcastTranscriptRequest(
   request: Request,
@@ -1288,9 +1471,43 @@ export async function handleBroadcastTranscriptRequest(
   }
 
   const providerResolution = resolveBroadcastTranscriptConnection(environment);
+  const requestedProvider =
+    environment.BROADCAST_TRANSCRIPT_PROVIDER === "gemini" ||
+    environment.BROADCAST_TRANSCRIPT_PROVIDER === "qwen"
+      ? environment.BROADCAST_TRANSCRIPT_PROVIDER
+      : null;
+  let providerConnection: ActiveBroadcastTranscriptConnection;
+  let configurationFallbackUsed = false;
+  if (providerResolution.ok && providerResolution.connection.provider !== "disabled") {
+    providerConnection = providerResolution.connection;
+  } else if (
+    !providerResolution.ok &&
+    providerResolution.code === "MISSING_CREDENTIALS" &&
+    requestedProvider !== null
+  ) {
+    const fallbackConnection = resolveBroadcastTranscriptFallbackConnection(
+      environment,
+      requestedProvider,
+    );
+    if (fallbackConnection === null) {
+      return jsonResponse(
+        503,
+        "PROXY_NOT_CONFIGURED",
+        "방송 대사 분석 연결을 준비하지 못했어요.",
+        origin,
+      );
+    }
+    providerConnection = fallbackConnection;
+    configurationFallbackUsed = true;
+  } else {
+    return jsonResponse(
+      503,
+      "PROXY_NOT_CONFIGURED",
+      "방송 대사 분석 연결을 준비하지 못했어요.",
+      origin,
+    );
+  }
   if (
-    !providerResolution.ok ||
-    providerResolution.connection.provider === "disabled" ||
     environment.RATE_LIMITER === undefined ||
     environment.IP_RATE_LIMITER === undefined
   ) {
@@ -1301,7 +1518,6 @@ export async function handleBroadcastTranscriptRequest(
       origin,
     );
   }
-  const providerConnection = providerResolution.connection;
 
   const declaredLength = request.headers.get("Content-Length");
   if (
@@ -1406,161 +1622,60 @@ export async function handleBroadcastTranscriptRequest(
     );
   }
 
-  let upstreamBody: string;
-  try {
-    upstreamBody = JSON.stringify(
-      providerConnection.provider === "gemini"
-        ? buildBroadcastTranscriptGeminiRequestBody(transcriptRequest.audioBase64)
-        : buildBroadcastTranscriptQwenOmniRequestBody(transcriptRequest.audioBase64),
+  const fetchImplementation = dependencies.fetchImplementation ?? fetch;
+  const timeoutMs = dependencies.upstreamTimeoutMs ?? UPSTREAM_TIMEOUT_MS;
+  const primaryAttempt = await attemptBroadcastTranscriptProvider(
+    providerConnection,
+    transcriptRequest,
+    fetchImplementation,
+    timeoutMs,
+  );
+  let finalAttempt = primaryAttempt;
+  let fallbackUsed = configurationFallbackUsed;
+  let primaryFailureKind: BroadcastTranscriptProviderFailureKind | null =
+    configurationFallbackUsed ? "auth" : null;
+  if (
+    !configurationFallbackUsed &&
+    !primaryAttempt.ok &&
+    shouldAttemptBroadcastTranscriptProviderFallback(primaryAttempt.kind)
+  ) {
+    const fallbackConnection = resolveBroadcastTranscriptFallbackConnection(
+      environment,
+      providerConnection.provider,
     );
-  } catch {
-    return jsonResponse(
-      400,
-      "INVALID_AUDIO",
-      "방송 오디오 조각의 인코딩을 확인해 주세요.",
-      origin,
-    );
-  }
-
-  // ASR is duration-billed. Do not automatically replay an ambiguous timeout,
-  // because the first request may already have completed and been charged.
-  let upstreamResponse: Response;
-  try {
-    upstreamResponse = await fetchWithTimeout(
-      dependencies.fetchImplementation ?? fetch,
-      providerConnection.endpoint,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...(providerConnection.provider === "gemini"
-            ? { "x-goog-api-key": providerConnection.apiKey }
-            : { Authorization: `Bearer ${providerConnection.apiKey}` }),
-        },
-        body: upstreamBody,
-        cache: "no-store",
-        credentials: "omit",
-        referrerPolicy: "no-referrer",
-      },
-      dependencies.upstreamTimeoutMs ?? UPSTREAM_TIMEOUT_MS,
-    );
-  } catch (error) {
-    return jsonResponse(
-      error instanceof UpstreamTimeoutError ? 504 : 502,
-      error instanceof UpstreamTimeoutError
-        ? "UPSTREAM_TIMEOUT"
-        : "UPSTREAM_UNAVAILABLE",
-      "방송 대사 분석 응답을 받지 못했어요.",
-      origin,
-    );
-  }
-  if (!upstreamResponse.ok) {
-    if (providerConnection.provider === "qwen") {
-      const providerCode = await readSafeProviderErrorCode(upstreamResponse);
-      console.error("broadcast_transcript_upstream_rejected", {
-        status: upstreamResponse.status,
-        providerCode,
-      });
-    } else if (upstreamResponse.status === 400) {
-      const rejection = await classifyUpstreamRejection(upstreamResponse);
-      if (rejection === "api-key") {
-        return jsonResponse(
-          503,
-          "PROXY_NOT_CONFIGURED",
-          "방송 대사 분석 연결 설정을 확인해야 해요.",
-          origin,
-        );
-      }
-      if (rejection === "response-format") {
-        return jsonResponse(
-          502,
-          "UPSTREAM_RESPONSE_FORMAT_REJECTED",
-          "방송 대사 응답 형식 설정을 확인해야 해요.",
-          origin,
-        );
-      }
-      if (rejection === "invalid-argument") {
-        return jsonResponse(
-          502,
-          "UPSTREAM_INVALID_ARGUMENT",
-          "AI가 방송 대사 분석 요청을 받아들이지 않았어요.",
-          origin,
-        );
-      }
-    } else {
-      await upstreamResponse.body?.cancel().catch(() => undefined);
-    }
-    if (upstreamResponse.status === 401 || upstreamResponse.status === 403) {
-      return jsonResponse(
-        503,
-        "PROXY_NOT_CONFIGURED",
-        "방송 대사 분석 연결 설정을 확인해야 해요.",
-        origin,
-      );
-    }
-    if (upstreamResponse.status === 404) {
-      return jsonResponse(
-        502,
-        "UPSTREAM_MODEL_NOT_FOUND",
-        "방송 대사 분석 모델을 찾지 못했어요.",
-        origin,
-      );
-    }
-    if (upstreamResponse.status === 413) {
-      return jsonResponse(
-        502,
-        "UPSTREAM_PAYLOAD_TOO_LARGE",
-        "방송 대사 분석 조각이 모델의 허용 크기를 넘었어요.",
-        origin,
-      );
-    }
-    return jsonResponse(
-      upstreamResponse.status === 429 ? 429 : 502,
-      upstreamResponse.status === 429
-        ? "UPSTREAM_RATE_LIMITED"
-        : "UPSTREAM_REJECTED",
-      "방송 대사 분석 요청을 처리하지 못했어요.",
-      origin,
-      upstreamResponse.status === 429 ? { "Retry-After": "60" } : undefined,
-    );
-  }
-
-  let result: BroadcastTranscriptQwenResult | null;
-  try {
-    const bytes = await readBodyWithLimit(
-      upstreamResponse.body,
-      MAX_BROADCAST_TRANSCRIPT_QWEN_RESPONSE_BYTES,
-    );
-    const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-    bytes.fill(0);
-    if (providerConnection.provider === "gemini") {
-      result = extractBroadcastTranscriptGeminiResponse(
-        JSON.parse(text),
+    if (fallbackConnection !== null) {
+      fallbackUsed = true;
+      primaryFailureKind = primaryAttempt.kind;
+      finalAttempt = await attemptBroadcastTranscriptProvider(
+        fallbackConnection,
         transcriptRequest,
-      );
-    } else {
-      result = extractBroadcastTranscriptQwenOmniSseResponse(
-        text,
-        transcriptRequest,
+        fetchImplementation,
+        timeoutMs,
       );
     }
-  } catch {
-    return jsonResponse(
-      502,
-      "UPSTREAM_INVALID_RESPONSE",
-      "방송 대사 분석 응답을 안전하게 확인하지 못했어요.",
+  }
+  if (!finalAttempt.ok) {
+    return broadcastTranscriptProviderFailureResponse(
+      finalAttempt.kind,
       origin,
+      primaryFailureKind === null || !fallbackUsed
+        ? undefined
+        : {
+            [EXCLIPPER_PRIMARY_FAILURE_HEADER]: primaryFailureKind,
+            [EXCLIPPER_FALLBACK_FAILURE_HEADER]: finalAttempt.kind,
+          },
     );
   }
-  if (result === null) {
-    return jsonResponse(
-      502,
-      "UPSTREAM_INVALID_RESPONSE",
-      "방송 대사 분석 응답 형식을 확인하지 못했어요.",
-      origin,
-    );
-  }
-  return successResponse(result, origin);
+  return successResponse(finalAttempt.result, origin, {
+    [CANDIDATE_PASS_B_RESPONSE_MODEL_ID_HEADER]:
+      finalAttempt.connection.descriptor.modelId,
+    [CANDIDATE_PASS_B_RESPONSE_MODEL_REVISION_HEADER]:
+      finalAttempt.connection.descriptor.modelRevision,
+    [CANDIDATE_PASS_B_RESPONSE_FALLBACK_HEADER]: fallbackUsed ? "true" : "false",
+    ...(primaryFailureKind === null || !fallbackUsed
+      ? {}
+      : { [EXCLIPPER_FALLBACK_REASON_HEADER]: primaryFailureKind }),
+  });
 }
 
 export async function handleYouTubeCaptionsRequest(

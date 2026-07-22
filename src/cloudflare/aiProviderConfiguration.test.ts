@@ -5,6 +5,7 @@ import {
   isBoundedAiProviderFallbackEnabled,
   resolveBroadcastContextConnection,
   resolveBroadcastTranscriptConnection,
+  resolveBroadcastTranscriptFallbackConnection,
   resolveCandidateInsightConnection,
   resolveCandidateInsightFallbackConnection,
 } from "./aiProviderConfiguration";
@@ -51,7 +52,7 @@ describe("aiProviderConfiguration", () => {
     expect(manifest.candidateInsight).toEqual({
       selectedProvider: "qwen",
       modelId: "qwen3.5-omni-flash",
-      modelRevision: "qwen3.5-omni-flash-grounded-frames-cast-v3-2026-07-22",
+      modelRevision: "qwen3.5-omni-flash-grounded-frames-cast-v4-2026-07-22",
       implementationStatus: "active",
       configured: true,
       active: true,
@@ -198,6 +199,28 @@ describe("aiProviderConfiguration", () => {
     });
   });
 
+  it("resolves one alternate transcript provider only in bounded mode", () => {
+    const environment = {
+      BROADCAST_TRANSCRIPT_PROVIDER: "qwen",
+      AI_PROVIDER_FALLBACK_MODE: "bounded",
+      QWEN_API_KEY: "qwen-secret",
+      GEMINI_API_KEY: "gemini-secret",
+    } as const;
+    expect(
+      resolveBroadcastTranscriptFallbackConnection(environment, "qwen"),
+    ).toMatchObject({
+      provider: "gemini",
+      descriptor: AI_PROVIDER_CATALOG.broadcastTranscript.gemini,
+      apiKey: "gemini-secret",
+    });
+    expect(
+      resolveBroadcastTranscriptFallbackConnection(
+        { ...environment, AI_PROVIDER_FALLBACK_MODE: "disabled" },
+        "qwen",
+      ),
+    ).toBeNull();
+  });
+
   it("never includes credentials or workspace IDs in the readiness manifest", () => {
     const serialized = JSON.stringify(
       createAiProviderReadinessManifest({
@@ -206,12 +229,28 @@ describe("aiProviderConfiguration", () => {
         QWEN_WORKSPACE_ID: "private-workspace",
         BROADCAST_CONTEXT_PROVIDER: "deepseek",
         DEEPSEEK_API_KEY: "deepseek-secret-never-return",
+        GEMINI_API_KEY: "gemini-secret-never-return",
       }),
     );
 
     expect(serialized).not.toContain("qwen-secret-never-return");
     expect(serialized).not.toContain("deepseek-secret-never-return");
+    expect(serialized).not.toContain("gemini-secret-never-return");
     expect(serialized).not.toContain("private-workspace");
     expect(serialized).not.toContain("endpoint");
+  });
+
+  it("reports both Gemini roles from one secret even when Qwen is selected", () => {
+    const manifest = createAiProviderReadinessManifest({
+      CANDIDATE_INSIGHT_PROVIDER: "qwen",
+      BROADCAST_TRANSCRIPT_PROVIDER: "qwen",
+      QWEN_API_KEY: "qwen-secret",
+      GEMINI_API_KEY: "shared-gemini-secret",
+    });
+    expect(manifest.schemaVersion).toBe("1.2.0");
+    expect(manifest.geminiRoutes).toEqual({
+      candidateInsightConfigured: true,
+      broadcastTranscriptConfigured: true,
+    });
   });
 });

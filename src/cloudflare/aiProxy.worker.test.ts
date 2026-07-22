@@ -181,6 +181,7 @@ describe("aiProxy.worker", () => {
   it("reasons over whole-broadcast context through Qwen 3.7 Plus", async () => {
     const contextInput = {
       sourceDurationMs: 60_000,
+      castRosterId: DEFAULT_CANDIDATE_PASS_B_CAST_ROSTER_ID,
       chapters: [
         {
           chapterId: "chapter-1",
@@ -229,6 +230,10 @@ describe("aiProxy.worker", () => {
         expect(body.max_tokens).toBe(3_072);
         expect(body.response_format).toEqual({ type: "json_object" });
         expect(body).not.toHaveProperty("thinking");
+        const messages = body.messages as Array<{ content?: string }>;
+        expect(messages[1]?.content).toContain("세라 교수님");
+        expect(messages[1]?.content).toContain("토로리 코코");
+        expect(messages[1]?.content).toContain("목소리 느낌만으로 발화자를 정하거나");
         return Promise.resolve(
           new Response(
             JSON.stringify({
@@ -276,6 +281,37 @@ describe("aiProxy.worker", () => {
     expect(response.headers.get("Access-Control-Expose-Headers")).toContain(
       "X-ExClipper-Usage-Total-Tokens",
     );
+  });
+
+  it("rejects an arbitrary whole-context roster before any paid call", async () => {
+    const upstreamFetch = vi.fn();
+    const response = await handleBroadcastContextRequest(
+      createRequest(
+        {
+          sourceDurationMs: 60_000,
+          castRosterId: "user-authored-roster",
+          chapters: [{
+            chapterId: "chapter-1",
+            startMs: 0,
+            endMs: 60_000,
+            evidenceMode: "complete-transcript",
+            evidenceCoverageRatio: 1,
+            summaryKo: "방송 내용을 설명했다.",
+          }],
+          candidates: [],
+        },
+        { url: "https://rettohighlight-gemini.example/v1/broadcast-context" },
+      ),
+      {
+        ...createEnvironment(),
+        BROADCAST_CONTEXT_PROVIDER: "qwen",
+        QWEN_API_KEY: "qwen-secret",
+      },
+      { fetchImplementation: upstreamFetch },
+    );
+    expect(response.status).toBe(400);
+    expect(await responseErrorCode(response)).toBe("INVALID_REQUEST");
+    expect(upstreamFetch).not.toHaveBeenCalled();
   });
 
   it("falls back once from Qwen 3.7 Plus to Qwen 3.6 Flash for text context", async () => {
@@ -619,6 +655,94 @@ describe("aiProxy.worker", () => {
     });
   });
 
+  it("uses Gemini once when Qwen transcript returns an explicit temporary failure", async () => {
+    const durationMs = 1_000;
+    const candidate = createCandidateBody(durationMs);
+    const body = {
+      audioBase64: candidate.audioBase64,
+      sourceStartMs: 600_000,
+      durationMs,
+    };
+    const upstreamFetch = vi
+      .fn<(_input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>()
+      .mockResolvedValueOnce(new Response("temporary", { status: 503 }))
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            candidates: [{
+              finishReason: "STOP",
+              content: {
+                parts: [{ text: JSON.stringify({ textKo: "세라 교수님이 결과를 설명했다." }) }],
+              },
+            }],
+          }),
+          { status: 200 },
+        ),
+      );
+    const response = await handleBroadcastTranscriptRequest(
+      createRequest(body, {
+        url: "https://rettohighlight-gemini.example/v1/broadcast-transcript",
+      }),
+      {
+        ...createEnvironment(),
+        BROADCAST_TRANSCRIPT_PROVIDER: "qwen",
+        AI_PROVIDER_FALLBACK_MODE: "bounded",
+        QWEN_API_KEY: "qwen-secret",
+      },
+      { fetchImplementation: upstreamFetch },
+    );
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      modelId: "gemini-3.6-flash",
+      textKo: "세라 교수님이 결과를 설명했다.",
+    });
+    expect(upstreamFetch).toHaveBeenCalledTimes(2);
+    const fallbackInput = upstreamFetch.mock.calls[1]?.[0];
+    const fallbackUrl = typeof fallbackInput === "string"
+      ? fallbackInput
+      : fallbackInput instanceof URL
+        ? fallbackInput.toString()
+        : fallbackInput?.url ?? "";
+    expect(fallbackUrl).toContain("/models/gemini-3.6-flash:generateContent");
+    expect(response.headers.get("X-ExClipper-Fallback-Used")).toBe("true");
+    expect(response.headers.get("X-ExClipper-Fallback-Reason")).toBe(
+      "server-error",
+    );
+  });
+
+  it("does not replay duration-billed transcript work after an ambiguous timeout", async () => {
+    const durationMs = 1_000;
+    const candidate = createCandidateBody(durationMs);
+    const upstreamFetch = vi.fn(
+      (_input: RequestInfo | URL, init?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () => {
+            reject(new DOMException("aborted", "AbortError"));
+          });
+        }),
+    );
+    const response = await handleBroadcastTranscriptRequest(
+      createRequest(
+        {
+          audioBase64: candidate.audioBase64,
+          sourceStartMs: 0,
+          durationMs,
+        },
+        { url: "https://rettohighlight-gemini.example/v1/broadcast-transcript" },
+      ),
+      {
+        ...createEnvironment(),
+        BROADCAST_TRANSCRIPT_PROVIDER: "qwen",
+        AI_PROVIDER_FALLBACK_MODE: "bounded",
+        QWEN_API_KEY: "qwen-secret",
+      },
+      { fetchImplementation: upstreamFetch, upstreamTimeoutMs: 1 },
+    );
+    expect(response.status).toBe(504);
+    expect(await responseErrorCode(response)).toBe("UPSTREAM_TIMEOUT");
+    expect(upstreamFetch).toHaveBeenCalledTimes(1);
+  });
+
   it("logs only a bounded provider code when Qwen rejects transcript work", async () => {
     const durationMs = 1_000;
     const candidate = createCandidateBody(durationMs);
@@ -693,14 +817,23 @@ describe("aiProxy.worker", () => {
       { fetchImplementation: upstreamFetch },
     );
     expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({
+    const payload: unknown = await response.json();
+    expect(payload).toMatchObject({
       ok: true,
       service: "rettohighlight-gemini",
       version: 2,
-      routingPolicyVersion: "1.9.0",
+      routingPolicyVersion: "1.10.0",
       contextModelRevision:
         "qwen3.7-plus-context-editorial-jury-topic-balanced-2026-07-22",
+      providers: {
+        schemaVersion: "1.2.0",
+        geminiRoutes: {
+          candidateInsightConfigured: false,
+          broadcastTranscriptConfigured: false,
+        },
+      },
     });
+    expect(JSON.stringify(payload)).not.toContain(API_KEY);
     expect(response.headers.get("Cache-Control")).toBe("no-store");
     expect(upstreamFetch).not.toHaveBeenCalled();
   });
@@ -1083,7 +1216,7 @@ describe("aiProxy.worker", () => {
       "gemini-3.6-flash",
     );
     expect(response.headers.get("X-ExClipper-Model-Revision")).toBe(
-      "gemini-3.6-flash-grounded-frames-cast-v4-2026-07-22",
+      "gemini-3.6-flash-grounded-frames-cast-v5-2026-07-22",
     );
     expect(response.headers.get("X-ExClipper-Fallback-Used")).toBe("true");
     expect(response.headers.get("X-ExClipper-Fallback-Reason")).toBe(
