@@ -1,10 +1,12 @@
-export const AI_MODEL_ROUTING_POLICY_VERSION = "1.6.0" as const;
+export const AI_MODEL_ROUTING_POLICY_VERSION = "1.7.0" as const;
+/** Candidate fallback upgrades must not invalidate already-paid Qwen context results. */
+export const AI_BROADCAST_CONTEXT_ROUTING_REVISION = "1.6.0" as const;
 
 export const EXCLIPPER_MODEL_IDS = {
   candidatePerceptionPrimary: "qwen3.5-omni-flash",
-  candidatePerceptionFallback: "gemini-3.5-flash",
+  candidatePerceptionFallback: "gemini-3.6-flash",
   candidateAdjudicationPrimary: "qwen3.7-plus",
-  candidateAdjudicationFallback: "gemini-3.1-pro-preview",
+  candidateAdjudicationFallback: "gemini-3.6-flash",
   broadcastTranscription: "qwen3.5-omni-flash",
   broadcastVisualChaptering: "qwen3.5-omni-flash",
   broadcastContextReasoning: "qwen3.7-plus",

@@ -15,7 +15,7 @@ import {
   EXCLIPPER_MODEL_IDS,
 } from "../analysis/aiModelRoutingPolicy";
 
-export const AI_PROVIDER_CONFIGURATION_VERSION = "1.0.0" as const;
+export const AI_PROVIDER_CONFIGURATION_VERSION = "1.1.0" as const;
 
 export const QWEN_CANDIDATE_MODEL_ID = CANDIDATE_PASS_B_QWEN_MODEL_ID;
 export const QWEN_CANDIDATE_MODEL_REVISION = CANDIDATE_PASS_B_QWEN_MODEL_REVISION;

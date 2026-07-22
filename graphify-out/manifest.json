@@ -5,23 +5,23 @@
     "semantic_hash": ""
   },
   "DEVELOPMENT_LOG.md": {
-    "mtime": 1784687693.9289618,
-    "ast_hash": "7cfd9787fa4b14e4c66446df359ba137",
+    "mtime": 1784690717.7342105,
+    "ast_hash": "2fd419cedfdf695a9104935c072b898f",
     "semantic_hash": ""
   },
   "OPERATIONS.md": {
-    "mtime": 1784687525.0179596,
-    "ast_hash": "ec12b6c3b57b3a01b80bce066522f070",
+    "mtime": 1784690238.7648737,
+    "ast_hash": "35a45397d7e14d534b66683a80aa9831",
     "semantic_hash": ""
   },
   "PRODUCT_PLAN.md": {
-    "mtime": 1784687525.0056417,
-    "ast_hash": "6b7b40e0faac278eb27ae07a29b6a39e",
+    "mtime": 1784690238.761825,
+    "ast_hash": "44384c14fd6fec32b3c2c2e220b231ad",
     "semantic_hash": ""
   },
   "STATE_LIFECYCLE.md": {
-    "mtime": 1784687525.0238245,
-    "ast_hash": "c39655e3cc1fc9cccede10a9a540cbec",
+    "mtime": 1784690238.7684784,
+    "ast_hash": "f53c8707fda28a24ef4fd5e5b4b022f9",
     "semantic_hash": ""
   },
   "eslint.config.js": {
@@ -30,13 +30,13 @@
     "semantic_hash": ""
   },
   "package.json": {
-    "mtime": 1784687440.0490372,
-    "ast_hash": "e64232d3388da2b89c0da966b03d1312",
+    "mtime": 1784689409.9630706,
+    "ast_hash": "bdcc8fde7fff39aa638610ace387f860",
     "semantic_hash": ""
   },
   "src/App.tsx": {
-    "mtime": 1784687524.9886322,
-    "ast_hash": "222085efb6176c91f6840a827a8ab875",
+    "mtime": 1784690539.658396,
+    "ast_hash": "3a332f712522de4ce93e4463ad514a0d",
     "semantic_hash": ""
   },
   "src/analysis/chatImport.test.ts": {
@@ -155,8 +155,8 @@
     "semantic_hash": ""
   },
   "README.md": {
-    "mtime": 1784687525.0139928,
-    "ast_hash": "74ab5a0f7193c7b33cfa52288c4ef3a7",
+    "mtime": 1784689409.9800527,
+    "ast_hash": "89813d796d55209963a2361dcd73e72b",
     "semantic_hash": ""
   },
   "index.html": {
@@ -425,8 +425,8 @@
     "semantic_hash": ""
   },
   "src/analysis/candidatePassBWorkerProtocol.ts": {
-    "mtime": 1784678998.6346014,
-    "ast_hash": "d58dc888beca080374a7d671d30c50a0",
+    "mtime": 1784688335.9447303,
+    "ast_hash": "81986e588378838092eb5964f27b0771",
     "semantic_hash": ""
   },
   "src/domain/candidatePassBRun.test.ts": {
@@ -645,13 +645,13 @@
     "semantic_hash": ""
   },
   "src/cloudflare/aiProviderConfiguration.test.ts": {
-    "mtime": 1784686295.5613396,
-    "ast_hash": "f90396800cc1e72e3d8b183948820b60",
+    "mtime": 1784688376.5870523,
+    "ast_hash": "4b75281caf1ae7b6186c8b9148d478e1",
     "semantic_hash": ""
   },
   "src/cloudflare/aiProviderConfiguration.ts": {
-    "mtime": 1784686295.558803,
-    "ast_hash": "8370d779aa1be2d3eea72d284c563378",
+    "mtime": 1784688335.9518213,
+    "ast_hash": "52a405fe6b28c5904b46e1a8e988e0ed",
     "semantic_hash": ""
   },
   "src/media/clipRenderer.test.ts": {
@@ -665,13 +665,13 @@
     "semantic_hash": ""
   },
   "src/storage/candidatePassBInsightStore.test.ts": {
-    "mtime": 1784678998.6415186,
-    "ast_hash": "2a53c83c1ca696a7d0e5cdba30479a81",
+    "mtime": 1784688387.8667817,
+    "ast_hash": "0987d363525a40547dea5f89cac5b226",
     "semantic_hash": ""
   },
   "src/storage/candidatePassBInsightStore.ts": {
-    "mtime": 1784677394.7050283,
-    "ast_hash": "4ccadd4def359e39024fd837470eab40",
+    "mtime": 1784688335.9536722,
+    "ast_hash": "e70a451b94d3a0f343fca83a67e81ef8",
     "semantic_hash": ""
   },
   "graphify-out/memory/query_20260721_044623_\uc138\ud305\ud558\ub824\uba74_\uc774\uc81c_\ubb50\uac00_\ud544\uc694\ud558\uc9c0.md": {
@@ -755,13 +755,13 @@
     "semantic_hash": ""
   },
   "src/analysis/aiModelRoutingPolicy.test.ts": {
-    "mtime": 1784671214.404496,
-    "ast_hash": "87b88a904cfede823e1a9049c0575ff1",
+    "mtime": 1784688376.5850592,
+    "ast_hash": "fe9132fa5823ccdab275448d113654ad",
     "semantic_hash": ""
   },
   "src/analysis/aiModelRoutingPolicy.ts": {
-    "mtime": 1784686295.5560884,
-    "ast_hash": "2539e6319d097538bbfa8c1e36e48754",
+    "mtime": 1784689409.9784677,
+    "ast_hash": "7bf786c77394b3b7e80df43a2a376a43",
     "semantic_hash": ""
   },
   "src/analysis/broadcastContextDeepseek.test.ts": {
@@ -790,13 +790,13 @@
     "semantic_hash": ""
   },
   "src/analysis/contextQualifiedFinalSelection.test.ts": {
-    "mtime": 1784658050.692707,
-    "ast_hash": "076bbea1d14b8fed0d02aaf92abef112",
+    "mtime": 1784690539.6503386,
+    "ast_hash": "120a1cc166ac976ca03a33802ce2b16a",
     "semantic_hash": ""
   },
   "src/analysis/contextQualifiedFinalSelection.ts": {
-    "mtime": 1784658050.6916647,
-    "ast_hash": "8e8dde757b322107b69dbab13e1c8f20",
+    "mtime": 1784690539.648036,
+    "ast_hash": "2e1123db5cb8b206e6be3a9c355465eb",
     "semantic_hash": ""
   },
   "src/analysis/temporalPointProcess.test.ts": {
@@ -810,13 +810,13 @@
     "semantic_hash": ""
   },
   "src/cloudflare/aiProxy.worker.test.ts": {
-    "mtime": 1784686295.5636592,
-    "ast_hash": "0fe929e05d08d71a4e741ecdeb97ecbe",
+    "mtime": 1784690481.7880187,
+    "ast_hash": "8ff968d8155016ba94e3849bedc62309",
     "semantic_hash": ""
   },
   "src/cloudflare/aiProxy.worker.ts": {
-    "mtime": 1784686039.9213269,
-    "ast_hash": "db1c361ab9c4df8a4304f726abdae04e",
+    "mtime": 1784690466.2325106,
+    "ast_hash": "78cbdb244c11f7a09616336fca4dbb78",
     "semantic_hash": ""
   },
   "src/qa/sampleEvaluationContract.test.ts": {
@@ -880,8 +880,8 @@
     "semantic_hash": ""
   },
   "src/analysis/broadcastTranscriptQwen.ts": {
-    "mtime": 1784671785.2431414,
-    "ast_hash": "9517eea4acd7de5c178bc310c7d6579b",
+    "mtime": 1784688335.9470003,
+    "ast_hash": "de9d2af78431fe1f8e9e15510c5a974c",
     "semantic_hash": ""
   },
   "src/analysis/broadcastTranscriptQwenClient.test.ts": {
@@ -1032,6 +1032,36 @@
   "src/analysis/broadcastTopicalDiscovery.ts": {
     "mtime": 1784685671.088333,
     "ast_hash": "7122b2326f00ee16d71784fae5d48f04",
+    "semantic_hash": ""
+  },
+  ".qa/gemini36-food-01.jpg": {
+    "mtime": 1784688565.4615862,
+    "ast_hash": "e9cdb91f7f2c259dcc9b860991a395ae",
+    "semantic_hash": ""
+  },
+  ".qa/gemini36-food-02.jpg": {
+    "mtime": 1784688565.6788423,
+    "ast_hash": "4e0f593556a74838312320e66367837e",
+    "semantic_hash": ""
+  },
+  ".qa/gemini36-food-03.jpg": {
+    "mtime": 1784688565.8563035,
+    "ast_hash": "d7db45c36f013b1e82d86278e3d61f67",
+    "semantic_hash": ""
+  },
+  ".qa/gemini36-food-04.jpg": {
+    "mtime": 1784688566.0465136,
+    "ast_hash": "38923a92479e469c4deee79d7a07fea3",
+    "semantic_hash": ""
+  },
+  ".qa/gemini36-food.wav": {
+    "mtime": 1784688565.2687638,
+    "ast_hash": "f9bc64f044128f2ad800bea8f034ddfb",
+    "semantic_hash": ""
+  },
+  "docs/CONTEXT_AWARE_PIPELINE_REVIEW_2026-07-22.md": {
+    "mtime": 1784690213.5000584,
+    "ast_hash": "fb4dfad4b573a3e74179ea2a6787ff81",
     "semantic_hash": ""
   }
 }

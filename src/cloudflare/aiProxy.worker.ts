@@ -66,6 +66,7 @@ import {
   type AiProviderEnvironment,
   type BroadcastContextConnection,
   type CandidateInsightConnection,
+  type CandidateInsightProviderId,
 } from "./aiProviderConfiguration";
 
 const ENDPOINT_PATH = "/v1/candidate-insights";
@@ -111,6 +112,9 @@ const EXCLIPPER_USAGE_COMPLETION_TOKENS_HEADER =
   "X-ExClipper-Usage-Completion-Tokens";
 const EXCLIPPER_USAGE_TOTAL_TOKENS_HEADER =
   "X-ExClipper-Usage-Total-Tokens";
+const EXCLIPPER_FALLBACK_REASON_HEADER = "X-ExClipper-Fallback-Reason";
+const EXCLIPPER_PRIMARY_FAILURE_HEADER = "X-ExClipper-Primary-Failure";
+const EXCLIPPER_FALLBACK_FAILURE_HEADER = "X-ExClipper-Fallback-Failure";
 const MAX_YOUTUBE_WATCH_PAGE_BYTES = 2 * 1024 * 1024;
 const MAX_YOUTUBE_CAPTION_BYTES = 8 * 1024 * 1024;
 
@@ -227,6 +231,9 @@ function corsHeaders(origin: string): Headers {
       EXCLIPPER_USAGE_PROMPT_TOKENS_HEADER,
       EXCLIPPER_USAGE_COMPLETION_TOKENS_HEADER,
       EXCLIPPER_USAGE_TOTAL_TOKENS_HEADER,
+      EXCLIPPER_FALLBACK_REASON_HEADER,
+      EXCLIPPER_PRIMARY_FAILURE_HEADER,
+      EXCLIPPER_FALLBACK_FAILURE_HEADER,
     ].join(", "),
   );
   headers.set("Vary", "Origin");
@@ -662,6 +669,7 @@ type CandidateProviderFailureKind =
   | "unavailable"
   | "rate-limited"
   | "auth"
+  | "model-unavailable"
   | "response-format"
   | "invalid-argument"
   | "rejected"
@@ -678,6 +686,26 @@ type CandidateProviderAttempt =
       readonly kind: CandidateProviderFailureKind;
       readonly diagnosticHeaders?: Readonly<Record<string, string>>;
     };
+
+/**
+ * Cross-provider retries are reserved for provider-specific or temporary
+ * failures. A rejected request or invalid shared argument is deterministic;
+ * sending it to another paid model would only hide a contract bug or repeat a
+ * policy rejection.
+ */
+function shouldAttemptCandidateProviderFallback(
+  kind: CandidateProviderFailureKind,
+): boolean {
+  return (
+    kind === "timeout" ||
+    kind === "unavailable" ||
+    kind === "rate-limited" ||
+    kind === "auth" ||
+    kind === "model-unavailable" ||
+    kind === "response-format" ||
+    kind === "invalid-response"
+  );
+}
 
 async function attemptCandidateProvider(
   connection: CandidateInsightConnection,
@@ -745,6 +773,10 @@ async function attemptCandidateProvider(
     if (upstreamResponse.status === 401 || upstreamResponse.status === 403) {
       await upstreamResponse.body?.cancel().catch(() => undefined);
       return { ok: false, kind: "auth" };
+    }
+    if (upstreamResponse.status === 404) {
+      await upstreamResponse.body?.cancel().catch(() => undefined);
+      return { ok: false, kind: "model-unavailable" };
     }
     if (upstreamResponse.status >= 500 && upstreamResponse.status <= 599) {
       await upstreamResponse.body?.cancel().catch(() => undefined);
@@ -875,6 +907,13 @@ function candidateProviderFailureResponse(
         "AI 연결 설정을 확인해야 해요.",
         origin,
       );
+    case "model-unavailable":
+      return jsonResponse(
+        502,
+        "UPSTREAM_MODEL_UNAVAILABLE",
+        "선택한 AI 모델을 사용할 수 없어 대체 경로를 확인해야 해요.",
+        origin,
+      );
     case "response-format":
       return jsonResponse(
         502,
@@ -960,9 +999,7 @@ export async function handleCandidateInsightRequest(
     );
   }
 
-  const providerResolution = resolveCandidateInsightConnection(environment);
   if (
-    !providerResolution.ok ||
     environment.RATE_LIMITER === undefined ||
     environment.IP_RATE_LIMITER === undefined
   ) {
@@ -973,7 +1010,44 @@ export async function handleCandidateInsightRequest(
       origin,
     );
   }
-  const providerConnection = providerResolution.connection;
+  const providerResolution = resolveCandidateInsightConnection(environment);
+  const requestedProvider: CandidateInsightProviderId | null =
+    environment.CANDIDATE_INSIGHT_PROVIDER === undefined ||
+    environment.CANDIDATE_INSIGHT_PROVIDER === "gemini"
+      ? "gemini"
+      : environment.CANDIDATE_INSIGHT_PROVIDER === "qwen"
+        ? "qwen"
+        : null;
+  let providerConnection: CandidateInsightConnection;
+  let configurationFallbackUsed = false;
+  if (providerResolution.ok) {
+    providerConnection = providerResolution.connection;
+  } else if (
+    providerResolution.code === "MISSING_CREDENTIALS" &&
+    requestedProvider !== null
+  ) {
+    const fallbackConnection = resolveCandidateInsightFallbackConnection(
+      environment,
+      requestedProvider,
+    );
+    if (fallbackConnection === null) {
+      return jsonResponse(
+        503,
+        "PROXY_NOT_CONFIGURED",
+        "AI 연결 준비가 아직 끝나지 않았어요.",
+        origin,
+      );
+    }
+    providerConnection = fallbackConnection;
+    configurationFallbackUsed = true;
+  } else {
+    return jsonResponse(
+      503,
+      "PROXY_NOT_CONFIGURED",
+      "AI 연결 준비가 아직 끝나지 않았어요.",
+      origin,
+    );
+  }
 
   const declaredLength = request.headers.get("Content-Length");
   if (
@@ -1101,14 +1175,21 @@ export async function handleCandidateInsightRequest(
     retryDelaysMs,
   );
   let finalAttempt = primaryAttempt;
-  let fallbackUsed = false;
-  if (!primaryAttempt.ok) {
+  let fallbackUsed = configurationFallbackUsed;
+  let primaryFailureKind: CandidateProviderFailureKind | null =
+    configurationFallbackUsed ? "auth" : null;
+  if (
+    !configurationFallbackUsed &&
+    !primaryAttempt.ok &&
+    shouldAttemptCandidateProviderFallback(primaryAttempt.kind)
+  ) {
     const fallbackConnection = resolveCandidateInsightFallbackConnection(
       environment,
       providerConnection.provider,
     );
     if (fallbackConnection !== null) {
       fallbackUsed = true;
+      primaryFailureKind = primaryAttempt.kind;
       finalAttempt = await attemptCandidateProvider(
         fallbackConnection,
         candidateRequest,
@@ -1119,7 +1200,12 @@ export async function handleCandidateInsightRequest(
     }
   }
   if (!finalAttempt.ok) {
-    return candidateProviderFailureResponse(finalAttempt, origin);
+    const response = candidateProviderFailureResponse(finalAttempt, origin);
+    if (primaryFailureKind !== null && fallbackUsed) {
+      response.headers.set(EXCLIPPER_PRIMARY_FAILURE_HEADER, primaryFailureKind);
+      response.headers.set(EXCLIPPER_FALLBACK_FAILURE_HEADER, finalAttempt.kind);
+    }
+    return response;
   }
   return successResponse(finalAttempt.payload, origin, {
     [CANDIDATE_PASS_B_RESPONSE_MODEL_ID_HEADER]:
@@ -1127,6 +1213,9 @@ export async function handleCandidateInsightRequest(
     [CANDIDATE_PASS_B_RESPONSE_MODEL_REVISION_HEADER]:
       finalAttempt.connection.descriptor.modelRevision,
     [CANDIDATE_PASS_B_RESPONSE_FALLBACK_HEADER]: fallbackUsed ? "true" : "false",
+    ...(primaryFailureKind !== null && fallbackUsed
+      ? { [EXCLIPPER_FALLBACK_REASON_HEADER]: primaryFailureKind }
+      : {}),
   });
 }
 

@@ -1,5 +1,16 @@
 # Development Log
 
+## 2026-07-22 `0.3.34` Gemini 3.6 Flash GA fallback upgrade
+
+- Upgraded the candidate audio-plus-representative-frame fallback and the explicitly selected Gemini long-audio transcript adapter from `gemini-3.5-flash` to the GA `gemini-3.6-flash`. The difficult-candidate fallback role is aligned to the same model while Qwen3.5 Omni Flash remains the deployed candidate primary and Qwen3.7 Plus remains the editorial jury.
+- Kept the existing GenerateContent contract: one user turn, timestamp-labelled JPEG frames, WAV audio, structured JSON response format, `thinkingLevel: MEDIUM`, no deprecated sampling parameters, and `store: false`.
+- Advanced the provider policy to `1.7.0`, candidate route revision to `qwen3.5-omni-flash_then_gemini-3.6-flash_bounded-v3`, and provider configuration to `1.1.0`. The separate broadcast-context cache fence remains `1.6.0`, so this candidate-only fallback change does not discard already-paid Qwen overview/discovery/jury results.
+- Preserved every paid `gemini-3.5-flash-grounded-frames-v2-2026-07-22` result and the previous v2 route manifest as readable legacy identities. Recovery never relabels a 3.5 result as 3.6 and does not pay to regenerate it merely because the fallback model advanced.
+- Cloudflare version metadata exposes a `GEMINI_API_KEY` binding name, but a zero-traffic and temporary live readiness probe of the 3.6 version returned `PROXY_NOT_CONFIGURED` before request validation. No sample audio reached Google and no Gemini charge was incurred. Production was restored to the prior Qwen-primary Worker immediately; Gemini must not be enabled as primary until the secret value is refreshed and the real food-talk smoke passes.
+- Replaced unconditional cross-provider switching with an explicit candidate failure matrix. Timeout, network/5xx, 429, authentication, missing-model, response-format, and malformed provider responses may use the one bounded alternate; invalid shared arguments and provider rejection do not trigger duplicate paid work. Public headers record the bounded reason, or both failure classes when the alternate also fails, without exposing provider bodies.
+- Applied the accepted integrity portion of the GitHub context-pipeline review. Context AI no longer removes candidates from the canonical array: it stores `recommended`, `needs-review`, `deprioritized`, or `insufficient-evidence` projections. Unapproved low-priority/music candidates skip paid detail analysis, but stay visible and keep editor review/boundary state; approved candidates override the AI queue projection.
+- Release gate: strict TypeScript, ESLint warning 0, 67 test files / 723 tests, production Vite build, and Wrangler dry-run passed. The generated main bundle is 603.09 kB (174.32 kB gzip), CSS is 83.17 kB, and the Worker upload is 182.15 KiB (35.65 KiB gzip).
+
 ## 2026-07-22 `0.3.33` comparative editorial jury and broadcast event map
 
 - Rechecked the food-talk ground truth against the production YouTube caption track. The expected events occur around 19:38–20:16 (칼국수), 22:29–23:29 (껍데기), and 28:19–29:19 (두바이 초콜릿). The three previous fast-pass peaks at 01:11, 02:38, and 03:56 contain explicit music cues and are not the expected clips; candidate count alone is no longer treated as a passing regression.

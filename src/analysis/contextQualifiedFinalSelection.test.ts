@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import type { BroadcastContextCandidateAnnotation } from "./broadcastContextProtocol";
-import { finalizeContextQualifiedCandidates } from "./contextQualifiedFinalSelection";
+import {
+  finalizeContextQualifiedCandidates,
+  selectCandidateDetailCandidateIds,
+} from "./contextQualifiedFinalSelection";
 
 function candidate(id: string, peakMs: number) {
   return { id, peakMs, startMs: peakMs - 20_000, endMs: peakMs + 25_000, score: 0.8 };
@@ -35,6 +38,11 @@ describe("finalizeContextQualifiedCandidates", () => {
 
     expect(result.selectedCandidates).toEqual([]);
     expect(result.rejectedCandidateIds).toEqual(["relay-a", "relay-b"]);
+    expect(result.projectionById).toEqual({
+      "relay-a": "deprioritized",
+      "relay-b": "deprioritized",
+    });
+    expect(candidates).toHaveLength(2);
   });
 
   it("keeps only the exact apology and does not promote adjacent reactions", () => {
@@ -63,5 +71,47 @@ describe("finalizeContextQualifiedCandidates", () => {
     expect(result.selectedCandidates).toEqual([]);
     expect(result.reviewCandidates.map((item) => item.id)).toEqual(["unseen"]);
     expect(result.missingContextCandidateIds).toEqual(["unseen"]);
+    expect(result.projectionById).toEqual({ unseen: "insufficient-evidence" });
+  });
+
+  it("keeps editor state intact when AI only projects a lower priority", () => {
+    const approved = {
+      ...candidate("approved-by-editor", 10_000),
+      reviewState: "approved" as const,
+      approvedBoundaryRevision: 3,
+    };
+    const result = finalizeContextQualifiedCandidates(
+      [approved],
+      [annotation(approved.id, "reject")],
+    );
+
+    expect(result.projectionById[approved.id]).toBe("deprioritized");
+    expect(approved).toMatchObject({
+      reviewState: "approved",
+      approvedBoundaryRevision: 3,
+    });
+  });
+
+  it("spends detail budget by editor priority without deleting the ledger", () => {
+    const ledger = [
+      { id: "approved-music", reviewState: "approved" as const },
+      { id: "ai-recommended", reviewState: "unreviewed" as const },
+      { id: "ai-low", reviewState: "unreviewed" as const },
+      { id: "editor-rejected", reviewState: "rejected" as const },
+    ];
+
+    expect(
+      selectCandidateDetailCandidateIds(
+        ledger,
+        {
+          "approved-music": "deprioritized",
+          "ai-recommended": "recommended",
+          "ai-low": "deprioritized",
+          "editor-rejected": "recommended",
+        },
+        new Set(["approved-music"]),
+      ),
+    ).toEqual(["approved-music", "ai-recommended"]);
+    expect(ledger).toHaveLength(4);
   });
 });

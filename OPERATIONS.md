@@ -2,6 +2,13 @@
 
 ## 2026-07-22 release notes
 
+- `0.3.34`: candidate audio+frame fallback and opt-in Gemini transcript routing use GA `gemini-3.6-flash`; production remains Qwen-primary. Routing policy is `1.7.0`, while the broadcast-context cache fence intentionally remains `1.6.0`.
+- Before enabling Gemini as primary, refresh the `GEMINI_API_KEY` Worker Secret and require a real candidate request to return model ID `gemini-3.6-flash`, revision `gemini-3.6-flash-grounded-frames-v3-2026-07-22`, and a grounded food-talk description. A binding name in `wrangler secret list` is not sufficient readiness evidence.
+- Rollback and recovery must continue accepting the exact Gemini 3.5 model/revision pair and v2 route manifest. Never rewrite a recovered paid result to the 3.6 identity or invalidate Qwen whole-context results for this candidate-only change.
+- Candidate fallback matrix: `timeout | unavailable | rate-limited | auth | model-unavailable | response-format | invalid-response` may switch provider once; `invalid-argument | rejected` must fail without a second paid request. Long-audio transcription remains single-provider because timeout billing is ambiguous at broadcast scale.
+- A successful switch exposes `X-ExClipper-Fallback-Reason`. If both providers fail, expose only the bounded primary/fallback failure classes. Never expose upstream body text, keys, endpoint credentials, audio, frames, or transcript in diagnostics.
+- Context `reject` is an AI priority projection, not deletion. Release smoke must confirm the canonical candidate count and editor review/boundary state remain stable while the paid detail queue excludes unapproved `deprioritized` and explicit-music candidates.
+
 - `0.3.33`: transcript/context routing precedes candidate multimodal perception. Qwen3.6 Flash discovers up to 24 topical leads; Qwen3.7 Plus performs the final comparative jury; only three selected leads plus three context reserves enter caption-native refinement.
 - Routing policy `1.6.0` invalidates older overview/discovery/jury caches. Caption-native refinement uses complete 30-second timestamp cells with zero ASR billing; the bounded one-minute audio refinement remains the only fallback when no matching caption track is available.
 - Whole-context success responses expose public prompt/completion/total token counts in addition to model identity and fallback state. These headers contain no source text and are used by the live harness for list-price accounting.
@@ -25,7 +32,7 @@
 - Pass B evidence and AI insight snapshots are stored by analysis run in a dedicated IndexedDB object store. Recovery filters them to the recovered candidate IDs, and a new run epoch prevents late writes from an older source contaminating the current result.
 - Fixed non-vocal program-edge bursts (opening, ending, and break loops) are rejected by default. An edge segment can still survive when it has a distinctive vocal/dialogue anchor, while the central UI presents the automatic phase and candidate list without promotional copy.
 
-- 문서 버전: `0.3.33`
+- 문서 버전: `0.3.34`
 - 기준일: 2026-07-22 (Asia/Seoul)
 - 대상: GitHub Pages에서 실행되는 1인용 AI 편집 어시스턴트
 - 함께 읽을 문서: `PRODUCT_PLAN.md`, `STATE_LIFECYCLE.md`, `DEVELOPMENT_LOG.md`
@@ -502,7 +509,7 @@ type DiagnosticEvent = {
 
 ## 14. `0.3.28` provider 설정 운영 경계
 
-- 배포 기본값은 후보 오디오·화면과 한국어 전사 `qwen / qwen3.5-omni-flash`, 압축 방송 문맥 `qwen / qwen3.7-plus`다. `qwen3.6-flash`는 저비용 보수 심사 경로로 준비되어 있고, `gemini-3.5-flash`·`gemini-3.1-pro-preview`·`deepseek-v4-pro`는 유효 credential과 별도 회귀 검증 전에는 자동 호출하지 않는다.
+- 배포 기본값은 후보 오디오·화면과 한국어 전사 `qwen / qwen3.5-omni-flash`, 압축 방송 문맥 `qwen / qwen3.7-plus`다. `qwen3.6-flash`는 저비용 보수 심사 경로로 준비되어 있고, `gemini-3.6-flash`·`deepseek-v4-pro`는 유효 credential과 별도 회귀 검증 전에는 자동 호출하지 않는다.
 - production 필수 Secret은 현재 `QWEN_API_KEY`다. Google 키가 유효하지 않아도 운영 기본 경로에는 영향이 없다. 키 원문은 readiness, 오류, 브라우저 bundle, IndexedDB, export에 기록하지 않는다.
 
 ## 15. `0.3.29` 계층형 문맥·자막·네거티브 게이트

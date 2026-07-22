@@ -2,6 +2,8 @@ import type { CandidatePassBEvidence } from "../analysis/candidatePassB";
 import {
   CANDIDATE_PASS_B_GEMINI_MODEL_ID,
   CANDIDATE_PASS_B_GEMINI_MODEL_REVISION,
+  CANDIDATE_PASS_B_LEGACY_GEMINI_MODEL_ID,
+  CANDIDATE_PASS_B_LEGACY_GEMINI_MODEL_REVISION,
   CANDIDATE_PASS_B_QWEN_MODEL_ID,
   CANDIDATE_PASS_B_QWEN_MODEL_REVISION,
   MAX_CANDIDATE_PASS_B_VIDEO_FRAME_BASE64_LENGTH,
@@ -34,10 +36,12 @@ export interface StoredCandidatePassBInsight {
 export interface StoredCandidatePassBModelIdentity {
   readonly id:
     | typeof CANDIDATE_PASS_B_QWEN_MODEL_ID
-    | typeof CANDIDATE_PASS_B_GEMINI_MODEL_ID;
+    | typeof CANDIDATE_PASS_B_GEMINI_MODEL_ID
+    | typeof CANDIDATE_PASS_B_LEGACY_GEMINI_MODEL_ID;
   readonly revision:
     | typeof CANDIDATE_PASS_B_QWEN_MODEL_REVISION
-    | typeof CANDIDATE_PASS_B_GEMINI_MODEL_REVISION;
+    | typeof CANDIDATE_PASS_B_GEMINI_MODEL_REVISION
+    | typeof CANDIDATE_PASS_B_LEGACY_GEMINI_MODEL_REVISION;
 }
 
 export interface CandidatePassBInsightsRecord {
@@ -160,7 +164,9 @@ function isStoredModelIdentity(
     ((value.id === CANDIDATE_PASS_B_QWEN_MODEL_ID &&
       value.revision === CANDIDATE_PASS_B_QWEN_MODEL_REVISION) ||
       (value.id === CANDIDATE_PASS_B_GEMINI_MODEL_ID &&
-        value.revision === CANDIDATE_PASS_B_GEMINI_MODEL_REVISION))
+        value.revision === CANDIDATE_PASS_B_GEMINI_MODEL_REVISION) ||
+      (value.id === CANDIDATE_PASS_B_LEGACY_GEMINI_MODEL_ID &&
+        value.revision === CANDIDATE_PASS_B_LEGACY_GEMINI_MODEL_REVISION))
   );
 }
 

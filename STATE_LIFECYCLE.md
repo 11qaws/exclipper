@@ -1,10 +1,20 @@
 # ExClipper 상태·생애주기 명세
 
-- 문서 버전: 0.3.33
-- 기준 제품 계획: PRODUCT_PLAN.md 0.3.33
+- 문서 버전: 0.3.34
+- 기준 제품 계획: PRODUCT_PLAN.md 0.3.34
 - 기준일: 2026-07-20 (Asia/Seoul)
 - 적용 범위: GitHub Pages에서 실행되는 개인 편집 어시스턴트와 선택형 CHZZK 동반 수집기
 - 문서 지위: 구현 전 상태 모델의 기준 문서
+
+## `0.3.34` Gemini 후보 폴백 identity와 유료 결과 보존
+
+- 새 후보 요청의 route manifest는 `qwen3.5-omni-flash_then_gemini-3.6-flash_bounded-v3`다. Qwen이 기본이며 Gemini는 bounded 대체 시도 또는 명시적으로 선택된 provider일 때만 호출한다.
+- 저장된 `gemini-3.5-flash`/`gemini-3.5-flash-grounded-frames-v2-2026-07-22`와 v2 route manifest는 호환 가능한 유료 legacy 결과다. 복구는 원래 identity를 유지하고 재요청을 예약하지 않는다.
+- Gemini Secret이 없거나 런타임에서 준비되지 않았으면 provider 연결은 후보 payload를 읽기 전에 `PROXY_NOT_CONFIGURED`로 끝난다. 이 실패는 Qwen 결과, 후보 경계, 점수, 승인 상태, 전체 맥락 cache를 변경하지 않는다.
+- 후보 fallback 정책 버전 `1.7.0`과 방송 전체 맥락 cache fence `1.6.0`은 분리한다. 후보 모델 교체만으로 저장된 Qwen context 결과를 폐기하거나 다시 과금하는 전이는 금지한다.
+- 후보 원장은 context 결과 전후에 같은 ID·개수·review state·boundary revision을 유지한다. context annotation은 `recommended | needs-review | deprioritized | insufficient-evidence` projection만 갱신할 수 있다.
+- 사용자 `approved`는 낮은 AI 우선순위보다 상세 분석 queue에서 우선하고, 사용자 `rejected`는 자동 재분석 대상에서 제외한다. 어느 경우에도 AI가 사용자 결정을 되돌리거나 candidate 객체를 삭제하지 않는다.
+- candidate cross-provider 전이는 `timeout | unavailable | rate-limited | auth | model-unavailable | response-format | invalid-response`에서만 한 번 허용한다. `invalid-argument | rejected`에서 대체 provider를 호출하는 전이는 금지한다.
 
 ## `0.3.33` context-first gate와 자막 refinement
 

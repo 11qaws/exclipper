@@ -1,5 +1,13 @@
 # ExClipper 제품·UX·기술 계획서
 
+## `0.3.34` Gemini 3.6 Flash 폴백 전환
+
+- 후보 오디오·대표 화면의 운영 기본값은 계속 `qwen3.5-omni-flash`다. 일시적 공급자 실패 뒤 한 번만 허용하는 대체 경로와 명시적으로 Gemini를 고른 장문 음성 전사 경로만 `gemini-3.6-flash`로 올린다.
+- 후보 route revision은 v3로 올리되, 이미 비용을 낸 Gemini 3.5 Flash 결과와 v2 route snapshot은 실제 모델 귀속을 유지한 채 복구한다. 후보 폴백만 바뀌었으므로 Qwen 전체 맥락 cache revision은 `1.6.0`으로 유지한다.
+- 배포 Secret이 런타임에서 실제로 준비되지 않았으면 Gemini 경로는 fail-closed다. Qwen 기본 분석과 저장 결과는 계속 사용할 수 있으며, 키 재주입과 실제 음식 토크 화면·오디오 smoke 전에는 Gemini를 기본 provider로 승격하지 않는다.
+- 후보 provider 전환은 실패 유형별로 제한한다. timeout·네트워크/5xx·429·인증·모델 없음·응답 형식·비정상 응답은 한 번의 대체 provider를 허용하지만, 공통 요청 인자 오류와 provider의 명시적 거절은 같은 요청을 다른 유료 모델에 반복하지 않는다.
+- 전체 맥락 AI는 후보를 삭제하지 않고 우선순위 projection만 소유한다. 낮은 우선순위와 명시적 음악 후보는 기본 유료 상세 분석 queue에서 빠지지만 canonical ledger와 사용자 승인·제외·경계 revision은 유지한다.
+
 ## `0.3.33` context-first editorial routing
 
 - 빠른 신호 reservoir를 곧바로 정밀 영상 모델에 보내지 않는다. 먼저 공개 자막 또는 예산 제한 전사 지도를 완성하고, 전체 맥락 모델이 음악·오프닝·엔딩·휴식과 사건 없는 진행을 제거한 뒤 살아남은 후보만 최대 12개 정밀 해석한다.
@@ -11,7 +19,7 @@
 
 ## `0.3.31` bounded runtime model routing
 
-- The shared role policy is now part of the Worker runtime instead of a test-only catalog. Candidate perception uses the configured primary (`qwen3.5-omni-flash` in production) and may switch once to `gemini-3.5-flash` only when bounded fallback is enabled and both credentials are valid.
+- The shared role policy is now part of the Worker runtime instead of a test-only catalog. Candidate perception uses the configured primary (`qwen3.5-omni-flash` in production) and may switch once to `gemini-3.6-flash` only when bounded fallback is enabled and both credentials are valid.
 - Whole-broadcast compressed-text reasoning uses `qwen3.7-plus`, with one schema-compatible `qwen3.6-flash` fallback. The low-cost selection pass starts with `qwen3.6-flash` and may use `qwen3.7-plus` once when the cheaper model cannot return a valid decision.
 - Full or sampled broadcast transcription remains single-provider per chunk. An ambiguous timeout may already have been billed, so ExClipper does not automatically resend the same long audio to Gemini. This preserves the `$1` run envelope and leaves failed coverage explicit.
 - A provider switch never changes candidate score, range, approval, or review state. The actual candidate model ID and revision are validated from exposed response metadata and stored per candidate so a recovered paid result is not mislabeled as another model.
@@ -2401,6 +2409,6 @@ YouTube IFrame이 요구하는 Referer를 유지하고 `strict-origin-when-cross
 - `qwen3.5-omni-flash`는 후보의 오디오·대표 화면을 함께 읽고, YouTube 한국어 자막을 사용할 수 없을 때 방송 대사 챕터를 만드는 기본 지각 모델이다.
 - `qwen3.7-plus`는 압축된 방송 전체 챕터와 후보 근거를 함께 읽는 기본 문맥 모델이며, 넓게 잡힌 사건을 1분 단위의 서로 다른 순간으로 나누는 재검증에도 사용한다.
 - `qwen3.6-flash`는 텍스트만으로 충분한 보수적 선택 단계의 저비용 대안이다. 샘플에서 `qwen3.7-plus`보다 정확하다는 증거가 없으므로 기본 전체 문맥 모델을 대신하지 않는다.
-- `gemini-3.5-flash`는 후보 오디오·영상 지각 대체 경로, `gemini-3.1-pro-preview`는 맥락이 어려운 최대 3개 후보의 고급 재판정 대체 경로로 제한한다. 유효한 Google credential과 동일 회귀 검증이 없으면 자동 호출하지 않는다.
+- `gemini-3.6-flash`는 후보 오디오·영상 지각 대체 경로와 맥락이 어려운 최대 3개 후보의 고급 재판정 대체 역할로 제한한다. 유효한 Google credential과 동일 회귀 검증이 없으면 자동 호출하지 않는다.
 - `deepseek-v4-pro`는 압축 텍스트 문맥의 비상 대체 경로다. 오디오·영상 원본을 직접 맡기지 않고 기본 자동 재시도로도 사용하지 않아 중복 과금을 막는다.
 - 현재 배포 기본값은 후보 지각·전사 `Qwen 3.5 Omni Flash`, 전체 문맥·의미 재확인 `Qwen 3.7 Plus`다. 모델별 결과는 provider·model revision을 포함해 분석 세션에 분리 저장하므로 다른 모델의 캐시로 가장하거나 새로고침 때 다시 결제하지 않는다.

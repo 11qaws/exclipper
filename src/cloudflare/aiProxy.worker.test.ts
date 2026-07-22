@@ -113,6 +113,18 @@ function createGeminiPayload(candidateDurationMs = 1_000): unknown {
   };
 }
 
+function createQwenSsePayload(candidateDurationMs = 1_000): string {
+  const payload = createGeminiPayload(candidateDurationMs) as {
+    candidates: readonly [{ content: { parts: readonly [{ text: string }] } }];
+  };
+  return [
+    `data: ${JSON.stringify({ choices: [{ delta: { content: payload.candidates[0].content.parts[0].text }, finish_reason: null }] })}`,
+    `data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: "stop" }] })}`,
+    "data: [DONE]",
+    "",
+  ].join("\n\n");
+}
+
 async function responseErrorCode(response: Response): Promise<string> {
   const payload = (await response.json()) as { error: { code: string } };
   return payload.error.code;
@@ -602,7 +614,7 @@ describe("aiProxy.worker", () => {
       ok: true,
       service: "rettohighlight-gemini",
       version: 2,
-      routingPolicyVersion: "1.6.0",
+      routingPolicyVersion: "1.7.0",
       contextModelRevision:
         "qwen3.7-plus-context-editorial-jury-gameplay-calibrated-2026-07-22",
     });
@@ -725,7 +737,7 @@ describe("aiProxy.worker", () => {
     const upstreamFetch = vi.fn(
       (input: RequestInfo | URL, init?: RequestInit) => {
         expect(input).toBe(
-          "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent",
+          "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent",
         );
         expect(new Headers(init?.headers).get("x-goog-api-key")).toBe(API_KEY);
         expect(init?.credentials).toBe("omit");
@@ -931,7 +943,7 @@ describe("aiProxy.worker", () => {
             new Response("temporary qwen failure", { status: 503 }),
           );
         }
-        expect(url).toContain("models/gemini-3.5-flash:generateContent");
+        expect(url).toContain("models/gemini-3.6-flash:generateContent");
         expect(new Headers(init?.headers).get("x-goog-api-key")).toBe(API_KEY);
         return Promise.resolve(
           new Response(JSON.stringify(geminiPayload), { status: 200 }),
@@ -952,16 +964,161 @@ describe("aiProxy.worker", () => {
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual(geminiPayload);
     expect(response.headers.get("X-ExClipper-Model-Id")).toBe(
-      "gemini-3.5-flash",
+      "gemini-3.6-flash",
     );
     expect(response.headers.get("X-ExClipper-Model-Revision")).toBe(
-      "gemini-3.5-flash-grounded-frames-v2-2026-07-22",
+      "gemini-3.6-flash-grounded-frames-v3-2026-07-22",
     );
     expect(response.headers.get("X-ExClipper-Fallback-Used")).toBe("true");
+    expect(response.headers.get("X-ExClipper-Fallback-Reason")).toBe(
+      "unavailable",
+    );
     expect(response.headers.get("Access-Control-Expose-Headers")).toContain(
       "X-ExClipper-Model-Id",
     );
     expect(upstreamFetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("starts with the configured alternate when the selected provider credential is missing", async () => {
+    const candidate = createCandidateBody();
+    const upstreamFetch = vi.fn(() =>
+      Promise.resolve(
+        new Response(createQwenSsePayload(candidate.candidateDurationMs), {
+          status: 200,
+        }),
+      ),
+    );
+    const response = await handleCandidateInsightRequest(
+      createRequest(candidate),
+      {
+        ...createEnvironment(),
+        GEMINI_API_KEY: "",
+        CANDIDATE_INSIGHT_PROVIDER: "gemini",
+        AI_PROVIDER_FALLBACK_MODE: "bounded",
+        QWEN_API_KEY: "qwen-secret",
+      },
+      { fetchImplementation: upstreamFetch },
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("X-ExClipper-Model-Id")).toBe(
+      "qwen3.5-omni-flash",
+    );
+    expect(response.headers.get("X-ExClipper-Fallback-Used")).toBe("true");
+    expect(response.headers.get("X-ExClipper-Fallback-Reason")).toBe("auth");
+    expect(upstreamFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not duplicate a deterministic invalid-argument failure on another provider", async () => {
+    const upstreamFetch = vi.fn(() =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({
+            error: {
+              status: "INVALID_ARGUMENT",
+              message: "candidate duration is invalid",
+            },
+          }),
+          { status: 400 },
+        ),
+      ),
+    );
+    const response = await handleCandidateInsightRequest(
+      createRequest(createCandidateBody()),
+      {
+        ...createEnvironment(),
+        CANDIDATE_INSIGHT_PROVIDER: "qwen",
+        AI_PROVIDER_FALLBACK_MODE: "bounded",
+        QWEN_API_KEY: "qwen-secret",
+      },
+      { fetchImplementation: upstreamFetch, upstreamRetryDelaysMs: [] },
+    );
+
+    expect(response.status).toBe(502);
+    expect(await responseErrorCode(response)).toBe("UPSTREAM_INVALID_ARGUMENT");
+    expect(response.headers.get("X-ExClipper-Fallback-Used")).toBeNull();
+    expect(upstreamFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("uses a different provider for a temporary rate-limit failure", async () => {
+    const candidate = createCandidateBody();
+    const geminiPayload = createGeminiPayload(candidate.candidateDurationMs);
+    const upstreamFetch = vi
+      .fn<(_input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>()
+      .mockResolvedValueOnce(new Response("quota", { status: 429 }))
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify(geminiPayload), { status: 200 }),
+      );
+    const response = await handleCandidateInsightRequest(
+      createRequest(candidate),
+      {
+        ...createEnvironment(),
+        CANDIDATE_INSIGHT_PROVIDER: "qwen",
+        AI_PROVIDER_FALLBACK_MODE: "bounded",
+        QWEN_API_KEY: "qwen-secret",
+      },
+      { fetchImplementation: upstreamFetch, upstreamRetryDelaysMs: [] },
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("X-ExClipper-Fallback-Used")).toBe("true");
+    expect(response.headers.get("X-ExClipper-Fallback-Reason")).toBe(
+      "rate-limited",
+    );
+    expect(upstreamFetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("falls back when the selected provider does not expose the configured model", async () => {
+    const candidate = createCandidateBody();
+    const qwenPayload = createQwenSsePayload(candidate.candidateDurationMs);
+    const upstreamFetch = vi
+      .fn<(_input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>()
+      .mockResolvedValueOnce(new Response("missing model", { status: 404 }))
+      .mockResolvedValueOnce(new Response(qwenPayload, { status: 200 }));
+    const response = await handleCandidateInsightRequest(
+      createRequest(candidate),
+      {
+        ...createEnvironment(),
+        CANDIDATE_INSIGHT_PROVIDER: "gemini",
+        AI_PROVIDER_FALLBACK_MODE: "bounded",
+        QWEN_API_KEY: "qwen-secret",
+      },
+      { fetchImplementation: upstreamFetch, upstreamRetryDelaysMs: [] },
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("X-ExClipper-Model-Id")).toBe(
+      "qwen3.5-omni-flash",
+    );
+    expect(response.headers.get("X-ExClipper-Fallback-Reason")).toBe(
+      "model-unavailable",
+    );
+  });
+
+  it("reports both bounded failure classes without exposing provider bodies", async () => {
+    const upstreamFetch = vi
+      .fn<(_input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>()
+      .mockResolvedValueOnce(new Response("primary private", { status: 503 }))
+      .mockResolvedValueOnce(new Response("fallback private", { status: 429 }));
+    const response = await handleCandidateInsightRequest(
+      createRequest(createCandidateBody()),
+      {
+        ...createEnvironment(),
+        CANDIDATE_INSIGHT_PROVIDER: "qwen",
+        AI_PROVIDER_FALLBACK_MODE: "bounded",
+        QWEN_API_KEY: "qwen-secret",
+      },
+      { fetchImplementation: upstreamFetch, upstreamRetryDelaysMs: [] },
+    );
+
+    expect(response.status).toBe(429);
+    expect(response.headers.get("X-ExClipper-Primary-Failure")).toBe(
+      "unavailable",
+    );
+    expect(response.headers.get("X-ExClipper-Fallback-Failure")).toBe(
+      "rate-limited",
+    );
+    expect(await response.text()).not.toContain("private");
   });
 
   it.each([

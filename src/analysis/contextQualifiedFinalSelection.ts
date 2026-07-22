@@ -4,6 +4,39 @@ import {
 } from "./broadcastContextProtocol";
 import type { SelectableCandidate } from "./contextAwareCandidateSelection";
 
+export type CandidateAiProjectionDisposition =
+  | "recommended"
+  | "needs-review"
+  | "deprioritized"
+  | "insufficient-evidence";
+
+export type CandidateAiProjectionById = Readonly<
+  Record<string, CandidateAiProjectionDisposition>
+>;
+
+export interface CandidateAiQueueItem {
+  readonly id: string;
+  readonly reviewState: "unreviewed" | "approved" | "rejected";
+}
+
+/** Editor decisions outrank AI priority when choosing paid detail work. */
+export function selectCandidateDetailCandidateIds(
+  candidates: readonly CandidateAiQueueItem[],
+  projectionById: CandidateAiProjectionById,
+  explicitMusicOnlyCandidateIds: ReadonlySet<string>,
+): readonly string[] {
+  return candidates
+    .filter((candidate) => {
+      if (candidate.reviewState === "rejected") return false;
+      if (candidate.reviewState === "approved") return true;
+      return (
+        projectionById[candidate.id] !== "deprioritized" &&
+        !explicitMusicOnlyCandidateIds.has(candidate.id)
+      );
+    })
+    .map((candidate) => candidate.id);
+}
+
 export interface ContextQualifiedFinalSelection<
   TCandidate extends SelectableCandidate = SelectableCandidate,
 > {
@@ -11,6 +44,7 @@ export interface ContextQualifiedFinalSelection<
   readonly reviewCandidates: readonly TCandidate[];
   readonly rejectedCandidateIds: readonly string[];
   readonly missingContextCandidateIds: readonly string[];
+  readonly projectionById: CandidateAiProjectionById;
   readonly eligibilityById: Readonly<
     Record<string, "eligible" | "exploration" | "ineligible">
   >;
@@ -43,6 +77,7 @@ export function finalizeContextQualifiedCandidates<
   const reviewCandidates: TCandidate[] = [];
   const rejectedCandidateIds: string[] = [];
   const missingContextCandidateIds: string[] = [];
+  const projectionById: Record<string, CandidateAiProjectionDisposition> = {};
 
   for (const candidate of candidates) {
     const annotation = annotationById.get(candidate.id);
@@ -50,14 +85,18 @@ export function finalizeContextQualifiedCandidates<
       eligibilityById[candidate.id] = "exploration";
       reviewCandidates.push(candidate);
       missingContextCandidateIds.push(candidate.id);
+      projectionById[candidate.id] = "insufficient-evidence";
       continue;
     }
     if (annotation.clipDecision === "select") {
       selectedCandidates.push(candidate);
+      projectionById[candidate.id] = "recommended";
     } else if (annotation.clipDecision === "review") {
       reviewCandidates.push(candidate);
+      projectionById[candidate.id] = "needs-review";
     } else {
       rejectedCandidateIds.push(candidate.id);
+      projectionById[candidate.id] = "deprioritized";
     }
   }
 
@@ -73,6 +112,7 @@ export function finalizeContextQualifiedCandidates<
     reviewCandidates,
     rejectedCandidateIds,
     missingContextCandidateIds,
+    projectionById,
     eligibilityById,
   };
 }

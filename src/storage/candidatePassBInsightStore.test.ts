@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { CandidatePassBEvidence } from "../analysis/candidatePassB";
+import { isCompatibleCandidatePassBRoutingModelRevision } from "../analysis/candidatePassBWorkerProtocol";
 import {
   CANDIDATE_PASS_B_INSIGHT_SCHEMA_VERSION,
   assertCandidatePassBInsightsRecord,
@@ -56,8 +57,8 @@ const record: CandidatePassBInsightsRecord = {
   },
   modelByCandidateId: {
     "candidate-a": {
-      id: "gemini-3.5-flash",
-      revision: "gemini-3.5-flash-grounded-frames-v2-2026-07-22",
+      id: "gemini-3.6-flash",
+      revision: "gemini-3.6-flash-grounded-frames-v3-2026-07-22",
     },
   },
   thumbnailById: {
@@ -100,13 +101,39 @@ describe("Candidate Pass B insight persistence", () => {
     ).not.toThrow();
   });
 
+  it("keeps already-paid Gemini 3.5 candidate results readable after the 3.6 upgrade", () => {
+    expect(() =>
+      assertCandidatePassBInsightsRecord({
+        ...record,
+        modelManifestHash:
+          "qwen3.5-omni-flash_then_gemini-3.5-flash_bounded-v2",
+        modelByCandidateId: {
+          "candidate-a": {
+            id: "gemini-3.5-flash",
+            revision: "gemini-3.5-flash-grounded-frames-v2-2026-07-22",
+          },
+        },
+      }),
+    ).not.toThrow();
+    expect(
+      isCompatibleCandidatePassBRoutingModelRevision(
+        "qwen3.5-omni-flash_then_gemini-3.5-flash_bounded-v2",
+      ),
+    ).toBe(true);
+    expect(
+      isCompatibleCandidatePassBRoutingModelRevision(
+        "qwen3.5-omni-flash_then_gemini-3.6-flash_bounded-v3",
+      ),
+    ).toBe(true);
+  });
+
   it("rejects a provider model paired with another provider revision", () => {
     expect(() =>
       assertCandidatePassBInsightsRecord({
         ...record,
         modelByCandidateId: {
           "candidate-a": {
-            id: "gemini-3.5-flash",
+            id: "gemini-3.6-flash",
             revision: "qwen3.5-omni-flash-grounded-frames-v2-2026-07-22",
           },
         },

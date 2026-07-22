@@ -2640,6 +2640,35 @@
   color: var(--rh-danger);
 }
 
+.rh-context-projection-badge {
+  display: inline-flex;
+  padding: 2px 7px;
+  border: 1px solid var(--accentBd);
+  border-radius: 999px;
+  background: var(--accentBg);
+  color: var(--text3);
+  font-size: .75rem;
+  font-weight: 650;
+}
+
+.rh-context-projection-badge[data-disposition="recommended"] {
+  border-color: var(--rh-success-border);
+  background: var(--rh-success-bg);
+  color: var(--rh-success);
+}
+
+.rh-context-projection-badge[data-disposition="deprioritized"] {
+  border-color: var(--border);
+  background: var(--bg3);
+  color: var(--text4);
+}
+
+.rh-candidate-card[data-ai-projection="deprioritized"]:not(
+    [data-review-state="approved"]
+  ) {
+  border-style: dashed;
+}
+
 .rh-candidate-card[data-review-state="rejected"] {
   opacity: .62;
 }

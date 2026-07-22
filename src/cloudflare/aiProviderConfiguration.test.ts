@@ -21,7 +21,7 @@ describe("aiProviderConfiguration", () => {
         provider: "gemini",
         descriptor: AI_PROVIDER_CATALOG.candidateInsight.gemini,
         endpoint:
-          "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent",
+          "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent",
         apiKey: "gemini-secret",
       },
     });
@@ -71,7 +71,7 @@ describe("aiProviderConfiguration", () => {
       provider: "gemini",
       descriptor: AI_PROVIDER_CATALOG.candidateInsight.gemini,
       endpoint:
-        "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent",
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent",
       apiKey: "gemini-secret",
     });
     expect(

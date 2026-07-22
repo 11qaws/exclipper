@@ -56,7 +56,7 @@ import {
   formatEstimatedUsd,
 } from "./analysis/candidatePassBCost";
 import { createAnalysisBudgetEnvelope } from "./analysis/analysisBudgetPolicy";
-import { AI_MODEL_ROUTING_POLICY_VERSION } from "./analysis/aiModelRoutingPolicy";
+import { AI_BROADCAST_CONTEXT_ROUTING_REVISION } from "./analysis/aiModelRoutingPolicy";
 import {
   createCaptionDiscoveredLeadRefinementPlan,
   createDiscoveredLeadRefinementChapters,
@@ -109,6 +109,7 @@ import {
   type CandidatePassBTranscriptResult,
   type CandidatePassBWorkerIdentity,
 } from "./analysis/candidatePassBWorkerClient";
+import { isCompatibleCandidatePassBRoutingModelRevision } from "./analysis/candidatePassBWorkerProtocol";
 import {
   fuseReactionHighlightCandidates,
   highlightReasonForSignalKinds,
@@ -119,7 +120,11 @@ import {
   buildEventEpisodes,
   selectContextAwareCandidates,
 } from "./analysis/contextAwareCandidateSelection";
-import { finalizeContextQualifiedCandidates } from "./analysis/contextQualifiedFinalSelection";
+import {
+  finalizeContextQualifiedCandidates,
+  selectCandidateDetailCandidateIds,
+  type CandidateAiProjectionById,
+} from "./analysis/contextQualifiedFinalSelection";
 import type {
   BroadcastContextCandidateInput,
   BroadcastContextChapterInput,
@@ -300,7 +305,7 @@ interface AudioAnalysisOutcome {
   readonly coverageComplete: boolean;
 }
 
-const APP_VERSION = "0.3.33";
+const APP_VERSION = "0.3.34";
 const PERSISTENCE_SCHEMA_VERSION = "0.3.0";
 const SIGNAL_ENGINE_VERSION =
   "streamer-reaction-fast-pass-v5-chat-fallback-music-confirmation";
@@ -953,6 +958,8 @@ function App() {
   >("idle");
   const [broadcastContextResult, setBroadcastContextResult] =
     useState<BroadcastContextResult | null>(null);
+  const [candidateAiProjectionById, setCandidateAiProjectionById] =
+    useState<CandidateAiProjectionById>({});
   const [broadcastContextRefinementLeadIds, setBroadcastContextRefinementLeadIds] =
     useState<readonly string[] | null>(null);
   const [broadcastContextError, setBroadcastContextError] = useState<string | null>(null);
@@ -1337,15 +1344,6 @@ function App() {
     preflight !== null &&
     preflight.capabilities.worker &&
     typeof globalThis.fetch === "function";
-  const candidatePassBTransferDurationMs = candidates
-    .slice(0, 12)
-    .reduce((total, candidate) => total + candidate.endMs - candidate.startMs, 0);
-  const candidatePassBCostEstimate = estimateCandidatePassBCost(
-    Math.min(12, candidates.length),
-    candidates.length === 0
-      ? 0
-      : Math.round(candidatePassBTransferDurationMs / Math.min(12, candidates.length)),
-  );
   const candidateAudioEventRuntimeAvailable =
     preflight !== null &&
     preflight.capabilities.worker &&
@@ -1535,6 +1533,29 @@ function App() {
       ),
     [candidates, youtubeCaptionTrack],
   );
+  const candidateDetailCandidateIds = useMemo(
+    () =>
+      selectCandidateDetailCandidateIds(
+        candidates,
+        candidateAiProjectionById,
+        explicitMusicOnlyCandidateIds,
+      ),
+    [candidateAiProjectionById, candidates, explicitMusicOnlyCandidateIds],
+  );
+  const candidateDetailCostEstimate = useMemo(() => {
+    const detailIds = new Set(candidateDetailCandidateIds.slice(0, 12));
+    const detailCandidates = candidates.filter((candidate) => detailIds.has(candidate.id));
+    const totalDurationMs = detailCandidates.reduce(
+      (total, candidate) => total + candidate.endMs - candidate.startMs,
+      0,
+    );
+    return estimateCandidatePassBCost(
+      detailCandidates.length,
+      detailCandidates.length === 0
+        ? 0
+        : Math.round(totalDurationMs / detailCandidates.length),
+    );
+  }, [candidateDetailCandidateIds, candidates]);
   const analysisBudgetEnvelope = useMemo(() => {
     if (boundarySourceDurationMs <= 0) {
       return null;
@@ -1842,6 +1863,7 @@ function App() {
     setBroadcastTranscriptError(null);
     setBroadcastContextStatus("idle");
     setBroadcastContextResult(null);
+    setCandidateAiProjectionById({});
     setBroadcastContextRefinementLeadIds(null);
     setBroadcastContextError(null);
     setSemanticLeadRefinementStatus("idle");
@@ -4238,6 +4260,7 @@ function App() {
     setBroadcastTranscriptError(null);
     setBroadcastContextStatus("idle");
     setBroadcastContextResult(null);
+    setCandidateAiProjectionById({});
     setBroadcastContextRefinementLeadIds(null);
     setBroadcastContextError(null);
     setSemanticLeadRefinementStatus("idle");
@@ -4283,11 +4306,11 @@ function App() {
     // reconnecting does not schedule the same Gemini verification again.
     const isRecoverablePassBCandidate = (candidateId: string) =>
       recoveredCandidateIds.has(candidateId) || candidateId.startsWith("semantic-");
-    const recoveredPassBInsights =
-      recovered.candidatePassBInsights?.modelManifestHash ===
-      CANDIDATE_PASS_B_ROUTING_MODEL_REVISION
-        ? recovered.candidatePassBInsights
-        : null;
+    const recoveredPassBInsights = isCompatibleCandidatePassBRoutingModelRevision(
+      recovered.candidatePassBInsights?.modelManifestHash,
+    )
+      ? recovered.candidatePassBInsights
+      : null;
     const recoveredEvidence = Object.fromEntries(
       Object.entries(recoveredPassBInsights?.evidenceById ?? {}).filter(([candidateId]) =>
         isRecoverablePassBCandidate(candidateId),
@@ -4585,7 +4608,7 @@ function App() {
       broadcastContextStatus === "failed";
     if (
       !analysisComplete ||
-      candidates.length === 0 ||
+      candidateDetailCandidateIds.length === 0 ||
       sourceFile === null ||
       sourceContentFingerprint === null ||
       openedRecoveredResult !== null ||
@@ -4597,14 +4620,14 @@ function App() {
     }
     autoCandidatePassBSourceRef.current = sourceContentFingerprint;
     const timer = window.setTimeout(() => {
-      void runCandidatePassBRef.current();
+      void runCandidatePassBRef.current(candidateDetailCandidateIds);
     }, 450);
     return () => window.clearTimeout(timer);
   }, [
     analysisComplete,
     broadcastContextStatus,
     broadcastTranscriptStatus,
-    candidates.length,
+    candidateDetailCandidateIds,
     candidatePassBRun,
     openedRecoveredResult,
     sourceContentFingerprint,
@@ -4655,22 +4678,23 @@ function App() {
       setBroadcastContextRefinementLeadIds(safeRefinementLeadIds);
       setTimelineSemanticChapters(result.semanticChapters);
       const qualified = finalizeContextQualifiedCandidates(candidates, result.annotations);
+      setCandidateAiProjectionById(qualified.projectionById);
       const survivingIds = new Set([
         ...qualified.selectedCandidates.map((candidate) => candidate.id),
         ...qualified.reviewCandidates.map((candidate) => candidate.id),
       ]);
       const survivingCandidates = candidates.filter(
         (candidate) =>
-          survivingIds.has(candidate.id) &&
-          !explicitMusicOnlyCandidateIds.has(candidate.id),
+          candidate.reviewState === "approved" ||
+          (candidate.reviewState !== "rejected" &&
+            survivingIds.has(candidate.id) &&
+            !explicitMusicOnlyCandidateIds.has(candidate.id)),
       );
-      setCandidates(survivingCandidates);
       setSelectionResult((current) =>
         current === null
           ? current
           : { ...current, candidateCount: survivingCandidates.length },
       );
-      resetCandidateRanking(survivingCandidates);
       setBroadcastContextStatus("completed");
     };
 
@@ -4678,7 +4702,7 @@ function App() {
       const contextInputSignature = await createContentFingerprint([
         inputSignature,
         JSON.stringify(contextInput),
-        `ai-routing-policy:${AI_MODEL_ROUTING_POLICY_VERSION}`,
+        `broadcast-context-routing:${AI_BROADCAST_CONTEXT_ROUTING_REVISION}`,
         `topical-discovery:${BROADCAST_TOPICAL_DISCOVERY_VERSION}`,
       ]);
       if (controller.signal.aborted || !isMounted.current) return;
@@ -6235,8 +6259,8 @@ function App() {
                     <h4 id="pass-b-title">화면·오디오·대사 맥락 정리</h4>
                     <p>AI가 후보마다 사건과 스트리머 반응을 한국어로 설명합니다.</p>
                     <p className="rh-cost-note">
-                      현재 전송량 기준 예상 비용 {formatEstimatedUsd(candidatePassBCostEstimate.totalCostUsd)} ·
-                      입력 약 {candidatePassBCostEstimate.inputTokens.toLocaleString()}토큰 + 후보별 화면 4장 기준
+                      현재 전송량 기준 예상 비용 {formatEstimatedUsd(candidateDetailCostEstimate.totalCostUsd)} ·
+                      입력 약 {candidateDetailCostEstimate.inputTokens.toLocaleString()}토큰 + 후보별 화면 4장 기준
                     </p>
                   </div>
                   <div className="rh-passb-actions">
@@ -6247,14 +6271,15 @@ function App() {
                         disabled={
                           sourceFile === null ||
                           !candidatePassBRuntimeAvailable ||
+                          candidateDetailCandidateIds.length === 0 ||
                           selectionResult.audioGapReasonCode === "NO_AUDIO_TRACK" ||
                           candidateAudioEventBusy
                         }
-                        onClick={() => void runCandidatePassB()}
+                        onClick={() => void runCandidatePassB(candidateDetailCandidateIds)}
                       >
                         {candidatePassBRun === null
-                          ? `후보 ${Math.min(12, candidates.length)}개 자세히 분석`
-                          : `후보 ${Math.min(12, candidates.length)}개 다시 분석`}
+                          ? `후보 ${Math.min(12, candidateDetailCandidateIds.length)}개 자세히 분석`
+                          : `후보 ${Math.min(12, candidateDetailCandidateIds.length)}개 다시 분석`}
                       </button>
                     )}
                     {candidatePassBBusy && (
@@ -6301,6 +6326,13 @@ function App() {
                     )}
                     {!candidatePassBBusy && candidateAudioEventBusy && (
                       <p>반응 종류 확인이 끝나면 AI 분석을 시작할 수 있어요.</p>
+                    )}
+                    {candidateDetailCandidateIds.length === 0 && candidates.length > 0 && (
+                      <p>
+                        전체 맥락에서 모두 낮은 우선순위 또는 음악 구간으로 분류되어 추가 유료
+                        분석을 생략했어요. 후보는 삭제하지 않았으므로 아래 목록에서 직접 확인할 수
+                        있어요.
+                      </p>
                     )}
                     {candidatePassBError !== null && <p role="alert">{candidatePassBError}</p>}
                     {candidatePassBWorkStarted && (
@@ -6997,11 +7029,13 @@ function App() {
                       candidate.reviewState === "approved" &&
                       candidate.approvedBoundaryRevision !== null &&
                       (boundaryRevision?.revision ?? 0) > candidate.approvedBoundaryRevision;
+                    const aiProjection = candidateAiProjectionById[candidate.id];
                     return (
                     <article
                       className="rh-candidate-card rh-candidate-card--signal"
                       data-selected="true"
                       data-review-state={candidate.reviewState}
+                      data-ai-projection={aiProjection}
                       role="listitem"
                       aria-labelledby={candidateElementId("candidate-title", candidate.id)}
                       key={candidate.id}
@@ -7013,6 +7047,20 @@ function App() {
                           <span className="rh-review-badge" data-state={candidate.reviewState}>
                             {candidate.reviewState === "approved" ? "사용하기로 함" : candidate.reviewState === "rejected" ? "제외함" : "검토 전"}
                           </span>
+                          {aiProjection !== undefined && (
+                            <span
+                              className="rh-context-projection-badge"
+                              data-disposition={aiProjection}
+                            >
+                              {aiProjection === "recommended"
+                                ? "AI 추천"
+                                : aiProjection === "needs-review"
+                                  ? "AI 추가 확인"
+                                  : aiProjection === "deprioritized"
+                                    ? "AI 낮은 우선순위"
+                                    : "AI 근거 부족"}
+                            </span>
+                          )}
                           {narrative.basis === "visual-exploration" && (
                             <span className="rh-interpretation-badge" data-basis={narrative.basis}>
                               {narrative.basisLabel}

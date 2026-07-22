@@ -2,9 +2,9 @@ export const BROADCAST_TRANSCRIPT_QWEN_SCHEMA_VERSION = "1.0.0" as const;
 export const BROADCAST_TRANSCRIPT_QWEN_MODEL_ID = "qwen3-asr-flash" as const;
 export const BROADCAST_TRANSCRIPT_QWEN_MODEL_REVISION =
   "qwen3-asr-flash-dashscope-native-reviewed-2026-07-22" as const;
-export const BROADCAST_TRANSCRIPT_GEMINI_MODEL_ID = "gemini-3.5-flash" as const;
+export const BROADCAST_TRANSCRIPT_GEMINI_MODEL_ID = "gemini-3.6-flash" as const;
 export const BROADCAST_TRANSCRIPT_GEMINI_MODEL_REVISION =
-  "gemini-3.5-flash-audio-transcript-reviewed-2026-07-22" as const;
+  "gemini-3.6-flash-audio-transcript-reviewed-2026-07-22" as const;
 export const BROADCAST_TRANSCRIPT_QWEN_OMNI_MODEL_ID =
   "qwen3.5-omni-flash" as const;
 export const BROADCAST_TRANSCRIPT_QWEN_OMNI_MODEL_REVISION =

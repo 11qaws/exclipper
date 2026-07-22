@@ -11,14 +11,14 @@ describe("aiModelRoutingPolicy", () => {
       plan.steps.find((step) => step.stage === "candidate-perception"),
     ).toMatchObject({
       primaryModelId: "qwen3.5-omni-flash",
-      fallbackModelId: "gemini-3.5-flash",
+      fallbackModelId: "gemini-3.6-flash",
       maximumCalls: 12,
     });
     expect(
       plan.steps.find((step) => step.stage === "candidate-adjudication"),
     ).toMatchObject({
       primaryModelId: "qwen3.7-plus",
-      fallbackModelId: "gemini-3.1-pro-preview",
+      fallbackModelId: "gemini-3.6-flash",
       maximumCalls: 3,
     });
   });
