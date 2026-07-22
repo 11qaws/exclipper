@@ -3,6 +3,10 @@ import {
   MAX_BROADCAST_CONTEXT_SUMMARY_LENGTH,
   type BroadcastContextChapterInput,
 } from "./broadcastContextProtocol";
+import type {
+  DiscoveredLeadRefinementPlan,
+  RefinementTranscriptRange,
+} from "./discoveredLeadRefinement";
 
 export const YOUTUBE_VIDEO_ID_PATTERN = /^[A-Za-z0-9_-]{11}$/u;
 export const MAX_YOUTUBE_CAPTION_EVENTS = 120_000;
@@ -103,6 +107,32 @@ export function createYouTubeCaptionChapters(
     });
   }
   return chapters;
+}
+
+/** Builds exact, free refinement cells from the already-fetched caption track. */
+export function createYouTubeCaptionRefinementTranscripts(
+  track: YouTubeCaptionTrackResult,
+  plan: DiscoveredLeadRefinementPlan,
+): readonly RefinementTranscriptRange[] {
+  return plan.segments.flatMap((segment) => {
+    const textKo = representativeCaptionText(
+      track.events
+        .filter(
+          (event) =>
+            event.startMs < segment.sourceEndMs &&
+            event.startMs + event.durationMs >= segment.sourceStartMs,
+        )
+        .map((event) => event.text),
+      MAX_BROADCAST_CONTEXT_SUMMARY_LENGTH,
+    );
+    return textKo === "[대사 없음]"
+      ? []
+      : [{
+          sourceStartMs: segment.sourceStartMs,
+          sourceEndMs: segment.sourceEndMs,
+          textKo,
+        }];
+  });
 }
 
 export function extractKoreanYouTubeCaptionTrackFromPlayerResponse(

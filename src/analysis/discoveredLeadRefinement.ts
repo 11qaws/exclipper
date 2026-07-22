@@ -3,13 +3,14 @@ import {
   type BroadcastContextChapterInput,
   type BroadcastContextDiscoveredLead,
 } from "./broadcastContextProtocol";
-import type { BroadcastTranscriptQwenResult } from "./broadcastTranscriptQwen";
 import { QWEN_ASR_FILETRANS_USD_PER_SECOND } from "./broadcastContextSamplingPlan";
 
-export const DISCOVERED_LEAD_REFINEMENT_VERSION = "1.0.0" as const;
+export const DISCOVERED_LEAD_REFINEMENT_VERSION = "1.1.0" as const;
 export const DISCOVERED_LEAD_REFINEMENT_BUDGET_USD = 0.03;
 export const MAX_DISCOVERED_LEADS_TO_REFINE = 4;
+export const MAX_CAPTION_DISCOVERED_LEADS_TO_REFINE = 6;
 export const REFINEMENT_SEGMENT_DURATION_MS = 60_000;
+export const CAPTION_REFINEMENT_SEGMENT_DURATION_MS = 30_000;
 export const REFINED_CLIP_DURATION_MS = 60_000;
 
 export interface DiscoveredLeadRefinementSegment {
@@ -24,6 +25,17 @@ export interface DiscoveredLeadRefinementPlan {
   readonly selectedLeadIds: readonly string[];
   readonly segments: readonly DiscoveredLeadRefinementSegment[];
   readonly estimatedAsrCostUsd: number;
+}
+
+export interface DiscoveredLeadRefinementPlanOptions {
+  /** The caller already applied a whole-broadcast editorial jury. */
+  readonly preserveInputOrder?: boolean;
+}
+
+export interface RefinementTranscriptRange {
+  readonly sourceStartMs: number;
+  readonly sourceEndMs: number;
+  readonly textKo: string;
 }
 
 export interface RefinedDiscoveredLeadRange {
@@ -61,9 +73,9 @@ function boundedInspectionRange(
  */
 export function createDiscoveredLeadRefinementPlan(
   leads: readonly BroadcastContextDiscoveredLead[],
+  options: DiscoveredLeadRefinementPlanOptions = {},
 ): DiscoveredLeadRefinementPlan {
-  const selected = [...leads]
-    .filter(
+  const eligible = [...leads].filter(
       (lead) =>
         Number.isFinite(lead.confidence) &&
         lead.confidence >= 0.55 &&
@@ -71,14 +83,16 @@ export function createDiscoveredLeadRefinementPlan(
         Number.isSafeInteger(lead.endMs) &&
         lead.startMs >= 0 &&
         lead.endMs > lead.startMs,
-    )
-    .sort(
-      (left, right) =>
-        right.confidence - left.confidence ||
-        left.startMs - right.startMs ||
-        left.leadId.localeCompare(right.leadId),
-    )
-    .slice(0, MAX_DISCOVERED_LEADS_TO_REFINE);
+    );
+  const selected = (options.preserveInputOrder === true
+    ? eligible
+    : eligible.sort(
+        (left, right) =>
+          right.confidence - left.confidence ||
+          left.startMs - right.startMs ||
+          left.leadId.localeCompare(right.leadId),
+      )
+  ).slice(0, MAX_DISCOVERED_LEADS_TO_REFINE);
   const perLeadBudgetMs =
     selected.length === 0
       ? 0
@@ -116,6 +130,59 @@ export function createDiscoveredLeadRefinementPlan(
 }
 
 /**
+ * Captions are already timestamped and carry no audio-transcription charge, so
+ * inspect the entire selected lead instead of trimming it to the ASR reserve.
+ * Thirty-second cells give the follow-up router enough precision to place a
+ * 30–60 second clip without pretending that the overview knew an exact second.
+ */
+export function createCaptionDiscoveredLeadRefinementPlan(
+  leads: readonly BroadcastContextDiscoveredLead[],
+  options: DiscoveredLeadRefinementPlanOptions = {},
+): DiscoveredLeadRefinementPlan {
+  const eligible = [...leads].filter(
+      (lead) =>
+        Number.isFinite(lead.confidence) &&
+        lead.confidence >= 0.55 &&
+        Number.isSafeInteger(lead.startMs) &&
+        Number.isSafeInteger(lead.endMs) &&
+        lead.startMs >= 0 &&
+        lead.endMs > lead.startMs,
+    );
+  const selected = (options.preserveInputOrder === true
+    ? eligible
+    : eligible.sort(
+        (left, right) =>
+          right.confidence - left.confidence ||
+          left.startMs - right.startMs ||
+          left.leadId.localeCompare(right.leadId),
+      )
+  ).slice(0, MAX_CAPTION_DISCOVERED_LEADS_TO_REFINE);
+  const segments: DiscoveredLeadRefinementSegment[] = [];
+  for (const lead of selected) {
+    let sourceStartMs = lead.startMs;
+    while (sourceStartMs < lead.endMs) {
+      const sourceEndMs = Math.min(
+        lead.endMs,
+        sourceStartMs + CAPTION_REFINEMENT_SEGMENT_DURATION_MS,
+      );
+      segments.push({
+        segmentId: `caption-refine-${String(segments.length + 1).padStart(3, "0")}`,
+        leadId: lead.leadId,
+        sourceStartMs,
+        sourceEndMs,
+      });
+      sourceStartMs = sourceEndMs;
+    }
+  }
+  return {
+    version: DISCOVERED_LEAD_REFINEMENT_VERSION,
+    selectedLeadIds: selected.map((lead) => lead.leadId),
+    segments,
+    estimatedAsrCostUsd: 0,
+  };
+}
+
+/**
  * Converts the source-fenced refinement ASR results back into the chapter
  * protocol used by the context router. Each parent lead is sent separately so
  * one broad event can yield several independent clip moments without competing
@@ -124,7 +191,7 @@ export function createDiscoveredLeadRefinementPlan(
 export function createDiscoveredLeadRefinementChapters(
   leadId: string,
   plan: DiscoveredLeadRefinementPlan,
-  transcripts: readonly BroadcastTranscriptQwenResult[],
+  transcripts: readonly RefinementTranscriptRange[],
   parentContextKo = "",
 ): readonly BroadcastContextChapterInput[] {
   const transcriptByRange = new Map(
@@ -176,7 +243,7 @@ export interface MaterializedRefinedLeadEvidence {
 /** Makes a 30–60 second source-fenced candidate from a router-selected cell. */
 export function materializeRefinedDiscoveredLeadEvidence(
   lead: BroadcastContextDiscoveredLead,
-  transcripts: readonly BroadcastTranscriptQwenResult[],
+  transcripts: readonly RefinementTranscriptRange[],
   sourceDurationMs: number,
 ): MaterializedRefinedLeadEvidence | null {
   if (
@@ -276,7 +343,7 @@ function transcriptMatchScore(cue: string, transcript: string): number {
 export function refineDiscoveredLeadRange(
   lead: BroadcastContextDiscoveredLead,
   plan: DiscoveredLeadRefinementPlan,
-  transcripts: readonly BroadcastTranscriptQwenResult[],
+  transcripts: readonly RefinementTranscriptRange[],
   sourceDurationMs: number,
 ): RefinedDiscoveredLeadRange | null {
   const segmentByRange = new Map(

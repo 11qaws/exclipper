@@ -1,5 +1,18 @@
 # Development Log
 
+## 2026-07-22 `0.3.33` comparative editorial jury and broadcast event map
+
+- Rechecked the food-talk ground truth against the production YouTube caption track. The expected events occur around 19:38–20:16 (칼국수), 22:29–23:29 (껍데기), and 28:19–29:19 (두바이 초콜릿). The three previous fast-pass peaks at 01:11, 02:38, and 03:56 contain explicit music cues and are not the expected clips; candidate count alone is no longer treated as a passing regression.
+- Reordered the automatic pipeline so the complete caption/transcript map and cheap Qwen whole-context gate run before candidate audio/video perception. Exact source-fenced caption text is attached to each fast candidate, explicit `[음악]`-only ranges fail closed, and only surviving candidates consume multimodal calls.
+- Added a caption-native semantic refinement route. Context leads are split across their complete evidence range into timestamped 30-second caption cells at zero ASR cost, while sources without captions retain the bounded one-minute Qwen ASR route.
+- Split semantic routing into a cheap high-recall discovery pass and a comparative editorial jury. Qwen3.6 Flash scans up to four chronological topic slices and merges at most 24 grounded leads; Qwen3.7 Plus then compares the complete reservoir and may abstain. Routing/cache revision advanced to `1.6.0`.
+- Fixed broad-overview deduplication so a long umbrella topic no longer erases distinct short events inside it. Caption refinement now takes three jury selections plus three nearby context reserves, preserving exact events without sending all 24 leads to multimodal analysis.
+- Calibrated the final jury against routine gameplay. General talk requires 0.88 confidence, gameplay requires 0.93, and ordinary falling, mob mistakes, resource loss, or ad-hoc building explanations are explicit negatives unless a rare achievement, accountability event, serious bug, social conflict, or long payoff is grounded.
+- Rebuilt the event map as an editorial information view: chronological candidate numbers match their cards, 30-minute rulers cross four labeled layers, topic sections use distinguishable bands, and numbered whole-context leads share category colors with their source-time bars. The potentially long explanation list is collapsed by default while every lead remains visible on the time axis.
+- Added bounded production token-usage response headers for whole-context calls and the live evaluation harness. This enables list-price cost accounting from actual prompt/completion tokens without exposing captions or model output.
+- Live caption regressions: food talk preserves 칼국수·껍데기·두바이 초콜릿 in the bounded six-lead refinement set at about `$0.0308` text cost; accidental subscription selects the discovery, formal apology, compensation, and later self-correction sequence at about `$0.0306`; the Minecraft relay returns zero after the gameplay-calibrated jury at about `$0.0253`.
+- Release gate: strict TypeScript, ESLint warning 0, 67 test files / 715 tests, production Vite build, Wrangler dry-run, current Worker deployment, and maximized 1600px light/dark browser QA pass. The matching Pages workflow and public smoke are required for the release handoff.
+
 ## 2026-07-22 `0.3.31` bounded Qwen/Gemini runtime failover
 
 - 클립 검토 화면에서는 지난 분석 목록과 현재 편집 작업 요약을 숨겨, 타임라인과 후보 검토가 첫 화면에 더 빨리 보이도록 정리했다.

@@ -13,6 +13,7 @@ export const BROADCAST_CONTEXT_PROXY_ENDPOINT =
 
 export type BroadcastContextAnalysisMode =
   | "overview"
+  | "discovery"
   | "refinement"
   | "selection";
 

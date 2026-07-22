@@ -219,6 +219,11 @@ describe("aiProxy.worker", () => {
           new Response(
             JSON.stringify({
               choices: [{ message: { content: JSON.stringify(providerResult) } }],
+              usage: {
+                prompt_tokens: 1_234,
+                completion_tokens: 321,
+                total_tokens: 1_555,
+              },
             }),
             { status: 200 },
           ),
@@ -251,6 +256,12 @@ describe("aiProxy.worker", () => {
     expect(environment.RATE_LIMITER.limit).toHaveBeenCalledWith({
       key: "broadcast-context",
     });
+    expect(response.headers.get("X-ExClipper-Usage-Prompt-Tokens")).toBe("1234");
+    expect(response.headers.get("X-ExClipper-Usage-Completion-Tokens")).toBe("321");
+    expect(response.headers.get("X-ExClipper-Usage-Total-Tokens")).toBe("1555");
+    expect(response.headers.get("Access-Control-Expose-Headers")).toContain(
+      "X-ExClipper-Usage-Total-Tokens",
+    );
   });
 
   it("falls back once from Qwen 3.7 Plus to Qwen 3.6 Flash for text context", async () => {
@@ -335,6 +346,131 @@ describe("aiProxy.worker", () => {
       "qwen3.6-flash",
     );
     expect(response.headers.get("X-ExClipper-Fallback-Used")).toBe("true");
+  });
+
+  it("uses Qwen 3.6 Flash for bounded topic discovery", async () => {
+    const contextInput = {
+      sourceDurationMs: 120_000,
+      chapters: [{
+        chapterId: "chapter-1",
+        startMs: 0,
+        endMs: 120_000,
+        evidenceMode: "complete-transcript",
+        evidenceCoverageRatio: 1,
+        summaryKo: "두바이 초콜릿 모양을 두고 강하게 항변한다.",
+      }],
+      candidates: [],
+      analysisMode: "discovery",
+    };
+    const upstreamFetch = vi.fn(
+      (_input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+        const body = JSON.parse(
+          typeof init?.body === "string" ? init.body : "{}",
+        ) as { model: string; max_tokens: number };
+        expect(body.model).toBe("qwen3.6-flash");
+        expect(body.max_tokens).toBe(2_048);
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              choices: [{
+                message: {
+                  content: JSON.stringify({
+                    summary: "초콜릿 항변",
+                    leads: [{
+                      s: "chapter-1",
+                      e: "chapter-1",
+                      c: "reaction",
+                      p: 0.82,
+                      event: "초콜릿 모양을 두고 항변한다.",
+                      cue: "초콜릿한테 대한 모욕이야",
+                    }],
+                  }),
+                },
+              }],
+            }),
+            { status: 200 },
+          ),
+        );
+      },
+    );
+    const response = await handleBroadcastContextRequest(
+      createRequest(contextInput, {
+        url: "https://rettohighlight-gemini.example/v1/broadcast-context",
+      }),
+      {
+        ...createEnvironment(),
+        BROADCAST_CONTEXT_PROVIDER: "qwen",
+        QWEN_API_KEY: "qwen-secret",
+      },
+      { fetchImplementation: upstreamFetch },
+    );
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      discoveredLeads: [expect.objectContaining({ confidence: 0.82 })],
+    });
+  });
+
+  it("uses Qwen 3.7 Plus for the final abstention-sensitive editorial jury", async () => {
+    const contextInput = {
+      sourceDurationMs: 120_000,
+      chapters: [{
+        chapterId: "chapter-1",
+        startMs: 0,
+        endMs: 120_000,
+        evidenceMode: "candidate-context-only",
+        evidenceCoverageRatio: 1,
+        summaryKo: "평범한 게임 건축 진행 구간",
+      }],
+      candidates: [{
+        candidateId: "candidate-1",
+        startMs: 30_000,
+        endMs: 90_000,
+        transcriptKo: "재료가 부족해서 다시 모으러 간다.",
+        eventSummaryKo: "흔한 자원 부족",
+        reactionSummaryKo: "잠깐 당황한 뒤 진행을 계속한다.",
+        chatReactionSummaryKo: null,
+      }],
+      analysisMode: "selection",
+    };
+    const upstreamFetch = vi.fn(
+      (_input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+        const body = JSON.parse(
+          typeof init?.body === "string" ? init.body : "{}",
+        ) as { model: string };
+        expect(body.model).toBe("qwen3.7-plus");
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              choices: [{
+                message: {
+                  content: JSON.stringify({
+                    summary: "독립적인 클립 가치가 없어 기권",
+                    selected: [],
+                  }),
+                },
+              }],
+            }),
+            { status: 200 },
+          ),
+        );
+      },
+    );
+    const response = await handleBroadcastContextRequest(
+      createRequest(contextInput, {
+        url: "https://rettohighlight-gemini.example/v1/broadcast-context",
+      }),
+      {
+        ...createEnvironment(),
+        BROADCAST_CONTEXT_PROVIDER: "qwen",
+        QWEN_API_KEY: "qwen-secret",
+      },
+      { fetchImplementation: upstreamFetch },
+    );
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      annotations: [expect.objectContaining({ clipDecision: "reject" })],
+    });
+    expect(response.headers.get("X-ExClipper-Model-Id")).toBe("qwen3.7-plus");
   });
 
   it("transcribes a bounded broadcast chunk through the fixed Qwen Omni adapter", async () => {
@@ -465,7 +601,10 @@ describe("aiProxy.worker", () => {
     expect(await response.json()).toEqual({
       ok: true,
       service: "rettohighlight-gemini",
-      version: 1,
+      version: 2,
+      routingPolicyVersion: "1.6.0",
+      contextModelRevision:
+        "qwen3.7-plus-context-editorial-jury-gameplay-calibrated-2026-07-22",
     });
     expect(response.headers.get("Cache-Control")).toBe("no-store");
     expect(upstreamFetch).not.toHaveBeenCalled();

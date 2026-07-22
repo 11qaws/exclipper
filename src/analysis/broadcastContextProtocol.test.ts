@@ -69,6 +69,30 @@ describe("broadcastContextProtocol", () => {
     expect(request.candidates).toEqual([]);
   });
 
+  it("accepts a bounded 24-lead editorial jury but rejects a 25th item", () => {
+    const input = validInput();
+    const candidates = Array.from({ length: 24 }, (_, index) => ({
+      ...input.candidates[0],
+      candidateId: `candidate-${index + 1}`,
+    }));
+    expect(
+      createBroadcastContextRequest({ ...input, candidates }).candidates,
+    ).toHaveLength(24);
+    expect(() =>
+      createBroadcastContextRequest({
+        ...input,
+        candidates: [
+          ...candidates,
+          { ...input.candidates[0], candidateId: "candidate-25" },
+        ],
+      }),
+    ).toThrowError(
+      expect.objectContaining<Partial<BroadcastContextInputError>>({
+        code: "INVALID_CANDIDATE_COUNT",
+      }),
+    );
+  });
+
   it("maps whole-broadcast decisions to a non-forcing final selection gate", () => {
     expect(
       buildBroadcastContextEligibilityById([

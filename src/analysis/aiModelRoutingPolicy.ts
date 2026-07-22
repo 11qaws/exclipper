@@ -1,4 +1,4 @@
-export const AI_MODEL_ROUTING_POLICY_VERSION = "1.3.0" as const;
+export const AI_MODEL_ROUTING_POLICY_VERSION = "1.6.0" as const;
 
 export const EXCLIPPER_MODEL_IDS = {
   candidatePerceptionPrimary: "qwen3.5-omni-flash",

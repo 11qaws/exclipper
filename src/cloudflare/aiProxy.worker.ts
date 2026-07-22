@@ -24,6 +24,7 @@ import {
   buildBroadcastContextDeepseekRequestBody,
   buildBroadcastContextQwenRequestBody,
   extractBroadcastContextDeepseekResponse,
+  extractBroadcastContextQwenDiscoveryResponse,
   extractBroadcastContextQwenRefinementResponse,
   extractBroadcastContextQwenSelectionResponse,
   extractBroadcastContextQwenOverviewResponse,
@@ -52,10 +53,11 @@ import {
 } from "../analysis/youtubeCaptionTrack";
 
 import {
+  AI_PROVIDER_ROUTING_POLICY_VERSION,
   QWEN_CONTEXT_MODEL_ID,
   QWEN_CONTEXT_MODEL_REVISION,
-  QWEN_CONTEXT_SELECTION_MODEL_ID,
-  QWEN_CONTEXT_SELECTION_MODEL_REVISION,
+  QWEN_CONTEXT_DISCOVERY_MODEL_ID,
+  QWEN_CONTEXT_DISCOVERY_MODEL_REVISION,
   isBoundedAiProviderFallbackEnabled,
   resolveCandidateInsightFallbackConnection,
   resolveCandidateInsightConnection,
@@ -103,6 +105,12 @@ const YOUTUBE_CAPTIONS_RATE_LIMIT_KEY = "youtube-captions";
 const YOUTUBE_INNERTUBE_API_KEY = "AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8";
 const YOUTUBE_ANDROID_CLIENT_VERSION = "20.10.38";
 const JSON_CONTENT_TYPE = "application/json; charset=utf-8";
+const EXCLIPPER_USAGE_PROMPT_TOKENS_HEADER =
+  "X-ExClipper-Usage-Prompt-Tokens";
+const EXCLIPPER_USAGE_COMPLETION_TOKENS_HEADER =
+  "X-ExClipper-Usage-Completion-Tokens";
+const EXCLIPPER_USAGE_TOTAL_TOKENS_HEADER =
+  "X-ExClipper-Usage-Total-Tokens";
 const MAX_YOUTUBE_WATCH_PAGE_BYTES = 2 * 1024 * 1024;
 const MAX_YOUTUBE_CAPTION_BYTES = 8 * 1024 * 1024;
 
@@ -139,6 +147,36 @@ class UpstreamTimeoutError extends Error {}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+interface ProviderTokenUsage {
+  readonly promptTokens: number;
+  readonly completionTokens: number;
+  readonly totalTokens: number;
+}
+
+function readProviderTokenUsage(payload: unknown): ProviderTokenUsage | null {
+  if (!isRecord(payload) || !isRecord(payload.usage)) return null;
+  const promptTokens = payload.usage.prompt_tokens;
+  const completionTokens = payload.usage.completion_tokens;
+  const totalTokens = payload.usage.total_tokens;
+  if (
+    !Number.isSafeInteger(promptTokens) ||
+    (promptTokens as number) < 0 ||
+    !Number.isSafeInteger(completionTokens) ||
+    (completionTokens as number) < 0
+  ) {
+    return null;
+  }
+  const computedTotal = (promptTokens as number) + (completionTokens as number);
+  return {
+    promptTokens: promptTokens as number,
+    completionTokens: completionTokens as number,
+    totalTokens:
+      Number.isSafeInteger(totalTokens) && (totalTokens as number) >= computedTotal
+        ? totalTokens as number
+        : computedTotal,
+  };
 }
 
 function hasExactKeys(
@@ -186,6 +224,9 @@ function corsHeaders(origin: string): Headers {
       CANDIDATE_PASS_B_RESPONSE_MODEL_ID_HEADER,
       CANDIDATE_PASS_B_RESPONSE_MODEL_REVISION_HEADER,
       CANDIDATE_PASS_B_RESPONSE_FALLBACK_HEADER,
+      EXCLIPPER_USAGE_PROMPT_TOKENS_HEADER,
+      EXCLIPPER_USAGE_COMPLETION_TOKENS_HEADER,
+      EXCLIPPER_USAGE_TOTAL_TOKENS_HEADER,
     ].join(", "),
   );
   headers.set("Vary", "Origin");
@@ -606,7 +647,13 @@ function healthResponse(request: Request): Response {
   });
   const body = request.method === "HEAD"
     ? null
-    : JSON.stringify({ ok: true, service: "rettohighlight-gemini", version: 1 });
+    : JSON.stringify({
+        ok: true,
+        service: "rettohighlight-gemini",
+        version: 2,
+        routingPolicyVersion: AI_PROVIDER_ROUTING_POLICY_VERSION,
+        contextModelRevision: QWEN_CONTEXT_MODEL_REVISION,
+      });
   return new Response(body, { status: 200, headers });
 }
 
@@ -1539,6 +1586,7 @@ type BroadcastContextProviderAttempt =
       readonly result: unknown;
       readonly modelId: string;
       readonly modelRevision: string;
+      readonly usage: ProviderTokenUsage | null;
     }
   | {
       readonly ok: false;
@@ -1549,7 +1597,7 @@ type BroadcastContextProviderAttempt =
 async function attemptBroadcastContextProvider(
   connection: Exclude<BroadcastContextConnection, { readonly provider: "disabled" }>,
   broadcastContextRequest: BroadcastContextRequest,
-  contextMode: "overview" | "refinement" | "selection",
+  contextMode: "overview" | "discovery" | "refinement" | "selection",
   qwenModelId: string,
   qwenModelRevision: string,
   fetchImplementation: FetchImplementation,
@@ -1615,7 +1663,12 @@ async function attemptBroadcastContextProvider(
   }
 
   const parsed =
-    connection.provider === "qwen" && contextMode === "refinement"
+    connection.provider === "qwen" && contextMode === "discovery"
+      ? extractBroadcastContextQwenDiscoveryResponse(
+          upstreamPayload,
+          broadcastContextRequest,
+        )
+      : connection.provider === "qwen" && contextMode === "refinement"
       ? extractBroadcastContextQwenRefinementResponse(
           upstreamPayload,
           broadcastContextRequest,
@@ -1694,6 +1747,7 @@ async function attemptBroadcastContextProvider(
       connection.provider === "qwen"
         ? qwenModelRevision
         : connection.descriptor.modelRevision,
+    usage: readProviderTokenUsage(upstreamPayload),
   };
 }
 
@@ -1745,6 +1799,8 @@ export async function handleBroadcastContextRequest(
 
   const contextMode = isRecord(inputValue) && inputValue.analysisMode === "refinement"
     ? "refinement" as const
+    : isRecord(inputValue) && inputValue.analysisMode === "discovery"
+      ? "discovery" as const
     : isRecord(inputValue) && inputValue.analysisMode === "selection"
       ? "selection" as const
       : "overview" as const;
@@ -1773,14 +1829,16 @@ export async function handleBroadcastContextRequest(
   const timeoutMs = dependencies.upstreamTimeoutMs ?? UPSTREAM_TIMEOUT_MS;
   const retryDelaysMs = dependencies.upstreamRetryDelaysMs ?? DEFAULT_UPSTREAM_RETRY_DELAYS_MS;
   const primaryModelId =
-    providerConnection.provider === "qwen" && contextMode === "selection"
-      ? QWEN_CONTEXT_SELECTION_MODEL_ID
+    providerConnection.provider === "qwen" &&
+      contextMode === "discovery"
+      ? QWEN_CONTEXT_DISCOVERY_MODEL_ID
       : providerConnection.provider === "qwen"
         ? QWEN_CONTEXT_MODEL_ID
         : providerConnection.descriptor.modelId;
   const primaryModelRevision =
-    providerConnection.provider === "qwen" && contextMode === "selection"
-      ? QWEN_CONTEXT_SELECTION_MODEL_REVISION
+    providerConnection.provider === "qwen" &&
+      contextMode === "discovery"
+      ? QWEN_CONTEXT_DISCOVERY_MODEL_REVISION
       : providerConnection.provider === "qwen"
         ? QWEN_CONTEXT_MODEL_REVISION
         : providerConnection.descriptor.modelRevision;
@@ -1803,13 +1861,13 @@ export async function handleBroadcastContextRequest(
   ) {
     fallbackUsed = true;
     const fallbackModelId =
-      contextMode === "selection"
+      contextMode === "discovery"
         ? QWEN_CONTEXT_MODEL_ID
-        : QWEN_CONTEXT_SELECTION_MODEL_ID;
+        : QWEN_CONTEXT_DISCOVERY_MODEL_ID;
     const fallbackModelRevision =
-      contextMode === "selection"
+      contextMode === "discovery"
         ? QWEN_CONTEXT_MODEL_REVISION
-        : QWEN_CONTEXT_SELECTION_MODEL_REVISION;
+        : QWEN_CONTEXT_DISCOVERY_MODEL_REVISION;
     finalAttempt = await attemptBroadcastContextProvider(
       providerConnection,
       broadcastContextRequest,
@@ -1844,6 +1902,19 @@ export async function handleBroadcastContextRequest(
     [CANDIDATE_PASS_B_RESPONSE_MODEL_REVISION_HEADER]:
       finalAttempt.modelRevision,
     [CANDIDATE_PASS_B_RESPONSE_FALLBACK_HEADER]: fallbackUsed ? "true" : "false",
+    ...(finalAttempt.usage === null
+      ? {}
+      : {
+          [EXCLIPPER_USAGE_PROMPT_TOKENS_HEADER]: String(
+            finalAttempt.usage.promptTokens,
+          ),
+          [EXCLIPPER_USAGE_COMPLETION_TOKENS_HEADER]: String(
+            finalAttempt.usage.completionTokens,
+          ),
+          [EXCLIPPER_USAGE_TOTAL_TOKENS_HEADER]: String(
+            finalAttempt.usage.totalTokens,
+          ),
+        }),
   });
 }
 

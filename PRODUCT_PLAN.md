@@ -1,5 +1,14 @@
 # ExClipper 제품·UX·기술 계획서
 
+## `0.3.33` context-first editorial routing
+
+- 빠른 신호 reservoir를 곧바로 정밀 영상 모델에 보내지 않는다. 먼저 공개 자막 또는 예산 제한 전사 지도를 완성하고, 전체 맥락 모델이 음악·오프닝·엔딩·휴식과 사건 없는 진행을 제거한 뒤 살아남은 후보만 최대 12개 정밀 해석한다.
+- 공개 자막이 있으면 후보의 정확한 30~60초 범위와 겹치는 이벤트만 입력한다. `[음악]` 표기만 있고 한국어 발화가 없는 구간은 모델 판단과 별개로 ineligible이며, 주변 2분 챕터의 대사가 음악 후보를 살리지 못한다.
+- 전체 맥락의 `discoveredLeads`는 최종 클립이 아니라 고회수 라우팅 결과다. Qwen3.6 Flash가 시간순 주제 조각을 훑어 최대 24개를 모으고 Qwen3.7 Plus가 서로 비교해 최종 editorial jury를 수행한다. 자막이 있으면 jury 상위 3개와 인접 맥락 reserve 3개의 전체 범위를 30초 칸으로 무료 재검토한다. 정밀 영상·음성 검증과 최종 선택 게이트가 false positive를 다시 제거한다.
+- 타임라인은 동일 source-time 축에 30분 눈금, 잠재 신호, 시간순 후보 번호, 주제 구간, 의미 단서를 분리된 레이어로 보여 준다. 의미 단서 번호와 종류별 색은 접을 수 있는 사건·시각·종류·확신 목록과 일치한다.
+- 전체 방송 맥락이 약하거나 일상적 게임 진행뿐인 경우에는 jury가 빈 배열을 반환하는 것이 정상이다. 후보 수를 채우기 위해 단편적 실수나 반복 플레이를 살리지 않는다.
+- 음식 토크의 회귀는 수량이 아니라 사건 identity와 시간 범위로 판정한다: 칼국수 19:38–20:16, 껍데기 22:29–23:29, 두바이 초콜릿 28:19–29:19. 01:11·02:38·03:56의 음악 후보 3개는 실패 사례다.
+
 ## `0.3.31` bounded runtime model routing
 
 - The shared role policy is now part of the Worker runtime instead of a test-only catalog. Candidate perception uses the configured primary (`qwen3.5-omni-flash` in production) and may switch once to `gemini-3.5-flash` only when bounded fallback is enabled and both credentials are valid.
@@ -15,7 +24,7 @@
 
 The working assumption for the clip page is a maximized desktop window. The top of the page therefore uses a wide two-column workspace: source input and an always-visible readiness summary. The primary analysis action is placed immediately below that row so a beginner does not have to scroll to start.
 
-The analysis pipeline is phased: fast local audio/visual/chat signals scan the full source (up to 12 hours) and produce a broad reservoir of 30–60 second leads. Event Episode grouping removes fragments of the same moment before a context-aware selector chooses at most 12 detail-analysis targets. Candidate Pass B sends candidate audio plus timestamp-labelled representative frames to Qwen3.5 Omni Flash. Qwen3.7 Plus reads the whole-broadcast transcript map, and broad semantic leads are split again into one-minute cells. A whole-broadcast judgment may select, defer, or reject every candidate; zero final clips is valid for a negative stream.
+The analysis pipeline is phased: fast local audio/visual/chat signals scan the full source (up to 12 hours) and produce a broad reservoir of 30–60 second leads. Event Episode grouping removes fragments of the same moment before a context-aware selector forms a bounded reservoir. The complete caption/transcript map is prepared next, and Qwen3.7 Plus rejects fast peaks without a grounded event while discovering quieter semantic leads. Only context-surviving candidates are sent with audio and timestamp-labelled representative frames to Qwen3.5 Omni Flash. Broad semantic leads use free 30-second caption cells when available or bounded one-minute ASR cells otherwise. A whole-broadcast judgment may select, defer, or reject every candidate; zero final clips is valid for a negative stream.
 
 The fast pass includes a conservative dialogue-led signal. A novel speech-band and articulation change can become a candidate even without a loudness spike. It is a review lead, not semantic understanding; multimodal AI and playback confirmation remain authoritative.
 

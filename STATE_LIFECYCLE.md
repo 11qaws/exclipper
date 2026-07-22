@@ -1,10 +1,20 @@
 # ExClipper 상태·생애주기 명세
 
-- 문서 버전: 0.3.25
-- 기준 제품 계획: PRODUCT_PLAN.md 0.3.25
+- 문서 버전: 0.3.33
+- 기준 제품 계획: PRODUCT_PLAN.md 0.3.33
 - 기준일: 2026-07-20 (Asia/Seoul)
 - 적용 범위: GitHub Pages에서 실행되는 개인 편집 어시스턴트와 선택형 CHZZK 동반 수집기
 - 문서 지위: 구현 전 상태 모델의 기준 문서
+
+## `0.3.33` context-first gate와 자막 refinement
+
+- 로컬 fast pass 완료는 Candidate Pass B 시작 조건이 아니다. transcript가 `completed | completedWithGaps`이면 whole-context가 `completed | failed`로 정착한 뒤에만 정밀 후보 해석을 시작한다. transcript 자체가 `failed`면 후보 단계는 기존 fast result를 보존한 채 진행할 수 있다.
+- 공개 YouTube caption track은 현재 source/run에 묶인 휘발 상태다. source 교체·새 분석·복구 전환 때 반드시 비우며, 저장된 chapter map을 다시 열 때는 같은 video ID의 track을 재요청할 수 있다.
+- whole-context annotation과 source-fenced explicit-music gate가 모두 후보 생존 조건이다. 둘 중 하나가 ineligible이면 해당 후보는 정밀 분석 budget을 소비하지 않는다.
+- caption refinement plan은 의미 lead 전체 범위를 30초 cell로 나누고 `estimatedAsrCostUsd = 0`을 유지한다. caption이 없을 때만 기존 ASR reserve plan을 사용하며, 두 plan의 결과는 동일한 source range 검증과 semantic candidate serialization을 거친다.
+- 타임라인의 후보 번호는 항상 현재 candidates를 source peak 시각으로 정렬한 index+1이다. 원·요약 카드·접근성 label이 같은 index를 사용하며, 주제/의미 단서 레이어는 candidate lifecycle을 변경하지 않는 projection이다.
+- topical discovery의 최대 24개 lead는 비교 전 reservoir다. editorial jury가 선택한 상위 3개와 시간상 인접한 context reserve 3개의 ID만 별도 세션 envelope에 저장하고 refinement 입력으로 사용한다. jury가 빈 배열이면 semantic refinement도 빈 결과로 정착한다.
+- 의미 단서 목록의 접힘 여부와 종류별 색은 탭의 표현 상태다. source range, confidence, lead ID, 후보 승인 상태 또는 저장 dirty 여부를 변경하지 않는다.
 
 ## `0.3.31` 후보 모델 라우팅과 결과 귀속
 

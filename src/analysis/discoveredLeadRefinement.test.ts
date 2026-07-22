@@ -3,6 +3,7 @@ import type { BroadcastContextDiscoveredLead } from "./broadcastContextProtocol"
 import {
   DISCOVERED_LEAD_REFINEMENT_BUDGET_USD,
   createDiscoveredLeadRefinementChapters,
+  createCaptionDiscoveredLeadRefinementPlan,
   createDiscoveredLeadRefinementPlan,
   materializeRefinedDiscoveredLeadEvidence,
   refineDiscoveredLeadRange,
@@ -38,6 +39,36 @@ describe("discoveredLeadRefinement", () => {
         (segment) => segment.sourceEndMs - segment.sourceStartMs <= 60_000,
       ),
     ).toBe(true);
+  });
+
+  it("covers the full lead with free thirty-second caption refinement", () => {
+    const broadLead = { ...lead("caption", 600_000), endMs: 1_020_000 };
+    const plan = createCaptionDiscoveredLeadRefinementPlan([broadLead]);
+    expect(plan.estimatedAsrCostUsd).toBe(0);
+    expect(plan.segments[0]?.sourceStartMs).toBe(broadLead.startMs);
+    expect(plan.segments.at(-1)?.sourceEndMs).toBe(broadLead.endMs);
+    expect(
+      plan.segments.every(
+        (segment) => segment.sourceEndMs - segment.sourceStartMs <= 30_000,
+      ),
+    ).toBe(true);
+  });
+
+  it("keeps six pre-ranked caption leads in jury order at no ASR cost", () => {
+    const juryOrder = [
+      lead("selected-low-signal", 1_200_000, 0.7),
+      lead("selected-high-signal", 300_000, 0.95),
+      ...Array.from({ length: 5 }, (_, index) =>
+        lead(`reserve-${index + 1}`, 1_800_000 + index * 300_000, 0.8),
+      ),
+    ];
+    const plan = createCaptionDiscoveredLeadRefinementPlan(juryOrder, {
+      preserveInputOrder: true,
+    });
+    expect(plan.selectedLeadIds).toEqual(
+      juryOrder.slice(0, 6).map((item) => item.leadId),
+    );
+    expect(plan.estimatedAsrCostUsd).toBe(0);
   });
 
   it("locates the exact apology cell instead of choosing the loudest neighbor", () => {

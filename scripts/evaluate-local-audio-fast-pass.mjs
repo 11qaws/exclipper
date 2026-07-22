@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { Buffer } from "node:buffer";
 import console from "node:console";
+import { writeFileSync } from "node:fs";
 import { performance } from "node:perf_hooks";
 import process from "node:process";
 
@@ -361,11 +362,16 @@ function candidatePeakDistribution(candidates, sourceDurationMs) {
 }
 
 async function main() {
-  const [videoPath, ffmpegPath = "ffmpeg", ffprobePath = "ffprobe"] =
+  const [
+    videoPath,
+    ffmpegPath = "ffmpeg",
+    ffprobePath = "ffprobe",
+    outputPath,
+  ] =
     process.argv.slice(2);
   if (videoPath === undefined) {
     console.error(
-      "Usage: node --experimental-strip-types scripts/evaluate-local-audio-fast-pass.mjs <video> [ffmpeg] [ffprobe]",
+      "Usage: node --experimental-strip-types scripts/evaluate-local-audio-fast-pass.mjs <video> [ffmpeg] [ffprobe] [output.json]",
     );
     process.exitCode = 2;
     return;
@@ -434,7 +440,11 @@ async function main() {
     },
     candidates: result.candidates.map(candidateSummary),
   };
-  process.stdout.write(`${JSON.stringify(summary, null, 2)}\n`);
+  const serialized = `${JSON.stringify(summary, null, 2)}\n`;
+  if (outputPath !== undefined) {
+    writeFileSync(outputPath, serialized, "utf8");
+  }
+  process.stdout.write(serialized);
 }
 
 main().catch((error) => {

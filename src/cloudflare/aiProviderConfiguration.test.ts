@@ -165,7 +165,7 @@ describe("aiProviderConfiguration", () => {
     expect(createAiProviderReadinessManifest(environment).broadcastContext).toEqual({
       selectedProvider: "qwen",
       modelId: "qwen3.7-plus",
-      modelRevision: "qwen3.7-plus-topic-chapters-reviewed-2026-07-22",
+      modelRevision: "qwen3.7-plus-context-editorial-jury-gameplay-calibrated-2026-07-22",
       implementationStatus: "active",
       configured: true,
       active: true,

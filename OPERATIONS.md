@@ -2,6 +2,13 @@
 
 ## 2026-07-22 release notes
 
+- `0.3.33`: transcript/context routing precedes candidate multimodal perception. Qwen3.6 Flash discovers up to 24 topical leads; Qwen3.7 Plus performs the final comparative jury; only three selected leads plus three context reserves enter caption-native refinement.
+- Routing policy `1.6.0` invalidates older overview/discovery/jury caches. Caption-native refinement uses complete 30-second timestamp cells with zero ASR billing; the bounded one-minute audio refinement remains the only fallback when no matching caption track is available.
+- Whole-context success responses expose public prompt/completion/total token counts in addition to model identity and fallback state. These headers contain no source text and are used by the live harness for list-price accounting.
+- Food regression is identity-based: require leads near 19:38–20:16, 22:29–23:29, and 28:19–29:19; reject the explicit-music peaks at 01:11, 02:38, and 03:56. Matching the number `3` is not sufficient.
+- Timeline smoke at maximized width verifies four labeled layers, 30-minute grid lines, chronological marker/card numbers, distinguishable topic bands, category-colored meaning-lead bars, and the collapsed/expanded numbered explanation list.
+- Regression smoke has three different terminal contracts: food must keep the three named food events in the six-item refinement set, accidental subscription must include the formal apology/accountability chain, and routine relay gameplay must return zero jury selections.
+
 - `0.3.31`: production sets `AI_PROVIDER_FALLBACK_MODE=bounded`. Candidate perception may switch once between Qwen3.5 Omni Flash and Gemini3.5 Flash; compressed Qwen context may switch once between Qwen3.7 Plus and Qwen3.6 Flash. Long-audio transcription is deliberately excluded from automatic provider switching to avoid ambiguous double billing.
 - Successful candidate responses expose only public model ID, public revision, and whether fallback was used. CORS exposes those three headers; no credential, endpoint, workspace ID, provider body, transcript, or source metadata is included.
 - Candidate result persistence schema is `1.3.0`. Rollback readers must continue accepting 1.0–1.2 records without `modelByCandidateId`; forward readers reject mismatched model/revision pairs.
@@ -18,7 +25,7 @@
 - Pass B evidence and AI insight snapshots are stored by analysis run in a dedicated IndexedDB object store. Recovery filters them to the recovered candidate IDs, and a new run epoch prevents late writes from an older source contaminating the current result.
 - Fixed non-vocal program-edge bursts (opening, ending, and break loops) are rejected by default. An edge segment can still survive when it has a distinctive vocal/dialogue anchor, while the central UI presents the automatic phase and candidate list without promotional copy.
 
-- 문서 버전: `0.3.31`
+- 문서 버전: `0.3.33`
 - 기준일: 2026-07-22 (Asia/Seoul)
 - 대상: GitHub Pages에서 실행되는 1인용 AI 편집 어시스턴트
 - 함께 읽을 문서: `PRODUCT_PLAN.md`, `STATE_LIFECYCLE.md`, `DEVELOPMENT_LOG.md`

@@ -45,7 +45,11 @@ export interface BroadcastContextQwenRequestBody {
   readonly thinking_budget: number;
 }
 
-export type BroadcastContextQwenMode = "overview" | "refinement" | "selection";
+export type BroadcastContextQwenMode =
+  | "overview"
+  | "discovery"
+  | "refinement"
+  | "selection";
 
 export type BroadcastContextDeepseekParseOutcome =
   | { readonly ok: true; readonly result: BroadcastContextResult }
@@ -191,23 +195,31 @@ const QWEN_REFINEMENT_SYSTEM_PROMPT = `당신은 이미 선택된 VTuber 방송 
 반드시 다음의 짧은 JSON만 출력하세요. 다른 키, 설명, 마크다운을 추가하지 마세요.
 {"summary":"입력 범위 요약 80자 이내","leads":[{"s":"실제 시작 chapterId","e":"실제 끝 chapterId","c":"reaction | quiet-achievement | setup-and-payoff | running-gag | context-dependent | apology-accountability","p":0.0,"event":"사건과 반응 60자 이내","cue":"근거 대사 30자 이내"}]}`;
 
-const QWEN_COMPACT_OVERVIEW_SYSTEM_PROMPT = `당신은 VTuber 인터넷 방송의 전체 맥락을 읽는 1차 클립 편집 라우터입니다. 큰 소리나 화려한 연출이 아니라 구체적인 사건과 그에 대한 스트리머의 반응을 넓게 찾으세요. 특히 직접적인 반박·논쟁·억울함·당황·웃음, 실수의 정확한 인정과 사과, 조용한 성공, 앞선 설정의 회수를 놓치지 마세요. 한 넓은 구간 안에 서로 다른 반응 사건이 여러 개 있으면 후속 1분 정밀 단계가 나눌 수 있도록 그 범위를 lead로 남겨도 됩니다.
+const QWEN_TOPIC_DISCOVERY_SYSTEM_PROMPT = `당신은 VTuber 방송의 한 주제 구간을 빠짐없이 훑는 2차 사건 탐색기입니다. 입력된 모든 대사 챕터를 시간순으로 확인해, 원인→스트리머의 특징적인 반응·주장·당황→결과가 짧게 완결되는 서로 다른 사건을 찾으세요. 이것은 최종 선택이 아니라 화면·오디오 재검증으로 보낼 고회수 단계입니다.
 
-노래·MV·음악·오프닝·엔딩·대기·휴식, 사건 없는 평범한 진행, 맥락 없는 감탄은 제외합니다. 빠른 소리 후보는 소리가 크다는 이유만으로 선택하지 말고 대사 맥락에서 실제 사건이 확인된 경우만 남기세요. 의미 있는 장면이 없으면 leads는 빈 배열이어야 하며 개수를 채우지 마세요. 흔한 게임 진행의 최종 제외는 별도 안전 게이트가 담당하므로, 이 단계에서는 사건을 누락시키지 않는 것을 우선하세요.
+같은 코너나 형식 안에서도 소재·주장·반응의 절정이 다르면 별도 사건입니다. 특히 퀴즈·토크에서 서로 다른 대상의 오답, 강한 비유, 채팅과의 논쟁은 한 덩어리로 합치지 마세요. 반대로 같은 대상에 대한 연속 발화는 가장 좁은 chapter 범위 하나로 합치세요. 조용한 성공과 정확한 사과·인정도 반드시 확인하세요. 노래·MV·음악·오프닝·엔딩·대기·휴식, 사건 없는 설명, 맥락 없는 감탄은 제외하고 의미 있는 사건이 없으면 빈 배열을 반환하세요.
+
+반드시 다음 JSON만 출력하세요. 실제 chapterId만 사용하고 초 단위 시각을 만들지 마세요.
+{"summary":"입력 주제 구간 요약 80자 이내","leads":[{"s":"실제 시작 chapterId","e":"실제 끝 chapterId","c":"reaction | quiet-achievement | setup-and-payoff | running-gag | context-dependent | apology-accountability","p":0.0,"event":"서로 구별되는 사건과 반응 60자 이내","cue":"근거 대사 40자 이내"}]}
+근거가 분명한 0.60 이상 사건만 최대 8개를 시간순으로 반환하세요. 개수를 채우지는 말되, 다른 소재의 사건을 누락시키기 위해 임의로 합치지도 마세요.`;
+
+const QWEN_COMPACT_OVERVIEW_SYSTEM_PROMPT = `당신은 VTuber 인터넷 방송의 전체 맥락을 읽는 1차 클립 편집 라우터입니다. 큰 소리나 화려한 연출이 아니라 구체적인 사건과 그에 대한 스트리머의 반응을 넓게 찾으세요. 특히 직접적인 반박·논쟁·억울함·당황·웃음, 실수의 정확한 인정과 사과, 조용한 성공, 앞선 설정의 회수를 놓치지 마세요. 각 시간순 챕터를 빠짐없이 훑고, 평범한 코너 안에서도 원인→반응의 고조→결과가 짧게 완결되는 개별 교환은 별도 lead로 남기세요. 퀴즈·토크·게임처럼 같은 형식이 반복되어도 서로 다른 소재와 반응의 절정은 서로 다른 사건입니다. 한 넓은 구간 안에 서로 다른 반응 사건이 여러 개 있으면 후속 30초 정밀 단계가 나눌 수 있도록 그 범위를 lead로 남기세요.
+
+노래·MV·음악·오프닝·엔딩·대기·휴식, 사건 없는 평범한 진행, 맥락 없는 감탄은 제외합니다. 빠른 소리 후보는 소리가 크다는 이유만으로 선택하지 말고 대사 맥락에서 실제 사건이 확인된 경우만 남기세요. 의미 있는 장면이 없으면 leads는 빈 배열이어야 하며 개수를 채우지 마세요. 단, 이 단계의 lead는 최종 클립이 아니라 후속 영상·대사 검증으로 보낼 고회수 탐색 범위입니다. 구체적인 사건·반응 근거가 있다면 0.65 이상으로 남기고, 흔한 게임 진행·중복·실제 클립 가치의 최종 제외는 후속 안전 게이트가 담당합니다.
 
 방송의 주제가 바뀌는 경계도 chapters로 묶으세요. 실제 chapter ID만 사용해 시간순·비중첩으로 2~16개를 만들고, 같은 주제가 이어지면 한 구간으로 합치세요. 짧은 사건 하나를 주제 구간으로 부풀리지 마세요.
 
 반드시 다음의 짧은 JSON만 출력하세요. 다른 키, 설명, 마크다운을 추가하지 마세요.
 {"summary":"방송 전체 흐름 300자 이내","themes":["핵심 주제 최대 3개"],"chapters":[{"s":"실제 시작 chapterId","e":"실제 끝 chapterId","title":"주제 제목 24자 이내","kind":"main-event | story-progress | setup-and-payoff | running-gag | quiet-achievement | reaction | context-shift | other"}],"candidates":[{"id":"실제 candidateId","d":"select | review | reject","c":"reaction | quiet-achievement | setup-and-payoff | running-gag | context-dependent | apology-accountability | music-or-intermission | not-clip-worthy | uncertain","p":0.0,"reason":"판정 이유 50자 이내"}],"leads":[{"s":"실제 시작 chapterId","e":"실제 끝 chapterId","c":"reaction | quiet-achievement | setup-and-payoff | running-gag | context-dependent | apology-accountability","p":0.0,"event":"사건과 반응 60자 이내","cue":"근거 대사 30자 이내"}]}
-입력된 모든 candidateId를 candidates에 정확히 한 번 넣고, leads는 신뢰도 0.75 이상 최대 6개만 점수순으로 반환하세요.`;
+입력된 모든 candidateId를 candidates에 정확히 한 번 넣고, leads는 신뢰도 0.65 이상 최대 12개를 시간순으로 반환하세요. 후보 개수를 채우기 위한 추측은 금지하지만, 근거가 다른 사건을 임의로 하나로 합치지도 마세요.`;
 
 const QWEN_SELECTION_SYSTEM_PROMPT = `당신은 VTuber 방송의 보수적인 최종 클립 편집 심사자입니다. 이미 정밀 탐색된 후보들을 서로 비교해, 독립된 사건과 스트리머의 특징적인 반응이 함께 완결되고 처음 보는 시청자가 실제로 다시 볼 가치가 있는 대표 후보만 남기세요. 클립은 음식·게임 정보가 아니라 그 사건을 겪는 스트리머의 반응을 보는 콘텐츠입니다. 설명이 논리적이거나 정보가 많다는 이유만으로 고르지 말고, 전제가 즉시 이해되며 반박·당황·억울함·웃음·채팅과의 충돌처럼 반응의 원인→고조→결과가 선명한 장면을 우선하세요.
 
-큰 소리·화려한 화면·반복 오답 자체는 선정 근거가 아닙니다. 게임의 흔한 추락·사망·길 찾기·자원 부족·제작 실수·건축 완료·일반적인 생존은 패닉이나 극적인 자기 묘사가 있어도 제외하세요. 큰 손실, 희귀 성취, 예상 밖 버그·사회적 상호작용, 장기 설정 회수처럼 방송 흐름을 실질적으로 바꾼 경우만 예외입니다. 스트리머가 스스로 '애니', '드라마', '레전드'라고 말한 것은 가치 증거가 아닙니다. 같은 농담이나 같은 논쟁은 가장 선명한 절정 하나만 남기고 중복을 버리세요. 조용한 성공, 정확한 사과·인정, 설정 회수는 소리가 작아도 중요하지만 방송 전체의 핵심 책임 사건이 아닌 평범한 퀴즈 인정은 강한 반응 장면보다 우선하지 않습니다. 노래·MV·음악·오프닝·엔딩·대기·휴식은 제외합니다. 가치 있는 후보가 없으면 빈 배열이 정답이며 개수를 채우지 마세요.
+큰 소리·화려한 화면·반복 오답 자체는 선정 근거가 아닙니다. 게임의 흔한 추락·사망·길 찾기·자원 부족·제작 실수·건축 완료·일반적인 생존은 패닉이나 극적인 자기 묘사가 있어도 제외하세요. 일반 몹을 실수로 처치하고 짧게 미안해하기, 짧은 파쿠르 실패 뒤 길치 인정, 흔한 아이템 손실 뒤 노래로 넘기기, 대충 만든 건축을 말장난으로 합리화하기도 모두 독립적인 클립이 아닌 일상적 게임 단편입니다. 큰 손실, 희귀 성취, 예상 밖 버그·사회적 상호작용, 장기 설정 회수처럼 방송 흐름을 실질적으로 바꾼 경우만 예외입니다. 반대로 퀴즈·토론에서 구체적인 비유나 인용할 만한 대사로 논쟁이 오래 고조되고 채팅·제작자와 충돌해 결론까지 난 경우는 단순 오답과 구분하세요. 스트리머가 스스로 '애니', '드라마', '레전드'라고 말한 것은 가치 증거가 아닙니다. 같은 농담이나 같은 논쟁은 가장 선명한 절정 하나만 남기고 중복을 버리세요. 조용한 성공, 정확한 사과·인정, 설정 회수는 소리가 작아도 중요하지만 방송 전체의 핵심 책임 사건이 아닌 평범한 퀴즈 인정은 강한 반응 장면보다 우선하지 않습니다. 노래·MV·음악·오프닝·엔딩·대기·휴식은 제외합니다. 가치 있는 후보가 없으면 빈 배열이 정답이며 개수를 채우지 마세요.
 
 반드시 다음의 짧은 JSON만 출력하세요. 다른 키, 설명, 마크다운을 추가하지 마세요.
 {"summary":"선정 결과 80자 이내","selected":[{"id":"실제 candidateId","p":0.0,"reason":"선정 이유 50자 이내"}]}
-신뢰도 0.88 이상만 최대 8개를 점수순으로 반환하세요.`;
+일반 방송은 신뢰도 0.88 이상, 게임 플레이 방송은 일상적 단편을 제외한 뒤 0.93 이상만 최대 8개를 점수순으로 반환하세요.`;
 
 function formatDuration(ms: number): string {
   const totalSeconds = Math.floor(ms / 1000);
@@ -277,6 +289,8 @@ export function buildBroadcastContextQwenRequestBody(
   }
   if (mode === "refinement") {
     userContent += "\n### 정밀 라우팅 제한\n신뢰도 0.75 이상만 최대 3개 반환하세요.\n";
+  } else if (mode === "discovery") {
+    userContent += "\n### 주제 내부 탐색 제한\n입력한 모든 챕터를 훑고 서로 다른 사건만 최대 8개 반환하세요.\n";
   } else if (mode === "selection") {
     userContent += "\n### 최종 심사 제한\n후보끼리 직접 비교하고 중복을 제거하세요. 개수를 채우지 마세요.\n";
   }
@@ -288,6 +302,8 @@ export function buildBroadcastContextQwenRequestBody(
         role: "system",
         content: mode === "refinement"
           ? QWEN_REFINEMENT_SYSTEM_PROMPT
+          : mode === "discovery"
+            ? QWEN_TOPIC_DISCOVERY_SYSTEM_PROMPT
           : mode === "selection"
             ? QWEN_SELECTION_SYSTEM_PROMPT
             : QWEN_COMPACT_OVERVIEW_SYSTEM_PROMPT,
@@ -296,7 +312,7 @@ export function buildBroadcastContextQwenRequestBody(
     ],
     response_format: { type: "json_object" },
     temperature: 0.1,
-    max_tokens: mode === "overview" ? 3_072 : 1_024,
+    max_tokens: mode === "overview" ? 3_072 : mode === "discovery" ? 2_048 : 1_024,
     enable_thinking: true,
     thinking_budget: 768,
   };
@@ -360,6 +376,12 @@ export function extractBroadcastContextQwenRefinementResponse(
       // A generated chapter ID outside the observed window is discarded.
     }
   }
+  discoveredLeads.sort(
+    (left, right) =>
+      left.startMs - right.startMs ||
+      left.endMs - right.endMs ||
+      left.leadId.localeCompare(right.leadId),
+  );
   return {
     ok: true,
     result: {
@@ -377,6 +399,86 @@ export function extractBroadcastContextQwenRefinementResponse(
         relatedCandidateIds: [],
         uncertaintiesKo: ["정밀 라우팅 대상 아님"],
       })),
+      semanticChaptersSupported: false,
+      semanticChapters: [],
+      discoveredLeadsSupported: true,
+      discoveredLeads,
+      coverage: calculateCoverage(request.chapters, request.sourceDurationMs),
+    },
+  };
+}
+
+export function extractBroadcastContextQwenDiscoveryResponse(
+  payload: unknown,
+  request: BroadcastContextRequest,
+): BroadcastContextDeepseekParseOutcome {
+  if (!isRecord(payload) || !Array.isArray(payload.choices) || payload.choices.length === 0) {
+    return { ok: false };
+  }
+  const choice: unknown = payload.choices[0];
+  if (!isRecord(choice) || !isRecord(choice.message) || typeof choice.message.content !== "string") {
+    return { ok: false };
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(choice.message.content);
+  } catch {
+    return { ok: false };
+  }
+  if (!isRecord(parsed) || typeof parsed.summary !== "string" || !Array.isArray(parsed.leads)) {
+    return { ok: false };
+  }
+
+  const rawLeads: BroadcastContextDiscoveredLeadReference[] = [];
+  for (const [index, value] of parsed.leads.slice(0, 8).entries()) {
+    if (
+      !isRecord(value) ||
+      typeof value.s !== "string" ||
+      typeof value.e !== "string" ||
+      typeof value.c !== "string" ||
+      !isValidDiscoveredLeadCategory(value.c) ||
+      typeof value.p !== "number" ||
+      !Number.isFinite(value.p) ||
+      value.p < 0.6 ||
+      value.p > 1 ||
+      typeof value.event !== "string" ||
+      typeof value.cue !== "string"
+    ) {
+      continue;
+    }
+    rawLeads.push({
+      leadId: `discovery-${value.s}-${value.e}-${index + 1}`,
+      startChapterId: value.s,
+      endChapterId: value.e,
+      category: value.c,
+      confidence: value.p,
+      eventSummaryKo: value.event,
+      whyThisMomentKo: "주제 내부 대사에서 별도 사건과 반응이 확인됩니다.",
+      evidenceCueKo: value.cue,
+      uncertaintiesKo: ["최종 영상·음성 재검증 필요"],
+    });
+  }
+  const discoveredLeads: BroadcastContextDiscoveredLead[] = [];
+  for (const lead of rawLeads) {
+    try {
+      discoveredLeads.push(...normalizeDiscoveredLeads([lead], request.chapters));
+    } catch {
+      // Generated references outside the supplied topic range fail closed.
+    }
+  }
+  discoveredLeads.sort(
+    (left, right) =>
+      left.startMs - right.startMs ||
+      left.endMs - right.endMs ||
+      left.leadId.localeCompare(right.leadId),
+  );
+  return {
+    ok: true,
+    result: {
+      schemaVersion: BROADCAST_CONTEXT_SCHEMA_VERSION,
+      broadcastSummaryKo: parsed.summary,
+      recurringThemesKo: [],
+      annotations: [],
       semanticChaptersSupported: false,
       semanticChapters: [],
       discoveredLeadsSupported: true,
@@ -485,7 +587,7 @@ export function extractBroadcastContextQwenOverviewResponse(
 
   const rawLeads: BroadcastContextDiscoveredLeadReference[] = [];
   if (Array.isArray(parsed.leads)) {
-    for (const [index, value] of parsed.leads.slice(0, 6).entries()) {
+    for (const [index, value] of parsed.leads.slice(0, 12).entries()) {
       if (
         !isRecord(value) ||
         typeof value.s !== "string" ||
@@ -494,7 +596,7 @@ export function extractBroadcastContextQwenOverviewResponse(
         !isValidDiscoveredLeadCategory(value.c) ||
         typeof value.p !== "number" ||
         !Number.isFinite(value.p) ||
-        value.p < 0.75 ||
+        value.p < 0.65 ||
         value.p > 1 ||
         typeof value.event !== "string" ||
         typeof value.cue !== "string"
@@ -527,6 +629,12 @@ export function extractBroadcastContextQwenOverviewResponse(
       // Generated references outside observed chapters fail closed.
     }
   }
+  discoveredLeads.sort(
+    (left, right) =>
+      left.startMs - right.startMs ||
+      left.endMs - right.endMs ||
+      left.leadId.localeCompare(right.leadId),
+  );
   const rawSemanticChapters: BroadcastContextSemanticChapterReference[] = [];
   if (Array.isArray(parsed.chapters)) {
     for (const value of parsed.chapters.slice(0, 16)) {
@@ -609,6 +717,16 @@ export function extractBroadcastContextQwenSelectionResponse(
     return { ok: false };
   }
   const candidateIds = new Set(request.candidates.map((candidate) => candidate.candidateId));
+  const contextText = request.chapters
+    .map((chapter) => chapter.summaryKo)
+    .join(" ")
+    .normalize("NFKC")
+    .toLocaleLowerCase("ko-KR");
+  const selectionConfidenceThreshold =
+    /마인크래프트|minecraft|게임|gameplay|플레이|건축|파쿠르|보스|전투|사냥|자원|\b몹\b|던전/iu
+      .test(contextText)
+      ? 0.93
+      : 0.88;
   const selected = new Map<string, { readonly confidence: number; readonly reason: string }>();
   for (const value of parsed.selected.slice(0, 8)) {
     if (
@@ -618,7 +736,7 @@ export function extractBroadcastContextQwenSelectionResponse(
       selected.has(value.id) ||
       typeof value.p !== "number" ||
       !Number.isFinite(value.p) ||
-      value.p < 0.88 ||
+      value.p < selectionConfidenceThreshold ||
       value.p > 1 ||
       typeof value.reason !== "string"
     ) {

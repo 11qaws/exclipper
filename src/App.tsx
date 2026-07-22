@@ -58,6 +58,7 @@ import {
 import { createAnalysisBudgetEnvelope } from "./analysis/analysisBudgetPolicy";
 import { AI_MODEL_ROUTING_POLICY_VERSION } from "./analysis/aiModelRoutingPolicy";
 import {
+  createCaptionDiscoveredLeadRefinementPlan,
   createDiscoveredLeadRefinementChapters,
   createDiscoveredLeadRefinementPlan,
   materializeRefinedDiscoveredLeadEvidence,
@@ -82,9 +83,16 @@ import {
 import {
   YOUTUBE_CAPTION_MODEL_REVISION,
   createYouTubeCaptionChapters,
+  createYouTubeCaptionRefinementTranscripts,
+  type YouTubeCaptionTrackResult,
   youtubeVideoIdFromSourceName,
 } from "./analysis/youtubeCaptionTrack";
 import { requestYouTubeCaptionTrack } from "./analysis/youtubeCaptionClient";
+import {
+  captionTextForRange,
+  chapterTextForRange,
+  isExplicitMusicOnlyCaption,
+} from "./analysis/captionCandidateEvidence";
 import { sampleCandidateVideoFrames } from "./analysis/candidateVideoFrames";
 import {
   mergeCandidatePassBEvidence,
@@ -115,10 +123,18 @@ import { finalizeContextQualifiedCandidates } from "./analysis/contextQualifiedF
 import type {
   BroadcastContextCandidateInput,
   BroadcastContextChapterInput,
+  BroadcastContextDiscoveredLeadCategory,
   BroadcastContextResult,
   BroadcastContextSemanticChapter,
 } from "./analysis/broadcastContextProtocol";
 import { buildHighlightNarrative } from "./analysis/highlightNarrative";
+import {
+  BROADCAST_TOPICAL_DISCOVERY_VERSION,
+  createBroadcastTopicalLeadJuryPlan,
+  createBroadcastTopicalDiscoverySlices,
+  mergeBroadcastTopicalDiscoveryLeads,
+  selectBroadcastTopicalRefinementLeadIds,
+} from "./analysis/broadcastTopicalDiscovery";
 import {
   createSemanticLeadCandidate,
   parseSemanticLeadCandidates,
@@ -284,12 +300,37 @@ interface AudioAnalysisOutcome {
   readonly coverageComplete: boolean;
 }
 
-const APP_VERSION = "0.3.31";
+const APP_VERSION = "0.3.33";
 const PERSISTENCE_SCHEMA_VERSION = "0.3.0";
 const SIGNAL_ENGINE_VERSION =
   "streamer-reaction-fast-pass-v5-chat-fallback-music-confirmation";
 const MAX_CHAT_FILE_BYTES = 32 * 1024 * 1024;
 const SIGNAL_GAP_POLICY_ID = DURABLE_SIGNAL_GAP_POLICY_ID;
+
+interface PersistedBroadcastContextEnvelope {
+  readonly resultPayload: unknown;
+  readonly refinementLeadIds: readonly string[] | null;
+}
+
+function unpackPersistedBroadcastContext(
+  payload: unknown,
+): PersistedBroadcastContextEnvelope {
+  if (
+    typeof payload === "object" &&
+    payload !== null &&
+    !Array.isArray(payload) &&
+    "result" in payload &&
+    "refinementLeadIds" in payload &&
+    Array.isArray(payload.refinementLeadIds) &&
+    payload.refinementLeadIds.every((value) => typeof value === "string")
+  ) {
+    return {
+      resultPayload: payload.result,
+      refinementLeadIds: payload.refinementLeadIds,
+    };
+  }
+  return { resultPayload: payload, refinementLeadIds: null };
+}
 
 type CandidateGeminiInsight = CandidatePassBTranscriptResult["insight"];
 type CandidateGeminiInsightById = Readonly<Record<string, CandidateGeminiInsight>>;
@@ -833,6 +874,19 @@ function triggerClipDownload(blob: Blob, fileName: string): void {
   globalThis.setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
 }
 
+function semanticLeadCategoryLabel(
+  category: BroadcastContextDiscoveredLeadCategory,
+): string {
+  return {
+    reaction: "특징적 반응",
+    "quiet-achievement": "조용한 성취",
+    "setup-and-payoff": "설정과 회수",
+    "running-gag": "반복 개그",
+    "context-dependent": "맥락형 사건",
+    "apology-accountability": "사과·해명",
+  }[category];
+}
+
 function App() {
   const [theme, setTheme] = useState<Theme>(initialTheme);
   const [isDragging, setIsDragging] = useState(false);
@@ -890,6 +944,8 @@ function App() {
     useState<BroadcastTranscriptWorkerProgress | null>(null);
   const [broadcastTranscriptChapters, setBroadcastTranscriptChapters] =
     useState<readonly BroadcastContextChapterInput[]>([]);
+  const [youtubeCaptionTrack, setYouTubeCaptionTrack] =
+    useState<YouTubeCaptionTrackResult | null>(null);
   const [broadcastTranscriptError, setBroadcastTranscriptError] =
     useState<string | null>(null);
   const [broadcastContextStatus, setBroadcastContextStatus] = useState<
@@ -897,6 +953,8 @@ function App() {
   >("idle");
   const [broadcastContextResult, setBroadcastContextResult] =
     useState<BroadcastContextResult | null>(null);
+  const [broadcastContextRefinementLeadIds, setBroadcastContextRefinementLeadIds] =
+    useState<readonly string[] | null>(null);
   const [broadcastContextError, setBroadcastContextError] = useState<string | null>(null);
   const [semanticLeadRefinementStatus, setSemanticLeadRefinementStatus] = useState<
     "idle" | "running" | "completed" | "failed"
@@ -1069,6 +1127,7 @@ function App() {
     setCandidateTimelineFramesById({});
     setCandidateTimelineScorePoints([]);
     setTimelineSemanticChapters([]);
+    setYouTubeCaptionTrack(null);
     setClipDownloadStatusById({});
     setClipDownloadErrorById({});
     setClipDownloadProgressById({});
@@ -1417,8 +1476,22 @@ function App() {
         const narrative = buildHighlightNarrative(candidate);
         const evidence = candidatePassBEvidenceById[candidate.id];
         const insight = candidateGeminiInsightById[candidate.id];
+        const exactCaptionKo = youtubeCaptionTrack === null
+          ? ""
+          : captionTextForRange(
+              youtubeCaptionTrack.events,
+              Math.round(candidate.startMs),
+              Math.round(candidate.endMs),
+            );
+        const persistedChapterKo = chapterTextForRange(
+          broadcastTranscriptChapters,
+          Math.round(candidate.startMs),
+          Math.round(candidate.endMs),
+        );
         const transcriptKo =
+          exactCaptionKo ||
           evidence?.cues.map((cue) => cue.text).join(" ").trim() ||
+          persistedChapterKo ||
           "후보 구간의 대사는 아직 확정하지 못함.";
         const chat = candidate.evidence.chat;
         return {
@@ -1435,7 +1508,32 @@ function App() {
               : `채팅 ${chat.messageCount}개, 반응 표현 ${chat.reactionMessageCount}개, 평소 대비 ${chat.burstRatio.toFixed(1)}배`,
         };
       }),
-    [candidateGeminiInsightById, candidatePassBEvidenceById, candidates],
+    [
+      broadcastTranscriptChapters,
+      candidateGeminiInsightById,
+      candidatePassBEvidenceById,
+      candidates,
+      youtubeCaptionTrack,
+    ],
+  );
+  const explicitMusicOnlyCandidateIds = useMemo(
+    () =>
+      new Set(
+        youtubeCaptionTrack === null
+          ? []
+          : candidates
+              .filter((candidate) =>
+                isExplicitMusicOnlyCaption(
+                  captionTextForRange(
+                    youtubeCaptionTrack.events,
+                    Math.round(candidate.startMs),
+                    Math.round(candidate.endMs),
+                  ),
+                ),
+              )
+              .map((candidate) => candidate.id),
+      ),
+    [candidates, youtubeCaptionTrack],
   );
   const analysisBudgetEnvelope = useMemo(() => {
     if (boundarySourceDurationMs <= 0) {
@@ -1740,9 +1838,11 @@ function App() {
     setBroadcastTranscriptStatus("idle");
     setBroadcastTranscriptProgress(null);
     setBroadcastTranscriptChapters([]);
+    setYouTubeCaptionTrack(null);
     setBroadcastTranscriptError(null);
     setBroadcastContextStatus("idle");
     setBroadcastContextResult(null);
+    setBroadcastContextRefinementLeadIds(null);
     setBroadcastContextError(null);
     setSemanticLeadRefinementStatus("idle");
     setSemanticLeadRefinementError(null);
@@ -4134,9 +4234,11 @@ function App() {
     setBroadcastTranscriptStatus("idle");
     setBroadcastTranscriptProgress(null);
     setBroadcastTranscriptChapters([]);
+    setYouTubeCaptionTrack(null);
     setBroadcastTranscriptError(null);
     setBroadcastContextStatus("idle");
     setBroadcastContextResult(null);
+    setBroadcastContextRefinementLeadIds(null);
     setBroadcastContextError(null);
     setSemanticLeadRefinementStatus("idle");
     setSemanticLeadRefinementError(null);
@@ -4477,12 +4579,17 @@ function App() {
   };
 
   useEffect(() => {
+    const wholeContextGateSettled =
+      broadcastTranscriptStatus === "failed" ||
+      broadcastContextStatus === "completed" ||
+      broadcastContextStatus === "failed";
     if (
       !analysisComplete ||
       candidates.length === 0 ||
       sourceFile === null ||
       sourceContentFingerprint === null ||
       openedRecoveredResult !== null ||
+      !wholeContextGateSettled ||
       candidatePassBRun !== null ||
       autoCandidatePassBSourceRef.current === sourceContentFingerprint
     ) {
@@ -4495,6 +4602,8 @@ function App() {
     return () => window.clearTimeout(timer);
   }, [
     analysisComplete,
+    broadcastContextStatus,
+    broadcastTranscriptStatus,
     candidates.length,
     candidatePassBRun,
     openedRecoveredResult,
@@ -4508,21 +4617,12 @@ function App() {
       openedRecoveredResult?.terminal.inputSignature ??
       analysisRun?.inputSignature ??
       sourceContentFingerprint;
-    const candidateInterpretationReady =
-      candidates.length === 0 ||
-      openedRecoveredResult !== null ||
-      !candidatePassBRuntimeAvailable ||
-      (candidatePassBRun !== null &&
-        ["completed", "completedWithGaps", "cancelled", "failed"].includes(
-          candidatePassBRun.status,
-        ));
     if (
       runId === null ||
       inputSignature === null ||
       boundarySourceDurationMs <= 0 ||
       broadcastTranscriptChapters.length === 0 ||
-      !["completed", "completedWithGaps"].includes(broadcastTranscriptStatus) ||
-      !candidateInterpretationReady
+      !["completed", "completedWithGaps"].includes(broadcastTranscriptStatus)
     ) {
       return;
     }
@@ -4543,16 +4643,26 @@ function App() {
       chapters: broadcastTranscriptChapters,
       candidates: broadcastContextCandidateInputs,
     };
-    const applyContextResult = (result: BroadcastContextResult): void => {
+    const applyContextResult = (
+      result: BroadcastContextResult,
+      refinementLeadIds: readonly string[],
+    ): void => {
+      const availableLeadIds = new Set(result.discoveredLeads.map((lead) => lead.leadId));
+      const safeRefinementLeadIds = [
+        ...new Set(refinementLeadIds.filter((leadId) => availableLeadIds.has(leadId))),
+      ].slice(0, 6);
       setBroadcastContextResult(result);
+      setBroadcastContextRefinementLeadIds(safeRefinementLeadIds);
       setTimelineSemanticChapters(result.semanticChapters);
       const qualified = finalizeContextQualifiedCandidates(candidates, result.annotations);
       const survivingIds = new Set([
         ...qualified.selectedCandidates.map((candidate) => candidate.id),
         ...qualified.reviewCandidates.map((candidate) => candidate.id),
       ]);
-      const survivingCandidates = candidates.filter((candidate) =>
-        survivingIds.has(candidate.id),
+      const survivingCandidates = candidates.filter(
+        (candidate) =>
+          survivingIds.has(candidate.id) &&
+          !explicitMusicOnlyCandidateIds.has(candidate.id),
       );
       setCandidates(survivingCandidates);
       setSelectionResult((current) =>
@@ -4569,6 +4679,7 @@ function App() {
         inputSignature,
         JSON.stringify(contextInput),
         `ai-routing-policy:${AI_MODEL_ROUTING_POLICY_VERSION}`,
+        `topical-discovery:${BROADCAST_TOPICAL_DISCOVERY_VERSION}`,
       ]);
       if (controller.signal.aborted || !isMounted.current) return;
       const store = getResultStore();
@@ -4585,18 +4696,88 @@ function App() {
         } catch {
           savedPayload = null;
         }
-        const savedResult = parseBroadcastContextProxyResult(savedPayload, contextInput);
-        if (savedResult !== null) {
+        const savedEnvelope = unpackPersistedBroadcastContext(savedPayload);
+        const savedResult = parseBroadcastContextProxyResult(
+          savedEnvelope.resultPayload,
+          contextInput,
+        );
+        if (savedResult !== null && savedEnvelope.refinementLeadIds !== null) {
           if (!controller.signal.aborted && isMounted.current) {
-            applyContextResult(savedResult);
+            applyContextResult(savedResult, savedEnvelope.refinementLeadIds);
           }
           return;
         }
       }
 
-      const result = await requestBroadcastContextDeepseek(contextInput, {
+      const overviewResult = await requestBroadcastContextDeepseek(contextInput, {
         signal: controller.signal,
       });
+      if (controller.signal.aborted || !isMounted.current) return;
+      const discoverySlices = createBroadcastTopicalDiscoverySlices(
+        broadcastTranscriptChapters,
+        overviewResult.semanticChapters,
+      );
+      const discoveryResults = await Promise.allSettled(
+        discoverySlices.map((slice) =>
+          requestBroadcastContextDeepseek(
+            {
+              sourceDurationMs: boundarySourceDurationMs,
+              chapters: slice.chapters,
+              candidates: [],
+            },
+            { signal: controller.signal, analysisMode: "discovery" },
+          ),
+        ),
+      );
+      if (controller.signal.aborted || !isMounted.current) return;
+      const result: BroadcastContextResult = {
+        ...overviewResult,
+        discoveredLeads: mergeBroadcastTopicalDiscoveryLeads([
+          overviewResult.discoveredLeads,
+          ...discoveryResults.flatMap((discovery) =>
+            discovery.status === "fulfilled"
+              ? [discovery.value.discoveredLeads]
+              : [],
+          ),
+        ]),
+      };
+      const juryPlan = createBroadcastTopicalLeadJuryPlan(
+        boundarySourceDurationMs,
+        result.broadcastSummaryKo,
+        result.semanticChapters,
+        result.discoveredLeads,
+      );
+      let refinementLeadIds: readonly string[];
+      if (juryPlan.candidates.length === 0) {
+        refinementLeadIds = [];
+      } else {
+        try {
+          const juryResult = await requestBroadcastContextDeepseek(
+            {
+              sourceDurationMs: boundarySourceDurationMs,
+              chapters: juryPlan.chapters,
+              candidates: juryPlan.candidates,
+            },
+            { signal: controller.signal, analysisMode: "selection" },
+          );
+          refinementLeadIds = selectBroadcastTopicalRefinementLeadIds(
+            result.discoveredLeads,
+            juryPlan,
+            juryResult.annotations,
+            result.semanticChapters,
+          );
+        } catch {
+          // The overview and discovery calls are already paid. Keep a bounded
+          // high-recall fallback if only the inexpensive jury transport fails.
+          refinementLeadIds = [...result.discoveredLeads]
+            .sort(
+              (left, right) =>
+                right.confidence - left.confidence || left.startMs - right.startMs,
+            )
+            .slice(0, 4)
+            .map((lead) => lead.leadId);
+        }
+      }
       if (controller.signal.aborted || !isMounted.current) return;
       const transcriptSession = await store.getBroadcastContextSession(runId);
       if (
@@ -4608,7 +4789,11 @@ function App() {
       await store.putBroadcastContextSession({
         ...transcriptSession,
         contextInputSignature,
-        contextResultJson: JSON.stringify(result),
+        contextResultJson: JSON.stringify({
+          schemaVersion: "1.0.0",
+          result,
+          refinementLeadIds,
+        }),
         recordedAt: new Date().toISOString(),
       });
       const reopened = await store.getBroadcastContextSession(runId);
@@ -4619,15 +4804,19 @@ function App() {
         throw new Error("저장한 방송 전체 맥락 결과를 다시 확인하지 못했어요.");
       }
       const reopenedPayload: unknown = JSON.parse(reopened.contextResultJson);
+      const reopenedEnvelope = unpackPersistedBroadcastContext(reopenedPayload);
       const reopenedResult = parseBroadcastContextProxyResult(
-        reopenedPayload,
+        reopenedEnvelope.resultPayload,
         contextInput,
       );
-      if (reopenedResult === null) {
+      if (
+        reopenedResult === null ||
+        reopenedEnvelope.refinementLeadIds === null
+      ) {
         throw new Error("저장한 방송 전체 맥락 결과 형식을 다시 확인하지 못했어요.");
       }
       if (!controller.signal.aborted && isMounted.current) {
-        applyContextResult(reopenedResult);
+        applyContextResult(reopenedResult, reopenedEnvelope.refinementLeadIds);
       }
     })()
       .catch((error: unknown) => {
@@ -4650,12 +4839,11 @@ function App() {
     broadcastContextCandidateInputs,
     broadcastTranscriptChapters,
     broadcastTranscriptStatus,
-    candidatePassBRuntimeAvailable,
-    candidatePassBRun,
     candidates,
     currentAnalysisRunId,
     getResultStore,
     openedRecoveredResult,
+    explicitMusicOnlyCandidateIds,
     resetCandidateRanking,
     sourceContentFingerprint,
   ]);
@@ -4664,15 +4852,29 @@ function App() {
     if (
       broadcastContextStatus !== "completed" ||
       broadcastContextResult === null ||
+      broadcastContextRefinementLeadIds === null ||
       sourceFile === null ||
       currentAnalysisRunId === null ||
       boundarySourceDurationMs <= 0
     ) {
       return;
     }
-    const plan = createDiscoveredLeadRefinementPlan(
-      broadcastContextResult.discoveredLeads,
+    const leadById = new Map(
+      broadcastContextResult.discoveredLeads.map((lead) => [lead.leadId, lead]),
     );
+    const refinementLeads = broadcastContextRefinementLeadIds.flatMap((leadId) => {
+      const lead = leadById.get(leadId);
+      return lead === undefined ? [] : [lead];
+    });
+    const plan = youtubeCaptionTrack === null
+      ? createDiscoveredLeadRefinementPlan(
+          refinementLeads,
+          { preserveInputOrder: true },
+        )
+      : createCaptionDiscoveredLeadRefinementPlan(
+          refinementLeads,
+          { preserveInputOrder: true },
+        );
     if (plan.segments.length === 0) {
       setSemanticLeadRefinementStatus("completed");
       return;
@@ -4745,7 +4947,9 @@ function App() {
         currentAnalysisRunId,
         JSON.stringify(plan),
         JSON.stringify(broadcastContextResult.discoveredLeads),
-        BROADCAST_TRANSCRIPT_ACTIVE_MODEL_REVISION,
+        youtubeCaptionTrack === null
+          ? BROADCAST_TRANSCRIPT_ACTIVE_MODEL_REVISION
+          : YOUTUBE_CAPTION_MODEL_REVISION,
       ]);
       if (controller.signal.aborted || !isMounted.current) return;
       const store = getResultStore();
@@ -4767,13 +4971,20 @@ function App() {
         }
       }
 
-      const result = await runBroadcastTranscriptWorker(sourceFile, {
-        sourceDurationMs: boundarySourceDurationMs,
-        chunks,
-        signal: controller.signal,
-      });
+      const refinementTranscripts = youtubeCaptionTrack === null
+        ? (
+            await runBroadcastTranscriptWorker(sourceFile, {
+              sourceDurationMs: boundarySourceDurationMs,
+              chunks,
+              signal: controller.signal,
+            })
+          ).results
+        : createYouTubeCaptionRefinementTranscripts(
+            youtubeCaptionTrack,
+            plan,
+          );
       if (controller.signal.aborted || !isMounted.current) return;
-      if (result.results.length === 0) {
+      if (refinementTranscripts.length === 0) {
         throw new Error("새 의미 후보의 정확한 대사 위치를 다시 찾지 못했어요.");
       }
       const parentLeadById = new Map(
@@ -4784,7 +4995,7 @@ function App() {
           const chapters = createDiscoveredLeadRefinementChapters(
             leadId,
             plan,
-            result.results,
+            refinementTranscripts,
             (() => {
               const parent = parentLeadById.get(leadId);
               return parent === undefined
@@ -4822,7 +5033,7 @@ function App() {
           for (const lead of refinement.leads) {
             const evidence = materializeRefinedDiscoveredLeadEvidence(
               lead,
-              result.results,
+              refinementTranscripts,
               boundarySourceDurationMs,
             );
             if (evidence === null) continue;
@@ -4845,7 +5056,7 @@ function App() {
         const range = refineDiscoveredLeadRange(
           parentLead,
           plan,
-          result.results,
+          refinementTranscripts,
           boundarySourceDurationMs,
         );
         if (range === null || range.transcriptMatchScore < 0.2) continue;
@@ -4854,7 +5065,7 @@ function App() {
         );
         const transcript = matchedSegment === undefined
           ? undefined
-          : result.results.find(
+          : refinementTranscripts.find(
               (item) =>
                 item.sourceStartMs === matchedSegment.sourceStartMs &&
                 item.sourceEndMs === matchedSegment.sourceEndMs,
@@ -4924,6 +5135,7 @@ function App() {
       });
   }, [
     boundarySourceDurationMs,
+    broadcastContextRefinementLeadIds,
     broadcastContextResult,
     broadcastContextStatus,
     candidateGeminiInsightById,
@@ -4933,6 +5145,7 @@ function App() {
     getResultStore,
     resetCandidateRanking,
     sourceFile,
+    youtubeCaptionTrack,
   ]);
 
   useEffect(() => {
@@ -4987,6 +5200,21 @@ function App() {
             saved.modelRevision === YOUTUBE_CAPTION_MODEL_REVISION)) &&
         saved.sourceDurationMs === sourceDurationMs
       ) {
+        if (
+          youtubeVideoId !== null &&
+          saved.modelRevision === YOUTUBE_CAPTION_MODEL_REVISION
+        ) {
+          try {
+            const captionTrack = await requestYouTubeCaptionTrack(youtubeVideoId, {
+              signal: controller.signal,
+            });
+            if (!controller.signal.aborted && isMounted.current) {
+              setYouTubeCaptionTrack(captionTrack);
+            }
+          } catch {
+            // The persisted complete chapter map remains usable offline.
+          }
+        }
         if (!controller.signal.aborted && isMounted.current) {
           setBroadcastTranscriptChapters(saved.chapters);
           setBroadcastTranscriptStatus(
@@ -5039,6 +5267,7 @@ function App() {
             signal: controller.signal,
           });
           if (controller.signal.aborted || !isMounted.current) return;
+          setYouTubeCaptionTrack(captionTrack);
           const captionChapters = createYouTubeCaptionChapters(
             captionTrack,
             sourceDurationMs,
@@ -5075,6 +5304,7 @@ function App() {
       if (controller.signal.aborted || !isMounted.current) {
         return;
       }
+      setYouTubeCaptionTrack(null);
       const completeAudioCoverage =
         broadcastContextSamplingPlan.estimatedAudioCoverageRatio === 1 &&
         result.gapChunkIds.length === 0;
@@ -6293,11 +6523,28 @@ function App() {
                           선의 위치는 방송 시각, 흐릿한 높이는 잠재 점수예요. 원과 요약 카드를 누르면 같은 장면을 바로 확인합니다.
                         </p>
                       </div>
-                      <span className="rh-timeline-count">
-                        {orderedCandidates.length}개 후보 · {timelineSemanticChapters.length}개 주제
-                      </span>
+                      <div className="rh-timeline-stats" aria-label="사건 지도 요약">
+                        <span>
+                          <strong>{orderedCandidates.length}</strong>
+                          검토 후보
+                        </span>
+                        <span>
+                          <strong>{timelineSemanticChapters.length}</strong>
+                          주제 구간
+                        </span>
+                        <span>
+                          <strong>{timelineDiscoveredLeads.length}</strong>
+                          의미 단서
+                        </span>
+                      </div>
                     </div>
                     <div className="rh-timeline-track" aria-label="방송 안 후보 위치">
+                      <div className="rh-timeline-row-labels" aria-hidden="true">
+                        <span data-row="score">잠재 신호</span>
+                        <span data-row="candidate">검토 후보</span>
+                        <span data-row="topic">주제 흐름</span>
+                        <span data-row="lead">의미 단서</span>
+                      </div>
                       <div className="rh-timeline-ticks" aria-hidden="true">
                         {timelineAxisTicks.map((tickMs) => (
                           <span
@@ -6335,9 +6582,12 @@ function App() {
                         })}
                       </div>
                       <span className="rh-timeline-line" aria-hidden="true" />
-                      {timelineSemanticChapters.length > 0 && (
-                        <div className="rh-timeline-semantic-rail" aria-label="타임라인 주요 구간">
-                          {timelineSemanticChapters.map((chapter) => {
+                      <div
+                        className="rh-timeline-semantic-rail"
+                        data-empty={timelineSemanticChapters.length === 0}
+                        aria-label="타임라인 주요 구간"
+                      >
+                          {timelineSemanticChapters.map((chapter, index) => {
                             const left =
                               boundarySourceDurationMs > 0
                                 ? Math.min(100, Math.max(0, (chapter.startMs / boundarySourceDurationMs) * 100))
@@ -6351,17 +6601,28 @@ function App() {
                                 key={chapter.semanticChapterId}
                                 className="rh-timeline-semantic-chapter"
                                 data-kind={chapter.kind}
+                                data-salience={chapter.salience}
+                                data-segment={index % 4}
                                 style={{ left: `${left}%`, width: `${width}%` }}
-                                title={chapter.summaryKo}
+                                title={`${formatDuration(chapter.startMs)}–${formatDuration(chapter.endMs)} · ${chapter.summaryKo}`}
                               >
                                 <span className="rh-timeline-semantic-title">{chapter.titleKo}</span>
                               </div>
                             );
                           })}
+                          {timelineSemanticChapters.length === 0 && (
+                            <span className="rh-timeline-empty-rail">
+                              {broadcastContextStatus === "running"
+                                ? "주제 구분 중"
+                                : "구분된 주제 없음"}
+                            </span>
+                          )}
                         </div>
-                      )}
-                      {timelineDiscoveredLeads.length > 0 && (
-                        <div className="rh-timeline-lead-rail" aria-label="전체 맥락에서 발견한 의미 후보 범위">
+                      <div
+                        className="rh-timeline-lead-rail"
+                        data-empty={timelineDiscoveredLeads.length === 0}
+                        aria-label="전체 맥락에서 발견한 의미 후보 범위"
+                      >
                           {timelineDiscoveredLeads.map((lead, index) => {
                             const left =
                               boundarySourceDurationMs > 0
@@ -6383,8 +6644,14 @@ function App() {
                               </span>
                             );
                           })}
+                          {timelineDiscoveredLeads.length === 0 && (
+                            <span className="rh-timeline-empty-rail">
+                              {broadcastContextStatus === "running"
+                                ? "의미 사건 탐색 중"
+                                : "추가 의미 단서 없음"}
+                            </span>
+                          )}
                         </div>
-                      )}
                       {orderedCandidates.map((candidate, index) => {
                         const position =
                           boundarySourceDurationMs > 0
@@ -6425,6 +6692,28 @@ function App() {
                       <span data-legend="lead">마름모 · 전체 맥락 의미 후보</span>
                       <span data-legend="score">흐린 높이 · 잠재 점수</span>
                     </div>
+                    {timelineDiscoveredLeads.length > 0 && (
+                      <details className="rh-timeline-lead-details">
+                        <summary>
+                          <span>전체 맥락 의미 단서 {timelineDiscoveredLeads.length}개</span>
+                          <small>번호와 설명 보기</small>
+                        </summary>
+                        <ol className="rh-timeline-lead-list" aria-label="전체 맥락 의미 단서 설명">
+                          {timelineDiscoveredLeads.map((lead, index) => (
+                            <li key={lead.leadId} data-category={lead.category}>
+                              <span aria-hidden="true">{index + 1}</span>
+                              <div>
+                                <strong>{lead.eventSummaryKo}</strong>
+                                <small>
+                                  {formatDuration(lead.startMs)}–{formatDuration(lead.endMs)} ·{" "}
+                                  {semanticLeadCategoryLabel(lead.category)} · 확신 {Math.round(lead.confidence * 100)}
+                                </small>
+                              </div>
+                            </li>
+                          ))}
+                        </ol>
+                      </details>
+                    )}
                     <ol className="rh-timeline-cards" aria-label="시간순 클립 후보 요약">
                       {orderedCandidates.map((candidate, index) => {
                         const frames = candidateTimelineFramesById[candidate.id] ?? [];

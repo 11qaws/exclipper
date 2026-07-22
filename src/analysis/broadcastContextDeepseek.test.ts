@@ -3,6 +3,7 @@ import {
   buildBroadcastContextDeepseekRequestBody,
   buildBroadcastContextQwenRequestBody,
   extractBroadcastContextDeepseekResponse,
+  extractBroadcastContextQwenDiscoveryResponse,
   extractBroadcastContextQwenRefinementResponse,
   extractBroadcastContextQwenSelectionResponse,
   extractBroadcastContextQwenOverviewResponse,
@@ -70,6 +71,8 @@ describe("broadcastContextDeepseek", () => {
       expect(body.messages[0].content).toContain("클립 편집 라우터");
       expect(body.messages[0].content).toContain('"chapters"');
       expect(body.messages[0].content).toContain("주제가 바뀌는 경계");
+      expect(body.messages[0].content).toContain("최대 12개");
+      expect(body.messages[0].content).toContain("후속 30초 정밀 단계");
       expect(body.response_format).toEqual({ type: "json_object" });
       expect(body).not.toHaveProperty("thinking");
       expect(body).not.toHaveProperty("reasoning_effort");
@@ -84,6 +87,52 @@ describe("broadcastContextDeepseek", () => {
       expect(body.max_tokens).toBe(1_024);
       expect(body.messages[0].content).toContain("최대 3개");
       expect(body.messages[0].content).toContain("1분 단위");
+    });
+
+    it("uses a high-recall topic discovery contract on the cheap text model", () => {
+      const body = buildBroadcastContextQwenRequestBody(
+        { ...dummyRequest, candidates: [] },
+        "qwen3.6-flash",
+        "discovery",
+      );
+      expect(body.model).toBe("qwen3.6-flash");
+      expect(body.max_tokens).toBe(2_048);
+      expect(body.messages[0].content).toContain("최대 8개");
+      expect(body.messages[0].content).toContain("서로 다른 대상의 오답");
+    });
+
+    it("keeps grounded topic discoveries at the routing threshold", () => {
+      const payload = {
+        choices: [{
+          message: {
+            content: JSON.stringify({
+              summary: "음식 퀴즈의 서로 다른 반응",
+              leads: [{
+                s: "c1",
+                e: "c1",
+                c: "reaction",
+                p: 0.65,
+                event: "초콜릿 모양을 두고 강하게 항변한다.",
+                cue: "초콜릿한테 대한 모욕이야",
+              }],
+            }),
+          },
+        }],
+      };
+      const parsed = extractBroadcastContextQwenDiscoveryResponse(
+        payload,
+        { ...dummyRequest, candidates: [] },
+      );
+      expect(parsed.ok).toBe(true);
+      if (parsed.ok) {
+        expect(parsed.result.discoveredLeads).toEqual([
+          expect.objectContaining({
+            startMs: 0,
+            endMs: 300_000,
+            confidence: 0.65,
+          }),
+        ]);
+      }
     });
 
     it("parses the compact refinement schema into grounded leads", () => {
@@ -141,6 +190,37 @@ describe("broadcastContextDeepseek", () => {
             confidence: 0.93,
           }),
         ]);
+      }
+    });
+
+    it("applies a stricter absolute threshold to routine gameplay context", () => {
+      const gameplayRequest: BroadcastContextRequest = {
+        ...dummyRequest,
+        chapters: dummyRequest.chapters.map((chapter) => ({
+          ...chapter,
+          summaryKo: "마인크래프트 건축 중 흔한 자원 손실과 짧은 파쿠르 실패",
+        })),
+      };
+      const payload = {
+        choices: [{
+          message: {
+            content: JSON.stringify({
+              summary: "일상적 게임 단편",
+              selected: [{ id: "can1", p: 0.92, reason: "잠깐 당황한다." }],
+            }),
+          },
+        }],
+      };
+      const parsed = extractBroadcastContextQwenSelectionResponse(
+        payload,
+        gameplayRequest,
+      );
+      expect(parsed.ok).toBe(true);
+      if (parsed.ok) {
+        expect(parsed.result.annotations[0]).toMatchObject({
+          candidateId: "can1",
+          clipDecision: "reject",
+        });
       }
     });
 
