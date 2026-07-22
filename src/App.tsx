@@ -166,6 +166,7 @@ import {
   serializeSemanticLeadCandidates,
 } from "./analysis/semanticLeadCandidate";
 import {
+  CANDIDATE_RANKING_MAX_CANDIDATES,
   buildCandidateRankingProposal,
   createCandidateRankingFingerprints,
   type CandidateRankingEntry,
@@ -325,7 +326,7 @@ interface AudioAnalysisOutcome {
   readonly coverageComplete: boolean;
 }
 
-const APP_VERSION = "0.3.39";
+const APP_VERSION = "0.3.40";
 const PERSISTENCE_SCHEMA_VERSION = "0.3.0";
 const SIGNAL_ENGINE_VERSION =
   "streamer-reaction-fast-pass-v5-chat-fallback-music-confirmation";
@@ -1560,6 +1561,19 @@ function App() {
       ),
     [candidateAiProjectionById, candidates, explicitMusicOnlyCandidateIds],
   );
+  const automaticCandidateDetailIds = useMemo(() => {
+    const alreadyHandledIds = new Set([
+      ...Object.keys(candidatePassBEvidenceById),
+      ...Object.keys(candidateGeminiInsightById),
+    ]);
+    return candidateDetailCandidateIds.filter(
+      (candidateId) => !alreadyHandledIds.has(candidateId),
+    );
+  }, [
+    candidateDetailCandidateIds,
+    candidateGeminiInsightById,
+    candidatePassBEvidenceById,
+  ]);
   const candidateDetailCostEstimate = useMemo(() => {
     const detailIds = new Set(candidateDetailCandidateIds.slice(0, 12));
     const detailCandidates = candidates.filter((candidate) => detailIds.has(candidate.id));
@@ -1699,6 +1713,67 @@ function App() {
     candidateRankingWorkStarted;
   const reviewCompleted =
     candidates.length > 0 && candidates.every(({ reviewState }) => reviewState !== "unreviewed");
+  const wholeContextPhaseActive =
+    broadcastTranscriptStatus === "running" ||
+    broadcastContextStatus === "restoring" ||
+    broadcastContextStatus === "running";
+  const wholeContextPhaseFailed =
+    broadcastTranscriptStatus === "failed" || broadcastContextStatus === "failed";
+  const wholeContextPhaseComplete = broadcastContextStatus === "completed";
+  const candidatePassBTerminal =
+    candidatePassBRun !== null &&
+    ["completed", "completedWithGaps", "cancelled", "failed"].includes(
+      candidatePassBRun.status,
+    );
+  const detailedReviewPhaseActive =
+    semanticLeadRefinementStatus === "running" || candidatePassBBusy;
+  const detailedReviewPhaseFailed =
+    semanticLeadRefinementStatus === "failed" || candidatePassBRun?.status === "failed";
+  const detailedReviewPhaseComplete =
+    !detailedReviewPhaseActive &&
+    !detailedReviewPhaseFailed &&
+    ((wholeContextPhaseComplete && semanticLeadRefinementStatus === "completed") ||
+      (wholeContextPhaseFailed &&
+        (candidateDetailCandidateIds.length === 0 || candidatePassBTerminal)));
+  const detailedReviewPhaseState = detailedReviewPhaseFailed
+    ? "error"
+    : detailedReviewPhaseActive
+      ? "active"
+      : detailedReviewPhaseComplete
+        ? "complete"
+        : "pending";
+  const detailedReviewPhaseLabel = !wholeContextPhaseComplete && !wholeContextPhaseFailed
+    ? "전체 맥락 완료 후 자동 시작"
+    : semanticLeadRefinementStatus === "running" && candidatePassBBusy
+      ? "의미 후보 위치와 화면·대사 동시 확인 중"
+      : semanticLeadRefinementStatus === "running"
+        ? "새 의미 후보의 정확한 위치 확인 중"
+        : candidatePassBBusy
+          ? candidatePassBDetailAnalysisLabel
+          : semanticLeadRefinementStatus === "failed"
+            ? "의미 후보 위치 확인 실패 · 기존 후보 유지"
+            : candidatePassBRun?.status === "failed"
+              ? "화면·대사 확인 실패 · 기존 후보 유지"
+              : detailedReviewPhaseComplete
+                ? candidateDetailCandidateIds.length === 0
+                  ? "추가 세부 분석 대상 없음 · 후보 유지"
+                  : `세부 검토 완료 · AI 단서 ${Object.keys(candidateGeminiInsightById).length}개`
+                : "세부 검토 준비 중";
+  const finalSelectionPhaseReady =
+    detailedReviewPhaseComplete || detailedReviewPhaseFailed;
+  const finalSelectionPhaseState =
+    reviewCompleted || (candidates.length === 0 && finalSelectionPhaseReady)
+      ? "complete"
+      : finalSelectionPhaseReady
+        ? "active"
+        : "pending";
+  const finalSelectionPhaseLabel = reviewCompleted
+    ? `검토 완료 · 사용 ${approvedCount}개`
+    : candidates.length === 0 && finalSelectionPhaseReady
+      ? "선택할 후보 없음 · 정상"
+      : finalSelectionPhaseReady
+        ? `편집자 확인 대기 ${remainingReviewCount}개 · 사용 ${approvedCount}개`
+        : "세부 검토가 끝나면 편집자가 결정";
   const analysisFinishedWithoutCandidates =
     analysisComplete && selectionResult !== null && candidates.length === 0;
   const reviewingRecoveredResult =
@@ -1812,6 +1887,7 @@ function App() {
   }, []);
 
   const resetCandidatePassB = useCallback((): void => {
+    autoCandidatePassBSourceRef.current = null;
     candidatePassBOperationEpoch.current += 1;
     candidatePassBInsightWriteEpochRef.current += 1;
     candidatePassBAbortController.current?.abort();
@@ -1848,25 +1924,34 @@ function App() {
 
   const resetCandidateRanking = useCallback(
     (nextCandidates: readonly ReviewedCandidate[] = []): void => {
+      const rankingCandidateSetSupported =
+        nextCandidates.length <= CANDIDATE_RANKING_MAX_CANDIDATES;
       const fingerprints =
         nextCandidates.length === 0
           ? {
               candidateSetFingerprint: "candidate-set-empty",
               evidenceFingerprint: "ranking-evidence-empty",
             }
-          : createCandidateRankingFingerprints(
-              nextCandidates,
-              {},
-              {},
-              "incomplete",
-            );
+          : rankingCandidateSetSupported
+            ? createCandidateRankingFingerprints(
+                nextCandidates,
+                {},
+                {},
+                "incomplete",
+              )
+            : {
+                candidateSetFingerprint: "candidate-set-over-ranking-limit",
+                evidenceFingerprint: "ranking-evidence-over-ranking-limit",
+              };
       candidateRankingRevision.current = 0;
       setCandidateRankingView(
         createCandidateRankingViewState({
           rankingSessionId: createOperationId("ranking-session"),
           candidateSetFingerprint: fingerprints.candidateSetFingerprint,
           evidenceFingerprint: fingerprints.evidenceFingerprint,
-          canonicalOrderIds: nextCandidates.map(({ id }) => id),
+          canonicalOrderIds: rankingCandidateSetSupported
+            ? nextCandidates.map(({ id }) => id)
+            : [],
         }),
       );
       setCandidateRankingFeedback(null);
@@ -4829,29 +4914,34 @@ function App() {
       broadcastTranscriptStatus === "failed" ||
       broadcastContextStatus === "completed" ||
       broadcastContextStatus === "failed";
+    const operationKey =
+      sourceContentFingerprint === null
+        ? null
+        : `${sourceContentFingerprint}:${candidateDetailCandidateIds.join("|")}`;
     if (
       !analysisComplete ||
-      candidateDetailCandidateIds.length === 0 ||
+      automaticCandidateDetailIds.length === 0 ||
       sourceFile === null ||
-      sourceContentFingerprint === null ||
+      operationKey === null ||
       openedRecoveredResult !== null ||
       !wholeContextGateSettled ||
-      candidatePassBRun !== null ||
-      autoCandidatePassBSourceRef.current === sourceContentFingerprint
+      candidatePassBBusy ||
+      autoCandidatePassBSourceRef.current === operationKey
     ) {
       return;
     }
-    autoCandidatePassBSourceRef.current = sourceContentFingerprint;
+    autoCandidatePassBSourceRef.current = operationKey;
     const timer = window.setTimeout(() => {
-      void runCandidatePassBRef.current(candidateDetailCandidateIds);
+      void runCandidatePassBRef.current(automaticCandidateDetailIds);
     }, 450);
     return () => window.clearTimeout(timer);
   }, [
     analysisComplete,
+    automaticCandidateDetailIds,
     broadcastContextStatus,
     broadcastTranscriptStatus,
     candidateDetailCandidateIds,
-    candidatePassBRun,
+    candidatePassBBusy,
     openedRecoveredResult,
     sourceContentFingerprint,
     sourceFile,
@@ -5219,14 +5309,6 @@ function App() {
       );
       resetCandidateRanking(nextCandidates);
       setSemanticLeadRefinementStatus("completed");
-      const needsVisualVerification = semanticCandidates
-        .map((candidate) => candidate.id)
-        .filter((candidateId) => candidateGeminiInsightById[candidateId] === undefined);
-      if (needsVisualVerification.length > 0 && candidatePassBRuntimeAvailable) {
-        window.setTimeout(() => {
-          void runCandidatePassBRef.current(needsVisualVerification);
-        }, 450);
-      }
     };
 
     void (async () => {
@@ -5440,8 +5522,6 @@ function App() {
     broadcastContextFastRefinementLeadIds,
     broadcastContextResult,
     broadcastContextStatus,
-    candidateGeminiInsightById,
-    candidatePassBRuntimeAvailable,
     candidates,
     currentAnalysisRunId,
     getResultStore,
@@ -6339,12 +6419,15 @@ function App() {
             <section className="rh-panel rh-review-workspace" aria-labelledby="candidate-title">
               <div className="rh-results-header">
                 <div>
-                  <p className="rh-eyebrow">3단계 · 후보 검토</p>
+                  <p className="rh-eyebrow">3단계 · 맥락 기반 후보 검토</p>
                   <h3 id="candidate-title" ref={candidateHeading} tabIndex={-1}>
-                    빠른 탐색 후보 {candidates.length}개
+                    {wholeContextPhaseComplete && semanticLeadRefinementStatus === "completed"
+                      ? `최종 검토 후보 ${candidates.length}개`
+                      : `현재 발견 후보 ${candidates.length}개`}
                   </h3>
                   <p className="rh-help">
-                    아직 최종 클립이 아니에요. 화면·대사·전체 방송 맥락을 확인한 뒤 사용할 장면만 남깁니다.
+                    AI가 방송 전체 맥락을 먼저 파악한 뒤 후보의 화면·오디오·대사를 세부 검토합니다.
+                    편집자는 자동 분석이 끝난 짧은 후보만 보고 사용할 장면을 고르면 됩니다.
                   </p>
                   {selectionResult.audioGapReasonCode !== undefined && selectionResult.audioGapReasonCode !== null && (
                     <p className="rh-notice" data-tone="warning" role="status">
@@ -6393,57 +6476,39 @@ function App() {
                 )}
               </div>
 
+              <div className="rh-phase-flow-heading">
+                <div>
+                  <p className="rh-eyebrow">분석·검토 순서</p>
+                  <strong>전체 맥락을 먼저 읽고, 그 결과로 후보를 자세히 확인해요</strong>
+                </div>
+                <span>1~3 자동 분석 · 4 편집자 선택</span>
+              </div>
+
               <section
                 className="rh-analysis-phase-map"
-                aria-label="AI 분석 단계"
+                aria-label="AI 분석과 편집자 검토 순서"
                 aria-live="polite"
               >
                 <div data-state="complete">
                   <span>1</span>
                   <strong>빠른 탐색</strong>
-                  <small>완료</small>
+                  <small>오디오·채팅·화면 반응 신호 확인 완료</small>
                 </div>
                 <div
                   data-state={
-                    candidatePassBBusy
+                    wholeContextPhaseActive
                       ? "active"
-                      : candidatePassBWorkStarted
+                      : wholeContextPhaseComplete
                         ? "complete"
+                        : wholeContextPhaseFailed
+                          ? "error"
                         : "pending"
                   }
                 >
                   <span>2</span>
-                  <strong>후보 화면·대사</strong>
-                  <small>{candidatePassBDetailAnalysisLabel}</small>
-                  {candidatePassBRun !== null && (
-                    <progress
-                      className="rh-analysis-progress"
-                      max={1}
-                      value={candidatePassBProgressRatio}
-                      aria-label="자동 후보 해석 진행률"
-                    />
-                  )}
-                </div>
-                <div
-                  data-state={
-                    broadcastTranscriptStatus === "running" ||
-                    broadcastContextStatus === "restoring" ||
-                    broadcastContextStatus === "running"
-                      ? "active"
-                      : broadcastContextStatus === "completed"
-                        ? "complete"
-                        : broadcastTranscriptStatus === "failed" ||
-                            broadcastContextStatus === "failed"
-                          ? "error"
-                          : "pending"
-                  }
-                >
-                  <span>3</span>
                   <strong>방송 전체 맥락</strong>
                   <small>{broadcastTranscriptStatusText}</small>
-                  {(broadcastTranscriptStatus === "running" ||
-                    broadcastContextStatus === "restoring" ||
-                    broadcastContextStatus === "running") && (
+                  {wholeContextPhaseActive && (
                     <progress
                       className="rh-analysis-progress"
                       max={1}
@@ -6453,33 +6518,31 @@ function App() {
                           ? {}
                           : { value: broadcastTranscriptProgressRatio }
                       )}
-                      aria-label="방송 전체 대사 지도 진행률"
+                      aria-label="방송 전체 대사와 맥락 분석 진행률"
                     />
                   )}
                 </div>
-                <div
-                  data-state={
-                    broadcastContextStatus === "completed" &&
-                    semanticLeadRefinementStatus === "completed"
-                      ? "complete"
-                      : broadcastContextStatus === "running" ||
-                          semanticLeadRefinementStatus === "running"
-                        ? "active"
-                        : semanticLeadRefinementStatus === "failed"
-                          ? "error"
-                          : "pending"
-                  }
-                >
+                <div data-state={detailedReviewPhaseState}>
+                  <span>3</span>
+                  <strong>맥락 기반 세부 검토</strong>
+                  <small>{detailedReviewPhaseLabel}</small>
+                  {detailedReviewPhaseActive && (
+                    <progress
+                      className="rh-analysis-progress"
+                      max={1}
+                      {...(
+                        semanticLeadRefinementStatus === "running"
+                          ? {}
+                          : { value: candidatePassBProgressRatio }
+                      )}
+                      aria-label="맥락 기반 후보 세부 검토 진행률"
+                    />
+                  )}
+                </div>
+                <div data-state={finalSelectionPhaseState}>
                   <span>4</span>
-                  <strong>최종 클립 선별</strong>
-                  <small>
-                    {semanticLeadRefinementStatus === "running"
-                      ? "새 의미 후보 위치 확인 중"
-                      : broadcastContextStatus === "completed" &&
-                          semanticLeadRefinementStatus === "completed"
-                      ? `남은 후보 ${candidates.length}개 · 0개도 정상`
-                      : "0개도 정상"}
-                  </small>
+                  <strong>편집자 최종 선택</strong>
+                  <small>{finalSelectionPhaseLabel}</small>
                 </div>
               </section>
 
@@ -6740,6 +6803,14 @@ function App() {
                 </section>
               )}
               </div>
+
+              {candidateReviewFeatureAvailability.rankingCandidateLimitExceeded && (
+                <div className="rh-notice" role="status">
+                  후보가 {CANDIDATE_RANKING_MAX_CANDIDATES}개보다 많아 전체 순서 자동 재정렬은
+                  생략했어요. 후보는 모두 유지되며, 화면·오디오 세부 분석은 우선순위가 높은
+                  최대 {CANDIDATE_RANKING_MAX_CANDIDATES}개부터 진행합니다.
+                </div>
+              )}
 
               {candidateReviewFeatureAvailability.showRanking && (
                 <section

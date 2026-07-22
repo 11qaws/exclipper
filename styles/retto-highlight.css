@@ -3279,6 +3279,7 @@
 
 .rh-review-workspace > .rh-results-header { order: 1; }
 .rh-review-workspace > .rh-phase-status,
+.rh-review-workspace > .rh-phase-flow-heading,
 .rh-review-workspace > .rh-analysis-phase-map { order: 2; }
 .rh-review-workspace > .rh-notice,
 .rh-review-workspace > .rh-context-summary { order: 3; }
@@ -3345,6 +3346,28 @@
   border-radius: var(--rh-radius-md);
 }
 
+.rh-phase-flow-heading {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 2px 4px 0;
+}
+
+.rh-phase-flow-heading strong {
+  display: block;
+  margin-top: 2px;
+  color: var(--text1);
+  font-size: .9375rem;
+}
+
+.rh-phase-flow-heading > span {
+  flex: 0 0 auto;
+  color: var(--text4);
+  font-size: .6875rem;
+  font-weight: 700;
+}
+
 .rh-analysis-phase-map {
   position: relative;
   display: grid;
@@ -3369,6 +3392,21 @@
   border: 1px solid var(--border);
   border-radius: var(--rh-radius-md);
   background: var(--bg2);
+}
+
+.rh-analysis-phase-map > div:not(:last-child)::after {
+  position: absolute;
+  z-index: 2;
+  top: 50%;
+  right: -13px;
+  width: 16px;
+  color: var(--text4);
+  content: "›";
+  font-size: 1rem;
+  font-weight: 850;
+  line-height: 1;
+  text-align: center;
+  transform: translateY(-50%);
 }
 
 .rh-analysis-phase-map > div > span {
@@ -3818,6 +3856,16 @@
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .rh-analysis-phase-map > div:not(:last-child)::after {
+    display: none;
+  }
+
+  .rh-phase-flow-heading {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 4px;
+  }
+
   .rh-results-header h3 {
     scroll-margin-top: 150px;
   }
@@ -3927,4 +3975,36 @@
   .rh-review-overview > div {
     border: 1px solid CanvasText;
   }
+}
+
+.rh-recovery-shell {
+  min-height: 100vh;
+  background: var(--bg2);
+  color: var(--text1);
+}
+
+.rh-recovery-main {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 32px;
+}
+
+.rh-recovery-card {
+  width: min(560px, 100%);
+  padding: 32px;
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  background: var(--bg);
+  box-shadow: 0 18px 50px rgb(33 56 99 / 12%);
+}
+
+.rh-recovery-card h1 {
+  margin: 8px 0 12px;
+  font-size: clamp(1.5rem, 4vw, 2rem);
+}
+
+.rh-recovery-card p:not(.rh-eyebrow) {
+  margin: 0 0 24px;
+  line-height: 1.7;
 }

@@ -681,6 +681,23 @@ describe("candidate ranking projection", () => {
     expect(projectCandidateOrder(duplicate, state)).toEqual(duplicate);
   });
 
+  it("keeps an oversized canonical ledger intact when ranking is inactive", () => {
+    const oversizedCandidates = Array.from({ length: 24 }, (_, index) => ({
+      id: `candidate-${index}`,
+      stableValue: `value-${index}`,
+    }));
+    const inactiveRanking = createCandidateRankingViewState({
+      rankingSessionId: "ranking-session-over-limit",
+      candidateSetFingerprint: "candidate-set-over-ranking-limit",
+      evidenceFingerprint: "ranking-evidence-over-ranking-limit",
+      canonicalOrderIds: [],
+    });
+
+    expect(projectCandidateOrder(oversizedCandidates, inactiveRanking)).toEqual(
+      oversizedCandidates,
+    );
+  });
+
   it("reports session-only work after a proposal exists or an order is active", () => {
     const clean = initial();
     const proposed = receive(clean);

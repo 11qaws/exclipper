@@ -12,6 +12,7 @@ describe("candidate review feature availability", () => {
       showPassB: false,
       showAudioEvent: false,
       showRanking: false,
+      rankingCandidateLimitExceeded: false,
     });
   });
 
@@ -21,6 +22,7 @@ describe("candidate review feature availability", () => {
       showPassB: true,
       showAudioEvent: true,
       showRanking: false,
+      rankingCandidateLimitExceeded: false,
     });
   });
 
@@ -32,11 +34,33 @@ describe("candidate review feature availability", () => {
         showPassB: true,
         showAudioEvent: true,
         showRanking: true,
+        rankingCandidateLimitExceeded: false,
       });
     },
   );
 
-  it.each([-1, 13, 0.5, 1.5, Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY])(
+  it.each([13, 24, Number.MAX_SAFE_INTEGER])(
+    "keeps %s candidates reviewable while disabling the twelve-item ranking projection",
+    (candidateCount) => {
+      expect(deriveCandidateReviewFeatureAvailability(candidateCount)).toEqual({
+        hasCandidates: true,
+        showPassB: true,
+        showAudioEvent: true,
+        showRanking: false,
+        rankingCandidateLimitExceeded: true,
+      });
+    },
+  );
+
+  it.each([
+    -1,
+    0.5,
+    1.5,
+    Number.NaN,
+    Number.POSITIVE_INFINITY,
+    Number.NEGATIVE_INFINITY,
+    Number.MAX_SAFE_INTEGER + 1,
+  ])(
     "rejects invalid candidate count %s with a typed error",
     (candidateCount) => {
       expect(() =>

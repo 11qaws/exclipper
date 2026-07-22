@@ -1,10 +1,18 @@
 # ExClipper 상태·생애주기 명세
 
-- 문서 버전: 0.3.39
-- 기준 제품 계획: PRODUCT_PLAN.md 0.3.39
+- 문서 버전: 0.3.40
+- 기준 제품 계획: PRODUCT_PLAN.md 0.3.40
 - 기준일: 2026-07-20 (Asia/Seoul)
 - 적용 범위: GitHub Pages에서 실행되는 개인 편집 어시스턴트와 선택형 CHZZK 동반 수집기
 - 문서 지위: 구현 전 상태 모델의 기준 문서
+
+## `0.3.40` 맥락 후 세부 검토와 후보 수 상한 분리
+
+- 표시 순서는 `fast discovery → whole-broadcast context → context-aware detail review → editor final selection`이다. 앞 단계가 `active`인 동안 뒤 자동 단계는 `pending`이며, 전체 맥락이 terminal에 도달한 뒤에만 세부 검토가 `active`가 된다. 최종 선택 표시기는 자동 세부 검토가 `complete | error`가 된 뒤 편집자 작업을 `active`로 안내한다. 후보 카드는 분석 중에도 미리 볼 수 있고, 오류가 나도 이미 확정한 canonical 후보는 유지한다.
+- 의미 후보 정밀화는 먼저 같은 run의 `refinementCandidatesJson`을 저장하고 재개방 검증한 뒤 canonical ledger에 합친다. 합친 결과가 12개를 넘어도 유효하다. `candidateCount <= 12`는 ranking projection과 한 번의 paid detail batch에만 적용하며 candidate review availability의 전역 불변식으로 사용하지 않는다.
+- ranking view는 13개 이상에서 빈 canonical order를 가진 안전한 비활성 session으로 교체한다. 실제 후보 배열은 시간순 원장으로 그대로 유지되고, projection mismatch는 입력 후보 전체를 그대로 반환한다. 후보가 많다는 이유로 membership, review state, boundary revision, 저장된 AI 근거를 삭제하는 전이는 금지한다.
+- 자동 세부 검토 operation identity는 source fingerprint와 현재 detail target ID 집합을 포함한다. 같은 집합은 한 번만 자동 시작한다. run이 busy이면 새 의미 후보 집합을 예약 상태로 두고 terminal 뒤 아직 Pass B evidence/insight가 없는 ID만 다음 최대 12개 batch로 처리한다.
+- 최상위 display error boundary는 presentation failure만 격리한다. 복구 화면 진입은 IndexedDB 분석 세션, context checkpoint, candidate ledger, 사용자 판단을 변경하지 않으며, 사용자가 명시적으로 누른 reload만 앱을 다시 초기화한다.
 
 ## `0.3.39` 병렬 맥락 run과 편집 목적 projection 경계
 

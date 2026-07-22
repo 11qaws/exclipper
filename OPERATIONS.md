@@ -2,6 +2,8 @@
 
 ## 2026-07-22 release notes
 
+- `0.3.40`: fixed the post-context blank screen reproduced in the deployed browser. Semantic refinement may legitimately push the canonical ledger above twelve; candidate review now accepts that ledger, preserves every candidate, and disables only the twelve-item ranking projection. Candidate detail execution remains bounded to twelve targets per run, and a top-level recovery view replaces a blank page for future render faults.
+- The visible sequence is now fast discovery → whole-broadcast context → context-aware detail review → editor final selection. Newly appended semantic candidates wait for any active detail run and then enter a missing-only follow-up batch; an unchanged target set is not automatically billed twice.
 - `0.3.39`: whole-broadcast overview and four deterministic full-coverage discovery slices start together. Qwen 3.7 Plus remains the overview/final jury and validates topic-balanced reserve leads; Qwen 3.6 Flash handles discovery and localization for leads already approved by the jury. Both refinement tiers share a six-request bounded pool. The 26-client-call ceiling and canonical Candidate Ledger are unchanged.
 - The accepted multi-purpose clipping direction is `Editorial Intent Profiles`: `balanced`, `main-story`, `shorts`, and `recap` are projections over one paid evidence run, not four analysis modes. Event categories such as apology, quiet achievement, talk conflict, and strong reaction remain independent evidence labels. Profile UI/ranking is a later slice and must not trigger repeat API analysis.
 - `0.3.36`: whole-context comparison accepts up to 32 grounded meaning leads. The Qwen 3.7 jury may approve up to eight independent events; topic-balanced reserves expand caption-only text localization to at most 20 internal leads, while no-caption ASR remains capped at four, new semantic proposals remain capped at 12, and each multimodal detail run keeps its 12-target bound. Canonical ledger entries are not deleted to enforce those execution budgets.
@@ -45,7 +47,7 @@
 - Pass B evidence and AI insight snapshots are stored by analysis run in a dedicated IndexedDB object store. Recovery filters them to the recovered candidate IDs, and a new run epoch prevents late writes from an older source contaminating the current result.
 - Fixed non-vocal program-edge bursts (opening, ending, and break loops) are rejected by default. An edge segment can still survive when it has a distinctive vocal/dialogue anchor, while the central UI presents the automatic phase and candidate list without promotional copy.
 
-- 문서 버전: `0.3.39`
+- 문서 버전: `0.3.40`
 - 기준일: 2026-07-22 (Asia/Seoul)
 - 대상: GitHub Pages에서 실행되는 1인용 AI 편집 어시스턴트
 - 함께 읽을 문서: `PRODUCT_PLAN.md`, `STATE_LIFECYCLE.md`, `DEVELOPMENT_LOG.md`

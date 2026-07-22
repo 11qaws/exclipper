@@ -2,6 +2,7 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 
 import App from "./App";
+import AppErrorBoundary from "./AppErrorBoundary";
 import "../styles/streamsaver-reference.css";
 import "../styles/retto-highlight.css";
 
@@ -13,6 +14,8 @@ if (rootElement === null) {
 
 createRoot(rootElement).render(
   <StrictMode>
-    <App />
+    <AppErrorBoundary>
+      <App />
+    </AppErrorBoundary>
   </StrictMode>,
 );
