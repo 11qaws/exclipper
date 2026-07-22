@@ -47,7 +47,7 @@ describe("broadcastContextProtocol", () => {
     const input = validInput();
     const request = createBroadcastContextRequest(input);
 
-    expect(request.schemaVersion).toBe("1.5.0");
+    expect(request.schemaVersion).toBe("1.6.0");
     expect(request.castRosterId).toBeNull();
     expect(request.chapters).not.toBe(input.chapters);
     expect(request.candidates).not.toBe(input.candidates);

@@ -18,7 +18,12 @@ import { CANDIDATE_PASS_B_SAMPLE_RATE_HZ } from "./candidatePassBWorkerProtocol"
 import {
   MAX_BROADCAST_TRANSCRIPT_QWEN_DURATION_MS,
 } from "./broadcastTranscriptQwen";
+import type { BroadcastContextTranscriptionChunk } from "./broadcastContextSamplingPlan";
 import { requestBroadcastTranscriptQwenChunk } from "./broadcastTranscriptQwenClient";
+import {
+  prioritizeAdjacentTranscriptChunks,
+  shouldExpandBroadcastContextChunk,
+} from "./broadcastContextExploration";
 import {
   MAX_BROADCAST_TRANSCRIPT_WORKER_CHUNKS,
   type BroadcastTranscriptWorkerIdentity,
@@ -86,8 +91,8 @@ function isValidAnalyzeRequest(
     return false;
   }
   const sourceDurationMs = value.sourceDurationMs as number;
-  let previousEndMs = -1;
   const chunkIds = new Set<string>();
+  const validatedChunks: BroadcastContextTranscriptionChunk[] = [];
   for (const rawChunk of value.chunks as readonly unknown[]) {
     if (
       !isRecord(rawChunk) ||
@@ -97,19 +102,33 @@ function isValidAnalyzeRequest(
       !Number.isSafeInteger(rawChunk.sourceStartMs) ||
       !Number.isSafeInteger(rawChunk.sourceEndMs) ||
       (rawChunk.sourceStartMs as number) < 0 ||
-      (rawChunk.sourceStartMs as number) < previousEndMs ||
       (rawChunk.sourceEndMs as number) <= (rawChunk.sourceStartMs as number) ||
       (rawChunk.sourceEndMs as number) > sourceDurationMs ||
       (rawChunk.sourceEndMs as number) - (rawChunk.sourceStartMs as number) >
         MAX_BROADCAST_TRANSCRIPT_QWEN_DURATION_MS ||
-      !["uniform", "event", "uniform-and-event"].includes(
-        String(rawChunk.kind),
-      )
+      typeof rawChunk.kind !== "string" ||
+      !["uniform", "event", "uniform-and-event"].includes(rawChunk.kind)
     ) {
       return false;
     }
     chunkIds.add(rawChunk.chunkId);
-    previousEndMs = rawChunk.sourceEndMs as number;
+    validatedChunks.push({
+      chunkId: rawChunk.chunkId,
+      sourceStartMs: rawChunk.sourceStartMs as number,
+      sourceEndMs: rawChunk.sourceEndMs as number,
+      kind: rawChunk.kind as BroadcastContextTranscriptionChunk["kind"],
+    });
+  }
+  const chronological = [...validatedChunks].sort(
+    (left, right) =>
+      left.sourceStartMs - right.sourceStartMs ||
+      left.sourceEndMs - right.sourceEndMs ||
+      left.chunkId.localeCompare(right.chunkId),
+  );
+  let previousEndMs = -1;
+  for (const chunk of chronological) {
+    if (chunk.sourceStartMs < previousEndMs) return false;
+    previousEndMs = chunk.sourceEndMs;
   }
   return true;
 }
@@ -287,16 +306,26 @@ async function runAnalyze(
       });
       return;
     }
-    let completedCount = 0;
+    let successfulCount = 0;
+    let processedCount = 0;
     let gapCount = 0;
-    for (const chunk of request.chunks) {
+    const chronologicalChunks = [...request.chunks].sort(
+      (left, right) =>
+        left.sourceStartMs - right.sourceStartMs ||
+        left.sourceEndMs - right.sourceEndMs ||
+        left.chunkId.localeCompare(right.chunkId),
+    );
+    let pendingChunks = [...request.chunks];
+    while (pendingChunks.length > 0) {
+      const chunk = pendingChunks.shift();
+      if (chunk === undefined) break;
       if (task.cancelled) return;
       post({
         type: "broadcast-transcript-progress",
         identity: task.identity,
         progress: {
           chunkId: chunk.chunkId,
-          completedCount,
+          completedCount: processedCount,
           totalCount: request.chunks.length,
           stage: "decoding",
         },
@@ -315,6 +344,7 @@ async function runAnalyze(
       if (task.cancelled || pcm === null) return;
       if (pcm.length === 0) {
         gapCount += 1;
+        processedCount += 1;
         post({
           type: "broadcast-transcript-gap",
           identity: task.identity,
@@ -328,7 +358,7 @@ async function runAnalyze(
         identity: task.identity,
         progress: {
           chunkId: chunk.chunkId,
-          completedCount,
+          completedCount: processedCount,
           totalCount: request.chunks.length,
           stage: "transcribing",
         },
@@ -340,6 +370,7 @@ async function runAnalyze(
       );
       pcm.fill(0);
       task.fetchController = new AbortController();
+      let semanticSeed = false;
       try {
         const result = await requestBroadcastTranscriptQwenChunk(
           encodeCandidatePassBBase64(wav),
@@ -348,7 +379,8 @@ async function runAnalyze(
           { signal: task.fetchController.signal },
         );
         if (task.cancelled) return;
-        completedCount += 1;
+        successfulCount += 1;
+        semanticSeed = shouldExpandBroadcastContextChunk(result);
         post({
           type: "broadcast-transcript-partial",
           identity: task.identity,
@@ -368,12 +400,22 @@ async function runAnalyze(
         task.fetchController = null;
         wav.fill(0);
       }
+      processedCount += 1;
+      if (semanticSeed && pendingChunks.length > 0) {
+        pendingChunks = [
+          ...prioritizeAdjacentTranscriptChunks(
+            pendingChunks,
+            chronologicalChunks,
+            chunk.chunkId,
+          ),
+        ];
+      }
     }
     post({
       type: "broadcast-transcript-complete",
       identity: task.identity,
       requestedCount: request.chunks.length,
-      completedCount,
+      completedCount: successfulCount,
       gapCount,
     });
   } catch (error) {

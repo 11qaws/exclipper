@@ -1,4 +1,43 @@
-import type { BroadcastContextResult } from "./broadcastContextProtocol";
+import type {
+  BroadcastContextResult,
+  BroadcastContextSemanticChapterKind,
+} from "./broadcastContextProtocol";
+
+export type BroadcastContextSemanticFamily =
+  | "event-reaction"
+  | "achievement-payoff"
+  | "flow-transition"
+  | "general-context";
+
+export function semanticChapterFamily(
+  kind: BroadcastContextSemanticChapterKind,
+): BroadcastContextSemanticFamily {
+  if (kind === "main-event" || kind === "reaction") {
+    return "event-reaction";
+  }
+  if (kind === "quiet-achievement" || kind === "setup-and-payoff") {
+    return "achievement-payoff";
+  }
+  if (
+    kind === "story-progress" ||
+    kind === "context-shift" ||
+    kind === "running-gag"
+  ) {
+    return "flow-transition";
+  }
+  return "general-context";
+}
+
+export function semanticChapterFamilyLabel(
+  family: BroadcastContextSemanticFamily,
+): string {
+  return {
+    "event-reaction": "주요 사건·반응",
+    "achievement-payoff": "성취·회수",
+    "flow-transition": "흐름·전환",
+    "general-context": "일반 맥락",
+  }[family];
+}
 
 export type BroadcastContextUiStatus =
   | "idle"

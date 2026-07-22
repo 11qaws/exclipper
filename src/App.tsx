@@ -69,7 +69,12 @@ import {
   createBroadcastContextSamplingPlan,
   createBroadcastContextTranscriptionChunks,
   subtractBroadcastContextCoveredRanges,
+  type BroadcastContextTranscriptionChunk,
 } from "./analysis/broadcastContextSamplingPlan";
+import {
+  createDistributedTimelineRevealOrder,
+  createDistributedTranscriptExplorationOrder,
+} from "./analysis/broadcastContextExploration";
 import {
   createBroadcastTranscriptChapters,
   mergeBroadcastTranscriptChapters,
@@ -81,6 +86,8 @@ import {
 } from "./analysis/broadcastContextPersistence";
 import {
   buildBroadcastContextTimelinePresentation,
+  semanticChapterFamily,
+  semanticChapterFamilyLabel,
   type BroadcastContextUiStatus,
 } from "./analysis/broadcastContextTimelinePresentation";
 import {
@@ -326,7 +333,7 @@ interface AudioAnalysisOutcome {
   readonly coverageComplete: boolean;
 }
 
-const APP_VERSION = "0.3.40";
+const APP_VERSION = "0.3.41";
 const PERSISTENCE_SCHEMA_VERSION = "0.3.0";
 const SIGNAL_ENGINE_VERSION =
   "streamer-reaction-fast-pass-v5-chat-fallback-music-confirmation";
@@ -362,6 +369,32 @@ interface CandidateTimelineScoreSource {
     UnifiedHighlightCandidate,
     "id" | "peakMs" | "startMs" | "endMs" | "score"
   >[];
+}
+
+type BroadcastTranscriptExplorationCellState =
+  | "queued"
+  | "active"
+  | "complete"
+  | "gap";
+
+interface BroadcastTranscriptExplorationCell {
+  readonly chunkId: string;
+  readonly sourceStartMs: number;
+  readonly sourceEndMs: number;
+  readonly kind: BroadcastContextTranscriptionChunk["kind"];
+  readonly state: BroadcastTranscriptExplorationCellState;
+  readonly stage: BroadcastTranscriptWorkerProgress["stage"] | null;
+}
+
+function createTranscriptExplorationCells(
+  chunks: readonly BroadcastContextTranscriptionChunk[],
+  state: BroadcastTranscriptExplorationCellState = "queued",
+): readonly BroadcastTranscriptExplorationCell[] {
+  return chunks.map((chunk) => ({
+    ...chunk,
+    state,
+    stage: null,
+  }));
 }
 
 function firstTimelineFrameById(
@@ -888,6 +921,10 @@ function semanticLeadCategoryLabel(
   }[category];
 }
 
+type TimelineInspectionTarget =
+  | { readonly kind: "chapter"; readonly id: string }
+  | { readonly kind: "lead"; readonly id: string };
+
 function App() {
   const [theme, setTheme] = useState<Theme>(initialTheme);
   const [isDragging, setIsDragging] = useState(false);
@@ -946,11 +983,17 @@ function App() {
     useState<readonly CandidateTimelineScorePoint[]>([]);
   const [timelineSemanticChapters, setTimelineSemanticChapters] =
     useState<readonly BroadcastContextSemanticChapter[]>([]);
+  const [timelineSemanticChapterRevealCount, setTimelineSemanticChapterRevealCount] =
+    useState(0);
+  const [timelineInspectionTarget, setTimelineInspectionTarget] =
+    useState<TimelineInspectionTarget | null>(null);
   const [broadcastTranscriptStatus, setBroadcastTranscriptStatus] = useState<
     "idle" | "running" | "completed" | "completedWithGaps" | "failed"
   >("idle");
   const [broadcastTranscriptProgress, setBroadcastTranscriptProgress] =
     useState<BroadcastTranscriptWorkerProgress | null>(null);
+  const [broadcastTranscriptExplorationCells, setBroadcastTranscriptExplorationCells] =
+    useState<readonly BroadcastTranscriptExplorationCell[]>([]);
   const [broadcastTranscriptChapters, setBroadcastTranscriptChapters] =
     useState<readonly BroadcastContextChapterInput[]>([]);
   const [youtubeCaptionTrack, setYouTubeCaptionTrack] =
@@ -1140,6 +1183,9 @@ function App() {
     setCandidateTimelineFramesById({});
     setCandidateTimelineScorePoints([]);
     setTimelineSemanticChapters([]);
+    setTimelineSemanticChapterRevealCount(0);
+    setTimelineInspectionTarget(null);
+    setBroadcastTranscriptExplorationCells([]);
     setYouTubeCaptionTrack(null);
     setClipDownloadStatusById({});
     setClipDownloadErrorById({});
@@ -1459,6 +1505,66 @@ function App() {
     return laneById;
   }, [boundarySourceDurationMs, orderedCandidates]);
   const timelineDiscoveredLeads = broadcastContextResult?.discoveredLeads ?? [];
+  const timelineSemanticChapterRevealOrder = useMemo(
+    () => createDistributedTimelineRevealOrder(timelineSemanticChapters),
+    [timelineSemanticChapters],
+  );
+  useEffect(() => {
+    if (timelineSemanticChapterRevealOrder.length === 0) return;
+    const revealTimer = globalThis.setInterval(() => {
+      setTimelineSemanticChapterRevealCount((current) => {
+        const next = Math.min(
+          timelineSemanticChapterRevealOrder.length,
+          current + 1,
+        );
+        if (next >= timelineSemanticChapterRevealOrder.length) {
+          globalThis.clearInterval(revealTimer);
+        }
+        return next;
+      });
+    }, 260);
+    return () => globalThis.clearInterval(revealTimer);
+  }, [timelineSemanticChapterRevealOrder]);
+  const visibleTimelineSemanticChapterIds = useMemo(
+    () =>
+      new Set(
+        timelineSemanticChapterRevealOrder
+          .slice(0, timelineSemanticChapterRevealCount)
+          .map((chapter) => chapter.semanticChapterId),
+      ),
+    [timelineSemanticChapterRevealCount, timelineSemanticChapterRevealOrder],
+  );
+  const visibleTimelineSemanticChapters = timelineSemanticChapters.filter((chapter) =>
+    visibleTimelineSemanticChapterIds.has(chapter.semanticChapterId),
+  );
+  const timelineTopicRevealComplete =
+    timelineSemanticChapters.length === 0 ||
+    timelineSemanticChapterRevealCount >= timelineSemanticChapters.length;
+  const visibleTimelineDiscoveredLeads = timelineTopicRevealComplete
+    ? timelineDiscoveredLeads
+    : [];
+  const inspectedTimelineChapter =
+    timelineInspectionTarget?.kind === "chapter"
+      ? timelineSemanticChapters.find(
+          ({ semanticChapterId }) =>
+            semanticChapterId === timelineInspectionTarget.id,
+        ) ?? null
+      : null;
+  const inspectedTimelineLead =
+    timelineInspectionTarget?.kind === "lead"
+      ? timelineDiscoveredLeads.find(
+          ({ leadId }) => leadId === timelineInspectionTarget.id,
+        ) ?? null
+      : null;
+  const timelinePlayheadMs =
+    inspectedTimelineChapter !== null
+      ? (inspectedTimelineChapter.startMs + inspectedTimelineChapter.endMs) / 2
+      : inspectedTimelineLead !== null
+        ? (inspectedTimelineLead.startMs + inspectedTimelineLead.endMs) / 2
+        : orderedCandidates.find(({ id }) => id === focusedCandidateId)?.peakMs ?? null;
+  const broadcastTranscriptExploredCount = broadcastTranscriptExplorationCells.filter(
+    ({ state }) => state === "complete" || state === "gap",
+  ).length;
   const broadcastContextTimelinePresentation = useMemo(
     () =>
       buildBroadcastContextTimelinePresentation({
@@ -1774,6 +1880,82 @@ function App() {
       : finalSelectionPhaseReady
         ? `편집자 확인 대기 ${remainingReviewCount}개 · 사용 ${approvedCount}개`
         : "세부 검토가 끝나면 편집자가 결정";
+  const contextualCandidatePublicationReady =
+    finalSelectionPhaseReady && timelineTopicRevealComplete;
+  const liveAnalysisStageNumber =
+    !wholeContextPhaseComplete && !wholeContextPhaseFailed
+      ? 2
+      : !contextualCandidatePublicationReady
+        ? 3
+        : 4;
+  const liveAnalysisStageTitle =
+    liveAnalysisStageNumber === 2
+      ? "방송 전역에서 맥락을 탐색하고 있어요"
+      : liveAnalysisStageNumber === 3
+        ? timelineTopicRevealComplete
+          ? "발견한 맥락으로 후보를 다시 보고 있어요"
+          : "방송 주제 지도를 하나씩 조합하고 있어요"
+        : reviewCompleted
+          ? "편집자 검토가 끝났어요"
+          : "최종 후보를 확인할 차례예요";
+  const liveAnalysisStageDetail =
+    liveAnalysisStageNumber === 2
+      ? broadcastTranscriptStatusText
+      : liveAnalysisStageNumber === 3
+        ? !timelineTopicRevealComplete
+          ? `주제 ${Math.min(
+              timelineSemanticChapterRevealCount,
+              timelineSemanticChapters.length,
+            )}/${timelineSemanticChapters.length}개를 타임라인에 배치하는 중`
+          : detailedReviewPhaseLabel
+        : finalSelectionPhaseLabel;
+  const liveAnalysisProgressValue: number | null =
+    liveAnalysisStageNumber === 2
+      ? broadcastTranscriptStatus === "running"
+        ? broadcastTranscriptProgressRatio
+        : null
+      : liveAnalysisStageNumber === 3
+        ? !timelineTopicRevealComplete && timelineSemanticChapters.length > 0
+          ? Math.min(
+              1,
+              timelineSemanticChapterRevealCount /
+                timelineSemanticChapters.length,
+            )
+          : candidatePassBBusy
+            ? candidatePassBProgressRatio
+            : null
+        : candidates.length === 0
+          ? 1
+          : reviewedCount / candidates.length;
+  const liveAnalysisPhaseSteps = [
+    { number: 1, label: "빠른 탐색", state: "complete" },
+    {
+      number: 2,
+      label: "전체 맥락",
+      state: wholeContextPhaseActive
+        ? "active"
+        : wholeContextPhaseComplete
+          ? "complete"
+          : wholeContextPhaseFailed
+            ? "error"
+            : "pending",
+    },
+    {
+      number: 3,
+      label: "후보 종합",
+      state:
+        !timelineTopicRevealComplete && finalSelectionPhaseReady
+          ? "active"
+          : detailedReviewPhaseState,
+    },
+    {
+      number: 4,
+      label: "편집자 선택",
+      state: contextualCandidatePublicationReady
+        ? finalSelectionPhaseState
+        : "pending",
+    },
+  ] as const;
   const analysisFinishedWithoutCandidates =
     analysisComplete && selectionResult !== null && candidates.length === 0;
   const reviewingRecoveredResult =
@@ -1975,6 +2157,9 @@ function App() {
     setCandidates([]);
     setCandidateTimelineScorePoints([]);
     setTimelineSemanticChapters([]);
+    setTimelineSemanticChapterRevealCount(0);
+    setTimelineInspectionTarget(null);
+    setBroadcastTranscriptExplorationCells([]);
     broadcastTranscriptAbortController.current?.abort();
     broadcastTranscriptAbortController.current = null;
     broadcastContextAbortController.current?.abort();
@@ -1986,6 +2171,7 @@ function App() {
     autoSemanticLeadRefinementSourceRef.current = null;
     setBroadcastTranscriptStatus("idle");
     setBroadcastTranscriptProgress(null);
+    setBroadcastTranscriptExplorationCells([]);
     setBroadcastTranscriptChapters([]);
     setYouTubeCaptionTrack(null);
     setBroadcastTranscriptError(null);
@@ -2364,6 +2550,9 @@ function App() {
     setCandidates([]);
     setCandidateTimelineScorePoints([]);
     setTimelineSemanticChapters([]);
+    setTimelineSemanticChapterRevealCount(0);
+    setTimelineInspectionTarget(null);
+    setBroadcastTranscriptExplorationCells([]);
     resetCandidateRanking();
     resetBoundarySession();
     setAnalysisError(null);
@@ -4618,7 +4807,9 @@ function App() {
       setBroadcastContextResult(restoredContext);
       setBroadcastContextRefinementLeadIds(restoredRefinementLeadIds);
       setBroadcastContextFastRefinementLeadIds(restoredFastRefinementLeadIds);
+      setTimelineSemanticChapterRevealCount(0);
       setTimelineSemanticChapters(restoredContext.semanticChapters);
+      setTimelineInspectionTarget(null);
       setCandidateAiProjectionById(
         finalizeContextQualifiedCandidates(
           recoveredCandidates,
@@ -5000,7 +5191,9 @@ function App() {
       setBroadcastContextResult(result);
       setBroadcastContextRefinementLeadIds(safeRefinementLeadIds);
       setBroadcastContextFastRefinementLeadIds(safeFastRefinementLeadIds);
+      setTimelineSemanticChapterRevealCount(0);
       setTimelineSemanticChapters(result.semanticChapters);
+      setTimelineInspectionTarget(null);
       const qualified = finalizeContextQualifiedCandidates(candidates, result.annotations);
       setCandidateAiProjectionById(qualified.projectionById);
       const survivingIds = new Set([
@@ -5561,6 +5754,7 @@ function App() {
     if (chunks.length === 0) {
       setBroadcastTranscriptStatus("completed");
       setBroadcastTranscriptChapters([]);
+      setBroadcastTranscriptExplorationCells([]);
       return;
     }
 
@@ -5633,6 +5827,7 @@ function App() {
             // The persisted complete chapter map remains usable offline.
           }
         if (!controller.signal.aborted && isMounted.current) {
+          setBroadcastTranscriptExplorationCells([]);
           setBroadcastTranscriptChapters(matchedSaved.chapters);
           setBroadcastTranscriptStatus("completed");
         }
@@ -5655,6 +5850,12 @@ function App() {
           broadcastContextSamplingPlan.estimatedAudioCoverageRatio < 1)
       ) {
         if (!controller.signal.aborted && isMounted.current) {
+          setBroadcastTranscriptExplorationCells(
+            createTranscriptExplorationCells(
+              createDistributedTranscriptExplorationOrder(chunks),
+              "complete",
+            ),
+          );
           setBroadcastTranscriptChapters(savedQwenCheckpoint.chapters);
           setBroadcastTranscriptStatus(
             savedQwenCheckpoint.completeAudioCoverage
@@ -5684,6 +5885,7 @@ function App() {
               YOUTUBE_CAPTION_MODEL_REVISION,
             );
             if (!controller.signal.aborted && isMounted.current) {
+              setBroadcastTranscriptExplorationCells([]);
               setBroadcastTranscriptChapters(reopened.chapters);
               setBroadcastTranscriptStatus("completed");
             }
@@ -5730,24 +5932,50 @@ function App() {
             BROADCAST_TRANSCRIPT_ACTIVE_MODEL_REVISION,
         );
         setBroadcastTranscriptChapters(reopened.chapters);
+        setBroadcastTranscriptExplorationCells(
+          createTranscriptExplorationCells(
+            createDistributedTranscriptExplorationOrder(chunks),
+            "complete",
+          ),
+        );
         setBroadcastTranscriptStatus(
           completeAudioCoverage ? "completed" : "completedWithGaps",
         );
         return;
       }
 
+      const explorationChunks = createDistributedTranscriptExplorationOrder(
+        transcriptChunks,
+      );
+      setBroadcastTranscriptExplorationCells(
+        createTranscriptExplorationCells(explorationChunks),
+      );
+      const updateExplorationCell = (
+        chunkId: string,
+        state: BroadcastTranscriptExplorationCellState,
+        stage: BroadcastTranscriptWorkerProgress["stage"] | null = null,
+      ): void => {
+        if (controller.signal.aborted || !isMounted.current) return;
+        setBroadcastTranscriptExplorationCells((current) =>
+          current.map((cell) =>
+            cell.chunkId === chunkId ? { ...cell, state, stage } : cell,
+          ),
+        );
+      };
       const checkpointResults = new Map<string, BroadcastTranscriptQwenResult>();
       let checkpointPersistence: Promise<void> = Promise.resolve();
       const result = await runBroadcastTranscriptWorker(sourceFile, {
         sourceDurationMs,
-        chunks: transcriptChunks,
+        chunks: explorationChunks,
         signal: controller.signal,
         onProgress: (progress) => {
           if (!controller.signal.aborted && isMounted.current) {
             setBroadcastTranscriptProgress(progress);
+            updateExplorationCell(progress.chunkId, "active", progress.stage);
           }
         },
         onPartialResult: (chunkId, partialResult) => {
+          updateExplorationCell(chunkId, "complete");
           checkpointResults.set(chunkId, partialResult);
           const resultSnapshot = [...checkpointResults.values()];
           const pendingGapIds = transcriptChunks
@@ -5777,6 +6005,9 @@ function App() {
                 setBroadcastTranscriptChapters(reopened.chapters);
               }
             });
+        },
+        onChunkGap: (chunkId) => {
+          updateExplorationCell(chunkId, "gap");
         },
       });
       if (controller.signal.aborted || !isMounted.current) {
@@ -6419,15 +6650,20 @@ function App() {
             <section className="rh-panel rh-review-workspace" aria-labelledby="candidate-title">
               <div className="rh-results-header">
                 <div>
-                  <p className="rh-eyebrow">3단계 · 맥락 기반 후보 검토</p>
+                  <p className="rh-eyebrow">
+                    {contextualCandidatePublicationReady
+                      ? "AI 분석 완료 · 편집자 검토"
+                      : "AI 분석 진행 중"}
+                  </p>
                   <h3 id="candidate-title" ref={candidateHeading} tabIndex={-1}>
-                    {wholeContextPhaseComplete && semanticLeadRefinementStatus === "completed"
+                    {contextualCandidatePublicationReady
                       ? `최종 검토 후보 ${candidates.length}개`
-                      : `현재 발견 후보 ${candidates.length}개`}
+                      : "방송 전체 맥락을 만들고 있어요"}
                   </h3>
                   <p className="rh-help">
-                    AI가 방송 전체 맥락을 먼저 파악한 뒤 후보의 화면·오디오·대사를 세부 검토합니다.
-                    편집자는 자동 분석이 끝난 짧은 후보만 보고 사용할 장면을 고르면 됩니다.
+                    {contextualCandidatePublicationReady
+                      ? "AI가 전체 방송 맥락과 화면·대사를 종합한 장면만 모았습니다. 이제 짧은 후보만 재생해 결정하면 됩니다."
+                      : "분산 탐색으로 방송 곳곳을 먼저 확인한 뒤, 의미가 이어지는 주변을 넓혀 봅니다. 최종 후보는 종합이 끝난 뒤 한 번에 표시합니다."}
                   </p>
                   {selectionResult.audioGapReasonCode !== undefined && selectionResult.audioGapReasonCode !== null && (
                     <p className="rh-notice" data-tone="warning" role="status">
@@ -6458,7 +6694,7 @@ function App() {
                     </p>
                   )}
                 </div>
-                {candidates.length > 0 && (
+                {contextualCandidatePublicationReady && candidates.length > 0 && (
                   <dl className="rh-review-overview" aria-live="polite">
                     <div>
                       <dt>남은 후보</dt>
@@ -6476,74 +6712,51 @@ function App() {
                 )}
               </div>
 
-              <div className="rh-phase-flow-heading">
-                <div>
-                  <p className="rh-eyebrow">분석·검토 순서</p>
-                  <strong>전체 맥락을 먼저 읽고, 그 결과로 후보를 자세히 확인해요</strong>
-                </div>
-                <span>1~3 자동 분석 · 4 편집자 선택</span>
-              </div>
-
               <section
-                className="rh-analysis-phase-map"
-                aria-label="AI 분석과 편집자 검토 순서"
+                className="rh-live-analysis-panel"
+                data-state={
+                  liveAnalysisStageNumber === 4 && reviewCompleted
+                    ? "complete"
+                    : "active"
+                }
+                aria-label="현재 AI 분석 진행 상황"
                 aria-live="polite"
               >
-                <div data-state="complete">
-                  <span>1</span>
-                  <strong>빠른 탐색</strong>
-                  <small>오디오·채팅·화면 반응 신호 확인 완료</small>
+                <div className="rh-live-analysis-current">
+                  <span className="rh-live-analysis-number" aria-hidden="true">
+                    {liveAnalysisStageNumber}
+                  </span>
+                  <div>
+                    <p className="rh-eyebrow">
+                      현재 진행 · {liveAnalysisStageNumber}/4
+                    </p>
+                    <strong>{liveAnalysisStageTitle}</strong>
+                    <small>{liveAnalysisStageDetail}</small>
+                  </div>
+                  <span className="rh-live-analysis-mode">
+                    {liveAnalysisStageNumber < 4
+                      ? "자동 진행"
+                      : reviewCompleted
+                        ? "완료"
+                        : `${reviewedCount}/${candidates.length} 검토`}
+                  </span>
                 </div>
-                <div
-                  data-state={
-                    wholeContextPhaseActive
-                      ? "active"
-                      : wholeContextPhaseComplete
-                        ? "complete"
-                        : wholeContextPhaseFailed
-                          ? "error"
-                        : "pending"
-                  }
-                >
-                  <span>2</span>
-                  <strong>방송 전체 맥락</strong>
-                  <small>{broadcastTranscriptStatusText}</small>
-                  {wholeContextPhaseActive && (
-                    <progress
-                      className="rh-analysis-progress"
-                      max={1}
-                      {...(
-                        broadcastContextStatus === "running" ||
-                        broadcastContextStatus === "restoring"
-                          ? {}
-                          : { value: broadcastTranscriptProgressRatio }
-                      )}
-                      aria-label="방송 전체 대사와 맥락 분석 진행률"
-                    />
-                  )}
-                </div>
-                <div data-state={detailedReviewPhaseState}>
-                  <span>3</span>
-                  <strong>맥락 기반 세부 검토</strong>
-                  <small>{detailedReviewPhaseLabel}</small>
-                  {detailedReviewPhaseActive && (
-                    <progress
-                      className="rh-analysis-progress"
-                      max={1}
-                      {...(
-                        semanticLeadRefinementStatus === "running"
-                          ? {}
-                          : { value: candidatePassBProgressRatio }
-                      )}
-                      aria-label="맥락 기반 후보 세부 검토 진행률"
-                    />
-                  )}
-                </div>
-                <div data-state={finalSelectionPhaseState}>
-                  <span>4</span>
-                  <strong>편집자 최종 선택</strong>
-                  <small>{finalSelectionPhaseLabel}</small>
-                </div>
+                <progress
+                  className="rh-live-analysis-progress"
+                  max={1}
+                  {...(liveAnalysisProgressValue === null
+                    ? {}
+                    : { value: liveAnalysisProgressValue })}
+                  aria-label="현재 분석 단계 진행률"
+                />
+                <ol className="rh-live-analysis-rail" aria-label="전체 분석 순서">
+                  {liveAnalysisPhaseSteps.map((step) => (
+                    <li key={step.number} data-state={step.state}>
+                      <span aria-hidden="true">{step.number}</span>
+                      <small>{step.label}</small>
+                    </li>
+                  ))}
+                </ol>
               </section>
 
               {(broadcastTranscriptStatus === "failed" ||
@@ -6583,13 +6796,57 @@ function App() {
 
               {broadcastContextResult !== null && (
                 <section className="rh-context-summary" aria-labelledby="broadcast-context-title">
-                  <div>
-                    <p className="rh-eyebrow">AI 방송 요약</p>
-                    <h4 id="broadcast-context-title">방송 흐름과 주제 구간</h4>
+                  <header className="rh-context-summary-heading">
+                    <div>
+                      <p className="rh-eyebrow">AI 방송 맥락</p>
+                      <h4 id="broadcast-context-title">방송 흐름과 진행자 이해</h4>
+                    </div>
+                    <span>방송 근거 기반</span>
+                  </header>
+                  <div className="rh-context-summary-grid">
+                    <article className="rh-context-narrative-card">
+                      <div className="rh-context-card-heading">
+                        <strong>방송 전체 서술</strong>
+                        <small>{Array.from(broadcastContextResult.broadcastSummaryKo).length}자</small>
+                      </div>
+                      <p>{broadcastContextResult.broadcastSummaryKo}</p>
+                    </article>
+                    <article className="rh-context-host-card">
+                      <div className="rh-context-card-heading">
+                        <strong>AI가 파악한 주 진행 스트리머</strong>
+                        <small>근거 기반 추정</small>
+                      </div>
+                      {broadcastContextResult.hostStreamerProfile === null ? (
+                        <div className="rh-context-host-unavailable">
+                          <strong>이 저장 결과에는 진행자 프로필이 없어요.</strong>
+                          <p>이전 분석을 꾸며내지 않았습니다. 새 분석부터 방송 속 근거와 함께 기록합니다.</p>
+                        </div>
+                      ) : (
+                        <>
+                          <div className="rh-context-host-name">
+                            {broadcastContextResult.hostStreamerProfile.displayNameKo ?? "주 진행 스트리머"}
+                          </div>
+                          <p>{broadcastContextResult.hostStreamerProfile.profileSummaryKo}</p>
+                          <div className="rh-context-host-evidence" aria-label="진행자 이해 근거">
+                            {broadcastContextResult.hostStreamerProfile.evidenceKo.map((evidence) => (
+                              <span key={evidence}>{evidence}</span>
+                            ))}
+                          </div>
+                          {broadcastContextResult.hostStreamerProfile.uncertaintiesKo.length > 0 && (
+                            <p className="rh-context-host-uncertainty">
+                              확인 한계 · {broadcastContextResult.hostStreamerProfile.uncertaintiesKo.join(" · ")}
+                            </p>
+                          )}
+                        </>
+                      )}
+                    </article>
                   </div>
-                  <p>{broadcastContextResult.broadcastSummaryKo}</p>
                   <div className="rh-context-summary-meta">
-                    <span>최종 검토 후보 {candidates.length}개</span>
+                    <span>
+                      {contextualCandidatePublicationReady
+                        ? `최종 검토 후보 ${candidates.length}개`
+                        : "맥락 기반 후보 종합 중"}
+                    </span>
                     <span>
                       {broadcastContextTimelinePresentation.topicMetric.label}{" "}
                       {broadcastContextTimelinePresentation.topicMetric.value}
@@ -6609,6 +6866,7 @@ function App() {
 
               {openedRecoveredResult !== null &&
                 sourcePreviewUrl === null &&
+                contextualCandidatePublicationReady &&
                 candidateReviewFeatureAvailability.hasCandidates && (
                 <div className="rh-notice rh-notice-with-action">
                   <span>원본을 연결하면 타임라인 카드에서 바로 재생하고 클립을 받을 수 있어요.</span>
@@ -6618,7 +6876,8 @@ function App() {
                 </div>
               )}
 
-              {candidateReviewFeatureAvailability.hasCandidates && (
+              {contextualCandidatePublicationReady &&
+                candidateReviewFeatureAvailability.hasCandidates && (
               <details className="rh-review-tools">
                 <summary>
                   <span>
@@ -7002,7 +7261,7 @@ function App() {
               </details>
               )}
 
-              {candidates.length === 0 ? (
+              {contextualCandidatePublicationReady && candidates.length === 0 ? (
                 <div className="rh-empty-state">
                   <strong>뚜렷한 방송 오디오·시청자 반응을 찾지 못했어요.</strong>
                   가짜 후보를 만들지 않고 이번 분석을 마쳤습니다. 오디오가 있는 원본인지 확인하거나 채팅 시간을 맞춰 다시 시도해 주세요.
@@ -7011,28 +7270,54 @@ function App() {
                 <>
                   <section
                     className="rh-candidate-timeline"
+                    data-state={
+                      contextualCandidatePublicationReady ? "ready" : "exploring"
+                    }
                     aria-labelledby="candidate-timeline-heading"
                   >
                     <div className="rh-candidate-timeline-heading">
                       <div>
-                        <p className="rh-eyebrow">방송 전체 사건 지도</p>
-                        <h3 id="candidate-timeline-heading">오늘 방송에서 먼저 볼 장면</h3>
+                        <p className="rh-eyebrow">
+                          {contextualCandidatePublicationReady
+                            ? "방송 전체 사건 지도"
+                            : "실시간 맥락 탐색 지도"}
+                        </p>
+                        <h3 id="candidate-timeline-heading">
+                          {contextualCandidatePublicationReady
+                            ? "오늘 방송에서 먼저 볼 장면"
+                            : "방송 곳곳에서 주제를 찾고 있어요"}
+                        </h3>
                         <p>
-                          선의 위치는 방송 시각, 흐릿한 높이는 잠재 점수예요. 원과 요약 카드를 누르면 같은 장면을 바로 확인합니다.
+                          {contextualCandidatePublicationReady
+                            ? "선의 위치는 방송 시각, 흐릿한 높이는 잠재 점수예요. 원과 요약 카드를 누르면 같은 장면을 바로 확인합니다."
+                            : "앞에서부터 순서대로 읽지 않고 방송 전역을 분산 탐색합니다. 의미가 잡히면 이웃 구간을 넓혀 보고, 주제가 확인되는 순서대로 지도에 나타납니다."}
                         </p>
                       </div>
                       <div className="rh-timeline-stats" aria-label="사건 지도 요약">
                         <span>
-                          <strong>{orderedCandidates.length}</strong>
-                          검토 후보
+                          <strong>
+                            {contextualCandidatePublicationReady
+                              ? orderedCandidates.length
+                              : broadcastTranscriptExplorationCells.length > 0
+                                ? `${broadcastTranscriptExploredCount}/${broadcastTranscriptExplorationCells.length}`
+                                : broadcastTranscriptStatus === "completed" ||
+                                    broadcastTranscriptStatus === "completedWithGaps"
+                                  ? "완료"
+                                  : "…"}
+                          </strong>
+                          {contextualCandidatePublicationReady ? "검토 후보" : "탐색 구간"}
                         </span>
                         <span>
-                          <strong>{broadcastContextTimelinePresentation.topicMetric.value}</strong>
-                          {broadcastContextTimelinePresentation.topicMetric.label}
+                          <strong>{visibleTimelineSemanticChapters.length}</strong>
+                          드러난 주제
                         </span>
                         <span>
-                          <strong>{broadcastContextTimelinePresentation.leadMetric.value}</strong>
-                          {broadcastContextTimelinePresentation.leadMetric.label}
+                          <strong>
+                            {contextualCandidatePublicationReady
+                              ? visibleTimelineDiscoveredLeads.length
+                              : "…"}
+                          </strong>
+                          {contextualCandidatePublicationReady ? "의미 단서" : "후보 종합"}
                         </span>
                       </div>
                     </div>
@@ -7049,7 +7334,10 @@ function App() {
                     <div className="rh-timeline-track" aria-label="방송 안 후보 위치">
                       <div className="rh-timeline-row-labels" aria-hidden="true">
                         <span data-row="score">잠재 신호</span>
-                        <span data-row="candidate">검토 후보</span>
+                        <span data-row="candidate">
+                          {contextualCandidatePublicationReady ? "검토 후보" : "후보 대기"}
+                        </span>
+                        <span data-row="exploration">맥락 탐색</span>
                         <span data-row="topic">주제 흐름</span>
                         <span data-row="lead">의미 단서</span>
                       </div>
@@ -7123,13 +7411,71 @@ function App() {
                           );
                         })}
                       </div>
-                      <span className="rh-timeline-line" aria-hidden="true" />
+                      <div
+                        className="rh-timeline-exploration-rail"
+                        data-empty={broadcastTranscriptExplorationCells.length === 0}
+                        aria-label="분산 맥락 탐색 위치"
+                      >
+                        {broadcastTranscriptExplorationCells.map((cell) => {
+                          const left =
+                            boundarySourceDurationMs > 0
+                              ? Math.min(
+                                  100,
+                                  Math.max(
+                                    0,
+                                    (cell.sourceStartMs /
+                                      boundarySourceDurationMs) *
+                                      100,
+                                  ),
+                                )
+                              : 0;
+                          const width =
+                            boundarySourceDurationMs > 0
+                              ? Math.max(
+                                  0.2,
+                                  Math.min(
+                                    100 - left,
+                                    ((cell.sourceEndMs - cell.sourceStartMs) /
+                                      boundarySourceDurationMs) *
+                                      100,
+                                  ),
+                                )
+                              : 0;
+                          return (
+                            <span
+                              key={cell.chunkId}
+                              data-state={cell.state}
+                              data-kind={cell.kind}
+                              style={{ left: `${left}%`, width: `${width}%` }}
+                              title={`${formatDuration(cell.sourceStartMs)}–${formatDuration(cell.sourceEndMs)} · ${
+                                cell.state === "active"
+                                  ? cell.stage === "decoding"
+                                    ? "오디오 변환 중"
+                                    : "대사와 맥락 인식 중"
+                                  : cell.state === "complete"
+                                    ? "탐색 완료"
+                                    : cell.state === "gap"
+                                      ? "근거 공백"
+                                      : "탐색 대기"
+                              }`}
+                            />
+                          );
+                        })}
+                        {broadcastTranscriptExplorationCells.length === 0 &&
+                          !contextualCandidatePublicationReady && (
+                            <span className="rh-timeline-empty-rail">
+                              자막·저장 기록과 분석 계획을 확인하는 중
+                            </span>
+                          )}
+                      </div>
+                      <div className="rh-timeline-candidate-lane" aria-hidden="true" />
                       <div
                         className="rh-timeline-semantic-rail"
-                        data-empty={timelineSemanticChapters.length === 0}
+                        data-empty={visibleTimelineSemanticChapters.length === 0}
                         aria-label="타임라인 주요 구간"
                       >
-                          {timelineSemanticChapters.map((chapter, index) => {
+                          {visibleTimelineSemanticChapters.map((chapter) => {
+                            const family = semanticChapterFamily(chapter.kind);
                             const left =
                               boundarySourceDurationMs > 0
                                 ? Math.min(100, Math.max(0, (chapter.startMs / boundarySourceDurationMs) * 100))
@@ -7139,31 +7485,49 @@ function App() {
                                 ? Math.max(0.35, Math.min(100 - left, ((chapter.endMs - chapter.startMs) / boundarySourceDurationMs) * 100))
                                 : 0;
                             return (
-                              <div
+                              <button
+                                type="button"
                                 key={chapter.semanticChapterId}
                                 className="rh-timeline-semantic-chapter"
                                 data-kind={chapter.kind}
+                                data-family={family}
                                 data-salience={chapter.salience}
-                                data-segment={index % 4}
+                                data-selected={
+                                  timelineInspectionTarget?.kind === "chapter" &&
+                                  timelineInspectionTarget.id === chapter.semanticChapterId
+                                }
                                 style={{ left: `${left}%`, width: `${width}%` }}
                                 title={`${formatDuration(chapter.startMs)}–${formatDuration(chapter.endMs)} · ${chapter.summaryKo}`}
+                                aria-label={`${chapter.titleKo}, ${semanticChapterFamilyLabel(family)}, ${formatDuration(chapter.startMs)}부터 ${formatDuration(chapter.endMs)}까지 자세히 보기`}
+                                aria-pressed={
+                                  timelineInspectionTarget?.kind === "chapter" &&
+                                  timelineInspectionTarget.id === chapter.semanticChapterId
+                                }
+                                onClick={() =>
+                                  setTimelineInspectionTarget({
+                                    kind: "chapter",
+                                    id: chapter.semanticChapterId,
+                                  })
+                                }
                               >
                                 <span className="rh-timeline-semantic-title">{chapter.titleKo}</span>
-                              </div>
+                              </button>
                             );
                           })}
-                          {timelineSemanticChapters.length === 0 && (
+                          {visibleTimelineSemanticChapters.length === 0 && (
                             <span className="rh-timeline-empty-rail">
-                              {broadcastContextTimelinePresentation.topicEmptyText}
+                              {broadcastContextStatus === "completed"
+                                ? "찾은 주제 지도를 펼치는 중"
+                                : "분산 탐색에서 주제가 확인되면 여기에 나타납니다"}
                             </span>
                           )}
                         </div>
                       <div
                         className="rh-timeline-lead-rail"
-                        data-empty={timelineDiscoveredLeads.length === 0}
+                        data-empty={visibleTimelineDiscoveredLeads.length === 0}
                         aria-label="전체 맥락에서 발견한 의미 후보 범위"
                       >
-                          {timelineDiscoveredLeads.map((lead, index) => {
+                          {visibleTimelineDiscoveredLeads.map((lead, index) => {
                             const left =
                               boundarySourceDurationMs > 0
                                 ? Math.min(100, Math.max(0, (lead.startMs / boundarySourceDurationMs) * 100))
@@ -7173,24 +7537,43 @@ function App() {
                                 ? Math.max(0.45, Math.min(100 - left, ((lead.endMs - lead.startMs) / boundarySourceDurationMs) * 100))
                                 : 0;
                             return (
-                              <span
+                              <button
+                                type="button"
                                 key={lead.leadId}
                                 className="rh-timeline-semantic-lead"
                                 data-category={lead.category}
+                                data-selected={
+                                  timelineInspectionTarget?.kind === "lead" &&
+                                  timelineInspectionTarget.id === lead.leadId
+                                }
                                 style={{ left: `${left}%`, width: `${width}%` }}
                                 title={`의미 후보 ${index + 1} · ${lead.eventSummaryKo}`}
+                                aria-label={`의미 단서 ${index + 1}, ${semanticLeadCategoryLabel(lead.category)}, ${formatDuration(lead.startMs)}부터 ${formatDuration(lead.endMs)}까지 자세히 보기`}
+                                aria-pressed={
+                                  timelineInspectionTarget?.kind === "lead" &&
+                                  timelineInspectionTarget.id === lead.leadId
+                                }
+                                onClick={() =>
+                                  setTimelineInspectionTarget({
+                                    kind: "lead",
+                                    id: lead.leadId,
+                                  })
+                                }
                               >
                                 <span>{index + 1}</span>
-                              </span>
+                              </button>
                             );
                           })}
-                          {timelineDiscoveredLeads.length === 0 && (
+                          {visibleTimelineDiscoveredLeads.length === 0 && (
                             <span className="rh-timeline-empty-rail">
-                              {broadcastContextTimelinePresentation.leadEmptyText}
+                              {timelineTopicRevealComplete
+                                ? broadcastContextTimelinePresentation.leadEmptyText
+                                : "주제 지도가 완성된 뒤 의미 단서를 연결합니다"}
                             </span>
                           )}
                         </div>
-                      {orderedCandidates.map((candidate, index) => {
+                      {contextualCandidatePublicationReady &&
+                        orderedCandidates.map((candidate, index) => {
                         const position =
                           boundarySourceDurationMs > 0
                             ? Math.min(100, Math.max(0, (candidate.peakMs / boundarySourceDurationMs) * 100))
@@ -7207,6 +7590,7 @@ function App() {
                             data-selected={candidate.id === focusedCandidateId}
                             data-review-state={candidate.reviewState}
                             data-origin={candidate.evidence.semantic === undefined ? "signal" : "semantic"}
+                            data-ai-projection={candidateAiProjectionById[candidate.id] ?? "insufficient-evidence"}
                             aria-label={`후보 ${index + 1}, ${formatDuration(candidate.peakMs)} 위치 선택${sourcePreviewUrl === null ? "" : " 및 재생"}`}
                             onClick={() => playCandidate(candidate)}
                           >
@@ -7214,47 +7598,136 @@ function App() {
                           </button>
                         );
                       })}
+                      {timelinePlayheadMs !== null && boundarySourceDurationMs > 0 && (
+                        <span
+                          className="rh-timeline-playhead"
+                          style={{
+                            left: `${Math.min(100, Math.max(0, (timelinePlayheadMs / boundarySourceDurationMs) * 100))}%`,
+                          }}
+                          aria-hidden="true"
+                        />
+                      )}
                     </div>
                     <div className="rh-timeline-axis" aria-hidden="true">
                       <span>00:00</span>
                       <span>{formatDuration(boundarySourceDurationMs)}</span>
                     </div>
+                    <section className="rh-timeline-inspector" aria-live="polite">
+                      {inspectedTimelineChapter !== null ? (
+                        <>
+                          <header>
+                            <div>
+                              <span
+                                className="rh-timeline-inspector-kind"
+                                data-family={semanticChapterFamily(inspectedTimelineChapter.kind)}
+                              >
+                                {semanticChapterFamilyLabel(
+                                  semanticChapterFamily(inspectedTimelineChapter.kind),
+                                )}
+                              </span>
+                              <strong>{inspectedTimelineChapter.titleKo}</strong>
+                            </div>
+                            <time>
+                              {formatDuration(inspectedTimelineChapter.startMs)}–
+                              {formatDuration(inspectedTimelineChapter.endMs)}
+                            </time>
+                          </header>
+                          <p>{inspectedTimelineChapter.summaryKo}</p>
+                          <dl>
+                            <div>
+                              <dt>중요도</dt>
+                              <dd>{inspectedTimelineChapter.salience === "primary" ? "핵심 흐름" : "보조 흐름"}</dd>
+                            </div>
+                            <div>
+                              <dt>연결 후보</dt>
+                              <dd>
+                                {inspectedTimelineChapter.relatedCandidateIds.length === 0
+                                  ? "직접 연결 없음"
+                                  : inspectedTimelineChapter.relatedCandidateIds
+                                      .map((candidateId) => {
+                                        const index = orderedCandidates.findIndex(({ id }) => id === candidateId);
+                                        return index < 0 ? candidateId : `#${index + 1}`;
+                                      })
+                                      .join(" · ")}
+                              </dd>
+                            </div>
+                            <div>
+                              <dt>확인 한계</dt>
+                              <dd>
+                                {inspectedTimelineChapter.uncertaintiesKo.length === 0
+                                  ? "별도 불확실성 없음"
+                                  : inspectedTimelineChapter.uncertaintiesKo.join(" · ")}
+                              </dd>
+                            </div>
+                          </dl>
+                        </>
+                      ) : inspectedTimelineLead !== null ? (
+                        <>
+                          <header>
+                            <div>
+                              <span
+                                className="rh-timeline-inspector-kind"
+                                data-category={inspectedTimelineLead.category}
+                              >
+                                {semanticLeadCategoryLabel(inspectedTimelineLead.category)}
+                              </span>
+                              <strong>{inspectedTimelineLead.eventSummaryKo}</strong>
+                            </div>
+                            <time>
+                              {formatDuration(inspectedTimelineLead.startMs)}–
+                              {formatDuration(inspectedTimelineLead.endMs)}
+                            </time>
+                          </header>
+                          <p>{inspectedTimelineLead.whyThisMomentKo}</p>
+                          <dl>
+                            <div>
+                              <dt>근거 단서</dt>
+                              <dd>{inspectedTimelineLead.evidenceCueKo}</dd>
+                            </div>
+                            <div>
+                              <dt>AI 확신</dt>
+                              <dd>{Math.round(inspectedTimelineLead.confidence * 100)}%</dd>
+                            </div>
+                            <div>
+                              <dt>확인 한계</dt>
+                              <dd>
+                                {inspectedTimelineLead.uncertaintiesKo.length === 0
+                                  ? "별도 불확실성 없음"
+                                  : inspectedTimelineLead.uncertaintiesKo.join(" · ")}
+                              </dd>
+                            </div>
+                          </dl>
+                        </>
+                      ) : (
+                        <div className="rh-timeline-inspector-empty">
+                          <strong>주제 띠나 의미 단서를 선택하면 분석 내용이 여기에 열립니다.</strong>
+                          <span>색은 순서가 아니라 사건의 의미를 나타내며, 모든 범위는 위 시간 눈금과 같은 축을 사용합니다.</span>
+                        </div>
+                      )}
+                    </section>
                     <p className="rh-timeline-score-hint">
-                      {selectionResult.analyzedChatMessageCount > 0
+                      {!contextualCandidatePublicationReady
+                        ? "흐릿한 높이는 초기 반응 신호일 뿐 아직 클립 후보가 아닙니다. 탐색 셀과 주제 맥락을 종합한 뒤 최종 후보 원을 공개합니다."
+                        : selectionResult.analyzedChatMessageCount > 0
                         ? "흐릿한 막대는 오디오·채팅·화면 신호의 상대 점수예요. 번호가 없어도 막대가 있는 구간은 먼저 확인할 잠재 후보입니다."
                         : "흐릿한 막대는 오디오·화면 신호의 상대 점수예요. 번호가 없어도 막대가 있는 구간은 먼저 확인할 잠재 후보입니다."}
                     </p>
                     <div className="rh-timeline-legend" aria-label="타임라인 범례">
-                      <span data-legend="candidate">숫자 원 · 검토 후보</span>
-                      <span data-legend="topic">색 띠 · 방송 주제 구간</span>
+                      {contextualCandidatePublicationReady && (
+                        <span data-legend="candidate">숫자 원 · 최종 검토 후보</span>
+                      )}
+                      <span data-legend="exploration">짧은 셀 · 분산 맥락 탐색</span>
+                      <span data-legend="event-reaction">파랑 · 주요 사건·반응</span>
+                      <span data-legend="achievement-payoff">초록 · 성취·회수</span>
+                      <span data-legend="flow-transition">보라 · 흐름·전환</span>
+                      <span data-legend="general-context">회색 · 일반 맥락</span>
                       <span data-legend="lead">마름모 · 전체 맥락 의미 후보</span>
                       <span data-legend="score">흐린 높이 · 잠재 점수</span>
                       {timelineContextCoverageGaps.length > 0 && (
                         <span data-legend="gap">빗금 · AI 근거가 없는 구간</span>
                       )}
                     </div>
-                    {timelineDiscoveredLeads.length > 0 && (
-                      <details className="rh-timeline-lead-details">
-                        <summary>
-                          <span>전체 맥락 의미 단서 {timelineDiscoveredLeads.length}개</span>
-                          <small>번호와 설명 보기</small>
-                        </summary>
-                        <ol className="rh-timeline-lead-list" aria-label="전체 맥락 의미 단서 설명">
-                          {timelineDiscoveredLeads.map((lead, index) => (
-                            <li key={lead.leadId} data-category={lead.category}>
-                              <span aria-hidden="true">{index + 1}</span>
-                              <div>
-                                <strong>{lead.eventSummaryKo}</strong>
-                                <small>
-                                  {formatDuration(lead.startMs)}–{formatDuration(lead.endMs)} ·{" "}
-                                  {semanticLeadCategoryLabel(lead.category)} · 확신 {Math.round(lead.confidence * 100)}
-                                </small>
-                              </div>
-                            </li>
-                          ))}
-                        </ol>
-                      </details>
-                    )}
+                    {contextualCandidatePublicationReady && (
                     <ol className="rh-timeline-cards" aria-label="시간순 클립 후보 요약">
                       {orderedCandidates.map((candidate, index) => {
                         const frames = candidateTimelineFramesById[candidate.id] ?? [];
@@ -7293,12 +7766,12 @@ function App() {
                               </span>
                               <span className="rh-timeline-card-copy">
                                 <strong>
-                                  후보 {index + 1} · {candidate.reviewState === "approved" ? "사용" : candidate.reviewState === "rejected" ? "제외" : "검토 전"}
+                                  #{index + 1} · {candidate.reviewState === "approved" ? "사용" : candidate.reviewState === "rejected" ? "제외" : "검토 전"}
                                 </strong>
                                 <small>
                                   {candidate.evidence.semantic === undefined
-                                    ? "빠른 탐색 후보"
-                                    : "전체 맥락에서 찾은 의미 후보"}
+                                    ? "빠른 탐색"
+                                    : "맥락 의미 후보"}
                                 </small>
                                 <span>{oneLineSummary}</span>
                               </span>
@@ -7307,8 +7780,37 @@ function App() {
                         );
                       })}
                     </ol>
+                    )}
                   </section>
+                  {contextualCandidatePublicationReady && (
                   <div className="rh-review-editor">
+                    <nav className="rh-candidate-navigation" aria-label="후보 이동">
+                      <button
+                        className="btn btn-secondary"
+                        type="button"
+                        disabled={previousFocusedCandidate === null}
+                        onClick={() => {
+                          if (previousFocusedCandidate !== null) {
+                            focusCandidateForReview(previousFocusedCandidate);
+                          }
+                        }}
+                      >
+                        이전 후보
+                      </button>
+                      <span>{previewCandidateNumber} / {orderedCandidates.length}</span>
+                      <button
+                        className="btn btn-secondary"
+                        type="button"
+                        disabled={nextFocusedCandidate === null}
+                        onClick={() => {
+                          if (nextFocusedCandidate !== null) {
+                            focusCandidateForReview(nextFocusedCandidate);
+                          }
+                        }}
+                      >
+                        다음 후보
+                      </button>
+                    </nav>
                     <aside className="rh-preview-panel" aria-label="선택한 후보 미리보기">
                       <div className="rh-preview-heading">
                         <div>
@@ -7370,33 +7872,6 @@ function App() {
                       </p>
                     </aside>
                   <div className="rh-candidate-column">
-                    <nav className="rh-candidate-navigation" aria-label="후보 이동">
-                      <button
-                        className="btn btn-secondary"
-                        type="button"
-                        disabled={previousFocusedCandidate === null}
-                        onClick={() => {
-                          if (previousFocusedCandidate !== null) {
-                            focusCandidateForReview(previousFocusedCandidate);
-                          }
-                        }}
-                      >
-                        이전 후보
-                      </button>
-                      <span>{previewCandidateNumber} / {orderedCandidates.length}</span>
-                      <button
-                        className="btn btn-secondary"
-                        type="button"
-                        disabled={nextFocusedCandidate === null}
-                        onClick={() => {
-                          if (nextFocusedCandidate !== null) {
-                            focusCandidateForReview(nextFocusedCandidate);
-                          }
-                        }}
-                      >
-                        다음 후보
-                      </button>
-                    </nav>
                   <div
                     className="rh-candidate-list"
                     role="list"
@@ -8123,13 +8598,16 @@ function App() {
                   </div>
                   </div>
                   </div>
+                  )}
                 </>
               )}
 
-              <p className="rh-screen-reader-only" role="status" aria-live="polite">
-                {candidates.length}개 중 {reviewedCount}개 검토 · 승인 {approvedCount}개 · 제외 {rejectedCount}개
-              </p>
-              {unsavedSessionWorkStarted && (
+              {contextualCandidatePublicationReady && (
+                <p className="rh-screen-reader-only" role="status" aria-live="polite">
+                  {candidates.length}개 중 {reviewedCount}개 검토 · 승인 {approvedCount}개 · 제외 {rejectedCount}개
+                </p>
+              )}
+              {contextualCandidatePublicationReady && unsavedSessionWorkStarted && (
                 <details className="rh-session-note">
                   <summary>현재 검토 변경 사항은 아직 저장되지 않았어요</summary>
                   <p>
@@ -8140,7 +8618,9 @@ function App() {
                 </details>
               )}
 
-              {candidates.length > 0 && (approvedCount > 0 || reviewCompleted) && (
+              {contextualCandidatePublicationReady &&
+                candidates.length > 0 &&
+                (approvedCount > 0 || reviewCompleted) && (
                 <section className="rh-export-panel" aria-labelledby="export-title">
                   <div className="rh-export-heading">
                     <div>

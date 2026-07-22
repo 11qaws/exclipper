@@ -20,6 +20,7 @@ pnpm-debug.log*
 .dev.vars
 .dev.vars.*
 .wrangler/
+.wrangler-dry-run/
 
 # Tool caches
 .vite/

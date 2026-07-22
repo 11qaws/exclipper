@@ -81,11 +81,11 @@ describe("broadcastTranscriptWorkerClient", () => {
     }
   });
 
-  it("collects source-fenced partial results in plan order", async () => {
+  it("accepts scattered execution order but returns source-fenced results chronologically", async () => {
     const worker = new FakeWorker();
     const chunks = [
-      { chunkId: "asr-001", sourceStartMs: 0, sourceEndMs: 1_000, kind: "uniform" as const },
       { chunkId: "asr-002", sourceStartMs: 1_000, sourceEndMs: 2_000, kind: "event" as const },
+      { chunkId: "asr-001", sourceStartMs: 0, sourceEndMs: 1_000, kind: "uniform" as const },
     ];
     const promise = runBroadcastTranscriptWorker(new File(["x"], "sample.mp4"), {
       sourceDurationMs: 2_000,
@@ -94,6 +94,10 @@ describe("broadcastTranscriptWorkerClient", () => {
     });
     const analyze = worker.posted[0];
     if (analyze?.type !== "broadcast-transcript-analyze") throw new Error("request");
+    expect(analyze.chunks.map(({ chunkId }) => chunkId)).toEqual([
+      "asr-002",
+      "asr-001",
+    ]);
     const result = (start: number) => ({
       schemaVersion: "1.0.0" as const,
       modelId: "qwen3-asr-flash" as const,
@@ -118,6 +122,55 @@ describe("broadcastTranscriptWorkerClient", () => {
       gapChunkIds: [],
       results: [{ sourceStartMs: 0 }, { sourceStartMs: 1_000 }],
     });
+  });
+
+  it("still rejects overlapping chunks when their request order is scattered", async () => {
+    await expect(
+      runBroadcastTranscriptWorker(new File(["x"], "sample.mp4"), {
+        sourceDurationMs: 3_000,
+        chunks: [
+          { chunkId: "late", sourceStartMs: 1_000, sourceEndMs: 2_000, kind: "event" },
+          { chunkId: "overlap", sourceStartMs: 500, sourceEndMs: 1_500, kind: "uniform" },
+        ],
+      }),
+    ).rejects.toMatchObject({ code: "INVALID_INPUT" });
+  });
+
+  it("reports individual gaps to the live timeline", async () => {
+    const worker = new FakeWorker();
+    const onChunkGap = vi.fn();
+    const promise = runBroadcastTranscriptWorker(new File(["x"], "sample.mp4"), {
+      sourceDurationMs: 1_000,
+      chunks: [
+        { chunkId: "asr-001", sourceStartMs: 0, sourceEndMs: 1_000, kind: "uniform" },
+      ],
+      workerFactory: () => worker,
+      onChunkGap,
+    });
+    const analyze = worker.posted[0];
+    if (analyze?.type !== "broadcast-transcript-analyze") throw new Error("request");
+    worker.emit({
+      type: "broadcast-transcript-gap",
+      identity: analyze.identity,
+      chunkId: "asr-001",
+      reason: "transcription-failed",
+    });
+    worker.emit({
+      type: "broadcast-transcript-complete",
+      identity: analyze.identity,
+      requestedCount: 1,
+      completedCount: 0,
+      gapCount: 1,
+    });
+    await expect(promise).resolves.toMatchObject({
+      requestedCount: 1,
+      results: [],
+      gapChunkIds: ["asr-001"],
+    });
+    expect(onChunkGap).toHaveBeenCalledWith(
+      "asr-001",
+      "transcription-failed",
+    );
   });
 
   it("rejects a partial result outside its chunk fence", async () => {

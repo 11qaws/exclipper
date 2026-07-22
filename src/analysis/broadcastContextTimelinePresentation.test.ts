@@ -1,11 +1,16 @@
 import { describe, expect, it } from "vitest";
 
 import type { BroadcastContextResult } from "./broadcastContextProtocol";
-import { buildBroadcastContextTimelinePresentation } from "./broadcastContextTimelinePresentation";
+import {
+  buildBroadcastContextTimelinePresentation,
+  semanticChapterFamily,
+  semanticChapterFamilyLabel,
+} from "./broadcastContextTimelinePresentation";
 
 const completeResult: BroadcastContextResult = {
   schemaVersion: "1.4.0",
   broadcastSummaryKo: "음식에 관해 이야기한다.",
+  hostStreamerProfile: null,
   recurringThemesKo: [],
   annotations: [],
   semanticChaptersSupported: true,
@@ -99,5 +104,19 @@ describe("buildBroadcastContextTimelinePresentation", () => {
     expect(view.topicEmptyText).toContain("확인한 근거 범위");
     expect(view.noticeText).toContain("70%");
     expect(view.noticeText).toContain("빗금");
+  });
+});
+
+describe("semantic chapter families", () => {
+  it("uses stable meaning-based families instead of sequence colors", () => {
+    expect(semanticChapterFamily("main-event")).toBe("event-reaction");
+    expect(semanticChapterFamily("reaction")).toBe("event-reaction");
+    expect(semanticChapterFamily("quiet-achievement")).toBe("achievement-payoff");
+    expect(semanticChapterFamily("setup-and-payoff")).toBe("achievement-payoff");
+    expect(semanticChapterFamily("story-progress")).toBe("flow-transition");
+    expect(semanticChapterFamily("context-shift")).toBe("flow-transition");
+    expect(semanticChapterFamily("running-gag")).toBe("flow-transition");
+    expect(semanticChapterFamily("other")).toBe("general-context");
+    expect(semanticChapterFamilyLabel("achievement-payoff")).toBe("성취·회수");
   });
 });

@@ -101,7 +101,9 @@ describe("broadcastContextDeepseek", () => {
       expect(body.model).toBe("qwen3.7-plus");
       expect(body.enable_thinking).toBe(true);
       expect(body.thinking_budget).toBe(768);
-      expect(body.max_tokens).toBe(3_072);
+      expect(body.max_tokens).toBe(4_096);
+      expect(body.messages[0].content).toContain("600~1000자");
+      expect(body.messages[0].content).toContain("host");
       expect(body.messages[0].content).toContain("클립 편집 라우터");
       expect(body.messages[0].content).toContain('"chapters"');
       expect(body.messages[0].content).toContain("주제가 바뀌는 경계");
@@ -442,12 +444,20 @@ describe("broadcastContextDeepseek", () => {
       const payload = {
         choices: [{ message: { content: JSON.stringify({
           summary: "실수의 경위를 설명하고 사과했다.",
+          host: {
+            name: "아모레또",
+            profile: "미국 출신 여성 스트리머로 추정된다. 음식 취향을 솔직하게 설명하고 채팅의 반박에는 구체적인 비유로 응수하며, 틀렸다고 판단하면 결국 인정하는 진행자다.",
+            evidence: ["21살이라고 언급", "음식 퀴즈에서 채팅과 논쟁", "오답을 확인한 뒤 인정"],
+            uncertainty: ["본명은 확인되지 않음", "이 방송 밖의 진행 성향은 확인하지 않음"],
+          },
           themes: ["사과"],
           chapters: [{
             s: "c1",
             e: "c2",
             title: "실수 경위와 사과",
+            desc: "실수의 경위를 설명한 뒤 책임을 인정하고 사과로 마무리한다.",
             kind: "main-event",
+            sal: "primary",
           }],
           candidates: [{
             id: "can1",
@@ -473,6 +483,14 @@ describe("broadcastContextDeepseek", () => {
           candidateId: "can1",
           clipDecision: "select",
         });
+        expect(parsed.result.hostStreamerProfile).toMatchObject({
+          displayNameKo: null,
+          evidenceKo: ["음식 퀴즈에서 채팅과 논쟁", "오답을 확인한 뒤 인정"],
+        });
+        expect(parsed.result.hostStreamerProfile?.profileSummaryKo).not.toContain("미국 출신");
+        expect(parsed.result.hostStreamerProfile?.uncertaintiesKo).toEqual([
+          "이 방송 밖의 진행 성향은 확인하지 않음",
+        ]);
         expect(parsed.result.discoveredLeads[0]).toMatchObject({
           category: "apology-accountability",
           startMs: 0,
@@ -484,6 +502,8 @@ describe("broadcastContextDeepseek", () => {
           startMs: 0,
           endMs: 600_000,
           kind: "main-event",
+          summaryKo: "실수의 경위를 설명한 뒤 책임을 인정하고 사과로 마무리한다.",
+          salience: "primary",
         });
       }
     });
@@ -540,6 +560,12 @@ describe("broadcastContextDeepseek", () => {
             message: {
               content: JSON.stringify({
                 broadcastSummaryKo: "방송 전체 요약",
+                hostStreamerProfile: {
+                  displayNameKo: "아모레또",
+                  profileSummaryKo: "방송을 주도하며 채팅의 반응을 받아 자신의 판단을 설명하고, 실수가 확인되면 이를 인정하는 진행자다.",
+                  evidenceKo: ["채팅과 판단을 대조함", "실수를 명시적으로 인정함"],
+                  uncertaintiesKo: ["방송 밖의 성향은 알 수 없음"],
+                },
                 recurringThemesKo: ["떡밥 1", "밈 2"],
                 semanticChapters: [
                   {
@@ -576,6 +602,7 @@ describe("broadcastContextDeepseek", () => {
       expect(parsed.ok).toBe(true);
       if (parsed.ok) {
         expect(parsed.result.broadcastSummaryKo).toBe("방송 전체 요약");
+        expect(parsed.result.hostStreamerProfile?.displayNameKo).toBeNull();
         expect(parsed.result.annotations[0]?.category).toBe("reaction");
         expect(parsed.result.annotations[0]?.clipDecision).toBe("select");
         expect(parsed.result.semanticChaptersSupported).toBe(true);

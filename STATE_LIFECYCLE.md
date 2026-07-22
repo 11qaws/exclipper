@@ -1,14 +1,21 @@
 # ExClipper 상태·생애주기 명세
 
-- 문서 버전: 0.3.40
-- 기준 제품 계획: PRODUCT_PLAN.md 0.3.40
-- 기준일: 2026-07-20 (Asia/Seoul)
+- 문서 버전: 0.3.41
+- 기준 제품 계획: PRODUCT_PLAN.md 0.3.41
+- 기준일: 2026-07-22 (Asia/Seoul)
 - 적용 범위: GitHub Pages에서 실행되는 개인 편집 어시스턴트와 선택형 CHZZK 동반 수집기
 - 문서 지위: 구현 전 상태 모델의 기준 문서
 
+## `0.3.41` 분산 탐색·후보 공개·풍부한 맥락 결과
+
+- transcript 실행 순서는 source-time 정렬과 별개다. 같은 계획을 결정론적 분산 순서로 실행하고 의미 seed가 확인되면 이미 계획된 이웃을 앞당기지만, 저장 chapter와 최종 context 입력은 다시 source-time 순서로 정규화한다. partial·gap checkpoint는 각 셀의 source fence를 유지한다.
+- fast 후보는 맥락 분석 중 canonical ledger에 보존되지만 presentation publication gate 전에는 후보 수·번호 원·카드·편집 pane으로 공개하지 않는다. 전체 맥락, 의미 위치 보정, 상세 검토, 주제 reveal이 terminal에 도달하면 같은 candidate ID와 review/boundary 상태로 한 번에 공개한다.
+- `BroadcastContextResult 1.6.0`은 `broadcastSummaryKo`와 별도로 `hostStreamerProfile`을 저장한다. 프로필은 편집 관련 관찰·근거·불확실성만 소유하고 후보 membership, 점수, 경계, 승인 상태를 바꾸지 않는다. `1.5.0` 이하 저장 결과는 프로필을 `null`로 복구하며 추정 텍스트를 생성하지 않는다.
+- 타임라인 선택 대상은 `chapter | lead`인 일시적 presentation state다. 선택 playhead와 inspector는 source range와 저장된 분석 내용을 표시할 뿐 후보 lifecycle을 변경하지 않는다. semantic family 색은 kind에서 결정되며 배열 순서를 근거로 바뀌지 않는다.
+
 ## `0.3.40` 맥락 후 세부 검토와 후보 수 상한 분리
 
-- 표시 순서는 `fast discovery → whole-broadcast context → context-aware detail review → editor final selection`이다. 앞 단계가 `active`인 동안 뒤 자동 단계는 `pending`이며, 전체 맥락이 terminal에 도달한 뒤에만 세부 검토가 `active`가 된다. 최종 선택 표시기는 자동 세부 검토가 `complete | error`가 된 뒤 편집자 작업을 `active`로 안내한다. 후보 카드는 분석 중에도 미리 볼 수 있고, 오류가 나도 이미 확정한 canonical 후보는 유지한다.
+- 표시 순서는 `fast discovery → whole-broadcast context → context-aware detail review → editor final selection`이다. 앞 단계가 `active`인 동안 뒤 자동 단계는 `pending`이며, 전체 맥락이 terminal에 도달한 뒤에만 세부 검토가 `active`가 된다. 최종 선택 표시기는 자동 세부 검토가 `complete | error`가 된 뒤 편집자 작업을 `active`로 안내한다. 오류가 나도 이미 확정한 canonical 후보는 유지한다.
 - 의미 후보 정밀화는 먼저 같은 run의 `refinementCandidatesJson`을 저장하고 재개방 검증한 뒤 canonical ledger에 합친다. 합친 결과가 12개를 넘어도 유효하다. `candidateCount <= 12`는 ranking projection과 한 번의 paid detail batch에만 적용하며 candidate review availability의 전역 불변식으로 사용하지 않는다.
 - ranking view는 13개 이상에서 빈 canonical order를 가진 안전한 비활성 session으로 교체한다. 실제 후보 배열은 시간순 원장으로 그대로 유지되고, projection mismatch는 입력 후보 전체를 그대로 반환한다. 후보가 많다는 이유로 membership, review state, boundary revision, 저장된 AI 근거를 삭제하는 전이는 금지한다.
 - 자동 세부 검토 operation identity는 source fingerprint와 현재 detail target ID 집합을 포함한다. 같은 집합은 한 번만 자동 시작한다. run이 busy이면 새 의미 후보 집합을 예약 상태로 두고 terminal 뒤 아직 Pass B evidence/insight가 없는 ID만 다음 최대 12개 batch로 처리한다.

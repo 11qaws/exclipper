@@ -6,7 +6,14 @@ import tseslint from "typescript-eslint";
 
 export default tseslint.config(
   {
-    ignores: ["dist", "coverage", "graphify-out", "node_modules", ".wrangler"],
+    ignores: [
+      "dist",
+      "coverage",
+      "graphify-out",
+      "node_modules",
+      ".wrangler",
+      ".wrangler-dry-run",
+    ],
   },
   eslint.configs.recommended,
   ...tseslint.configs.recommendedTypeChecked.map((config) => ({

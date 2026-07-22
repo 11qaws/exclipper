@@ -227,7 +227,7 @@ describe("aiProxy.worker", () => {
         expect(body.model).toBe("qwen3.7-plus");
         expect(body.enable_thinking).toBe(true);
         expect(body.thinking_budget).toBe(768);
-        expect(body.max_tokens).toBe(3_072);
+        expect(body.max_tokens).toBe(4_096);
         expect(body.response_format).toEqual({ type: "json_object" });
         expect(body).not.toHaveProperty("thinking");
         const messages = body.messages as Array<{ content?: string }>;

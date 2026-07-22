@@ -3,7 +3,7 @@ import {
   type CandidatePassBCastRosterId,
 } from "./participantRoster";
 
-export const BROADCAST_CONTEXT_SCHEMA_VERSION = "1.5.0" as const;
+export const BROADCAST_CONTEXT_SCHEMA_VERSION = "1.6.0" as const;
 export const MAX_BROADCAST_CONTEXT_SOURCE_DURATION_MS = 12 * 60 * 60_000;
 export const MAX_BROADCAST_CONTEXT_CHAPTERS = 144;
 export const MAX_BROADCAST_CONTEXT_CANDIDATES = 32;
@@ -156,14 +156,28 @@ export interface BroadcastContextCoverage {
   readonly partialChapterIds: readonly string[];
 }
 
+/**
+ * Editorially useful observations about the person leading the broadcast.
+ * This is deliberately grounded in the supplied broadcast evidence: it is
+ * not a biographical or demographic profile.
+ */
+export interface BroadcastContextHostStreamerProfile {
+  readonly displayNameKo: string | null;
+  readonly profileSummaryKo: string;
+  readonly evidenceKo: readonly string[];
+  readonly uncertaintiesKo: readonly string[];
+}
+
 export interface BroadcastContextResult {
   readonly schemaVersion:
     | typeof BROADCAST_CONTEXT_SCHEMA_VERSION
+    | "1.5.0"
     | "1.4.0"
     | "1.2.0"
     | "1.1.0"
     | "1.0.0";
   readonly broadcastSummaryKo: string;
+  readonly hostStreamerProfile: BroadcastContextHostStreamerProfile | null;
   readonly recurringThemesKo: readonly string[];
   readonly annotations: readonly BroadcastContextCandidateAnnotation[];
   readonly semanticChaptersSupported: boolean;

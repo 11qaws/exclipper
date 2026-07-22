@@ -31,6 +31,10 @@ export interface RunBroadcastTranscriptWorkerOptions {
     chunkId: string,
     result: BroadcastTranscriptQwenResult,
   ) => void;
+  readonly onChunkGap?: (
+    chunkId: string,
+    reason: "decode-failed" | "no-audio" | "transcription-failed",
+  ) => void;
 }
 
 export interface BroadcastTranscriptWorkerRunResult {
@@ -109,7 +113,6 @@ function inputIssue(
   if (chunks.length > MAX_BROADCAST_TRANSCRIPT_WORKER_CHUNKS) {
     return `대사 분석 구간이 ${chunks.length}개라 현재 상한 ${MAX_BROADCAST_TRANSCRIPT_WORKER_CHUNKS}개를 넘었어요.`;
   }
-  let previousEndMs = -1;
   const ids = new Set<string>();
   for (const [index, chunk] of chunks.entries()) {
     const ordinal = index + 1;
@@ -124,9 +127,6 @@ function inputIssue(
     if (chunk.sourceStartMs < 0 || chunk.sourceEndMs <= chunk.sourceStartMs) {
       return `${ordinal}번째 대사 구간의 시작·끝 순서가 올바르지 않아요.`;
     }
-    if (chunk.sourceStartMs < previousEndMs) {
-      return `${ordinal}번째 대사 구간이 앞 구간과 시간상 겹쳐요.`;
-    }
     if (chunk.sourceEndMs > sourceDurationMs) {
       return `${ordinal}번째 대사 구간이 원본 영상 끝을 넘어가요.`;
     }
@@ -137,6 +137,18 @@ function inputIssue(
       return `${ordinal}번째 대사 구간이 90초 안전 길이를 넘었어요.`;
     }
     ids.add(chunk.chunkId);
+  }
+  const chronological = [...chunks].sort(
+    (left, right) =>
+      left.sourceStartMs - right.sourceStartMs ||
+      left.sourceEndMs - right.sourceEndMs ||
+      left.chunkId.localeCompare(right.chunkId),
+  );
+  let previousEndMs = -1;
+  for (const chunk of chronological) {
+    if (chunk.sourceStartMs < previousEndMs) {
+      return `대사 구간 ${chunk.chunkId}이 다른 구간과 시간상 겹쳐요.`;
+    }
     previousEndMs = chunk.sourceEndMs;
   }
   return null;
@@ -183,6 +195,12 @@ export function runBroadcastTranscriptWorker(
   const identity = { taskId: crypto.randomUUID() };
   const worker = (options.workerFactory ?? createWorker)();
   const chunkById = new Map(options.chunks.map((chunk) => [chunk.chunkId, chunk]));
+  const chronologicalChunks = [...options.chunks].sort(
+    (left, right) =>
+      left.sourceStartMs - right.sourceStartMs ||
+      left.sourceEndMs - right.sourceEndMs ||
+      left.chunkId.localeCompare(right.chunkId),
+  );
 
   return new Promise((resolve, reject) => {
     let settled = false;
@@ -286,6 +304,11 @@ export function runBroadcastTranscriptWorker(
             return;
           }
           gapChunkIds.add(event.data.chunkId);
+          try {
+            options.onChunkGap?.(event.data.chunkId, event.data.reason);
+          } catch {
+            malformed();
+          }
           return;
         case "broadcast-transcript-complete":
           if (
@@ -300,11 +323,11 @@ export function runBroadcastTranscriptWorker(
           settled = true;
           cleanup();
           resolve({
-            results: options.chunks.flatMap((chunk) => {
+            results: chronologicalChunks.flatMap((chunk) => {
               const result = resultsByChunkId.get(chunk.chunkId);
               return result === undefined ? [] : [result];
             }),
-            gapChunkIds: options.chunks
+            gapChunkIds: chronologicalChunks
               .filter((chunk) => gapChunkIds.has(chunk.chunkId))
               .map((chunk) => chunk.chunkId),
             requestedCount: options.chunks.length,
