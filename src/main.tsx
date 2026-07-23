@@ -4,6 +4,7 @@ import { createRoot } from "react-dom/client";
 import App from "./App";
 import AppErrorBoundary from "./AppErrorBoundary";
 import "../styles/streamsaver-reference.css";
+import "../styles/exclipper-foundation.css";
 import "../styles/retto-highlight.css";
 
 const rootElement = document.getElementById("root");

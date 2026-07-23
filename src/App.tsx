@@ -12,7 +12,6 @@ import {
 import {
   parseChatImport,
   type ChatImportResult,
-  type HighlightSelectionResult,
 } from "./analysis";
 import {
   ChatAnalysisWorkerError,
@@ -24,12 +23,10 @@ import {
 } from "./analysis/candidateAudioEventEvidenceState";
 import {
   buildCandidateAudioEventPresentation,
-  candidateAudioEventKindLabel,
 } from "./analysis/candidateAudioEventPresentation";
 import {
   buildCandidateEvidenceExplanationWithFallback,
   resolveCandidateEvidenceReplayTarget,
-  type CandidateEvidenceUnknown,
 } from "./analysis/candidateEvidenceExplanation";
 import {
   CANDIDATE_AUDIO_EVENT_MODEL_DTYPE,
@@ -47,7 +44,6 @@ import {
 import {
   buildCandidatePassBEvidence,
   selectCandidatePassBTargets,
-  type CandidatePassBEvidence,
   type CandidatePassBTarget as CandidatePassBCoreTarget,
 } from "./analysis/candidatePassB";
 import { buildCandidatePassBPresentation } from "./analysis/candidatePassBPresentation";
@@ -69,7 +65,6 @@ import {
   createBroadcastContextSamplingPlan,
   createBroadcastContextTranscriptionChunks,
   subtractBroadcastContextCoveredRanges,
-  type BroadcastContextTranscriptionChunk,
 } from "./analysis/broadcastContextSamplingPlan";
 import {
   createDistributedTimelineRevealOrder,
@@ -146,7 +141,6 @@ import {
 import { isCompatibleCandidatePassBRoutingModelRevision } from "./analysis/candidatePassBWorkerProtocol";
 import {
   fuseReactionHighlightCandidates,
-  highlightReasonForSignalKinds,
   type UnifiedHighlightCandidate,
 } from "./analysis/highlightFusion";
 import { calculateTemporalEventDensity } from "./analysis/temporalPointProcess";
@@ -167,7 +161,6 @@ import { buildBroadcastSummaryCitationPresentation } from "./analysis/broadcastS
 import type {
   BroadcastContextCandidateInput,
   BroadcastContextChapterInput,
-  BroadcastContextDiscoveredLeadCategory,
   BroadcastContextResult,
   BroadcastContextSemanticChapter,
 } from "./analysis/broadcastContextProtocol";
@@ -191,13 +184,11 @@ import {
   CANDIDATE_RANKING_MAX_CANDIDATES,
   buildCandidateRankingProposal,
   createCandidateRankingFingerprints,
-  type CandidateRankingEntry,
   type CandidateRankingFingerprints,
 } from "./analysis/candidateRanking";
 import {
   createAnalysisRun,
   reduceAnalysisRun,
-  type AnalysisRunEvent,
   type AnalysisRunState,
 } from "./domain/analysisRun";
 import { deriveAnalysisControlState } from "./domain/analysisControlState";
@@ -207,7 +198,6 @@ import {
   reduceCandidateAudioEventRun,
   summarizeCandidateAudioEventRun,
   type CandidateAudioEventRunEvent,
-  type CandidateAudioEventRunFailureReasonCode,
   type CandidateAudioEventRunState,
   type CandidateAudioEventWorkerEventPayload,
 } from "./domain/candidateAudioEventRun";
@@ -215,10 +205,7 @@ import {
   createCandidatePassBRun,
   reduceCandidatePassBRun,
   summarizeCandidatePassBRun,
-  type CandidatePassBCandidateFailureReasonCode,
-  type CandidatePassBNoClearSpeechReasonCode,
   type CandidatePassBRunEvent,
-  type CandidatePassBRunFailureReasonCode,
   type CandidatePassBRunState,
   type CandidatePassBWorkerEventPayload,
 } from "./domain/candidatePassBRun";
@@ -229,7 +216,6 @@ import {
   createCandidateBoundaryRevision,
   effectiveCandidateRange,
   type CandidateBoundaryCommand,
-  type CandidateBoundaryRejectionReason,
   type CandidateBoundaryRevision,
 } from "./domain/candidateBoundaryRevision";
 import {
@@ -240,7 +226,6 @@ import {
 import {
   createSourceCheck,
   reduceSourceCheck,
-  type SourceCheckEvent,
   type SourceCheckResultKind,
   type SourceCheckState,
 } from "./domain/sourceCheck";
@@ -255,7 +240,6 @@ import {
   analyzeLocalAudioReactions,
   LocalAudioReactionAnalysisError,
   type LocalAudioReactionAnalysisProgress,
-  type LocalAudioReactionAnalysisResult,
 } from "./media/localAudioReactionAnalysis";
 import {
   formatBytes,
@@ -283,7 +267,6 @@ import {
 } from "./storage/analysisResultStore";
 import { BROADCAST_CONTEXT_SESSION_SCHEMA_VERSION } from "./storage/broadcastContextSessionStore";
 import {
-  classifyDurableMediaContainer,
   durableCoverageDisposition,
   DURABLE_AUDIO_GAP_ID,
   DURABLE_CHAT_GAP_ID,
@@ -293,691 +276,108 @@ import {
   type DurableAnalysisGapApprovalEvidence,
   type DurableAnalysisInputDescriptor,
   type DurableAnalysisSelectionSummary,
-  type DurableAudioGapReasonCode,
-  type DurableChatGapReasonCode,
   type DurableFinalResultPayload,
   type DurableGapApprovalRecord,
-  type DurableHighlightCandidate,
-  type DurableSourceDescriptor,
 } from "./storage/durableAnalysisPayload";
 import {
   auditRecoverableAnalysisResults,
-  type RecoverableAnalysisAudit,
   type RecoverableAnalysisResult,
 } from "./storage/recoverableAnalysisResults";
 import {
   CANDIDATE_PASS_B_INSIGHT_SCHEMA_VERSION,
   type CandidatePassBInsightsRecord,
-  type StoredCandidatePassBModelIdentity,
 } from "./storage/candidatePassBInsightStore";
 import type {
-  CandidatePassBVerificationReceipt,
   CandidatePassBVideoFrame,
 } from "./analysis/candidatePassBWorkerProtocol";
 
-type Theme = "light" | "dark";
-type CandidateReviewState = "unreviewed" | "approved" | "rejected";
-type ReviewedCandidate = UnifiedHighlightCandidate & {
-  readonly reviewState: CandidateReviewState;
-  readonly approvedBoundaryRevision: number | null;
-};
-
-interface CandidateBoundaryFeedback {
-  readonly candidateId: string;
-  readonly tone: "success" | "warning";
-  readonly message: string;
-}
-
-interface CandidateRankingFeedback {
-  readonly tone: "success" | "warning";
-  readonly message: string;
-}
+import {
+  SourceRebindMismatchError,
+  type AudioAnalysisOutcome,
+  type BroadcastTranscriptExplorationCell,
+  type BroadcastTranscriptExplorationCellState,
+  type CandidateBoundaryFeedback,
+  type CandidateGeminiInsightById,
+  type CandidatePassBModelById,
+  type CandidatePassBVerificationReceiptById,
+  type CandidateRankingFeedback,
+  type CandidateReviewState,
+  type CandidateTimelineFramesById,
+  type CandidateTimelineScorePoint,
+  type CandidateTimelineThumbnailById,
+  type ChatAnalysisOutcome,
+  type ClipBatchStatus,
+  type ClipDownloadErrorById,
+  type ClipDownloadProgressById,
+  type ClipDownloadStatusById,
+  type RecoveryCatalogState,
+  type ReviewUndoState,
+  type ReviewedCandidate,
+  type Theme,
+  type TimelineInspectionTarget,
+} from "./app/appViewTypes";
+import {
+  buildCandidateTimelineScorePoints,
+  createChapterExplorationCells,
+  createTranscriptExplorationCells,
+  firstTimelineFrameById,
+  timelineSignalLabel,
+} from "./app/timelineProjection";
+import {
+  analysisRunLabel,
+  assessLink,
+  boundaryRejectionMessage,
+  candidateAudioEventGapStatusLabel,
+  candidateEvidenceUnknownLabel,
+  candidateRankingReasonText,
+  candidateRankingTranscriptNote,
+  explainAnalysisError,
+  explainCandidateAudioEventError,
+  explainCandidatePassBError,
+  explainClipRenderError,
+  explainPreflightError,
+  semanticLeadCategoryLabel,
+  sourceCheckLabel,
+} from "./app/statusMessages";
+import {
+  candidateAudioEventRunFailureReason,
+  candidatePassBFailureReason,
+  candidatePassBNoClearReason,
+  candidatePassBRunFailureReason,
+  durableAudioGapReasonForError,
+} from "./app/runFailureCodes";
+import {
+  createDurableSourceDescriptor,
+  hydrateDurableCandidate,
+  toDurableCandidate,
+} from "./app/durableCandidateMapping";
+import {
+  applyAnalysisEvent,
+  applySourceEvent,
+  candidateElementId,
+  createOperationId,
+  initialAnalysisLanguage,
+  initialTheme,
+  triggerClipDownload,
+} from "./app/browserEnvironment";
+import { ReviewUndoToast } from "./app/components/ReviewUndoToast";
+import { ShortcutHelpOverlay } from "./app/components/ShortcutHelpOverlay";
+import {
+  nextUnreviewedCandidateId,
+  reviewDecisionAdvances,
+} from "./app/reviewNavigation";
+import { useReviewShortcuts } from "./app/useReviewShortcuts";
 
 type AnalysisSelectionSummary = DurableAnalysisSelectionSummary;
 type AnalysisCoverageSummary = DurableAnalysisCoverageSummary;
 type AnalysisGapApprovalEvidence = DurableAnalysisGapApprovalEvidence;
 
-interface ChatAnalysisOutcome {
-  readonly result: HighlightSelectionResult | null;
-  readonly gapReasonCode: DurableChatGapReasonCode | null;
-}
-
-interface AudioAnalysisOutcome {
-  readonly result: LocalAudioReactionAnalysisResult | null;
-  readonly gapReasonCode: DurableAudioGapReasonCode | null;
-  readonly plannedWindowCount: number;
-  readonly analyzedWindowCount: number;
-  readonly coverageComplete: boolean;
-}
-
-const APP_VERSION = "0.3.45";
+const APP_VERSION = "0.3.46";
 const PERSISTENCE_SCHEMA_VERSION = "0.3.0";
 const SIGNAL_ENGINE_VERSION =
   "streamer-reaction-fast-pass-v5-chat-fallback-music-confirmation";
 const MAX_CHAT_FILE_BYTES = 32 * 1024 * 1024;
 const SIGNAL_GAP_POLICY_ID = DURABLE_SIGNAL_GAP_POLICY_ID;
-
-type CandidateGeminiInsight = CandidatePassBTranscriptResult["insight"];
-type CandidateGeminiInsightById = Readonly<Record<string, CandidateGeminiInsight>>;
-type CandidatePassBModelById = Readonly<
-  Record<string, StoredCandidatePassBModelIdentity>
->;
-type CandidateTimelineFrame = CandidatePassBVideoFrame;
-type CandidateTimelineFramesById = Readonly<
-  Record<string, readonly CandidateTimelineFrame[]>
->;
-type CandidateTimelineThumbnailById = Readonly<
-  Record<string, CandidatePassBVideoFrame>
->;
-type CandidatePassBVerificationReceiptById = Readonly<
-  Record<string, CandidatePassBVerificationReceipt>
->;
-type CandidateTimelineSignalKind = "audio" | "chat" | "visual" | "fused";
-interface CandidateTimelineScorePoint {
-  readonly id: string;
-  readonly peakMs: number;
-  readonly startMs: number;
-  readonly endMs: number;
-  readonly score: number;
-  readonly strength: number;
-  readonly signalKind: CandidateTimelineSignalKind;
-}
-
-interface CandidateTimelineScoreSource {
-  readonly signalKind: CandidateTimelineSignalKind;
-  readonly candidates: readonly Pick<
-    UnifiedHighlightCandidate,
-    "id" | "peakMs" | "startMs" | "endMs" | "score"
-  >[];
-}
-
-type BroadcastTranscriptExplorationCellState =
-  | "queued"
-  | "active"
-  | "complete"
-  | "gap";
-
-interface BroadcastTranscriptExplorationCell {
-  readonly chunkId: string;
-  readonly sourceStartMs: number;
-  readonly sourceEndMs: number;
-  readonly kind: BroadcastContextTranscriptionChunk["kind"];
-  readonly state: BroadcastTranscriptExplorationCellState;
-  readonly stage: BroadcastTranscriptWorkerProgress["stage"] | null;
-}
-
-function createTranscriptExplorationCells(
-  chunks: readonly BroadcastContextTranscriptionChunk[],
-  state: BroadcastTranscriptExplorationCellState = "queued",
-): readonly BroadcastTranscriptExplorationCell[] {
-  return chunks.map((chunk) => ({
-    ...chunk,
-    state,
-    stage: null,
-  }));
-}
-
-function createChapterExplorationCells(
-  chapters: readonly BroadcastContextChapterInput[],
-): readonly BroadcastTranscriptExplorationCell[] {
-  return chapters.map((chapter) => ({
-    chunkId: `chapter:${chapter.chapterId}`,
-    sourceStartMs: chapter.startMs,
-    sourceEndMs: chapter.endMs,
-    kind: "uniform",
-    state: "complete",
-    stage: null,
-  }));
-}
-
-function timelineSignalLabel(kind: CandidateTimelineSignalKind): string {
-  return {
-    audio: "목소리·소리 변화",
-    chat: "채팅 반응",
-    visual: "화면 변화",
-    fused: "복합 신호",
-  }[kind];
-}
-
-function firstTimelineFrameById(
-  framesById: CandidateTimelineFramesById,
-): CandidateTimelineThumbnailById {
-  return Object.fromEntries(
-    Object.entries(framesById).flatMap(([candidateId, frames]) => {
-      const frame = frames[0];
-      return frame === undefined ? [] : [[candidateId, frame]];
-    }),
-  );
-}
-
-function buildCandidateTimelineScorePoints(
-  sources: readonly CandidateTimelineScoreSource[],
-): readonly CandidateTimelineScorePoint[] {
-  const rawPoints = sources.flatMap(({ signalKind, candidates }) =>
-    candidates.map((candidate) => ({ ...candidate, signalKind })),
-  );
-  const maximumBySignal = new Map<CandidateTimelineSignalKind, number>();
-  for (const point of rawPoints) {
-    const currentMaximum = maximumBySignal.get(point.signalKind) ?? 0;
-    maximumBySignal.set(point.signalKind, Math.max(currentMaximum, point.score));
-  }
-  return rawPoints
-    .filter(
-      (point) =>
-        Number.isFinite(point.peakMs) &&
-        Number.isFinite(point.startMs) &&
-        Number.isFinite(point.endMs) &&
-        point.endMs > point.startMs &&
-        Number.isFinite(point.score),
-    )
-    .map((point) => {
-      const maximum = maximumBySignal.get(point.signalKind) ?? 0;
-      const normalized = maximum > 0 ? point.score / maximum : 0;
-      return {
-        ...point,
-        strength: Math.min(1, Math.max(0.08, normalized)),
-      };
-    })
-    .sort((left, right) => left.peakMs - right.peakMs || right.strength - left.strength);
-}
-
-type RecoveryCatalogState =
-  | { readonly status: "loading" }
-  | { readonly status: "ready"; readonly audit: RecoverableAnalysisAudit }
-  | { readonly status: "failed" };
-
-type ClipDownloadStatus = "idle" | "rendering" | "completed" | "failed";
-type ClipDownloadStatusById = Readonly<Record<string, ClipDownloadStatus>>;
-type ClipDownloadErrorById = Readonly<Record<string, string>>;
-type ClipDownloadProgressById = Readonly<Record<string, number>>;
-type ClipBatchStatus = "idle" | "rendering" | "completed" | "failed";
-
-class SourceRebindMismatchError extends Error {
-  public constructor() {
-    super("The selected file does not match the recovered source fingerprint.");
-    this.name = "SourceRebindMismatchError";
-  }
-}
-
-function createOperationId(prefix: string): string {
-  const randomId = globalThis.crypto?.randomUUID?.();
-  return `${prefix}-${randomId ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`}`;
-}
-
-function candidatePassBNoClearReason(
-  evidence: CandidatePassBEvidence,
-): CandidatePassBNoClearSpeechReasonCode {
-  if (evidence.status !== "fast-pass-fallback") {
-    return "unintelligible_speech";
-  }
-  switch (evidence.fallbackReason) {
-    case "silent":
-    case "empty-transcript":
-      return "no_speech";
-    case "low-quality-transcript":
-      return "low_transcript_confidence";
-  }
-}
-
-function candidatePassBFailureReason(
-  gap: CandidatePassBCandidateGap,
-): CandidatePassBCandidateFailureReasonCode {
-  switch (gap.reasonCode) {
-    case "NO_AUDIO_TRACK":
-      return "audio_extraction_failed";
-    case "UNSUPPORTED_CONTAINER":
-    case "UNSUPPORTED_AUDIO_CODEC":
-    case "AUDIO_DECODE_FAILED":
-      return "audio_decode_failed";
-    case "EMPTY_AUDIO":
-      return "audio_extraction_failed";
-    case "TRANSCRIPTION_FAILED":
-      return "transcription_failed";
-  }
-}
-
-function candidatePassBRunFailureReason(
-  error: unknown,
-): CandidatePassBRunFailureReasonCode {
-  if (!(error instanceof CandidatePassBWorkerError)) {
-    return "runtime_unavailable";
-  }
-  if (
-    error.code === "EVENT_FENCE_REJECTED" ||
-    error.code === "WORKER_MESSAGE_ERROR" ||
-    error.code === "RESULT_CALLBACK_FAILED" ||
-    error.code === "PROGRESS_CALLBACK_FAILED"
-  ) {
-    return "protocol_error";
-  }
-  if (error.code === "WORKER_FAILED") {
-    return "worker_initialization_failed";
-  }
-  return "runtime_unavailable";
-}
-
-function explainCandidatePassBError(error: unknown): string {
-  if (error instanceof CandidatePassBWorkerError) {
-    const diagnosticSuffix = error.workerReasonCode
-      ? ` (오류 코드: ${error.workerReasonCode})`
-      : "";
-    if (error.code === "ABORTED") {
-      return `AI 후보 분석을 멈췄어요. 이미 찾은 단서는 이 탭에서 그대로 볼 수 있어요.${diagnosticSuffix}`;
-    }
-    switch (error.workerReasonCode) {
-      case "PROXY_AUTH_REJECTED":
-        return `AI 연결 설정을 확인하지 못했어요. 잠시 뒤 다시 시도해 주세요. 기존 후보는 그대로 사용할 수 있어요.${diagnosticSuffix}`;
-      case "PROXY_BAD_REQUEST":
-        return `AI가 앱의 요청 형식을 받을 수 없었어요. 자동 재시도하지 않았습니다. 앱을 새로고침하거나 최신 버전을 확인해 주세요. 기존 후보는 그대로 사용할 수 있어요.${diagnosticSuffix}`;
-      case "PROXY_RATE_LIMITED":
-        return `AI 분석 요청이 잠시 많아요. 1분 정도 기다린 뒤 직접 다시 시도해 주세요. 자동으로 반복 요청하지 않았어요.${diagnosticSuffix}`;
-      case "PROXY_UNAVAILABLE":
-        return `AI에 연결하지 못했어요. 인터넷 연결을 확인한 뒤 원할 때 다시 시도해 주세요. 기존 후보는 그대로 사용할 수 있어요.${diagnosticSuffix}`;
-      case "PROXY_INVALID_RESPONSE":
-        return `AI 답변을 안전한 후보 단서로 확인하지 못했어요. 잘못된 문장은 표시하지 않았고 기존 후보는 그대로예요.${diagnosticSuffix}`;
-      case "PROXY_REQUEST_REJECTED":
-        return `AI가 후보 분석 요청을 완료하지 못했어요. 잠시 뒤 다시 시도해 주세요.${diagnosticSuffix}`;
-    }
-    return `AI 후보 분석을 끝까지 마치지 못했어요.${diagnosticSuffix}`;
-  }
-  return "AI 후보 분석을 끝까지 마치지 못했어요. 기존 오디오·채팅 근거와 후보는 그대로 사용할 수 있어요.";
-}
-
-function candidateAudioEventRunFailureReason(
-  error: unknown,
-): CandidateAudioEventRunFailureReasonCode {
-  if (!(error instanceof CandidateAudioEventWorkerError)) {
-    return "runtime_unavailable";
-  }
-  if (error.workerReasonCode === "MODEL_LOAD_FAILED") {
-    return "model_load_failed";
-  }
-  if (
-    error.code === "EVENT_FENCE_REJECTED" ||
-    error.code === "WORKER_MESSAGE_ERROR" ||
-    error.code === "RESULT_CALLBACK_FAILED" ||
-    error.code === "PROGRESS_CALLBACK_FAILED"
-  ) {
-    return "protocol_error";
-  }
-  if (error.code === "WORKER_FAILED") {
-    return "worker_initialization_failed";
-  }
-  return "runtime_unavailable";
-}
-
-function explainCandidateAudioEventError(error: unknown): string {
-  if (error instanceof CandidateAudioEventWorkerError) {
-    if (error.code === "ABORTED") {
-      return "반응 종류 찾기를 멈췄어요. 이미 찾은 단서는 이 탭에 그대로 남아 있어요.";
-    }
-    if (error.workerReasonCode === "MODEL_LOAD_FAILED") {
-      return "반응 종류 AI 파일을 불러오지 못했어요. 인터넷 연결을 확인한 뒤 다시 시도해 주세요. 기존 후보와 대사 단서는 그대로 사용할 수 있어요.";
-    }
-  }
-  return "반응 종류를 끝까지 나누지 못했어요. 빠른 분석 후보와 이미 찾은 대사 단서는 그대로 사용할 수 있어요.";
-}
-
-function candidateAudioEventGapStatusLabel(
-  reasonCode: CandidateAudioEventCandidateGap["reasonCode"],
-): string {
-  switch (reasonCode) {
-    case "NO_AUDIO_TRACK":
-      return "오디오 트랙 없음 · 후보 유지";
-    case "UNSUPPORTED_CONTAINER":
-      return "영상 형식 지원 안 됨 · 후보 유지";
-    case "UNSUPPORTED_AUDIO_CODEC":
-      return "오디오 코덱 지원 안 됨 · 후보 유지";
-    case "EMPTY_AUDIO":
-      return "들을 반응 없음 · 후보 유지";
-    case "AUDIO_DECODE_FAILED":
-      return "이 후보 오디오 읽기 실패 · 후보 유지";
-    case "CLASSIFICATION_FAILED":
-      return "이 후보 반응 분류 실패 · 후보 유지";
-  }
-}
-
-function candidateElementId(prefix: string, candidateId: string): string {
-  return `${prefix}-${encodeURIComponent(candidateId)}`;
-}
-
-function candidateEvidenceUnknownLabel(value: CandidateEvidenceUnknown): string {
-  switch (value) {
-    case "event":
-      return "실제 사건의 종류";
-    case "actor":
-      return "반응이나 대사의 주체";
-    case "cause":
-      return "반응의 원인";
-    case "outcome":
-      return "사건의 결과";
-  }
-}
-
-function candidateRankingReasonText(
-  entry: CandidateRankingEntry,
-  audioEventEvidence: CandidateAudioEventEvidenceById[string] | undefined,
-): string {
-  const hasStrongAudioEvent = entry.reasonCodes.includes("strong-audio-event");
-  const hasPossibleAudioEvent = entry.reasonCodes.includes("possible-audio-event");
-  if (
-    (hasStrongAudioEvent || hasPossibleAudioEvent) &&
-    audioEventEvidence?.status === "detected"
-  ) {
-    const labels = [
-      ...new Set(
-        audioEventEvidence.detections
-          .filter(({ strength }) =>
-            hasStrongAudioEvent ? strength === "strong" : strength === "possible",
-          )
-          .map(({ kind }) => candidateAudioEventKindLabel(kind)),
-      ),
-    ];
-    const reactionLabel = labels.length > 0 ? labels.join("·") : "반응 종류";
-    return hasStrongAudioEvent
-      ? `혼합 오디오에서 ${reactionLabel} 단서가 뚜렷해 먼저 확인하도록 제안했어요.`
-      : `혼합 오디오에서 ${reactionLabel} 가능성이 있어 조금 먼저 확인하도록 제안했어요.`;
-  }
-  if (entry.reasonCodes.includes("audio-chat-agreement")) {
-    return "방송 오디오 반응과 채팅 반응이 같은 구간에 모였어요.";
-  }
-  if (entry.reasonCodes.includes("fast-audio-reaction")) {
-    return "방송 오디오의 반응 정점이 잡혀 먼저 재생해 볼 가치가 있어요.";
-  }
-  if (entry.reasonCodes.includes("fast-chat-reaction")) {
-    return "채팅 반응이 평소보다 몰린 구간이에요.";
-  }
-  return "화면 변화만 남은 탐색 후보라 다른 반응 후보 뒤에서 확인하도록 제안했어요.";
-}
-
-function candidateRankingTranscriptNote(entry: CandidateRankingEntry): string | null {
-  if (entry.reasonCodes.includes("grounded-transcript-cue")) {
-    return "재생해 볼 대사 위치도 있어요. 대사 유무 자체는 순위 점수에 더하지 않았어요.";
-  }
-  if (entry.reasonCodes.includes("provisional-transcript-cue")) {
-    return "AI 대사 추정 위치도 있지만 틀릴 수 있어 순위 점수에는 더하지 않았어요.";
-  }
-  return null;
-}
-
-function toDurableCandidate(candidate: UnifiedHighlightCandidate): DurableHighlightCandidate {
-  const { reason: _presentationReason, ...durableCandidate } = candidate;
-  void _presentationReason;
-  return durableCandidate;
-}
-
-function hydrateDurableCandidate(
-  candidate: DurableHighlightCandidate,
-): UnifiedHighlightCandidate {
-  return {
-    ...candidate,
-    reason: highlightReasonForSignalKinds(candidate.signalKinds),
-  };
-}
-
-function createDurableSourceDescriptor(
-  preflight: LocalMediaPreflightResult,
-  sourceDefinitionId: string,
-  contentFingerprint: string,
-): DurableSourceDescriptor {
-  return {
-    sourceDefinitionId,
-    contentFingerprint,
-    sizeBytes: preflight.metadata.sizeBytes,
-    durationMs: preflight.metadata.durationMs,
-    kind: preflight.metadata.kind,
-    container: classifyDurableMediaContainer(
-      preflight.metadata.extension,
-      preflight.metadata.mimeType,
-    ),
-  };
-}
-
-function durableAudioGapReasonForError(
-  error: LocalAudioReactionAnalysisError,
-): DurableAudioGapReasonCode {
-  if (error.code === "EVENT_FENCE_REJECTED") {
-    return "EVENT_FENCE_REJECTED";
-  }
-  if (error.code === "WORKER_TIMEOUT") {
-    return "WORKER_TIMEOUT";
-  }
-  return "WORKER_FAILED";
-}
-
-function explainAnalysisError(error: unknown): string {
-  if (error instanceof LocalFileFingerprintError) {
-    return error.code === "CRYPTO_UNAVAILABLE"
-      ? "이 브라우저에서는 영상을 안전하게 다시 확인할 SHA-256 기능을 쓸 수 없어요. 최신 Chrome이나 Edge에서 다시 열어 주세요."
-      : "영상 내용 확인 지문을 만드는 중 문제가 생겼어요. 원본 파일을 다시 골라 주세요.";
-  }
-  if (error instanceof LocalVideoVisualAnalysisError) {
-    if (error.code === "ABORTED") {
-      return "분석을 안전하게 취소했어요. 원본과 채팅은 그대로 두었으니 다시 시작할 수 있어요.";
-    }
-    if (error.code === "SEEK_TIMEOUT" || error.code === "SEEK_FAILED") {
-      return "영상의 일부 위치로 이동하지 못했어요. MP4 또는 WebM으로 변환한 뒤 다시 시도해 주세요.";
-    }
-    return "영상 장면을 읽는 중 문제가 생겼어요. 다른 형식의 원본으로 다시 시도해 주세요.";
-  }
-  if (error instanceof LocalAudioReactionAnalysisError) {
-    return error.code === "ABORTED"
-      ? "분석을 안전하게 취소했어요."
-      : "방송 오디오의 음성형·큰 반응 신호를 읽지 못했어요. 채팅·화면 신호로 남긴 제한 결과인지 안내를 확인해 주세요.";
-  }
-  if (error instanceof ChatAnalysisWorkerError) {
-    return error.code === "ABORTED"
-      ? "분석을 안전하게 취소했어요."
-      : "채팅 반응 분석 Worker가 중단됐어요. 채팅 파일을 다시 선택해 주세요.";
-  }
-  if (error instanceof AnalysisResultStoreError) {
-    return "사이트 저장 공간에 결과를 확정하지 못했어요. 시크릿 모드를 끄거나 사이트 저장 권한을 허용해 주세요.";
-  }
-  return "후보를 찾는 중 예상하지 못한 문제가 생겼어요. 원본과 채팅을 확인한 뒤 다시 시도해 주세요.";
-}
-
-function initialTheme(): Theme {
-  try {
-    const stored = globalThis.localStorage?.getItem("retto-theme");
-    if (stored === "light" || stored === "dark") {
-      return stored;
-    }
-  } catch {
-    // Theme persistence is optional when storage is unavailable or blocked.
-  }
-  return globalThis.matchMedia?.("(prefers-color-scheme: dark)").matches === true
-    ? "dark"
-    : "light";
-}
-
-function initialAnalysisLanguage(): AnalysisLanguage {
-  try {
-    const stored = globalThis.localStorage?.getItem("exclipper-language");
-    if (stored === "ko" || stored === "en") return stored;
-  } catch {
-    // Language persistence is optional when storage is unavailable.
-  }
-  return "ko";
-}
-
-function sourceCheckLabel(state: SourceCheckState | null): string {
-  if (state === null) {
-    return "원본을 기다리는 중";
-  }
-  const labels: Record<SourceCheckState["status"], string> = {
-    created: "검사 준비",
-    checking: "원본 확인 중",
-    committing: "검사 결과 정리 중",
-    completed:
-      state.status === "completed" && state.resultKind === "blocked"
-        ? "분석할 수 없는 원본"
-        : "원본 확인 완료",
-    cancelling: "검사 취소 중",
-    cancelled: "검사 취소됨",
-    failed: "원본 검사 실패",
-    interrupted: "원본 검사 중단됨",
-  };
-  return labels[state.status];
-}
-
-function analysisRunLabel(state: AnalysisRunState | null): string {
-  if (state === null) {
-    return "아직 시작 안 함";
-  }
-  const labels: Record<AnalysisRunState["status"], string> = {
-    created: "분석 준비",
-    starting: "분석 시작 중",
-    running: "방송 오디오·채팅·화면 맥락 분석 중",
-    pausing: "안전하게 멈추는 중",
-    paused: "분석 일시정지",
-    resuming: "분석 이어 하는 중",
-    awaitingGapDecision: "누락 구간 확인 필요",
-    finalizing: "후보 순위 저장 중",
-    completing: "결과 다시 확인 중",
-    completed: "1차 후보 찾기 완료",
-    completedWithGaps: "일부 구간을 제외하고 완료",
-    cancelling: "분석 취소 중",
-    cancelled: "분석 취소됨",
-    failing: "오류 결과 정리 중",
-    failed: "분석 실패",
-    interrupted: "분석 중단됨",
-  };
-  return labels[state.status];
-}
-
-function explainPreflightError(error: unknown): string {
-  if (!(error instanceof LocalMediaPreflightError)) {
-    return "파일을 확인하는 중 예상하지 못한 문제가 생겼어요. 다른 영상 파일로 다시 시도해 주세요.";
-  }
-  const messages: Partial<Record<LocalMediaPreflightError["code"], string>> = {
-    INVALID_FILE: "브라우저가 이 파일을 읽을 수 없어요. 영상 파일을 다시 선택해 주세요.",
-    METADATA_TIMEOUT: "영상 정보를 읽는 데 너무 오래 걸렸어요. 파일이 손상되지 않았는지 확인해 주세요.",
-    METADATA_LOAD_FAILED: "이 브라우저가 영상 정보를 열지 못했어요. MP4 또는 WebM 파일을 먼저 권장해요.",
-    INVALID_DURATION: "영상 길이를 확인하지 못했어요. 다른 형식으로 변환한 파일을 시도해 주세요.",
-    DURATION_LIMIT_EXCEEDED: "한 원본은 최대 12시간까지 분석할 수 있어요. 12시간 이하의 파일로 나눠서 다시 골라 주세요.",
-    CLEANUP_FAILED: "검사는 끝났지만 임시 자원을 완전히 정리하지 못했어요. 페이지를 새로 열고 다시 시도해 주세요.",
-  };
-  return (
-    messages[error.code] ??
-    "브라우저에서 이 파일의 기본 정보를 확인하지 못했어요. 다른 영상 파일을 시도해 주세요."
-  );
-}
-
-function applySourceEvent(
-  state: SourceCheckState,
-  event: SourceCheckEvent,
-): SourceCheckState {
-  const outcome = reduceSourceCheck(state, event);
-  if (!outcome.accepted) {
-    throw new Error(`SourceCheck 전이가 거부되었습니다: ${outcome.reason}`);
-  }
-  return outcome.state;
-}
-
-function applyAnalysisEvent(
-  state: AnalysisRunState,
-  event: AnalysisRunEvent,
-): AnalysisRunState {
-  const outcome = reduceAnalysisRun(state, event);
-  if (!outcome.accepted) {
-    throw new Error(`AnalysisRun 전이가 거부되었습니다: ${outcome.reason}`);
-  }
-  return outcome.state;
-}
-
-function assessLink(value: string): string {
-  const trimmed = value.trim();
-  if (trimmed.length === 0) {
-    return "먼저 YouTube 또는 CHZZK 주소를 붙여 넣어 주세요.";
-  }
-  try {
-    const url = new URL(trimmed);
-    const host = url.hostname.toLowerCase();
-    if (host === "youtu.be" || host.endsWith("youtube.com")) {
-      return "YouTube 링크 형식을 확인했어요. 현재는 주소를 분석 입력으로 쓰지 않으므로, 내려받을 권한이 있는 내 영상 파일을 선택해 주세요.";
-    }
-    if (host === "chzzk.naver.com" || host.endsWith("chzzk.naver.com")) {
-      return "CHZZK 링크 형식을 확인했어요. 현재는 주소를 분석 입력으로 쓰지 않으므로, 내 영상 파일과 선택적 채팅 기록을 준비해 주세요.";
-    }
-    return "현재는 YouTube와 CHZZK 링크만 안내할 수 있어요. 분석하려면 내 영상 파일을 선택해 주세요.";
-  } catch {
-    return "주소 형식을 알아보지 못했어요. https:// 로 시작하는 전체 주소인지 확인해 주세요.";
-  }
-}
-
-function boundaryRejectionMessage(reason: CandidateBoundaryRejectionReason): string {
-  const messages: Record<CandidateBoundaryRejectionReason, string> = {
-    player_time_unavailable:
-      "먼저 ‘이 장면 보기’를 누르고 영상에서 원하는 위치로 이동해 주세요.",
-    player_time_out_of_source:
-      "현재 재생 위치를 원본 안에서 확인하지 못했어요. 영상을 다시 재생해 주세요.",
-    range_out_of_source:
-      "시작은 끝보다 앞이어야 하고, 두 위치 모두 원본 영상 안에 있어야 해요.",
-    would_exclude_peak:
-      "AI가 찾은 반응 정점이 빠지지 않도록 이 변경은 적용하지 않았어요.",
-    duration_below_minimum:
-      "클립이 30초보다 짧아져 적용하지 않았어요. 반대쪽 경계를 먼저 늘려 주세요.",
-    duration_above_maximum:
-      "클립이 1분보다 길어져 적용하지 않았어요. 반대쪽 경계를 먼저 줄여 주세요.",
-    already_at_proposal: "이미 AI가 처음 제안한 시작·끝을 사용하고 있어요.",
-    no_effective_change: "현재 조건에서는 더 움직일 수 없어요.",
-  };
-  return messages[reason];
-}
-
-function explainClipRenderError(error: unknown): string {
-  const code =
-    typeof error === "object" &&
-    error !== null &&
-    "code" in error &&
-    typeof error.code === "string"
-      ? error.code
-      : null;
-  if (code !== null) {
-    switch (code) {
-      case "ABORTED":
-        return "클립 만들기를 취소했어요.";
-      case "UNSUPPORTED_SOURCE":
-        return "이 영상 형식은 현재 브라우저에서 클립 파일로 만들 수 없어요. MP4 또는 WebM 원본으로 다시 시도해 주세요.";
-      case "NO_OUTPUT":
-        return "클립 파일이 비어 있어 저장하지 못했어요. 같은 구간을 다시 시도해 주세요.";
-      case "INVALID_RANGE":
-        return "클립 구간이 올바르지 않아요. 시작과 끝을 다시 확인해 주세요.";
-    }
-  }
-  return "클립 파일을 만들지 못했어요. 원본을 다시 연결한 뒤 한 번 더 시도해 주세요.";
-}
-
-function triggerClipDownload(blob: Blob, fileName: string): void {
-  const objectUrl = URL.createObjectURL(blob);
-  const anchor = document.createElement("a");
-  anchor.href = objectUrl;
-  anchor.download = fileName;
-  anchor.rel = "noopener";
-  document.body.appendChild(anchor);
-  anchor.click();
-  anchor.remove();
-  globalThis.setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
-}
-
-function semanticLeadCategoryLabel(
-  category: BroadcastContextDiscoveredLeadCategory,
-): string {
-  return {
-    reaction: "특징적 반응",
-    "quiet-achievement": "조용한 성취",
-    "setup-and-payoff": "설정과 회수",
-    "running-gag": "반복 개그",
-    "context-dependent": "맥락형 사건",
-    "apology-accountability": "사과·해명",
-  }[category];
-}
-
-type TimelineInspectionTarget =
-  | { readonly kind: "chapter"; readonly id: string }
-  | { readonly kind: "lead"; readonly id: string }
-  | { readonly kind: "exploration"; readonly id: string }
-  | { readonly kind: "signal"; readonly id: string };
 
 function App() {
   const [theme, setTheme] = useState<Theme>(initialTheme);
@@ -1130,6 +530,8 @@ function App() {
   const [previewCandidateId, setPreviewCandidateId] = useState<string | null>(null);
   const [previewPreparedCandidateId, setPreviewPreparedCandidateId] =
     useState<string | null>(null);
+  const [reviewUndo, setReviewUndo] = useState<ReviewUndoState | null>(null);
+  const [shortcutHelpOpen, setShortcutHelpOpen] = useState(false);
   const [clipDownloadStatusById, setClipDownloadStatusById] =
     useState<ClipDownloadStatusById>({});
   const [clipDownloadErrorById, setClipDownloadErrorById] =
@@ -4981,6 +4383,148 @@ function App() {
       true,
     );
   };
+
+  /**
+   * Records the decision and moves to the next undecided candidate. Reverting a
+   * decision back to `unreviewed` never advances, so undo keeps the editor in
+   * place.
+   */
+  const reviewCandidateAndAdvance = (
+    candidate: ReviewedCandidate,
+    reviewState: CandidateReviewState,
+  ): void => {
+    const candidateNumber =
+      orderedCandidates.findIndex(({ id }) => id === candidate.id) + 1;
+    updateReview(candidate.id, reviewState);
+    if (!reviewDecisionAdvances(reviewState)) {
+      setReviewUndo(null);
+      return;
+    }
+    const nextCandidateId = nextUnreviewedCandidateId(
+      orderedCandidates,
+      candidate.id,
+    );
+    const nextCandidate =
+      nextCandidateId === null
+        ? null
+        : orderedCandidates.find(({ id }) => id === nextCandidateId) ?? null;
+    if (nextCandidate !== null) {
+      focusCandidateForReview(nextCandidate);
+    }
+    setReviewUndo({
+      candidateId: candidate.id,
+      candidateNumber,
+      previousReviewState: candidate.reviewState,
+      appliedReviewState: reviewState,
+      advancedToCandidateId: nextCandidateId,
+    });
+  };
+
+  const undoLastReview = (): void => {
+    if (reviewUndo === null) {
+      return;
+    }
+    updateReview(reviewUndo.candidateId, reviewUndo.previousReviewState);
+    const restoredCandidate = orderedCandidates.find(
+      ({ id }) => id === reviewUndo.candidateId,
+    );
+    if (restoredCandidate !== undefined) {
+      focusCandidateForReview(restoredCandidate);
+    }
+    setReviewUndo(null);
+  };
+
+  const focusedCandidate =
+    focusedCandidateId === null
+      ? null
+      : orderedCandidates.find(({ id }) => id === focusedCandidateId) ?? null;
+  const reviewShortcutsActive =
+    contextualCandidatePublicationReady && orderedCandidates.length > 0;
+
+  const togglePreviewPlayback = (candidate: ReviewedCandidate): void => {
+    const player = previewVideo.current;
+    if (sourcePreviewUrl === null || player === null) {
+      return;
+    }
+    if (previewPreparedCandidateId !== candidate.id) {
+      playCandidate(candidate);
+      return;
+    }
+    if (player.paused) {
+      void player.play().catch(() => {
+        // The visible player control stays available if browser policy blocks it.
+      });
+      return;
+    }
+    player.pause();
+  };
+
+  /**
+   * Review shortcuts are keyed off `event.code`, not `event.key`, so they keep
+   * working while a Korean IME is active. Typing targets are always left alone.
+   */
+  useReviewShortcuts(
+    {
+      active: reviewShortcutsActive,
+      helpOpen: shortcutHelpOpen,
+      canUndo: reviewUndo !== null,
+      toggleHelp: () => setShortcutHelpOpen((open) => !open),
+      closeHelp: () => setShortcutHelpOpen(false),
+      togglePlayback: () => {
+        if (focusedCandidate !== null) togglePreviewPlayback(focusedCandidate);
+      },
+      focusPreviousCandidate: () => {
+        if (previousFocusedCandidate !== null) {
+          focusCandidateForReview(previousFocusedCandidate);
+        }
+      },
+      focusNextCandidate: () => {
+        if (nextFocusedCandidate !== null) {
+          focusCandidateForReview(nextFocusedCandidate);
+        }
+      },
+      nudgeStart: (direction) => {
+        if (focusedCandidate !== null) {
+          nudgeCandidateBoundary(
+            focusedCandidate,
+            "SHIFT_START",
+            direction === -1 ? -5_000 : 5_000,
+          );
+        }
+      },
+      nudgeEnd: (direction) => {
+        if (focusedCandidate !== null) {
+          nudgeCandidateBoundary(
+            focusedCandidate,
+            "SHIFT_END",
+            direction === -1 ? -5_000 : 5_000,
+          );
+        }
+      },
+      toggleApprove: () => {
+        if (focusedCandidate === null) return;
+        reviewCandidateAndAdvance(
+          focusedCandidate,
+          focusedCandidate.reviewState === "approved" ? "unreviewed" : "approved",
+        );
+      },
+      toggleReject: () => {
+        if (focusedCandidate === null) return;
+        reviewCandidateAndAdvance(
+          focusedCandidate,
+          focusedCandidate.reviewState === "rejected" ? "unreviewed" : "rejected",
+        );
+      },
+      undo: undoLastReview,
+  });
+
+  useEffect(() => {
+    if (reviewUndo === null) {
+      return;
+    }
+    const timer = globalThis.setTimeout(() => setReviewUndo(null), 8_000);
+    return () => globalThis.clearTimeout(timer);
+  }, [reviewUndo]);
 
   const focusSourceSection = (): void => {
     if (sourceHeading.current === null && reconnectSourceInput.current !== null) {
@@ -8934,6 +8478,84 @@ function App() {
                             </span>
                           )}
                         </div>
+                        <div className="rh-inline-actions rh-candidate-decision-bar">
+                          <button
+                            className="btn btn-secondary"
+                            type="button"
+                            aria-label={`후보 ${index + 1} 구간 바로 보기`}
+                            aria-keyshortcuts="Space"
+                            disabled={sourcePreviewUrl === null}
+                            onClick={() => playCandidate(candidate)}
+                          >
+                            {sourcePreviewUrl === null ? "원본 연결 후 재생" : "이 구간 재생"}
+                          </button>
+                          <button
+                            className="btn btn-secondary"
+                            type="button"
+                            aria-label={`후보 ${index + 1} 클립 파일 다운로드`}
+                            disabled={
+                              sourceFile === null ||
+                              clipBatchStatus === "rendering" ||
+                              clipDownloadStatusById[candidate.id] === "rendering"
+                            }
+                            onClick={() => downloadCandidateClip(candidate)}
+                          >
+                            {clipDownloadStatusById[candidate.id] === "rendering"
+                              ? `클립 만드는 중 ${Math.round((clipDownloadProgressById[candidate.id] ?? 0) * 100)}%`
+                              : clipDownloadStatusById[candidate.id] === "completed"
+                                ? "클립 다시 다운로드"
+                                : "이 구간 클립 다운로드"}
+                          </button>
+                          <button
+                            className="btn btn-primary"
+                            type="button"
+                            aria-label={
+                              candidate.reviewState === "approved"
+                                ? `후보 ${index + 1} 승인 취소`
+                                : `후보 ${index + 1} 사용하기`
+                            }
+                            aria-keyshortcuts="A"
+                            onClick={() =>
+                              reviewCandidateAndAdvance(
+                                candidate,
+                                candidate.reviewState === "approved" ? "unreviewed" : "approved",
+                              )
+                            }
+                          >
+                            {candidate.reviewState === "approved" ? "승인 취소" : "사용할게요"}
+                          </button>
+                          <button
+                            className="btn btn-secondary"
+                            type="button"
+                            aria-label={
+                              candidate.reviewState === "rejected"
+                                ? `후보 ${index + 1} 다시 검토`
+                                : `후보 ${index + 1} 제외`
+                            }
+                            aria-keyshortcuts="R"
+                            onClick={() =>
+                              reviewCandidateAndAdvance(
+                                candidate,
+                                candidate.reviewState === "rejected" ? "unreviewed" : "rejected",
+                              )
+                            }
+                          >
+                            {candidate.reviewState === "rejected" ? "다시 검토" : "빼기"}
+                          </button>
+                          <button
+                            className="rh-shortcut-hint"
+                            type="button"
+                            aria-label="검토 단축키 안내 열기"
+                            aria-keyshortcuts="?"
+                            aria-expanded={shortcutHelpOpen}
+                            onClick={() => setShortcutHelpOpen(true)}
+                          >
+                            단축키 <kbd>?</kbd>
+                          </button>
+                        </div>
+                        <p className="rh-candidate-verify-note">
+                          AI 단서는 참고용이에요. 재생해서 직접 확인한 뒤 판단해 주세요.
+                        </p>
                         <h4
                           className="rh-candidate-title"
                           id={candidateElementId("candidate-title", candidate.id)}
@@ -8988,7 +8610,6 @@ function App() {
                           >
                             <div>
                             <strong>AI가 화면·오디오에서 해석한 사건 단서</strong>
-                              <span>재생 확인 필요</span>
                             </div>
                             <p>{candidateGeminiInsight.eventSummaryKo}</p>
                             <p className="rh-identified-participant-line">
@@ -9042,7 +8663,7 @@ function App() {
                             <div>
                               <dt>아직 확인되지 않은 점</dt>
                               <dd>
-                                직접 재생해서 확인해 주세요: {evidenceExplanation.unknowns
+                                {evidenceExplanation.unknowns
                                   .map(candidateEvidenceUnknownLabel)
                                   .join(" · ")}
                               </dd>
@@ -9055,11 +8676,9 @@ function App() {
                             >
                               <div className="rh-gemini-insight-heading">
                                 <strong>AI 화면·오디오 해석</strong>
-                                <span>직접 재생 확인 필요</span>
                               </div>
                               <p>
-                                이 내용은 후보의 대표 화면과 혼합 오디오를 함께 본 모델 해석이에요.
-                                전체 방송 맥락과 이름 근거는 직접 재생해 확인해 주세요.
+                                후보의 대표 화면과 혼합 오디오를 함께 본 모델 해석이에요.
                               </p>
                               <dl>
                                 <div>
@@ -9202,7 +8821,7 @@ function App() {
                                         <time>
                                           {formatDuration(cue.sourceStartMs)}–{formatDuration(cue.sourceEndMs)}
                                         </time>
-                                        <small>혼합 오디오 단서 · 재생 확인 필요</small>
+                                        <small>혼합 오디오 단서</small>
                                       </button>
                                       {!cueInsideCurrentRange && (
                                         <small className="rh-transcript-cue-note">
@@ -9433,58 +9052,6 @@ function App() {
                             )}
                           </div>
                         </details>
-                        <div className="rh-inline-actions">
-                          <button
-                            className="btn btn-secondary"
-                            type="button"
-                            aria-label={`후보 ${index + 1} 구간 바로 보기`}
-                            disabled={sourcePreviewUrl === null}
-                            onClick={() => playCandidate(candidate)}
-                          >
-                            {sourcePreviewUrl === null ? "원본 연결 후 재생" : "이 구간 재생"}
-                          </button>
-                          <button
-                            className="btn btn-secondary"
-                            type="button"
-                            aria-label={`후보 ${index + 1} 클립 파일 다운로드`}
-                            disabled={
-                              sourceFile === null ||
-                              clipBatchStatus === "rendering" ||
-                              clipDownloadStatusById[candidate.id] === "rendering"
-                            }
-                            onClick={() => downloadCandidateClip(candidate)}
-                          >
-                            {clipDownloadStatusById[candidate.id] === "rendering"
-                              ? `클립 만드는 중 ${Math.round((clipDownloadProgressById[candidate.id] ?? 0) * 100)}%`
-                              : clipDownloadStatusById[candidate.id] === "completed"
-                                ? "클립 다시 다운로드"
-                                : "이 구간 클립 다운로드"}
-                          </button>
-                          <button
-                            className="btn btn-primary"
-                            type="button"
-                            aria-label={
-                              candidate.reviewState === "approved"
-                                ? `후보 ${index + 1} 승인 취소`
-                                : `후보 ${index + 1} 사용하기`
-                            }
-                            onClick={() => updateReview(candidate.id, candidate.reviewState === "approved" ? "unreviewed" : "approved")}
-                          >
-                            {candidate.reviewState === "approved" ? "승인 취소" : "사용할게요"}
-                          </button>
-                          <button
-                            className="btn btn-secondary"
-                            type="button"
-                            aria-label={
-                              candidate.reviewState === "rejected"
-                                ? `후보 ${index + 1} 다시 검토`
-                                : `후보 ${index + 1} 제외`
-                            }
-                            onClick={() => updateReview(candidate.id, candidate.reviewState === "rejected" ? "unreviewed" : "rejected")}
-                          >
-                            {candidate.reviewState === "rejected" ? "다시 검토" : "빼기"}
-                          </button>
-                        </div>
                         {clipDownloadStatusById[candidate.id] === "completed" && (
                           <p className="rh-notice" data-tone="success" role="status">
                             이 후보의 영상 클립 다운로드를 시작했어요.
@@ -9703,6 +9270,18 @@ function App() {
           ExClipper · v{APP_VERSION}
         </footer>
       </main>
+
+      {reviewUndo !== null && (
+        <ReviewUndoToast
+          undo={reviewUndo}
+          onUndo={undoLastReview}
+          onDismiss={() => setReviewUndo(null)}
+        />
+      )}
+
+      {shortcutHelpOpen && (
+        <ShortcutHelpOverlay onClose={() => setShortcutHelpOpen(false)} />
+      )}
     </div>
   );
 }

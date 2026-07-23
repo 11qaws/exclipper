@@ -5792,3 +5792,242 @@
     background: var(--rh-warning-bg);
   }
 }
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * 0.3.46 · Keyboard-driven review loop
+ * Uses the `--ex-*` foundation tokens. New components adopt the scale first;
+ * existing components move over as they are touched.
+ * ────────────────────────────────────────────────────────────────────────── */
+
+/*
+ * The decision bar sits above the evidence, not below it. Reading the AI's
+ * reasoning and acting on it are no longer sequentially gated, and the bar
+ * stays reachable while the editor scrolls a long candidate card.
+ */
+.rh-candidate-decision-bar {
+  position: sticky;
+  top: var(--ex-sticky-offset, 64px);
+  bottom: auto;
+  grid-template-columns: repeat(2, minmax(0, 1fr)) auto;
+  align-items: center;
+  margin: 0 0 var(--ex-space-sm);
+  box-shadow: var(--ex-elev-2);
+}
+
+.rh-shortcut-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ex-space-2xs);
+  min-height: 44px;
+  padding: 0 var(--ex-space-sm);
+  border: 1px dashed var(--border2);
+  border-radius: var(--ex-radius-sm);
+  background: none;
+  color: var(--text3);
+  font-size: var(--ex-font-xs);
+  cursor: pointer;
+  transition: color var(--ex-motion-fast) var(--ex-motion-ease),
+    border-color var(--ex-motion-fast) var(--ex-motion-ease);
+}
+
+.rh-shortcut-hint:hover,
+.rh-shortcut-hint:focus-visible {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+.rh-app kbd {
+  display: inline-block;
+  min-width: 22px;
+  padding: 2px var(--ex-space-2xs);
+  border: 1px solid var(--border2);
+  border-bottom-width: 2px;
+  border-radius: var(--ex-radius-sm);
+  background: var(--bg2);
+  color: var(--text2);
+  font-family: inherit;
+  font-size: var(--ex-font-2xs);
+  font-weight: 600;
+  text-align: center;
+}
+
+/* Said once per card. Downstream clues no longer repeat the same caveat. */
+.rh-candidate-verify-note {
+  margin: 0 0 var(--ex-space-sm);
+  color: var(--text4);
+  font-size: var(--ex-font-xs);
+}
+
+/* ── Undo toast ── */
+
+.rh-review-undo {
+  position: fixed;
+  right: var(--ex-space-md);
+  bottom: var(--ex-space-md);
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  gap: var(--ex-space-sm);
+  max-width: min(92vw, 440px);
+  padding: var(--ex-space-sm) var(--ex-space-md);
+  border: 1px solid var(--border);
+  border-radius: var(--ex-radius-lg);
+  background: var(--bg);
+  box-shadow: var(--ex-elev-3);
+  font-size: var(--ex-font-sm);
+}
+
+.rh-review-undo > span {
+  flex: 1 1 auto;
+  color: var(--text2);
+}
+
+.rh-review-undo .btn {
+  flex: 0 0 auto;
+  min-height: 36px;
+}
+
+.rh-review-undo-close {
+  flex: 0 0 auto;
+  width: 32px;
+  height: 32px;
+  border: none;
+  border-radius: var(--ex-radius-sm);
+  background: none;
+  color: var(--text4);
+  font-size: var(--ex-font-sm);
+  cursor: pointer;
+}
+
+.rh-review-undo-close:hover,
+.rh-review-undo-close:focus-visible {
+  background: var(--bg3);
+  color: var(--text);
+}
+
+/* ── Shortcut help ── */
+
+.rh-shortcut-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: grid;
+  place-items: center;
+  padding: var(--ex-space-md);
+  background: rgba(15, 23, 42, .48);
+}
+
+.rh-shortcut-sheet {
+  width: min(100%, 460px);
+  max-height: min(84vh, 640px);
+  overflow-y: auto;
+  padding: var(--ex-space-lg);
+  border: 1px solid var(--border);
+  border-radius: var(--ex-radius-xl);
+  background: var(--bg);
+  box-shadow: var(--ex-elev-3);
+}
+
+.rh-shortcut-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ex-space-sm);
+  margin-bottom: var(--ex-space-md);
+}
+
+.rh-shortcut-heading h3 {
+  margin: 0;
+  font-size: var(--ex-font-xl);
+}
+
+.rh-shortcut-list {
+  display: grid;
+  gap: var(--ex-space-xs);
+  margin: 0 0 var(--ex-space-md);
+}
+
+.rh-shortcut-list > div {
+  display: grid;
+  grid-template-columns: minmax(120px, auto) minmax(0, 1fr);
+  gap: var(--ex-space-sm);
+  align-items: baseline;
+  padding-bottom: var(--ex-space-xs);
+  border-bottom: 1px solid var(--border);
+}
+
+.rh-shortcut-list > div:last-child {
+  border-bottom: none;
+}
+
+.rh-shortcut-list dt,
+.rh-shortcut-list dd {
+  margin: 0;
+}
+
+.rh-shortcut-list dd {
+  color: var(--text2);
+  font-size: var(--ex-font-sm);
+}
+
+@media (max-width: 760px) {
+  .rh-candidate-decision-bar {
+    position: static;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .rh-shortcut-hint {
+    grid-column: 1 / -1;
+    justify-content: center;
+  }
+
+  .rh-review-undo {
+    right: var(--ex-space-xs);
+    left: var(--ex-space-xs);
+    bottom: var(--ex-space-xs);
+    max-width: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rh-shortcut-hint {
+    transition: none;
+  }
+}
+
+/*
+ * Narrow header: the centre `auto` column could not shrink, so the subtitle
+ * collided with the language and theme controls. Below 900px the header
+ * becomes two rows — brand and controls first, subtitle underneath — so
+ * nothing is hidden and nothing overlaps.
+ */
+@media (max-width: 900px) {
+  .rh-header-inner {
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    row-gap: var(--ex-space-3xs);
+  }
+
+  .rh-header-inner > h1 {
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  .rh-header-inner .rh-header-actions {
+    grid-column: 2;
+    grid-row: 1;
+  }
+
+  .rh-header-title {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    color: var(--text3);
+    font-size: var(--ex-font-md);
+    font-weight: 600;
+    text-align: left;
+  }
+
+  .rh-header-actions .rh-privacy-pill {
+    display: none;
+  }
+}

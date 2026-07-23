@@ -1,0 +1,87 @@
+/*
+ * ExClipper design foundation.
+ *
+ * This file owns the values ExClipper is built from: type scale, spacing scale,
+ * radius, elevation, motion and Korean text behaviour. It loads between the
+ * inherited StreamSaver snapshot and the ExClipper component styles so that
+ * components can consume `--ex-*` tokens while existing rules keep working.
+ *
+ * Adding a token here changes nothing on its own. Components move onto the
+ * scale as they are touched, so the system tightens without a single
+ * high-risk rewrite of the 888 existing rules.
+ */
+
+:root {
+  /* Type scale — 7 steps. Replaces 24 ad hoc font sizes. */
+  --ex-font-2xs: .6875rem;  /* 11px · badges, superscripts */
+  --ex-font-xs: .75rem;     /* 12px · eyebrows, helper text */
+  --ex-font-sm: .8125rem;   /* 13px · dense UI, table cells */
+  --ex-font-md: .875rem;    /* 14px · body default */
+  --ex-font-lg: 1rem;       /* 16px · emphasised body */
+  --ex-font-xl: 1.1875rem;  /* 19px · panel titles */
+  --ex-font-2xl: 1.5rem;    /* 24px · section headings */
+
+  /* Spacing scale — 7 steps on a 4px grid. */
+  --ex-space-3xs: 4px;
+  --ex-space-2xs: 6px;
+  --ex-space-xs: 8px;
+  --ex-space-sm: 12px;
+  --ex-space-md: 16px;
+  --ex-space-lg: 24px;
+  --ex-space-xl: 32px;
+
+  /* Radius — aliases the four radii ExClipper already committed to. */
+  --ex-radius-sm: var(--rh-radius-sm);
+  --ex-radius-md: var(--rh-radius-md);
+  --ex-radius-lg: var(--rh-radius-lg);
+  --ex-radius-xl: var(--rh-radius-xl);
+
+  /* Elevation — 3 steps. Replaces 25 bespoke shadow recipes. */
+  --ex-elev-1: 0 1px 2px rgba(15, 23, 42, .06);
+  --ex-elev-2: 0 4px 12px rgba(15, 23, 42, .08);
+  --ex-elev-3: 0 12px 32px rgba(15, 23, 42, .14);
+
+  /* Motion. */
+  --ex-motion-fast: 120ms;
+  --ex-motion-base: 200ms;
+  --ex-motion-ease: cubic-bezier(.2, .6, .3, 1);
+
+  /* Clearance under the sticky app header for anything else that sticks. */
+  --ex-sticky-offset: 64px;
+}
+
+[data-theme="dark"] {
+  --ex-elev-1: 0 1px 2px rgba(0, 0, 0, .4);
+  --ex-elev-2: 0 4px 12px rgba(0, 0, 0, .45);
+  --ex-elev-3: 0 12px 32px rgba(0, 0, 0, .55);
+}
+
+/*
+ * Korean line breaking. `keep-all` stops Hangul words from splitting at
+ * arbitrary characters; `break-word` still rescues genuinely unbreakable
+ * tokens such as file names and URLs so nothing overflows its panel.
+ */
+.rh-app,
+.rh-app h1,
+.rh-app h2,
+.rh-app h3,
+.rh-app h4,
+.rh-app p,
+.rh-app li,
+.rh-app dt,
+.rh-app dd,
+.rh-app strong,
+.rh-app small,
+.rh-app span,
+.rh-app button,
+.rh-app summary,
+.rh-app label {
+  word-break: keep-all;
+  overflow-wrap: break-word;
+}
+
+/* File names, URLs and timecode-like strings may break anywhere. */
+.rh-app [data-breakable="anywhere"] {
+  word-break: break-all;
+  overflow-wrap: anywhere;
+}
