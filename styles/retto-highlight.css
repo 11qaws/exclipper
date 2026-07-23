@@ -4147,6 +4147,274 @@
   }
 }
 
+@media (min-width: 1121px) {
+  /*
+   * 0.4.4 · PART C/D/E — review surface for the "ready" state only.
+   * The exploring state (context still building, nothing published) is
+   * untouched above: this block only fires once contextualCandidatePublicationReady
+   * is true, so the always-visible map during exploration keeps working exactly
+   * as before.
+   *
+   * The map (.rh-candidate-timeline) that used to occupy 2/3 of this row
+   * becomes a bottom sheet instead: hidden by default, toggled by the strip's
+   * "방송 지도" button or the `M` key. .rh-review-rail becomes the sole
+   * full-width workspace, itself split 58/42 into the video (left) and the
+   * candidate dossier (right).
+   */
+  .rh-timeline-review-layout[data-review-ready="true"] {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    position: relative;
+    overflow: hidden;
+    height: clamp(760px, calc(100vh - 180px), 1080px);
+  }
+
+  .ex-sur-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+    flex: 0 0 auto;
+  }
+
+  .ex-sur-head-title {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    min-width: 0;
+  }
+
+  .ex-sur-head-title strong {
+    overflow: hidden;
+    max-width: 40ch;
+    color: var(--text1);
+    font-size: 1.0625rem;
+    font-weight: 800;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .ex-sur-head-title span {
+    flex: 0 0 auto;
+    color: var(--text3);
+    font-size: .8125rem;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .ex-sur-head-chip {
+    flex: 0 0 auto;
+    padding: 5px 12px;
+    border: 1px solid var(--accentBd);
+    border-radius: 999px;
+    background: var(--accentBg);
+    color: var(--accentT);
+    font-size: .8125rem;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+
+  .ex-strip {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    flex: 0 0 auto;
+  }
+
+  .ex-strip-rail {
+    position: relative;
+    flex: 1 1 auto;
+    height: 20px;
+    min-width: 0;
+  }
+
+  .ex-strip-rail-line {
+    position: absolute;
+    top: 50%;
+    left: 0;
+    right: 0;
+    height: 6px;
+    transform: translateY(-50%);
+    border-radius: 999px;
+    background: var(--bg3);
+  }
+
+  .ex-strip-marker {
+    position: absolute;
+    top: 50%;
+    width: 10px;
+    height: 10px;
+    margin: 0 0 0 -5px;
+    padding: 0;
+    border: 2px solid var(--bg);
+    border-radius: 50%;
+    background: var(--text4);
+    cursor: pointer;
+    transform: translateY(-50%);
+    transition: transform .12s ease;
+  }
+
+  .ex-strip-marker:hover,
+  .ex-strip-marker:focus-visible {
+    transform: translateY(-50%) scale(1.25);
+  }
+
+  .ex-strip-marker[data-state="approved"] {
+    background: var(--rh-success);
+  }
+
+  .ex-strip-marker[data-current="true"] {
+    width: 16px;
+    height: 16px;
+    margin-left: -8px;
+    background: var(--accent);
+    box-shadow: 0 0 0 4px var(--accentBg);
+  }
+
+  .ex-strip-meta {
+    display: flex;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .ex-strip-map-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 10px;
+    border: 1px solid var(--border2);
+    border-radius: 8px;
+    background: var(--bg);
+    color: var(--text3);
+    font-size: .8125rem;
+    font-weight: 650;
+    cursor: pointer;
+  }
+
+  .ex-strip-map-toggle:hover {
+    border-color: var(--accentBd);
+    color: var(--accentT);
+  }
+
+  .ex-strip-map-toggle[aria-expanded="true"] {
+    border-color: var(--accentBd);
+    background: var(--accentBg);
+    color: var(--accentT);
+  }
+
+  .ex-strip-timecode {
+    color: var(--text3);
+    font-size: .8125rem;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+
+  .ex-sheet-scrim {
+    position: absolute;
+    inset: 0;
+    z-index: 20;
+    background: rgba(15, 23, 42, .28);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity .2s ease;
+  }
+
+  .ex-sheet-scrim[data-open="true"] {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .rh-timeline-review-layout[data-review-ready="true"] > .rh-candidate-timeline {
+    position: absolute;
+    z-index: 21;
+    inset: auto 0 0 0;
+    width: 100%;
+    max-width: none;
+    height: auto;
+    max-height: 60%;
+    margin: 0;
+    overflow-y: auto;
+    border-radius: var(--rh-radius-xl) var(--rh-radius-xl) 0 0;
+    box-shadow: 0 -18px 44px rgba(15, 23, 42, .18);
+    scrollbar-gutter: stable;
+    transform: translateY(102%);
+    transition: transform .26s cubic-bezier(.32, .72, 0, 1);
+  }
+
+  .rh-timeline-review-layout[data-review-ready="true"] > .rh-candidate-timeline[data-open="true"] {
+    transform: translateY(0);
+  }
+
+  .rh-candidate-timeline-heading {
+    position: relative;
+  }
+
+  .ex-map-close {
+    position: absolute;
+    top: -2px;
+    right: 0;
+    padding: 5px 10px;
+    border: 1px solid var(--border2);
+    border-radius: 8px;
+    background: var(--bg);
+    color: var(--text3);
+    font-size: .75rem;
+    font-weight: 650;
+    cursor: pointer;
+  }
+
+  .ex-map-close:hover {
+    border-color: var(--accentBd);
+    color: var(--accentT);
+  }
+
+  .rh-timeline-review-layout[data-review-ready="true"] > .rh-review-rail {
+    display: grid;
+    grid-template-columns: 58fr 42fr;
+    grid-template-rows: minmax(0, 1fr);
+    flex: 1 1 auto;
+    gap: 16px;
+    height: auto;
+    min-height: 0;
+    padding: 0;
+    border-left: 0;
+  }
+
+  .rh-timeline-review-layout[data-review-ready="true"] .rh-review-editor {
+    display: flex;
+    grid-column: 1;
+    grid-row: 1;
+    flex-direction: column;
+    gap: 10px;
+    min-width: 0;
+    min-height: 0;
+  }
+
+  .rh-timeline-review-layout[data-review-ready="true"] .rh-preview-panel {
+    flex: 1 1 auto;
+    min-height: 0;
+  }
+
+  .rh-timeline-review-layout[data-review-ready="true"] .rh-candidate-column {
+    grid-column: 2;
+    grid-row: 1;
+    min-width: 0;
+    min-height: 0;
+    padding: 0 4px 4px 0;
+    border-top: 0;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .rh-timeline-review-layout[data-review-ready="true"] > .rh-candidate-timeline,
+    .ex-sheet-scrim,
+    .ex-strip-marker {
+      transition: none;
+    }
+  }
+}
+
 @media (max-width: 1120px) {
   .rh-timeline-review-layout {
     grid-template-columns: minmax(0, 1fr);
@@ -4163,6 +4431,18 @@
     gap: 12px;
     padding-top: 12px;
     border-top: 1px solid var(--border);
+  }
+
+  /*
+   * Below the surface breakpoint the map stays inline as before, so the new
+   * header/strip/sheet chrome (meaningful only around the 58/42 workspace)
+   * is hidden rather than shown in a state that has nothing to toggle.
+   */
+  .ex-sur-head,
+  .ex-strip,
+  .ex-map-close,
+  .ex-sheet-scrim {
+    display: none;
   }
 }
 

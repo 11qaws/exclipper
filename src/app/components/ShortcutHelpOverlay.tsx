@@ -56,6 +56,18 @@ export function ShortcutHelpOverlay({ onClose }: ShortcutHelpOverlayProps) {
             <dd>방금 한 판단 되돌리기</dd>
           </div>
           <div>
+            <dt><kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd></dt>
+            <dd>후보 카드의 요약 · 단서 · 맥락 탭으로 이동</dd>
+          </div>
+          <div>
+            <dt><kbd>D</kbd></dt>
+            <dd>요약 · 단서 · 맥락 탭 순환</dd>
+          </div>
+          <div>
+            <dt><kbd>M</kbd></dt>
+            <dd>방송 지도 열고 닫기</dd>
+          </div>
+          <div>
             <dt><kbd>?</kbd></dt>
             <dd>이 안내 열고 닫기</dd>
           </div>

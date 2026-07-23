@@ -1,5 +1,9 @@
 import { useEffect, useRef } from "react";
 
+export type DossierTab = "summary" | "clues" | "context";
+
+const DOSSIER_TAB_ORDER: readonly DossierTab[] = ["summary", "clues", "context"];
+
 export interface ReviewShortcutActions {
   /** True once the review workspace is showing candidates the editor can judge. */
   readonly active: boolean;
@@ -16,6 +20,13 @@ export interface ReviewShortcutActions {
   readonly toggleApprove: () => void;
   readonly toggleReject: () => void;
   readonly undo: () => void;
+  /** Whether the broadcast-map bottom sheet is currently open. */
+  readonly mapSheetOpen: boolean;
+  readonly toggleMapSheet: () => void;
+  readonly closeMapSheet: () => void;
+  /** Which dossier tab is showing. Selection persists across candidates. */
+  readonly dossierTab: DossierTab;
+  readonly setDossierTab: (tab: DossierTab) => void;
 }
 
 /**
@@ -52,9 +63,22 @@ export function useReviewShortcuts(actions: ReviewShortcutActions): void {
         return;
       }
       if (event.code === "Escape") {
+        // Closest-first: the help overlay sits above the sheet, which sits
+        // above a non-default dossier tab, which sits above the resting
+        // "summary" view. Escape only ever undoes the outermost layer.
         if (current.helpOpen) {
           event.preventDefault();
           current.closeHelp();
+          return;
+        }
+        if (current.mapSheetOpen) {
+          event.preventDefault();
+          current.closeMapSheet();
+          return;
+        }
+        if (current.dossierTab !== "summary") {
+          event.preventDefault();
+          current.setDossierTab("summary");
         }
         return;
       }
@@ -110,6 +134,34 @@ export function useReviewShortcuts(actions: ReviewShortcutActions): void {
             event.preventDefault();
             current.undo();
           }
+          return;
+        }
+        case "KeyM": {
+          event.preventDefault();
+          current.toggleMapSheet();
+          return;
+        }
+        case "Digit1": {
+          event.preventDefault();
+          current.setDossierTab("summary");
+          return;
+        }
+        case "Digit2": {
+          event.preventDefault();
+          current.setDossierTab("clues");
+          return;
+        }
+        case "Digit3": {
+          event.preventDefault();
+          current.setDossierTab("context");
+          return;
+        }
+        case "KeyD": {
+          event.preventDefault();
+          const currentIndex = DOSSIER_TAB_ORDER.indexOf(current.dossierTab);
+          const nextTab =
+            DOSSIER_TAB_ORDER[(currentIndex + 1) % DOSSIER_TAB_ORDER.length]!;
+          current.setDossierTab(nextTab);
           return;
         }
         default:

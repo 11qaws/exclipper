@@ -375,17 +375,21 @@ import {
   estimateRemainingMs,
   formatRemainingLabel,
 } from "./app/progressEstimate";
+import { candidateStripPositionPercent } from "./app/positionStrip";
 import {
   nextUnreviewedCandidateId,
   reviewDecisionAdvances,
 } from "./app/reviewNavigation";
-import { useReviewShortcuts } from "./app/useReviewShortcuts";
+import {
+  useReviewShortcuts,
+  type DossierTab,
+} from "./app/useReviewShortcuts";
 
 type AnalysisSelectionSummary = DurableAnalysisSelectionSummary;
 type AnalysisCoverageSummary = DurableAnalysisCoverageSummary;
 type AnalysisGapApprovalEvidence = DurableAnalysisGapApprovalEvidence;
 
-const APP_VERSION = "0.4.4";
+const APP_VERSION = "0.4.5";
 const PERSISTENCE_SCHEMA_VERSION = "0.3.0";
 const SIGNAL_ENGINE_VERSION =
   "streamer-reaction-fast-pass-v5-chat-fallback-music-confirmation";
@@ -552,6 +556,16 @@ function App() {
     useState<string | null>(null);
   const [reviewUndo, setReviewUndo] = useState<ReviewUndoState | null>(null);
   const [shortcutHelpOpen, setShortcutHelpOpen] = useState(false);
+  /** Bottom sheet holding the full broadcast map (former always-visible timeline). */
+  const [mapSheetOpen, setMapSheetOpen] = useState(false);
+  /**
+   * Which dossier tab is showing. This is a view state that persists across
+   * candidates on purpose: flipping through candidates with the same tab open
+   * (e.g. comparing "단서" across several) is the whole reason tabs were
+   * chosen over a one-off popover. It never affects candidate data, score,
+   * boundaries or review state.
+   */
+  const [dossierTab, setDossierTab] = useState<DossierTab>("summary");
   const [clipDownloadStatusById, setClipDownloadStatusById] =
     useState<ClipDownloadStatusById>({});
   const [clipDownloadErrorById, setClipDownloadErrorById] =
@@ -4658,6 +4672,11 @@ function App() {
         );
       },
       undo: undoLastReview,
+      mapSheetOpen,
+      toggleMapSheet: () => setMapSheetOpen((open) => !open),
+      closeMapSheet: () => setMapSheetOpen(false),
+      dossierTab,
+      setDossierTab,
   });
 
   useEffect(() => {
@@ -7722,11 +7741,72 @@ function App() {
                     className="rh-timeline-review-layout"
                     data-review-ready={contextualCandidatePublicationReady}
                   >
+                  {contextualCandidatePublicationReady && (
+                    <div className="ex-sur-head">
+                      <div className="ex-sur-head-title">
+                        <strong>{preflight?.metadata.name ?? "저장된 AI 분석 결과"}</strong>
+                        <span>{formatDuration(boundarySourceDurationMs)}</span>
+                      </div>
+                      <span className="ex-sur-head-chip">
+                        후보 {previewCandidateNumber > 0 ? previewCandidateNumber : orderedCandidates.length > 0 ? 1 : 0}/{orderedCandidates.length}
+                        {" · 남음 "}
+                        {remainingReviewCount}
+                      </span>
+                    </div>
+                  )}
+                  {contextualCandidatePublicationReady && orderedCandidates.length > 0 && (
+                    <div className="ex-strip" aria-label="방송 전체에서 후보 위치">
+                      <div className="ex-strip-rail" aria-hidden="true">
+                        <span className="ex-strip-rail-line" />
+                        {orderedCandidates.map((candidate, stripIndex) => (
+                          <button
+                            key={candidate.id}
+                            type="button"
+                            className="ex-strip-marker"
+                            data-state={candidate.reviewState}
+                            data-current={candidate.id === focusedCandidateId}
+                            style={{
+                              left: `${candidateStripPositionPercent(candidate.peakMs, boundarySourceDurationMs)}%`,
+                            }}
+                            title={`후보 ${stripIndex + 1} · ${formatDuration(candidate.peakMs)}`}
+                            onClick={() => focusCandidateForReview(candidate)}
+                          />
+                        ))}
+                      </div>
+                      <div className="ex-strip-meta">
+                        <button
+                          type="button"
+                          className="ex-strip-map-toggle"
+                          aria-keyshortcuts="M"
+                          aria-expanded={mapSheetOpen}
+                          onClick={() => setMapSheetOpen((open) => !open)}
+                        >
+                          ▸ 방송 지도 <kbd>M</kbd>
+                        </button>
+                        {focusedCandidateId !== null && (
+                          <span className="ex-strip-timecode">
+                            {formatDuration(
+                              candidates.find(({ id }) => id === focusedCandidateId)?.peakMs ?? 0,
+                            )}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                  {contextualCandidatePublicationReady && (
+                    <div
+                      className="ex-sheet-scrim"
+                      data-open={mapSheetOpen}
+                      aria-hidden="true"
+                      onClick={() => setMapSheetOpen(false)}
+                    />
+                  )}
                   <section
                     className="rh-candidate-timeline"
                     data-state={
                       contextualCandidatePublicationReady ? "ready" : "exploring"
                     }
+                    data-open={mapSheetOpen}
                     aria-labelledby="candidate-timeline-heading"
                   >
                     <div className="rh-candidate-timeline-heading">
@@ -7741,6 +7821,16 @@ function App() {
                             ? "오늘 방송에서 먼저 볼 장면"
                             : "방송 곳곳에서 주제를 찾고 있어요"}
                         </h3>
+                        {contextualCandidatePublicationReady && (
+                          <button
+                            type="button"
+                            className="ex-map-close"
+                            aria-keyshortcuts="Escape"
+                            onClick={() => setMapSheetOpen(false)}
+                          >
+                            지도 닫기
+                          </button>
+                        )}
                         <p>
                           {contextualCandidatePublicationReady
                             ? "선의 위치는 방송 시각, 흐릿한 높이는 잠재 점수예요. 원과 요약 카드를 누르면 같은 장면을 바로 확인합니다."
@@ -8694,41 +8784,6 @@ function App() {
                                     : "AI 근거 부족"}
                             </span>
                           )}
-                          {narrative.basis === "visual-exploration" && (
-                            <span className="rh-interpretation-badge" data-basis={narrative.basis}>
-                              {narrative.basisLabel}
-                            </span>
-                          )}
-                          {(candidatePassBEvidence !== undefined ||
-                            candidatePassBOutcome !== undefined) && (
-                            <span
-                              className="rh-passb-badge"
-                              data-status={candidatePassBOutcome?.status ?? "clueFound"}
-                            >
-                              {candidatePassBStatusLabel}
-                            </span>
-                          )}
-                          {(candidateAudioEventEvidence !== undefined ||
-                            candidateAudioEventOutcome !== undefined) && (
-                            <span
-                              className="rh-audio-event-badge"
-                              data-status={candidateAudioEventBadgeStatus}
-                            >
-                              {candidateAudioEventStatusLabel}
-                            </span>
-                          )}
-                          {boundaryTouched && (
-                            <span className="rh-boundary-badge">
-                              {boundaryRevision?.provenance === "userResetToAi"
-                                ? "AI 제안 다시 적용"
-                                : "시작·끝 직접 조정"}
-                            </span>
-                          )}
-                          {approvedAfterEdit && (
-                            <span className="rh-boundary-badge" data-tone="warning">
-                              승인 유지 · 수정 구간 반영
-                            </span>
-                          )}
                         </div>
                         <div className="rh-inline-actions rh-candidate-decision-bar">
                           <button
@@ -8805,92 +8860,195 @@ function App() {
                             단축키 <kbd>?</kbd>
                           </button>
                         </div>
-                        <p className="rh-candidate-verify-note">
-                          AI 단서는 참고용이에요. 재생해서 직접 확인한 뒤 판단해 주세요.
-                        </p>
                         <h4
                           className="rh-candidate-title"
                           id={candidateElementId("candidate-title", candidate.id)}
                         >
                           후보 {index + 1} · {evidenceExplanation.headline}
                         </h4>
-                        <p className="rh-candidate-reason">
-                          <strong>먼저 볼 이유</strong>
-                          {evidenceExplanation.whyWorthReviewing.text}
-                        </p>
-                        <section
-                          className="rh-candidate-context-chain"
-                          aria-label={`후보 ${index + 1}의 전체 방송 맥락과 장면 상황`}
+                        <div
+                          className="ex-seg"
+                          role="tablist"
+                          aria-label={`후보 ${index + 1} 상세 정보 탭`}
                         >
-                          <header>
-                            <div>
-                              <strong>전체 방송 안에서 이 장면</strong>
-                              <span>맥락·대사·화면 4장·대표 썸네일 검증 완료</span>
-                            </div>
-                            <span>{candidateContext.topicContextKo}</span>
-                          </header>
-                          <p className="rh-candidate-broadcast-flow">
-                            <strong>전체 방송 흐름</strong>
-                            {candidateContext.broadcastSummaryKo}
-                          </p>
-                          <div className="rh-candidate-context-sequence">
-                            <article>
-                              <span>직전 흐름</span>
-                              <p>{candidateContext.beforeContextKo}</p>
-                            </article>
-                            <article data-current="true">
-                              <span>검증된 후보 상황</span>
-                              <p>
-                                {candidateGeminiInsight?.eventSummaryKo ??
-                                  candidateContext.contextVerdictKo}
-                              </p>
-                            </article>
-                            <article>
-                              <span>직후 흐름</span>
-                              <p>{candidateContext.afterContextKo}</p>
-                            </article>
-                          </div>
-                          <p className="rh-candidate-reference-transcript">
-                            <strong>확인한 대사</strong>
-                            {candidateContext.transcriptKo}
-                          </p>
-                        </section>
-                        {candidateGeminiInsight !== undefined && (
-                          <div
-                            className="rh-gemini-quick-summary"
-                            aria-label={`후보 ${index + 1}의 AI 화면·오디오 요약`}
+                          <button
+                            type="button"
+                            role="tab"
+                            id={candidateElementId("dossier-tab-summary", candidate.id)}
+                            aria-selected={dossierTab === "summary"}
+                            aria-keyshortcuts="1"
+                            className={dossierTab === "summary" ? "on" : undefined}
+                            onClick={() => setDossierTab("summary")}
                           >
-                            <div>
-                            <strong>AI가 화면·오디오에서 해석한 사건 단서</strong>
-                            </div>
-                            <p>{candidateGeminiInsight.eventSummaryKo}</p>
-                            <p className="rh-identified-participant-line">
-                              <strong>등장인물</strong>
-                              {candidateGeminiInsight.participantSummaryKo ??
-                                ((candidateGeminiInsight.identifiedParticipants?.length ?? 0) > 0
-                                  ? candidateGeminiInsight.identifiedParticipants
-                                      ?.map((participant) =>
-                                        canonicalCandidatePassBCastDisplayName(
-                                          sourceCastRosterId,
-                                          participant.displayName,
-                                        ),
-                                      )
-                                      .join(" · ")
-                                  : "이 저장 결과에는 등장인물 상태가 기록되지 않았습니다.")}
+                            요약
+                          </button>
+                          <button
+                            type="button"
+                            role="tab"
+                            id={candidateElementId("dossier-tab-clues", candidate.id)}
+                            aria-selected={dossierTab === "clues"}
+                            aria-keyshortcuts="2"
+                            className={dossierTab === "clues" ? "on" : undefined}
+                            onClick={() => setDossierTab("clues")}
+                          >
+                            단서
+                          </button>
+                          <button
+                            type="button"
+                            role="tab"
+                            id={candidateElementId("dossier-tab-context", candidate.id)}
+                            aria-selected={dossierTab === "context"}
+                            aria-keyshortcuts="3"
+                            className={dossierTab === "context" ? "on" : undefined}
+                            onClick={() => setDossierTab("context")}
+                          >
+                            맥락
+                          </button>
+                          <span className="ex-seg-keys">
+                            <kbd>1</kbd><kbd>2</kbd><kbd>3</kbd> · <kbd>D</kbd> 순환
+                          </span>
+                        </div>
+                        {dossierTab === "summary" && (
+                          <div
+                            className="ex-tabpane"
+                            data-pane="summary"
+                            role="tabpanel"
+                            aria-labelledby={candidateElementId("dossier-tab-summary", candidate.id)}
+                          >
+                            <p className="rh-candidate-reason">
+                              <strong>먼저 볼 이유</strong>
+                              {evidenceExplanation.whyWorthReviewing.text}
                             </p>
-                            <p>
-                              <strong>클립으로 먼저 볼 이유</strong>
-                              {candidateGeminiInsight.whyGoodClipKo}
+                            <p className="rh-candidate-reference-transcript">
+                              <strong>확인한 대사</strong>
+                              {candidateContext.transcriptKo}
                             </p>
-                            <small>
-                              대표 화면과 혼합 오디오를 본 AI 해석이에요. 출연자 이름은 화면 표시나 실제 호명이 확인된 경우에만 적어요.
-                            </small>
+                            <p className="rh-candidate-verify-note">
+                              AI 단서는 참고용이에요. 재생해서 직접 확인한 뒤 판단해 주세요.
+                            </p>
                           </div>
                         )}
-                        <details className="rh-candidate-evidence">
-                          <summary aria-label={`후보 ${index + 1}의 사건과 반응 단서 보기`}>
-                            사건·반응 단서 보기
-                          </summary>
+                        {dossierTab === "context" && (
+                          <section
+                            className="ex-tabpane rh-candidate-context-chain"
+                            data-pane="context"
+                            role="tabpanel"
+                            aria-labelledby={candidateElementId("dossier-tab-context", candidate.id)}
+                          >
+                            <header>
+                              <div>
+                                <strong>전체 방송 안에서 이 장면</strong>
+                                <span>맥락·대사·화면 4장·대표 썸네일 검증 완료</span>
+                              </div>
+                              <span>{candidateContext.topicContextKo}</span>
+                            </header>
+                            <p className="rh-candidate-broadcast-flow">
+                              <strong>전체 방송 흐름</strong>
+                              {candidateContext.broadcastSummaryKo}
+                            </p>
+                            <div className="rh-candidate-context-sequence">
+                              <article>
+                                <span>직전 흐름</span>
+                                <p>{candidateContext.beforeContextKo}</p>
+                              </article>
+                              <article data-current="true">
+                                <span>검증된 후보 상황</span>
+                                <p>
+                                  {candidateGeminiInsight?.eventSummaryKo ??
+                                    candidateContext.contextVerdictKo}
+                                </p>
+                              </article>
+                              <article>
+                                <span>직후 흐름</span>
+                                <p>{candidateContext.afterContextKo}</p>
+                              </article>
+                            </div>
+                          </section>
+                        )}
+                        {dossierTab === "clues" && (
+                        <div
+                          className="ex-tabpane"
+                          data-pane="clues"
+                          role="tabpanel"
+                          aria-labelledby={candidateElementId("dossier-tab-clues", candidate.id)}
+                        >
+                          {(narrative.basis === "visual-exploration" ||
+                            candidatePassBEvidence !== undefined ||
+                            candidatePassBOutcome !== undefined ||
+                            candidateAudioEventEvidence !== undefined ||
+                            candidateAudioEventOutcome !== undefined ||
+                            boundaryTouched ||
+                            approvedAfterEdit) && (
+                            <div className="ex-tabpane-badges">
+                              {narrative.basis === "visual-exploration" && (
+                                <span className="rh-interpretation-badge" data-basis={narrative.basis}>
+                                  {narrative.basisLabel}
+                                </span>
+                              )}
+                              {(candidatePassBEvidence !== undefined ||
+                                candidatePassBOutcome !== undefined) && (
+                                <span
+                                  className="rh-passb-badge"
+                                  data-status={candidatePassBOutcome?.status ?? "clueFound"}
+                                >
+                                  {candidatePassBStatusLabel}
+                                </span>
+                              )}
+                              {(candidateAudioEventEvidence !== undefined ||
+                                candidateAudioEventOutcome !== undefined) && (
+                                <span
+                                  className="rh-audio-event-badge"
+                                  data-status={candidateAudioEventBadgeStatus}
+                                >
+                                  {candidateAudioEventStatusLabel}
+                                </span>
+                              )}
+                              {boundaryTouched && (
+                                <span className="rh-boundary-badge">
+                                  {boundaryRevision?.provenance === "userResetToAi"
+                                    ? "AI 제안 다시 적용"
+                                    : "시작·끝 직접 조정"}
+                                </span>
+                              )}
+                              {approvedAfterEdit && (
+                                <span className="rh-boundary-badge" data-tone="warning">
+                                  승인 유지 · 수정 구간 반영
+                                </span>
+                              )}
+                            </div>
+                          )}
+                          {candidateGeminiInsight !== undefined && (
+                            <div
+                              className="rh-gemini-quick-summary"
+                              aria-label={`후보 ${index + 1}의 AI 화면·오디오 요약`}
+                            >
+                              <div>
+                              <strong>AI가 화면·오디오에서 해석한 사건 단서</strong>
+                              </div>
+                              <p>{candidateGeminiInsight.eventSummaryKo}</p>
+                              <p className="rh-identified-participant-line">
+                                <strong>등장인물</strong>
+                                {candidateGeminiInsight.participantSummaryKo ??
+                                  ((candidateGeminiInsight.identifiedParticipants?.length ?? 0) > 0
+                                    ? candidateGeminiInsight.identifiedParticipants
+                                        ?.map((participant) =>
+                                          canonicalCandidatePassBCastDisplayName(
+                                            sourceCastRosterId,
+                                            participant.displayName,
+                                          ),
+                                        )
+                                        .join(" · ")
+                                    : "이 저장 결과에는 등장인물 상태가 기록되지 않았습니다.")}
+                              </p>
+                              <p>
+                                <strong>클립으로 먼저 볼 이유</strong>
+                                {candidateGeminiInsight.whyGoodClipKo}
+                              </p>
+                              <small>
+                                대표 화면과 혼합 오디오를 본 AI 해석이에요. 출연자 이름은 화면 표시나 실제 호명이 확인된 경우에만 적어요.
+                              </small>
+                            </div>
+                          )}
                           {boundaryTouched && (
                             <p className="rh-evidence-boundary-note">
                               아래 내용은 AI가 처음 후보를 찾을 때 본 단서예요. 다듬은 구간에 모두
@@ -9187,7 +9345,8 @@ function App() {
                             </>
                           )}
                           </div>
-                        </details>
+                        </div>
+                        )}
                         <details className="rh-boundary-editor">
                           <summary
                             id={candidateElementId(
