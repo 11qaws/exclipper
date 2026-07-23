@@ -1,5 +1,13 @@
 # Development Log
 
+## 2026-07-24 `0.4.1` 저장소·주소 전면 교체 (rettolight → exclipper)
+
+- 외부 공유 전 마지막 시점에 저장소 이름과 Pages 주소를 제품명 `exclipper`로 교체했다. 변경 파일은 `vite.config.ts`(base), `index.html`(favicon·og:url), `README.md`뿐이다.
+- **Worker는 무변경** — CORS 허용은 `https://11qaws.github.io` origin 단위라 경로와 무관하다.
+- **브라우저 저장 데이터 전부 생존** — IndexedDB·localStorage·Cache API(모델 91MB)는 origin 스코프이므로 주소 교체의 영향을 받지 않는다. 지난 분석 결과·테마·언어 설정이 그대로 열린다.
+- 호환 경계(§5): 구주소 `/rettolight/`는 지원 종료(404). GitHub Pages는 경로 리다이렉트를 지원하지 않으며, 구이름으로 placeholder 레포를 만들면 git 이름 리다이렉트가 끊겨 병행 작업 중인 다른 에이전트 워크스페이스의 push가 오염되므로 만들지 않는다. 구이름을 비워 두면 기존 원격 URL은 GitHub가 자동 리다이렉트한다.
+- Worker 이름(`rettohighlight-gemini`) 교체는 별도 작업으로 보류 — 새 이름에 Secret 2종 재주입이 필요해 작업자 입력 없이는 불가하며, 엔드포인트는 사용자 화면에 노출되지 않는다.
+
 ## 2026-07-23 `0.4.0` 전사 바이너리 전송과 중계 바이트 조립
 
 ### Before / 원인
