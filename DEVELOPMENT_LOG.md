@@ -1,5 +1,26 @@
 # Development Log
 
+## 2026-07-24 `0.4.6` 좌측 아이콘 레일 · 시작 화면 명세 패널 (PART B+G)
+
+### Before / 원인
+
+- 상단 텍스트 스텝퍼(`rh-stepper`)가 4단계 라벨을 가로로 나열만 할 뿐 클릭 이동이 없었고, 세로 공간을 늘 차지했다. 태블릿 방향과 맞지 않는 웹 관례(가로 브레드크럼)였다.
+- 시작 화면에서 파일을 고르기 전에는 우측 컬럼이 완전히 비어 있었다. 처음 쓰는 사용자가 "무엇을 넣고, 무엇을 받는지" 알 방법이 없었다.
+
+### After / 구현
+
+- **PART B**: `rh-stepper`를 좌측(≥900px) 세로/상단(<900px) 가로 아이콘 레일(`.ex-rail`)로 교체했다. 브랜드 마크(E) + 4단계 아이콘 버튼(폴더/파형/재생사각/다운 SVG, 24 viewBox stroke 1.9) + 테마 토글. 클릭은 `focusRailStep(step)`으로 기존 `focusSourceSection` 패턴을 그대로 재사용해 해당 구간으로 스크롤 이동만 한다(강제 단계 전환 아님). 2·4단계 앵커용으로 `analysisHeading`/`exportHeading` ref를 신설(기존 `sourceHeading`/`candidateHeading`과 동일 패턴). `disabled`는 `step > currentStep`(아직 도달하지 않은 단계)만 적용, `data-complete`/`aria-current`는 기존 로직 그대로 재사용해 위치·완료 표시가 동일하게 읽힌다.
+  - `.rh-shell`을 명세대로 CSS Grid로 바꾸는 대신, `<nav className="ex-rail">` 바로 다음에 `<div className="ex-shell-content">` 래퍼 하나만 추가(태그 2줄 삽입)하고 ≥900px에서만 `.rh-shell{display:flex}` + 레일 `position:sticky`로 전환했다. 900px 미만에서는 `.ex-shell-content{display:contents}`로 기존 세로 흐름을 완전히 보존한다(대규모 JSX 재배치 없이 안전하게 좌측 레일을 구현하려는 의도적 선택).
+  - 헤더의 기존 테마 버튼은 그대로 두고 레일에도 하나 더 두었다(같은 `theme`/`setTheme` 상태 공유). 기능 충돌은 없으나 시각적으로는 약간의 중복이다 — 다음 파트에서 헤더 쪽을 정리할지 판단 필요.
+  - 옛 `.rh-stepper`/`.rh-step` CSS 규칙(3개 파일에 흩어짐)은 이제 대응하는 엘리먼트가 없어 죽은 코드이지만, 순수 정리 목적의 추가 위험을 피하려고 이번 범위에서는 그대로 남겨 뒀다.
+- **PART G**: 시작 화면에서 원본을 아직 고르지 않은 순간(`!sourceReady && sourceCheck === null && sourceError === null`, 저장 결과 재연결 흐름 제외)에만 우측에 `.rh-spec-panel`을 노출한다 — 넣는 것/하는 일/받는 것 3줄 + "6시간 분량 방송 기준 약 25~40분" 참고문. 파일을 고르는 순간 `sourceCheck`가 즉시 non-null이 되어 자동으로 기존 `rh-source-summary`/`rh-analysis-launchpad`로 교체된다(추가 상태·이펙트 불필요). 형용사·느낌표 없는 사실 서술로만 작성.
+
+### 검증
+
+- `npm run check`: strict TypeScript, ESLint 경고 0, 87개 파일 886개 테스트 그대로(이 파트는 신규 순수 모듈이 없어 테스트 수 변화 없음).
+- `npm run build` 통과. 청크 크기 경고는 기존과 동일.
+- **미검증**: 실제 브라우저에서 레일의 sticky 동작·900px 경계 전환·아이콘 시인성, 시작 화면 명세 패널의 실제 레이아웃(2열 그리드 정렬), 레일 버튼 클릭 시 스크롤 이동의 체감.
+
 ## 2026-07-24 `0.4.5` 16:9 검토 서피스 · 위치 스트립 · 도시에 탭 (PART C+D+E)
 
 ### Before / 원인

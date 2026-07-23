@@ -72,6 +72,141 @@
   padding: 0 24px 64px;
 }
 
+/* ── Left icon rail (replaces the old text stepper) ── */
+
+.ex-rail {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 16px 0 8px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--ex-radius-md);
+  background: var(--bg2);
+  overflow-x: auto;
+}
+
+.ex-rail-brand {
+  display: grid;
+  flex: 0 0 auto;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  border-radius: var(--ex-radius-sm);
+  background: var(--accent);
+  color: #fff;
+  font-size: .8125rem;
+  font-weight: 800;
+}
+
+.ex-rail-steps {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.ex-rail-step > button {
+  display: grid;
+  width: 38px;
+  height: 38px;
+  place-items: center;
+  border: 1px solid transparent;
+  border-radius: var(--ex-radius-sm);
+  background: transparent;
+  color: var(--text3);
+  cursor: pointer;
+}
+
+.ex-rail-step > button svg {
+  width: 20px;
+  height: 20px;
+}
+
+.ex-rail-step > button:hover:not(:disabled) {
+  border-color: var(--border);
+  background: var(--bg);
+  color: var(--text1);
+}
+
+.ex-rail-step > button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.ex-rail-step > button:disabled {
+  color: var(--text4);
+  cursor: not-allowed;
+  opacity: .5;
+}
+
+.ex-rail-step > button[data-complete="true"] {
+  color: var(--rh-success);
+}
+
+.ex-rail-step > button[aria-current="step"] {
+  border-color: var(--accentBd);
+  background: color-mix(in srgb, var(--accent) 14%, var(--bg));
+  color: var(--accentT);
+}
+
+.ex-rail-fill {
+  flex: 1;
+}
+
+.ex-rail-theme {
+  display: grid;
+  flex: 0 0 auto;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  border: 1px solid var(--border);
+  border-radius: var(--ex-radius-sm);
+  background: var(--bg);
+  color: var(--text2);
+  font-size: 1rem;
+  cursor: pointer;
+}
+
+.ex-rail-theme:hover {
+  border-color: var(--accentBd);
+  color: var(--text1);
+}
+
+@media (min-width: 900px) {
+  .rh-shell {
+    display: flex;
+    align-items: flex-start;
+    gap: 20px;
+  }
+
+  .ex-rail {
+    flex-direction: column;
+    gap: 10px;
+    position: sticky;
+    top: 96px;
+    margin: 16px 0;
+    padding: 12px 8px;
+  }
+
+  .ex-rail-steps {
+    flex-direction: column;
+  }
+
+  .ex-shell-content {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+}
+
+@media (max-width: 899px) {
+  .ex-shell-content {
+    display: contents;
+  }
+}
+
 .rh-header-inner,
 .rh-status-inner {
   max-width: var(--rh-content);
@@ -2456,6 +2591,45 @@
   font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.rh-spec-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.rh-spec-panel h3 {
+  margin: 2px 0 0;
+  font-size: .9375rem;
+  font-weight: 700;
+}
+
+.rh-spec-list {
+  display: grid;
+  gap: 12px;
+}
+
+.rh-spec-list dt {
+  color: var(--text4);
+  font-size: .75rem;
+  font-weight: 700;
+}
+
+.rh-spec-list dd {
+  margin-top: 3px;
+  color: var(--text2);
+  font-size: .8125rem;
+  line-height: 1.6;
+}
+
+.rh-spec-duration {
+  margin: 0;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+  color: var(--text3);
+  font-size: .8125rem;
+  font-variant-numeric: tabular-nums;
 }
 
 .rh-chat-row {

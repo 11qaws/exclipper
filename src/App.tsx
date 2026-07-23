@@ -389,7 +389,7 @@ type AnalysisSelectionSummary = DurableAnalysisSelectionSummary;
 type AnalysisCoverageSummary = DurableAnalysisCoverageSummary;
 type AnalysisGapApprovalEvidence = DurableAnalysisGapApprovalEvidence;
 
-const APP_VERSION = "0.4.5";
+const APP_VERSION = "0.4.6";
 const PERSISTENCE_SCHEMA_VERSION = "0.3.0";
 const SIGNAL_ENGINE_VERSION =
   "streamer-reaction-fast-pass-v5-chat-fallback-music-confirmation";
@@ -621,7 +621,9 @@ function App() {
   const clipRenderAbortController = useRef<AbortController | null>(null);
   const sourceHeading = useRef<HTMLHeadingElement | null>(null);
   const reconnectSourceInput = useRef<HTMLInputElement | null>(null);
+  const analysisHeading = useRef<HTMLHeadingElement | null>(null);
   const candidateHeading = useRef<HTMLHeadingElement | null>(null);
+  const exportHeading = useRef<HTMLHeadingElement | null>(null);
   const isMounted = useRef(true);
 
   useEffect(() => {
@@ -4719,6 +4721,33 @@ function App() {
     });
   };
 
+  const scrollToHeading = (heading: HTMLHeadingElement | null): void => {
+    heading?.focus();
+    heading?.scrollIntoView({
+      behavior: globalThis.matchMedia?.("(prefers-reduced-motion: reduce)").matches
+        ? "auto"
+        : "smooth",
+      block: "start",
+    });
+  };
+
+  /** Rail click moves the scroll anchor only — it never forces a step transition. */
+  const focusRailStep = (step: 1 | 2 | 3 | 4): void => {
+    if (step === 1) {
+      focusSourceSection();
+      return;
+    }
+    if (step === 2) {
+      scrollToHeading(analysisHeading.current);
+      return;
+    }
+    if (step === 3) {
+      scrollToHeading(candidateHeading.current);
+      return;
+    }
+    scrollToHeading(exportHeading.current);
+  };
+
   const openRecoveredAnalysis = (recovered: RecoverableAnalysisResult): void => {
     if (!confirmDiscardCurrentWork()) {
       return;
@@ -6386,31 +6415,81 @@ function App() {
       )}
 
       <main className="rh-shell">
-        <ol className="rh-stepper" aria-label={ui("작업 순서", "Workflow")}>
-          {[
-            openedRecoveredResult !== null && !sourceReady && candidates.length > 0
-              ? ui("원본 연결(선택)", "Connect source (optional)")
-              : ui("원본 고르기", "Choose source"),
-            ui("AI가 먼저 찾기", "AI discovery"),
-            ui("후보 검토", "Review candidates"),
-            ui("결과 받기", "Export results"),
-          ].map((label, index) => {
-            const step = index + 1;
-            return (
-              <li
-                className="rh-step"
-                data-step={step}
-                data-complete={step < currentStep}
-                aria-current={step === currentStep ? "step" : undefined}
-                key={label}
-              >
-                {label}
-                {step < currentStep && <span className="rh-screen-reader-only">{ui(" 완료", " complete")}</span>}
-              </li>
-            );
-          })}
-        </ol>
+        <nav className="ex-rail" aria-label={ui("작업 단계", "Workflow steps")}>
+          <span className="ex-rail-brand" aria-hidden="true">E</span>
+          <ol className="ex-rail-steps">
+            {[
+              {
+                label:
+                  openedRecoveredResult !== null && !sourceReady && candidates.length > 0
+                    ? ui("원본 연결(선택)", "Connect source (optional)")
+                    : ui("원본 고르기", "Choose source"),
+                icon: (
+                  <path d="M3 6.5a1.5 1.5 0 0 1 1.5-1.5h4l2 2.4h8.5A1.5 1.5 0 0 1 20.5 9v9a1.5 1.5 0 0 1-1.5 1.5H4.5A1.5 1.5 0 0 1 3 18V6.5Z" />
+                ),
+              },
+              {
+                label: ui("AI가 먼저 찾기", "AI discovery"),
+                icon: (
+                  <path d="M4 15V9M8.5 18V6M13 20.5V3.5M17.5 15.5V8.5M21 12.5v-1" />
+                ),
+              },
+              {
+                label: ui("후보 검토", "Review candidates"),
+                icon: (
+                  <>
+                    <rect x="3.5" y="3.5" width="17" height="17" rx="3" />
+                    <path d="M10.3 8.6v6.8l5.7-3.4-5.7-3.4Z" />
+                  </>
+                ),
+              },
+              {
+                label: ui("결과 받기", "Export results"),
+                icon: (
+                  <path d="M12 3.5v11.3M7.3 10.3 12 15l4.7-4.7M4.5 18.5h15" />
+                ),
+              },
+            ].map(({ label, icon }, index) => {
+              const step = (index + 1) as 1 | 2 | 3 | 4;
+              const complete = step < currentStep;
+              const reachable = step <= currentStep;
+              return (
+                <li key={label} className="ex-rail-step">
+                  <button
+                    type="button"
+                    data-step={step}
+                    data-complete={complete}
+                    aria-current={step === currentStep ? "step" : undefined}
+                    disabled={!reachable}
+                    title={label}
+                    onClick={() => focusRailStep(step)}
+                  >
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                      {icon}
+                    </svg>
+                    <span className="rh-screen-reader-only">
+                      {label}
+                      {complete && ui(" 완료", " complete")}
+                    </span>
+                  </button>
+                </li>
+              );
+            })}
+          </ol>
+          <span className="ex-rail-fill" aria-hidden="true" />
+          <button
+            className="ex-rail-theme"
+            type="button"
+            aria-label={theme === "light"
+              ? ui("어두운 화면으로 바꾸기", "Use dark theme")
+              : ui("밝은 화면으로 바꾸기", "Use light theme")}
+            onClick={() => setTheme((current) => (current === "light" ? "dark" : "light"))}
+          >
+            <span aria-hidden="true">{theme === "light" ? "☾" : "☀"}</span>
+          </button>
+        </nav>
 
+        <div className="ex-shell-content">
         {showRecoveryPanel && (
         <details
           key={openedRecoveredResult?.terminal.runId ?? "recovery-catalog"}
@@ -6760,12 +6839,36 @@ function App() {
             </section>
           )}
 
+          {openedRecoveredResult === null && !sourceReady && sourceCheck === null && sourceError === null && (
+            <section className="rh-panel rh-spec-panel" aria-labelledby="spec-title">
+              <p className="rh-eyebrow">{ui("시작하기 전에", "Before you start")}</p>
+              <h3 id="spec-title">{ui("이 도구가 하는 일", "What this tool does")}</h3>
+              <dl className="rh-spec-list">
+                <div>
+                  <dt>{ui("넣는 것", "You provide")}</dt>
+                  <dd>{ui("방송 원본 파일 하나(MP4·WebM 등). CHZZK 채팅 로그는 선택 사항입니다.", "One broadcast source file (MP4, WebM, etc). A CHZZK chat log is optional.")}</dd>
+                </div>
+                <div>
+                  <dt>{ui("하는 일", "What happens")}</dt>
+                  <dd>{ui("AI가 전체 방송을 훑어 반응이 몰린 구간을 먼저 찾고, 사람이 각 후보를 확인해 최종 사용 여부를 정합니다.", "The AI scans the whole broadcast for moments with concentrated reaction, then you review each candidate and decide.")}</dd>
+                </div>
+                <div>
+                  <dt>{ui("받는 것", "You get")}</dt>
+                  <dd>{ui("승인한 장면의 시작·끝 시간표(CSV·Markdown·JSON)와, 필요하면 잘라낸 클립 파일.", "A start/end timetable for approved scenes (CSV, Markdown, JSON), and cut clip files if you request them.")}</dd>
+                </div>
+              </dl>
+              <p className="rh-spec-duration">
+                {ui("6시간 분량 방송 기준 약 25~40분이 걸립니다.", "For a 6-hour broadcast, expect roughly 25–40 minutes.")}
+              </p>
+            </section>
+          )}
+
           {sourceReady && preflight !== null && !analysisComplete && !analysisBusy && (
             <section className="rh-panel rh-analysis-launchpad" aria-labelledby="analysis-title">
               <div className="rh-launchpad-heading">
                 <div>
                   <p className="rh-eyebrow">{ui("2단계 · 분석 설계", "Step 2 · Analysis setup")}</p>
-                  <h3 id="analysis-title">{ui("전체 방송 타임라인을 만들 준비가 됐어요", "Ready to build the full broadcast timeline")}</h3>
+                  <h3 id="analysis-title" ref={analysisHeading} tabIndex={-1}>{ui("전체 방송 타임라인을 만들 준비가 됐어요", "Ready to build the full broadcast timeline")}</h3>
                   <p className="rh-help">
                     {ui("처음부터 끝까지 여러 위치를 먼저 살피고, 맥락이 생기는 구간을 넓혀 클립 후보로 정리합니다.", "The AI samples across the full broadcast, expands meaningful regions, and organizes multiple clip candidates.")}
                   </p>
@@ -9512,7 +9615,7 @@ function App() {
                   <div className="rh-export-heading">
                     <div>
                       <p className="rh-eyebrow">4단계 · 결과 받기</p>
-                      <h3 id="export-title">
+                      <h3 id="export-title" ref={exportHeading} tabIndex={-1}>
                         {approvedCount > 0
                           ? `선택한 장면 ${approvedCount}개가 준비됐어요`
                           : "사용할 장면을 먼저 골라 주세요"}
@@ -9680,6 +9783,7 @@ function App() {
         <footer className="rh-footer">
           ExClipper · v{APP_VERSION}
         </footer>
+        </div>
       </main>
 
       {reviewUndo !== null && (
