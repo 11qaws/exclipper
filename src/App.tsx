@@ -372,7 +372,7 @@ type AnalysisSelectionSummary = DurableAnalysisSelectionSummary;
 type AnalysisCoverageSummary = DurableAnalysisCoverageSummary;
 type AnalysisGapApprovalEvidence = DurableAnalysisGapApprovalEvidence;
 
-const APP_VERSION = "0.3.46";
+const APP_VERSION = "0.3.47";
 const PERSISTENCE_SCHEMA_VERSION = "0.3.0";
 const SIGNAL_ENGINE_VERSION =
   "streamer-reaction-fast-pass-v5-chat-fallback-music-confirmation";
@@ -1452,6 +1452,17 @@ function App() {
   const wholeContextPhaseFailed =
     broadcastTranscriptStatus === "failed" || broadcastContextStatus === "failed";
   const wholeContextPhaseComplete = broadcastContextStatus === "completed";
+  /**
+   * Why the final list is empty. A pipeline that stopped early never reached a
+   * judgement, so saying "no clips passed verification" would blame the
+   * broadcast for a failure that belongs to the analysis.
+   */
+  const emptyResultReason: "analysis-incomplete" | "no-verified-candidates" =
+    wholeContextPhaseFailed ||
+    broadcastContextResult === null ||
+    broadcastTranscriptChapters.length === 0
+      ? "analysis-incomplete"
+      : "no-verified-candidates";
   const candidatePassBTerminal =
     candidatePassBRun !== null &&
     ["completed", "completedWithGaps", "cancelled", "failed"].includes(
@@ -4526,6 +4537,24 @@ function App() {
     return () => globalThis.clearTimeout(timer);
   }, [reviewUndo]);
 
+  /** Re-runs whichever whole-context stage stopped, keeping fast candidates. */
+  const retryWholeContextPhase = (): void => {
+    if (broadcastContextStatus === "failed" || broadcastContextResult === null) {
+      autoBroadcastContextSourceRef.current = null;
+      setBroadcastContextStatus("idle");
+      setBroadcastContextError(null);
+    }
+    if (
+      broadcastTranscriptStatus === "failed" ||
+      broadcastTranscriptChapters.length === 0
+    ) {
+      autoBroadcastTranscriptSourceRef.current = null;
+      setBroadcastTranscriptStatus("idle");
+      setBroadcastTranscriptProgress(null);
+      setBroadcastTranscriptError(null);
+    }
+  };
+
   const focusSourceSection = (): void => {
     if (sourceHeading.current === null && reconnectSourceInput.current !== null) {
       reconnectSourceInput.current.click();
@@ -7460,9 +7489,61 @@ function App() {
               )}
 
               {contextualCandidatePublicationReady && orderedCandidates.length === 0 ? (
-                <div className="rh-empty-state">
-                  <strong>완전 검증을 통과한 클립 후보가 없어요.</strong>
-                  전체 방송 흐름, 후보 대사, 대표 화면 네 장, 대표 썸네일과 멀티모달 판정 중 하나라도 빠지거나 서로 충돌한 장면은 최종 목록에 올리지 않았습니다.
+                <div className="rh-empty-state" data-reason={emptyResultReason}>
+                  {emptyResultReason === "analysis-incomplete" ? (
+                    <>
+                      <strong>분석이 끝까지 진행되지 못해서 후보를 만들지 못했어요.</strong>
+                      방송에 쓸 장면이 없다는 뜻이 아니에요. 대사와 맥락을 확보하는 단계에서
+                      멈췄기 때문에 판단 자체를 하지 못했습니다.
+                      <div className="rh-empty-state-actions">
+                        <button
+                          className="btn btn-primary"
+                          type="button"
+                          onClick={retryWholeContextPhase}
+                        >
+                          맥락 분석 다시 시도
+                        </button>
+                        <button
+                          className="btn btn-secondary"
+                          type="button"
+                          disabled={analysisBusy || candidateRefinementBusy}
+                          onClick={startFreshAnalysis}
+                        >
+                          처음부터 다시 분석
+                        </button>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <strong>AI가 확실하다고 볼 수 있는 장면을 찾지 못했어요.</strong>
+                      전체 방송 흐름, 후보 대사, 대표 화면 네 장, 대표 썸네일과 멀티모달 판정이
+                      모두 맞아떨어진 장면만 최종 목록에 올립니다. 아래에서 직접 확인해 보실 수 있어요.
+                      {candidates.length > 0 && (
+                        <p className="rh-help">
+                          빠른 탐색이 찾아 둔 구간 {candidates.length}개는 그대로 보관돼 있어요.
+                          검증 근거가 부족해 최종 목록에는 올리지 않았습니다.
+                        </p>
+                      )}
+                      <div className="rh-empty-state-actions">
+                        <button
+                          className="btn btn-secondary"
+                          type="button"
+                          disabled={analysisBusy || candidateRefinementBusy}
+                          onClick={retryWholeContextPhase}
+                        >
+                          맥락 분석 다시 시도
+                        </button>
+                        <button
+                          className="btn btn-secondary"
+                          type="button"
+                          disabled={analysisBusy || candidateRefinementBusy}
+                          onClick={startFreshAnalysis}
+                        >
+                          다른 영상으로 분석
+                        </button>
+                      </div>
+                    </>
+                  )}
                 </div>
               ) : (
                 <>

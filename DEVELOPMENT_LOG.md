@@ -1,5 +1,43 @@
 # Development Log
 
+## 2026-07-23 `0.3.47` 전사 중계 503 복구와 오류 경계
+
+### Before / 원인
+
+- 프로덕션에서 `/v1/broadcast-transcript` 요청이 전부 실패했다. 브라우저 콘솔에는 CORS 위반으로 보고됐지만 CORS 설정 자체는 정상이었다. `OPTIONS`는 204와 `Access-Control-Allow-Origin`을 정상 반환하고 작은 `POST`도 CORS 헤더가 붙은 400을 반환한다.
+- 실제 원인은 Worker가 자원 한도를 넘겨 종료되고, 그 자리에 Cloudflare 자체 응답이 나가는 것이었다. 그 응답에는 CORS 헤더가 없으므로 브라우저가 CORS 위반으로 표시했다. **진짜 오류가 CORS 메시지에 가려졌다.**
+- 크기별 실측으로 임계값을 확인했다. base64 1,024KB(약 25초)까지는 CORS 헤더가 붙은 400이 오고, 1,536KB(약 37초)부터 CORS 헤더 없는 빈 503이 온다. 앱은 청크당 최대 90초(3,840KB)를 보내므로 **모든 전사 청크가 예외 없이 Worker를 죽였다.**
+- 원인 코드는 검증 방식이었다. `decodeStrictBase64`가 90초 청크에서 384만 자 정규식, 288만 자 `atob`, 288만 회 `charCodeAt` 루프를 수행한 뒤, 그 결과로 WAV 헤더 44바이트만 확인하고 `fill(0)`으로 버렸다. 업스트림에는 원본 base64 문자열이 그대로 전달되므로 전체 디코드는 처음부터 불필요했다.
+- 같은 패턴이 후보 오디오(`handleCandidateInsightRequest`)와 JPEG 프레임 검증에도 있었다. 후보 오디오는 최대 60초(약 2,560KB)라 같은 임계값을 넘는다.
+- `0.3.35` 기록의 "120초와 180초에서 edge가 빈 500으로 실패"는 같은 현상이었다. 당시 업스트림 provider 문제로 판단해 상한을 90초로 정했지만, 실제 원인은 Worker 자신의 자원 한도였고 90초도 안전선 밖이었다.
+
+### 파급
+
+전사 청크 전부 실패 → 저장된 chapter 0개 → context packet 생성 불가 → `0.3.45` verification receipt 발급 불가 → 최종 후보 0개. 사용자에게는 `완전 검증을 통과한 클립 후보가 없어요`가 표시됐다. 방송에 쓸 장면이 없다는 뜻으로 읽히지만 실제로는 판단 자체를 한 적이 없다.
+
+### After / 구현
+
+- 미디어 검증에서 전체 디코드를 제거했다. `decodeStrictBase64Prefix`가 선행 44바이트만 디코드하고, `base64DecodedByteLength`가 전체 길이를 인코딩에서 산술로 계산한다. `isCanonicalCandidateWav`와 `isCanonicalBroadcastTranscriptWav`는 `(header, totalByteLength, durationMs)`를 받는다. 검증 규칙 자체는 바뀌지 않았다.
+- base64 형식 검사는 `isStrictBase64`로 분리했다. 기존 `(?:[A-Za-z0-9+/]{4})*` 패턴은 수량 지정 그룹이라 역추적 위험이 있어, 단일 문자 클래스와 패딩 위치 검사로 바꿔 한 번의 선형 스캔으로 끝낸다.
+- JPEG 프레임 검증도 디코드 없이 형식 검사만 수행한다.
+- Worker 최상위에 오류 경계를 추가했다. 기존 `export default { fetch }`에는 try/catch가 없어 어떤 실패든 CORS 헤더 없는 응답이 나갔다. 이제 모든 응답이 허용 origin을 달고 나가므로 앞으로 Worker 장애가 CORS로 위장되지 않는다. 다만 CPU·메모리 한도로 런타임이 강제 종료되면 이 catch에 도달하지 못하므로, 요청당 작업량을 작게 유지하는 것이 여전히 실제 방어선이다.
+- 빈 결과 화면을 두 가지로 나눴다. 분석이 중단돼 판단을 못 한 경우는 `분석이 끝까지 진행되지 못해서 후보를 만들지 못했어요`와 `맥락 분석 다시 시도`·`처음부터 다시 분석`을 제공한다. 실제로 검증을 통과한 후보가 없는 경우만 기존 설명을 유지하되 보관된 빠른 후보 수를 함께 알린다.
+
+### 위험과 경계
+
+- 검증 규칙은 동일하다. 읽는 필드가 전부 앞 44바이트 안이고 총 길이만 산술로 대체했다.
+- 전체 디코드가 사라졌으므로 `atob`의 암묵적 문자 검증에 의존하지 않는다. `isStrictBase64`가 길이·패딩 위치·문자 집합을 명시적으로 검사한다.
+- 90초 청크가 실제로 통과하는지는 배포 후 실측이 필요하다. 통과하지 못하면 `MAX_BROADCAST_TRANSCRIPT_QWEN_DURATION_MS`를 내려야 하는데, 청크 수가 늘면 `30회/60초` rate limit과 충돌하므로 함께 조정해야 한다.
+- 검증 전 후보 목록을 사용자에게 보여 주는 경로는 이번 범위에 넣지 않았다. 후보 카드가 `candidatePassBContextById[candidate.id]!`로 context packet 존재를 전제하므로, 검증되지 않은 후보를 그대로 렌더하면 안전하지 않다. 별도 슬라이스로 둔다.
+
+### 검증
+
+- `npm run check`: TypeScript strict, ESLint warning 0, **81개 파일 833개 테스트 통과**(이전 80파일 825개).
+- `aiProxyMediaValidation.test.ts`를 새로 추가했다. 3.84MB 90초 청크가 400 없이 업스트림까지 도달하는 회귀, 길이 불일치·비정규 WAV·잘못된 base64를 여전히 거부하는 회귀, 그리고 최상위 오류 경계가 허용 origin에는 CORS 헤더가 붙은 500을, 비허용 origin에는 CORS 헤더 없는 응답을 반환하는 회귀를 고정했다.
+- `npm run build`: production 빌드 통과.
+- `wrangler deploy --dry-run`: 241.41 KiB(gzip 47.10 KiB), 두 rate limiter와 provider 설정 확인.
+- **미검증**: Worker 실제 배포와 배포 후 90초 청크 실측. 배포 전에는 프로덕션이 계속 실패 상태다.
+
 ## 2026-07-23 `0.3.46` 키보드 검토 루프와 App 구조 분리
 
 ### Before / 원인

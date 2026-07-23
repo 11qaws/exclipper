@@ -377,7 +377,7 @@ function parseCandidateRequest(bytes: Uint8Array): CandidateInsightRequest | nul
       typeof frame.dataBase64 !== "string" ||
       frame.dataBase64.length === 0 ||
       frame.dataBase64.length > MAX_CANDIDATE_PASS_B_VIDEO_FRAME_BASE64_LENGTH ||
-      decodeStrictBase64(frame.dataBase64) === null
+      !isStrictBase64(frame.dataBase64)
     ) {
       return null;
     }
@@ -405,20 +405,55 @@ function parseCandidateRequest(bytes: Uint8Array): CandidateInsightRequest | nul
   };
 }
 
-function decodeStrictBase64(value: string): Uint8Array | null {
-  if (
-    value.length === 0 ||
-    value.length % 4 !== 0 ||
-    !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u.test(
-      value,
-    )
-  ) {
+/**
+ * Shape check only. The pattern is a single flat character class so it scans
+ * the input once with no backtracking, which matters because these payloads
+ * reach several megabytes.
+ */
+function isStrictBase64(value: string): boolean {
+  return (
+    value.length > 0 &&
+    value.length % 4 === 0 &&
+    /^[A-Za-z0-9+/]+={0,2}$/u.test(value) &&
+    !value.slice(0, -2).includes("=")
+  );
+}
+
+/** Decoded byte length derived from the encoding, without decoding anything. */
+function base64DecodedByteLength(value: string): number {
+  if (value.length % 4 !== 0) {
+    return 0;
+  }
+  const padding = value.endsWith("==") ? 2 : value.endsWith("=") ? 1 : 0;
+  return (value.length / 4) * 3 - padding;
+}
+
+/**
+ * Decodes only the leading bytes of a base64 payload.
+ *
+ * Media validation here needs the container header and the total length, never
+ * the samples themselves. Decoding a full 90-second WAV cost roughly three
+ * million `charCodeAt` iterations per request and pushed the Worker past its
+ * resource limits, which Cloudflare surfaced as an empty 503 with no CORS
+ * headers — reported by browsers as a misleading CORS failure.
+ */
+function decodeStrictBase64Prefix(
+  value: string,
+  maximumBytes: number,
+): Uint8Array | null {
+  if (!isStrictBase64(value)) {
     return null;
   }
+  const wholeGroups = Math.min(
+    value.length / 4,
+    Math.ceil(maximumBytes / 3),
+  );
+  const prefix = value.slice(0, wholeGroups * 4);
   try {
-    const decoded = atob(value);
-    const bytes = new Uint8Array(decoded.length);
-    for (let index = 0; index < decoded.length; index += 1) {
+    // A whole number of 4-character groups always decodes on its own.
+    const decoded = atob(prefix);
+    const bytes = new Uint8Array(Math.min(decoded.length, maximumBytes));
+    for (let index = 0; index < bytes.length; index += 1) {
       bytes[index] = decoded.charCodeAt(index);
     }
     return bytes;
@@ -437,23 +472,28 @@ function matchesAscii(bytes: Uint8Array, offset: number, expected: string): bool
 }
 
 function isCanonicalCandidateWav(
-  bytes: Uint8Array,
+  header: Uint8Array,
+  totalByteLength: number,
   candidateDurationMs: number,
 ): boolean {
-  if (bytes.byteLength < WAV_HEADER_BYTES || bytes.byteLength > MAX_WAV_BYTES) {
+  if (
+    header.byteLength < WAV_HEADER_BYTES ||
+    totalByteLength < WAV_HEADER_BYTES ||
+    totalByteLength > MAX_WAV_BYTES
+  ) {
     return false;
   }
-  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const view = new DataView(header.buffer, header.byteOffset, header.byteLength);
   const dataLength = view.getUint32(40, true);
   const sampleCount = dataLength / PCM_BYTES_PER_SAMPLE;
   const expectedSampleCount = Math.ceil(
     (candidateDurationMs / 1_000) * CANDIDATE_PASS_B_SAMPLE_RATE_HZ,
   );
   return (
-    matchesAscii(bytes, 0, "RIFF") &&
-    view.getUint32(4, true) + 8 === bytes.byteLength &&
-    matchesAscii(bytes, 8, "WAVE") &&
-    matchesAscii(bytes, 12, "fmt ") &&
+    matchesAscii(header, 0, "RIFF") &&
+    view.getUint32(4, true) + 8 === totalByteLength &&
+    matchesAscii(header, 8, "WAVE") &&
+    matchesAscii(header, 12, "fmt ") &&
     view.getUint32(16, true) === 16 &&
     view.getUint16(20, true) === 1 &&
     view.getUint16(22, true) === 1 &&
@@ -462,10 +502,10 @@ function isCanonicalCandidateWav(
       CANDIDATE_PASS_B_SAMPLE_RATE_HZ * PCM_BYTES_PER_SAMPLE &&
     view.getUint16(32, true) === PCM_BYTES_PER_SAMPLE &&
     view.getUint16(34, true) === 16 &&
-    matchesAscii(bytes, 36, "data") &&
+    matchesAscii(header, 36, "data") &&
     dataLength > 0 &&
     dataLength % PCM_BYTES_PER_SAMPLE === 0 &&
-    WAV_HEADER_BYTES + dataLength === bytes.byteLength &&
+    WAV_HEADER_BYTES + dataLength === totalByteLength &&
     sampleCount === expectedSampleCount &&
     sampleCount <=
       (MAX_CANDIDATE_PASS_B_TARGET_DURATION_MS / 1_000) *
@@ -474,26 +514,28 @@ function isCanonicalCandidateWav(
 }
 
 function isCanonicalBroadcastTranscriptWav(
-  bytes: Uint8Array,
+  header: Uint8Array,
+  totalByteLength: number,
   durationMs: number,
 ): boolean {
   if (
-    bytes.byteLength < WAV_HEADER_BYTES ||
-    bytes.byteLength > MAX_BROADCAST_TRANSCRIPT_WAV_BYTES
+    header.byteLength < WAV_HEADER_BYTES ||
+    totalByteLength < WAV_HEADER_BYTES ||
+    totalByteLength > MAX_BROADCAST_TRANSCRIPT_WAV_BYTES
   ) {
     return false;
   }
-  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const view = new DataView(header.buffer, header.byteOffset, header.byteLength);
   const dataLength = view.getUint32(40, true);
   const sampleCount = dataLength / PCM_BYTES_PER_SAMPLE;
   const expectedSampleCount = Math.ceil(
     (durationMs / 1_000) * CANDIDATE_PASS_B_SAMPLE_RATE_HZ,
   );
   return (
-    matchesAscii(bytes, 0, "RIFF") &&
-    view.getUint32(4, true) + 8 === bytes.byteLength &&
-    matchesAscii(bytes, 8, "WAVE") &&
-    matchesAscii(bytes, 12, "fmt ") &&
+    matchesAscii(header, 0, "RIFF") &&
+    view.getUint32(4, true) + 8 === totalByteLength &&
+    matchesAscii(header, 8, "WAVE") &&
+    matchesAscii(header, 12, "fmt ") &&
     view.getUint32(16, true) === 16 &&
     view.getUint16(20, true) === 1 &&
     view.getUint16(22, true) === 1 &&
@@ -502,10 +544,10 @@ function isCanonicalBroadcastTranscriptWav(
       CANDIDATE_PASS_B_SAMPLE_RATE_HZ * PCM_BYTES_PER_SAMPLE &&
     view.getUint16(32, true) === PCM_BYTES_PER_SAMPLE &&
     view.getUint16(34, true) === 16 &&
-    matchesAscii(bytes, 36, "data") &&
+    matchesAscii(header, 36, "data") &&
     dataLength > 0 &&
     dataLength % PCM_BYTES_PER_SAMPLE === 0 &&
-    WAV_HEADER_BYTES + dataLength === bytes.byteLength &&
+    WAV_HEADER_BYTES + dataLength === totalByteLength &&
     sampleCount === expectedSampleCount
   );
 }
@@ -1167,12 +1209,19 @@ export async function handleCandidateInsightRequest(
     );
   }
 
-  const wavBytes = decodeStrictBase64(candidateRequest.audioBase64);
+  const wavHeader = decodeStrictBase64Prefix(
+    candidateRequest.audioBase64,
+    WAV_HEADER_BYTES,
+  );
   if (
-    wavBytes === null ||
-    !isCanonicalCandidateWav(wavBytes, candidateRequest.candidateDurationMs)
+    wavHeader === null ||
+    !isCanonicalCandidateWav(
+      wavHeader,
+      base64DecodedByteLength(candidateRequest.audioBase64),
+      candidateRequest.candidateDurationMs,
+    )
   ) {
-    wavBytes?.fill(0);
+    wavHeader?.fill(0);
     return jsonResponse(
       400,
       "INVALID_AUDIO",
@@ -1180,6 +1229,7 @@ export async function handleCandidateInsightRequest(
       origin,
     );
   }
+  wavHeader.fill(0);
 
   let clientRateLimit: { readonly success: boolean };
   try {
@@ -1187,7 +1237,6 @@ export async function handleCandidateInsightRequest(
       key: clientRateLimitKey(request),
     });
   } catch {
-    wavBytes.fill(0);
     return jsonResponse(
       503,
       "RATE_LIMIT_UNAVAILABLE",
@@ -1196,7 +1245,6 @@ export async function handleCandidateInsightRequest(
     );
   }
   if (!clientRateLimit.success) {
-    wavBytes.fill(0);
     return jsonResponse(
       429,
       "RATE_LIMITED",
@@ -1212,7 +1260,6 @@ export async function handleCandidateInsightRequest(
       key: RATE_LIMIT_KEY,
     });
   } catch {
-    wavBytes.fill(0);
     return jsonResponse(
       503,
       "RATE_LIMIT_UNAVAILABLE",
@@ -1221,7 +1268,6 @@ export async function handleCandidateInsightRequest(
     );
   }
   if (!globalRateLimit.success) {
-    wavBytes.fill(0);
     return jsonResponse(
       429,
       "RATE_LIMITED",
@@ -1230,8 +1276,6 @@ export async function handleCandidateInsightRequest(
       { "Retry-After": "60" },
     );
   }
-
-  wavBytes.fill(0);
 
   const fetchImplementation = dependencies.fetchImplementation ?? fetch;
   const timeoutMs = dependencies.upstreamTimeoutMs ?? UPSTREAM_TIMEOUT_MS;
@@ -1602,12 +1646,19 @@ export async function handleBroadcastTranscriptRequest(
       origin,
     );
   }
-  const wavBytes = decodeStrictBase64(transcriptRequest.audioBase64);
+  const wavHeader = decodeStrictBase64Prefix(
+    transcriptRequest.audioBase64,
+    WAV_HEADER_BYTES,
+  );
   if (
-    wavBytes === null ||
-    !isCanonicalBroadcastTranscriptWav(wavBytes, transcriptRequest.durationMs)
+    wavHeader === null ||
+    !isCanonicalBroadcastTranscriptWav(
+      wavHeader,
+      base64DecodedByteLength(transcriptRequest.audioBase64),
+      transcriptRequest.durationMs,
+    )
   ) {
-    wavBytes?.fill(0);
+    wavHeader?.fill(0);
     return jsonResponse(
       400,
       "INVALID_AUDIO",
@@ -1615,7 +1666,7 @@ export async function handleBroadcastTranscriptRequest(
       origin,
     );
   }
-  wavBytes.fill(0);
+  wavHeader.fill(0);
 
   try {
     const clientLimit = await environment.IP_RATE_LIMITER.limit({
@@ -2427,22 +2478,51 @@ export async function handleBroadcastContextRequest(
   });
 }
 
+function routeRequest(
+  request: Request,
+  environment: AiProxyEnvironment,
+): Promise<Response> {
+  const url = new URL(request.url);
+  if (url.pathname === BROADCAST_TRANSCRIPT_ENDPOINT_PATH) {
+    return handleBroadcastTranscriptRequest(request, environment);
+  }
+  if (url.pathname === BROADCAST_CONTEXT_ENDPOINT_PATH) {
+    return handleBroadcastContextRequest(request, environment);
+  }
+  if (url.pathname === YOUTUBE_CAPTIONS_ENDPOINT_PATH) {
+    return handleYouTubeCaptionsRequest(request, environment);
+  }
+  if (url.pathname === CHZZK_VIDEO_CHANNEL_ENDPOINT_PATH) {
+    return handleChzzkVideoChannelRequest(request, environment);
+  }
+  return handleCandidateInsightRequest(request, environment);
+}
+
 export default {
-  fetch(request: Request, environment: AiProxyEnvironment): Promise<Response> {
-    const url = new URL(request.url);
-    if (url.pathname === BROADCAST_TRANSCRIPT_ENDPOINT_PATH) {
-      return handleBroadcastTranscriptRequest(request, environment);
+  /**
+   * Every response leaves through here so an unexpected failure still carries
+   * CORS headers. Without this, a thrown handler produced a Cloudflare error
+   * page with no `Access-Control-Allow-Origin`, and the browser reported a
+   * misleading CORS violation instead of the real fault.
+   *
+   * A runtime that is killed for exceeding CPU or memory limits never reaches
+   * this catch, so keeping request work small remains the actual defence.
+   */
+  async fetch(
+    request: Request,
+    environment: AiProxyEnvironment,
+  ): Promise<Response> {
+    const origin = request.headers.get("Origin");
+    try {
+      return await routeRequest(request, environment);
+    } catch {
+      return jsonResponse(
+        500,
+        "PROXY_UNAVAILABLE",
+        "AI 중계에서 예상하지 못한 문제가 생겼어요. 잠시 뒤 다시 시도해 주세요.",
+        origin,
+      );
     }
-    if (url.pathname === BROADCAST_CONTEXT_ENDPOINT_PATH) {
-      return handleBroadcastContextRequest(request, environment);
-    }
-    if (url.pathname === YOUTUBE_CAPTIONS_ENDPOINT_PATH) {
-      return handleYouTubeCaptionsRequest(request, environment);
-    }
-    if (url.pathname === CHZZK_VIDEO_CHANNEL_ENDPOINT_PATH) {
-      return handleChzzkVideoChannelRequest(request, environment);
-    }
-    return handleCandidateInsightRequest(request, environment);
   },
 };
 

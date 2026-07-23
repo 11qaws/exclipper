@@ -6031,3 +6031,16 @@
     display: none;
   }
 }
+
+/* Empty-state recovery actions: a stopped analysis must offer a way forward. */
+.rh-empty-state-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ex-space-xs);
+  margin-top: var(--ex-space-md);
+}
+
+.rh-empty-state[data-reason="analysis-incomplete"] {
+  border-color: var(--rh-warning-border);
+  background: var(--rh-warning-bg);
+}
