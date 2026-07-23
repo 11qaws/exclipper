@@ -393,7 +393,7 @@ type AnalysisSelectionSummary = DurableAnalysisSelectionSummary;
 type AnalysisCoverageSummary = DurableAnalysisCoverageSummary;
 type AnalysisGapApprovalEvidence = DurableAnalysisGapApprovalEvidence;
 
-const APP_VERSION = "0.4.7";
+const APP_VERSION = "0.4.8";
 const PERSISTENCE_SCHEMA_VERSION = "0.3.0";
 const SIGNAL_ENGINE_VERSION =
   "streamer-reaction-fast-pass-v5-chat-fallback-music-confirmation";
@@ -7302,6 +7302,37 @@ function App() {
                   ))}
                 </ol>
               </section>
+
+              {!contextualCandidatePublicationReady && !analysisComplete && candidates.length > 0 && (
+                <details className="rh-early-candidates">
+                  <summary>
+                    <strong>빠른 후보 {candidates.length}개 — 검증 전</strong>
+                    <span>지금 훑어볼 수 있어요. 최종 확정 전이라 순서·경계·설명이 바뀔 수 있어요.</span>
+                  </summary>
+                  <ol className="rh-early-candidates-list" aria-label="검증 전 빠른 후보 목록">
+                    {[...candidates]
+                      .sort((left, right) => left.peakMs - right.peakMs || left.id.localeCompare(right.id))
+                      .map((candidate) => (
+                        <li key={candidate.id}>
+                          <span className="rh-early-candidate-time">
+                            {formatDuration(candidate.startMs)}–{formatDuration(candidate.endMs)}
+                          </span>
+                          <span className="rh-early-candidate-score">
+                            상대 점수 {Math.round(candidate.score * 100)}
+                          </span>
+                          <button
+                            type="button"
+                            className="btn btn-secondary"
+                            disabled={sourcePreviewUrl === null}
+                            onClick={() => playCandidate(candidate)}
+                          >
+                            재생
+                          </button>
+                        </li>
+                      ))}
+                  </ol>
+                </details>
+              )}
 
               {(broadcastTranscriptStatus === "failed" ||
                 broadcastContextStatus === "failed" ||

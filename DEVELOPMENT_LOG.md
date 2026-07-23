@@ -1,5 +1,26 @@
 # Development Log
 
+## 2026-07-24 `0.4.8` 검증 전 빠른 후보 공개 (PART H-4' + PART F 배너)
+
+### Before / 원인
+
+- PART F(`0.4.4`)에서 "먼저 검토하기" 배너를 의도적으로 미뤘다 — 누를 곳(검증 전 후보를 안전하게 보여줄 화면)이 없었기 때문이다. 이번 항목이 그 짝이다.
+- 조사해 보니 애초에 "탐색 중"(맥락 종합 전) 상태에서는 후보를 카드로 전혀 보여주지 않고 있었다. 타임라인은 "잠재 신호는… 아직 클립 후보가 아닙니다"라고 명시적으로 안내하며, 실제 후보 카드 목록(`rh-timeline-cards`)조차 `contextualCandidatePublicationReady`에 전부 가려져 있었다. 즉 검증 전에는 개별 후보를 재생하거나 훑어볼 방법이 전혀 없었다.
+
+### After / 구현
+
+- 리뷰 워크스페이스의 2단계 진행 패널 바로 아래, "탐색 중"이고 빠른 탐색 후보가 하나 이상 있을 때만(`!contextualCandidatePublicationReady && !analysisComplete && candidates.length > 0`) `<details className="rh-early-candidates">`를 새로 노출한다. 제목은 "빠른 후보 N개 — 검증 전"으로 상태를 명시하고, 펼치면 시간·상대 점수·재생 버튼만 있는 최소 카드 목록이 나온다.
+- 명세의 "간이 카드(제목 없음, context packet 접근 금지)" 제약을 그대로 지켰다 — 이 목록은 `candidate.startMs/endMs/peakMs/score`만 읽고, `candidatePassBContextById`나 narrative/evidence 계열 함수는 아예 건드리지 않는다. PART I가 지목한 `candidatePassBContextById[id]!` 단정 함정을 원천적으로 피하는 방식이다.
+- **PART F 배너와 통합**: 별도의 "먼저 검토하기 → 스크롤 이동" 배너를 새로 만들지 않았다. 이 `<details>` 자체가 진행 패널 바로 아래, 스크롤 없이 보이는 위치에 있어 배너가 가리킬 곳과 배너가 사실상 같은 자리다. 명세가 원했던 문구("빠른 후보 n개 — 검증 전")는 그대로 살렸다.
+- `<details>` 네이티브 토글을 그대로 써서 새 React 상태를 만들지 않았다 — 이번 세션 내내 써 온 저위험 패턴을 재사용했다.
+
+### 검증
+
+- `npm run check`: strict TypeScript, ESLint 경고 0, 88개 파일 897개 테스트(순수 로직 변경이 없어 테스트 수 그대로).
+- `npm run build` 통과.
+- 이번 커밋을 포함해 세션 전체에서 수정한 모든 파일에 대해 제어문자(NUL 등) 바이트 스캔을 다시 돌려 깨끗함을 확인했다.
+- **미검증**: 실제 브라우저에서 "탐색 중" 단계에 진입했을 때 이 패널이 실제로 나타나는지, 재생 버튼이 `sourcePreviewUrl` 준비 전/후 상태를 올바르게 반영하는지.
+
 ## 2026-07-24 `0.4.7` 결과·산출물 개선 (PART H-1~H-6)
 
 ### Before / 원인
