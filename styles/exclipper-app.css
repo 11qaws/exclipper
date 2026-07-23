@@ -12,19 +12,19 @@
  */
 
 :root {
-  --ex-bg: #fbfcfe;
-  --ex-bg2: #f3f6fa;
-  --ex-bg3: #e9eef6;
-  --ex-line: #dde5ef;
-  --ex-line2: #c3cfde;
-  --ex-ink: #10203a;
-  --ex-ink2: #3a4a63;
-  --ex-ink3: #66768f;
-  --ex-ink4: #93a1b6;
-  --ex-accent: #2563eb;
-  --ex-accent-ink: #1d4ed8;
-  --ex-accent-bg: #e9f0fe;
-  --ex-accent-line: #bcd2f8;
+  --ex-bg: #ffffff;
+  --ex-bg2: #f4f3fb;
+  --ex-bg3: #eae9f5;
+  --ex-line: #e4e2f1;
+  --ex-line2: #cbc7e3;
+  --ex-ink: #17162e;
+  --ex-ink2: #403e63;
+  --ex-ink3: #6f6d92;
+  --ex-ink4: #9d9bba;
+  --ex-accent: #5b4df0;
+  --ex-accent-ink: #4a3ee0;
+  --ex-accent-bg: #edebff;
+  --ex-accent-line: #cfc9ff;
   --ex-ok: #15803d;
   --ex-ok-bg: #eaf7ef;
   --ex-ok-line: #b5e2c6;
@@ -38,19 +38,19 @@
 }
 
 [data-theme="dark"] {
-  --ex-bg: #0d1526;
-  --ex-bg2: #131d31;
-  --ex-bg3: #1a2740;
-  --ex-line: #243350;
-  --ex-line2: #334565;
-  --ex-ink: #e8eef8;
-  --ex-ink2: #bccadf;
-  --ex-ink3: #8ba3c4;
-  --ex-ink4: #5f7495;
-  --ex-accent: #6ea8ff;
-  --ex-accent-ink: #8ebbff;
-  --ex-accent-bg: #16264a;
-  --ex-accent-line: #2c4577;
+  --ex-bg: #191831;
+  --ex-bg2: #100f22;
+  --ex-bg3: #232145;
+  --ex-line: #2c2a52;
+  --ex-line2: #3f3b73;
+  --ex-ink: #eceafd;
+  --ex-ink2: #c6c3e8;
+  --ex-ink3: #918eba;
+  --ex-ink4: #676390;
+  --ex-accent: #8f84ff;
+  --ex-accent-ink: #a79dff;
+  --ex-accent-bg: #241f4d;
+  --ex-accent-line: #3a3480;
   --ex-ok: #7ee2a8;
   --ex-ok-bg: #0e2b1c;
   --ex-ok-line: #1e4d33;
@@ -251,6 +251,38 @@ progress.rh-analysis-progress {
   border-top: none;
   color: var(--ex-ink4);
   font-size: var(--ex-font-2xs);
+}
+
+/* ── Tablet v2: rounder floating surfaces on the lavender desk ── */
+.rh-panel,
+.rh-project-context,
+.rh-recovery-panel {
+  border-radius: 18px;
+  box-shadow: 0 10px 30px rgba(23, 22, 46, 0.07);
+}
+
+[data-theme="dark"] .rh-panel,
+[data-theme="dark"] .rh-project-context,
+[data-theme="dark"] .rh-recovery-panel {
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+}
+
+.rh-candidate-card,
+.rh-source-card,
+.rh-recovery-item {
+  border-radius: 16px;
+}
+
+.rh-app .btn {
+  border-radius: 12px;
+}
+
+.rh-primary-action {
+  border-radius: 14px;
+}
+
+.rh-brand-mark {
+  border-radius: 10px;
 }
 
 /* ── Focus: one ring everywhere ─────────────────────────────── */
