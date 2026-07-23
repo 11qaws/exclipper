@@ -11,7 +11,6 @@ import {
   type InputAudioTrack,
 } from "mediabunny";
 import {
-  encodeCandidatePassBBase64,
   encodeCandidatePassBPcm16Wav,
 } from "./candidatePassBGemini";
 import { CANDIDATE_PASS_B_SAMPLE_RATE_HZ } from "./candidatePassBWorkerProtocol";
@@ -19,7 +18,7 @@ import {
   MAX_BROADCAST_TRANSCRIPT_QWEN_DURATION_MS,
 } from "./broadcastTranscriptQwen";
 import type { BroadcastContextTranscriptionChunk } from "./broadcastContextSamplingPlan";
-import { requestBroadcastTranscriptQwenChunk } from "./broadcastTranscriptQwenClient";
+import { requestBroadcastTranscriptChunkBinary } from "./broadcastTranscriptQwenClient";
 import {
   prioritizeAdjacentTranscriptChunks,
   shouldExpandBroadcastContextChunk,
@@ -46,19 +45,14 @@ interface ActiveTask {
 /**
  * How many transcription requests may be in flight at once.
  *
- * Overlapping decode with the remote round trip is the obvious win, but the
- * binding constraint is not this worker or the proxy rate limit: it is the
- * Cloudflare isolate's 128 MB memory ceiling, which is the same on the free
- * and paid plans. Each 90-second chunk arrives as 3.84 MB of base64 inside a
- * JSON body, and decoding then parsing it costs roughly 19 MB per request.
- * Measured against production, two concurrent requests already return empty
- * 503s with no CORS headers, so the window stays at one until the proxy can
- * accept the audio without materialising it as a string twice.
- *
- * The real speed-up for a captioned broadcast is the caption path, which
- * skips transcription altogether.
+ * The ceiling used to be the relay: base64-in-JSON transport cost it about
+ * 30 MB of transient strings per request against a 128 MB isolate, and two
+ * concurrent chunks were enough to kill it (measured 2026-07-23). The 0.4.0
+ * raw-WAV transport keeps the relay near 7 MB per request, so four chunks
+ * overlap with headroom and the binding constraint moves to the proxy rate
+ * limit.
  */
-const MAX_IN_FLIGHT_TRANSCRIPTIONS = 1;
+const MAX_IN_FLIGHT_TRANSCRIPTIONS = 4;
 
 let activeTask: ActiveTask | null = null;
 
@@ -389,16 +383,14 @@ async function runAnalyze(
         CANDIDATE_PASS_B_SAMPLE_RATE_HZ,
       );
       pcm.fill(0);
-      const audioBase64 = encodeCandidatePassBBase64(wav);
-      wav.fill(0);
 
       const controller = new AbortController();
       task.fetchControllers.add(controller);
       const chunkId = chunk.chunkId;
       const inFlightRequest = (async (): Promise<void> => {
         try {
-          const result = await requestBroadcastTranscriptQwenChunk(
-            audioBase64,
+          const result = await requestBroadcastTranscriptChunkBinary(
+            wav,
             chunk.sourceStartMs,
             durationMs,
             { signal: controller.signal },
@@ -433,6 +425,7 @@ async function runAnalyze(
             reason: "transcription-failed",
           });
         } finally {
+          wav.fill(0);
           task.fetchControllers.delete(controller);
           processedCount += 1;
         }

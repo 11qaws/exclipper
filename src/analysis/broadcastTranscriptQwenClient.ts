@@ -82,46 +82,14 @@ function parseResult(
   };
 }
 
-export async function requestBroadcastTranscriptQwenChunk(
-  audioBase64: string,
+async function resolveBroadcastTranscriptProxyResponse(
+  responsePromise: Promise<Response>,
   sourceStartMs: number,
   durationMs: number,
-  options: {
-    readonly signal?: AbortSignal;
-    readonly fetchImplementation?: FetchImplementation;
-  } = {},
 ): Promise<BroadcastTranscriptQwenResult> {
-  if (
-    typeof audioBase64 !== "string" ||
-    audioBase64.length === 0 ||
-    audioBase64.length > MAX_BROADCAST_TRANSCRIPT_QWEN_BASE64_LENGTH ||
-    !Number.isSafeInteger(sourceStartMs) ||
-    sourceStartMs < 0 ||
-    !Number.isSafeInteger(durationMs) ||
-    durationMs <= 0 ||
-    durationMs > MAX_BROADCAST_TRANSCRIPT_QWEN_DURATION_MS
-  ) {
-    throw new BroadcastTranscriptQwenClientError(
-      "INVALID_INPUT",
-      "방송 대사 분석 구간을 준비하지 못했어요.",
-    );
-  }
-
   let response: Response;
   try {
-    const requestInit: RequestInit = {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ audioBase64, sourceStartMs, durationMs }),
-      credentials: "omit",
-      cache: "no-store",
-      referrerPolicy: "no-referrer",
-      ...(options.signal === undefined ? {} : { signal: options.signal }),
-    };
-    response = await (options.fetchImplementation ?? fetch)(
-      BROADCAST_TRANSCRIPT_PROXY_ENDPOINT,
-      requestInit,
-    );
+    response = await responsePromise;
   } catch {
     throw new BroadcastTranscriptQwenClientError(
       "PROXY_UNAVAILABLE",
@@ -171,4 +139,103 @@ export async function requestBroadcastTranscriptQwenChunk(
     );
   }
   return result;
+}
+
+export async function requestBroadcastTranscriptQwenChunk(
+  audioBase64: string,
+  sourceStartMs: number,
+  durationMs: number,
+  options: {
+    readonly signal?: AbortSignal;
+    readonly fetchImplementation?: FetchImplementation;
+  } = {},
+): Promise<BroadcastTranscriptQwenResult> {
+  if (
+    typeof audioBase64 !== "string" ||
+    audioBase64.length === 0 ||
+    audioBase64.length > MAX_BROADCAST_TRANSCRIPT_QWEN_BASE64_LENGTH ||
+    !Number.isSafeInteger(sourceStartMs) ||
+    sourceStartMs < 0 ||
+    !Number.isSafeInteger(durationMs) ||
+    durationMs <= 0 ||
+    durationMs > MAX_BROADCAST_TRANSCRIPT_QWEN_DURATION_MS
+  ) {
+    throw new BroadcastTranscriptQwenClientError(
+      "INVALID_INPUT",
+      "방송 대사 분석 구간을 준비하지 못했어요.",
+    );
+  }
+
+  const requestInit: RequestInit = {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ audioBase64, sourceStartMs, durationMs }),
+    credentials: "omit",
+    cache: "no-store",
+    referrerPolicy: "no-referrer",
+    ...(options.signal === undefined ? {} : { signal: options.signal }),
+  };
+  return resolveBroadcastTranscriptProxyResponse(
+    (options.fetchImplementation ?? fetch)(
+      BROADCAST_TRANSCRIPT_PROXY_ENDPOINT,
+      requestInit,
+    ),
+    sourceStartMs,
+    durationMs,
+  );
+}
+
+/** WAV byte ceiling implied by the base64 contract the proxy already enforces. */
+const MAX_BROADCAST_TRANSCRIPT_WAV_BYTES =
+  (MAX_BROADCAST_TRANSCRIPT_QWEN_BASE64_LENGTH / 4) * 3;
+
+/**
+ * Sends the chunk as raw WAV bytes instead of base64 wrapped in JSON.
+ *
+ * The old transport inflated every chunk by a third and forced the relay to
+ * materialise megabyte strings, which is what capped transcription at one
+ * request in flight. Raw bytes keep the relay memory flat, so chunks can
+ * finally overlap.
+ */
+export async function requestBroadcastTranscriptChunkBinary(
+  wavBytes: Uint8Array,
+  sourceStartMs: number,
+  durationMs: number,
+  options: {
+    readonly signal?: AbortSignal;
+    readonly fetchImplementation?: FetchImplementation;
+  } = {},
+): Promise<BroadcastTranscriptQwenResult> {
+  if (
+    !(wavBytes instanceof Uint8Array) ||
+    wavBytes.byteLength < 44 ||
+    wavBytes.byteLength > MAX_BROADCAST_TRANSCRIPT_WAV_BYTES ||
+    !Number.isSafeInteger(sourceStartMs) ||
+    sourceStartMs < 0 ||
+    !Number.isSafeInteger(durationMs) ||
+    durationMs <= 0 ||
+    durationMs > MAX_BROADCAST_TRANSCRIPT_QWEN_DURATION_MS
+  ) {
+    throw new BroadcastTranscriptQwenClientError(
+      "INVALID_INPUT",
+      "방송 대사 분석 구간을 준비하지 못했어요.",
+    );
+  }
+  const requestInit: RequestInit = {
+    method: "POST",
+    headers: { "Content-Type": "audio/wav" },
+    body: wavBytes as Uint8Array<ArrayBuffer>,
+    credentials: "omit",
+    cache: "no-store",
+    referrerPolicy: "no-referrer",
+    ...(options.signal === undefined ? {} : { signal: options.signal }),
+  };
+  return resolveBroadcastTranscriptProxyResponse(
+    (options.fetchImplementation ?? fetch)(
+      `${BROADCAST_TRANSCRIPT_PROXY_ENDPOINT}?startMs=${sourceStartMs}&durationMs=${durationMs}`,
+      requestInit,
+    ),
+    sourceStartMs,
+    durationMs,
+  );
 }

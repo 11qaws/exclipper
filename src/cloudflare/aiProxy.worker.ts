@@ -429,6 +429,85 @@ function base64DecodedByteLength(value: string): number {
 }
 
 /**
+ * Upstream bodies for raw-WAV ingress are assembled as bytes end to end.
+ *
+ * The JSON ingress path decoded, parsed and re-stringified megabyte payloads,
+ * holding roughly 30 MB of transient strings per request against a 128 MB
+ * isolate; two concurrent chunks were enough to kill the Worker (measured
+ * 2026-07-23). Byte assembly keeps the whole trip near 7 MB per request,
+ * which is what makes overlapping chunks safe.
+ *
+ * The sentinel is valid base64 so the existing builders accept it, and the
+ * exact 28-character token cannot occur in the fixed template text, so
+ * splitting on it yields exactly the prefix and suffix around the audio.
+ */
+const TRANSCRIPT_AUDIO_SENTINEL = "ExclipperAudioSentinel000000";
+const BASE64_BYTE_ALPHABET = new TextEncoder().encode(
+  "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/",
+);
+const BASE64_PAD_BYTE = 61;
+
+function base64EncodeToBytes(input: Uint8Array): Uint8Array<ArrayBuffer> {
+  const out = new Uint8Array(4 * Math.ceil(input.byteLength / 3));
+  const whole = input.byteLength - (input.byteLength % 3);
+  let o = 0;
+  for (let i = 0; i < whole; i += 3) {
+    const x = (input[i]! << 16) | (input[i + 1]! << 8) | input[i + 2]!;
+    out[o] = BASE64_BYTE_ALPHABET[(x >>> 18) & 63]!;
+    out[o + 1] = BASE64_BYTE_ALPHABET[(x >>> 12) & 63]!;
+    out[o + 2] = BASE64_BYTE_ALPHABET[(x >>> 6) & 63]!;
+    out[o + 3] = BASE64_BYTE_ALPHABET[x & 63]!;
+    o += 4;
+  }
+  const rest = input.byteLength - whole;
+  if (rest === 1) {
+    const x = input[whole]! << 16;
+    out[o] = BASE64_BYTE_ALPHABET[(x >>> 18) & 63]!;
+    out[o + 1] = BASE64_BYTE_ALPHABET[(x >>> 12) & 63]!;
+    out[o + 2] = BASE64_PAD_BYTE;
+    out[o + 3] = BASE64_PAD_BYTE;
+  } else if (rest === 2) {
+    const x = (input[whole]! << 16) | (input[whole + 1]! << 8);
+    out[o] = BASE64_BYTE_ALPHABET[(x >>> 18) & 63]!;
+    out[o + 1] = BASE64_BYTE_ALPHABET[(x >>> 12) & 63]!;
+    out[o + 2] = BASE64_BYTE_ALPHABET[(x >>> 6) & 63]!;
+    out[o + 3] = BASE64_PAD_BYTE;
+  }
+  return out;
+}
+
+type BroadcastTranscriptAudioPayload =
+  | { readonly kind: "base64"; readonly audioBase64: string }
+  | { readonly kind: "wav-bytes"; readonly wavBytes: Uint8Array };
+
+function buildBroadcastTranscriptUpstreamBytes(
+  provider: string,
+  wavBytes: Uint8Array,
+): Uint8Array<ArrayBuffer> {
+  const template = JSON.stringify(
+    provider === "gemini"
+      ? buildBroadcastTranscriptGeminiRequestBody(TRANSCRIPT_AUDIO_SENTINEL)
+      : buildBroadcastTranscriptQwenOmniRequestBody(TRANSCRIPT_AUDIO_SENTINEL),
+  );
+  const parts = template.split(TRANSCRIPT_AUDIO_SENTINEL);
+  if (parts.length !== 2) {
+    throw new Error("The audio sentinel must split the template exactly once.");
+  }
+  const encoder = new TextEncoder();
+  const prefix = encoder.encode(parts[0]);
+  const suffix = encoder.encode(parts[1]);
+  const audio = base64EncodeToBytes(wavBytes);
+  const out = new Uint8Array(
+    prefix.byteLength + audio.byteLength + suffix.byteLength,
+  );
+  out.set(prefix, 0);
+  out.set(audio, prefix.byteLength);
+  out.set(suffix, prefix.byteLength + audio.byteLength);
+  audio.fill(0);
+  return out;
+}
+
+/**
  * Decodes only the leading bytes of a base64 payload.
  *
  * Media validation here needs the container header and the total length, never
@@ -1375,19 +1454,27 @@ function shouldAttemptBroadcastTranscriptProviderFallback(
 
 async function attemptBroadcastTranscriptProvider(
   connection: ActiveBroadcastTranscriptConnection,
-  transcriptRequest: NonNullable<
-    ReturnType<typeof parseBroadcastTranscriptQwenProxyRequest>
-  >,
+  transcriptRequest: {
+    readonly sourceStartMs: number;
+    readonly durationMs: number;
+  },
+  audio: BroadcastTranscriptAudioPayload,
   fetchImplementation: FetchImplementation,
   timeoutMs: number,
 ): Promise<BroadcastTranscriptProviderAttempt> {
-  let upstreamBody: string;
+  let upstreamBody: string | Uint8Array<ArrayBuffer>;
   try {
-    upstreamBody = JSON.stringify(
-      connection.provider === "gemini"
-        ? buildBroadcastTranscriptGeminiRequestBody(transcriptRequest.audioBase64)
-        : buildBroadcastTranscriptQwenOmniRequestBody(transcriptRequest.audioBase64),
-    );
+    upstreamBody =
+      audio.kind === "wav-bytes"
+        ? buildBroadcastTranscriptUpstreamBytes(
+            connection.provider,
+            audio.wavBytes,
+          )
+        : JSON.stringify(
+            connection.provider === "gemini"
+              ? buildBroadcastTranscriptGeminiRequestBody(audio.audioBase64)
+              : buildBroadcastTranscriptQwenOmniRequestBody(audio.audioBase64),
+          );
   } catch {
     return { ok: false, kind: "invalid-argument" };
   }
@@ -1534,11 +1621,15 @@ export async function handleBroadcastTranscriptRequest(
       { Allow: "POST, OPTIONS" },
     );
   }
-  if (mediaType(request) !== "application/json") {
+  const requestMediaType = mediaType(request);
+  if (
+    requestMediaType !== "application/json" &&
+    requestMediaType !== "audio/wav"
+  ) {
     return jsonResponse(
       415,
       "UNSUPPORTED_MEDIA_TYPE",
-      "JSON 형식으로 방송 오디오를 보내 주세요.",
+      "JSON 또는 audio/wav 형식으로 방송 오디오를 보내 주세요.",
       origin,
     );
   }
@@ -1592,81 +1683,169 @@ export async function handleBroadcastTranscriptRequest(
     );
   }
 
-  const declaredLength = request.headers.get("Content-Length");
-  if (
-    declaredLength !== null &&
-    (!/^\d+$/u.test(declaredLength) ||
-      Number(declaredLength) > MAX_BROADCAST_TRANSCRIPT_REQUEST_BODY_BYTES)
-  ) {
-    return jsonResponse(
-      413,
-      "PAYLOAD_TOO_LARGE",
-      "방송 오디오 조각의 크기가 허용 범위를 넘었어요.",
-      origin,
-    );
-  }
+  let transcriptTimes: {
+    readonly sourceStartMs: number;
+    readonly durationMs: number;
+  };
+  let transcriptAudio: BroadcastTranscriptAudioPayload;
+  if (requestMediaType === "audio/wav") {
+    const requestUrl = new URL(request.url);
+    const startRaw = requestUrl.searchParams.get("startMs");
+    const durationRaw = requestUrl.searchParams.get("durationMs");
+    const sourceStartMs =
+      startRaw !== null && /^\d{1,10}$/u.test(startRaw)
+        ? Number(startRaw)
+        : null;
+    const durationMs =
+      durationRaw !== null && /^\d{1,7}$/u.test(durationRaw)
+        ? Number(durationRaw)
+        : null;
+    if (
+      [...requestUrl.searchParams.keys()].some(
+        (key) => key !== "startMs" && key !== "durationMs",
+      ) ||
+      sourceStartMs === null ||
+      durationMs === null ||
+      durationMs <= 0 ||
+      durationMs > MAX_BROADCAST_TRANSCRIPT_QWEN_DURATION_MS
+    ) {
+      return jsonResponse(
+        400,
+        "INVALID_REQUEST",
+        "방송 오디오 요청 형식을 확인해 주세요.",
+        origin,
+      );
+    }
+    const declaredLength = request.headers.get("Content-Length");
+    if (
+      declaredLength !== null &&
+      (!/^\d+$/u.test(declaredLength) ||
+        Number(declaredLength) > MAX_BROADCAST_TRANSCRIPT_WAV_BYTES)
+    ) {
+      return jsonResponse(
+        413,
+        "PAYLOAD_TOO_LARGE",
+        "방송 오디오 조각의 크기가 허용 범위를 넘었어요.",
+        origin,
+      );
+    }
+    let wavBytes: Uint8Array;
+    try {
+      wavBytes = await readBodyWithLimit(
+        request.body,
+        MAX_BROADCAST_TRANSCRIPT_WAV_BYTES,
+      );
+    } catch {
+      return jsonResponse(
+        413,
+        "PAYLOAD_TOO_LARGE",
+        "방송 오디오 조각의 크기가 허용 범위를 넘었어요.",
+        origin,
+      );
+    }
+    if (
+      wavBytes.byteLength < WAV_HEADER_BYTES ||
+      !isCanonicalBroadcastTranscriptWav(
+        wavBytes.subarray(0, WAV_HEADER_BYTES),
+        wavBytes.byteLength,
+        durationMs,
+      )
+    ) {
+      wavBytes.fill(0);
+      return jsonResponse(
+        400,
+        "INVALID_AUDIO",
+        "16kHz 모노 WAV 방송 오디오를 확인해 주세요.",
+        origin,
+      );
+    }
+    transcriptTimes = { sourceStartMs, durationMs };
+    transcriptAudio = { kind: "wav-bytes", wavBytes };
+  } else {
+    const declaredLength = request.headers.get("Content-Length");
+    if (
+      declaredLength !== null &&
+      (!/^\d+$/u.test(declaredLength) ||
+        Number(declaredLength) > MAX_BROADCAST_TRANSCRIPT_REQUEST_BODY_BYTES)
+    ) {
+      return jsonResponse(
+        413,
+        "PAYLOAD_TOO_LARGE",
+        "방송 오디오 조각의 크기가 허용 범위를 넘었어요.",
+        origin,
+      );
+    }
 
-  let requestBytes: Uint8Array;
-  try {
-    requestBytes = await readBodyWithLimit(
-      request.body,
-      MAX_BROADCAST_TRANSCRIPT_REQUEST_BODY_BYTES,
-    );
-  } catch {
-    return jsonResponse(
-      413,
-      "PAYLOAD_TOO_LARGE",
-      "방송 오디오 조각의 크기가 허용 범위를 넘었어요.",
-      origin,
-    );
-  }
+    let requestBytes: Uint8Array;
+    try {
+      requestBytes = await readBodyWithLimit(
+        request.body,
+        MAX_BROADCAST_TRANSCRIPT_REQUEST_BODY_BYTES,
+      );
+    } catch {
+      return jsonResponse(
+        413,
+        "PAYLOAD_TOO_LARGE",
+        "방송 오디오 조각의 크기가 허용 범위를 넘었어요.",
+        origin,
+      );
+    }
 
-  let inputValue: unknown;
-  try {
-    inputValue = JSON.parse(
-      new TextDecoder("utf-8", { fatal: true }).decode(requestBytes),
-    );
-  } catch {
+    let inputValue: unknown;
+    try {
+      inputValue = JSON.parse(
+        new TextDecoder("utf-8", { fatal: true }).decode(requestBytes),
+      );
+    } catch {
+      requestBytes.fill(0);
+      return jsonResponse(
+        400,
+        "INVALID_REQUEST",
+        "방송 오디오 요청 형식을 확인해 주세요.",
+        origin,
+      );
+    }
     requestBytes.fill(0);
-    return jsonResponse(
-      400,
-      "INVALID_REQUEST",
-      "방송 오디오 요청 형식을 확인해 주세요.",
-      origin,
-    );
-  }
-  requestBytes.fill(0);
 
-  const transcriptRequest = parseBroadcastTranscriptQwenProxyRequest(inputValue);
-  if (transcriptRequest === null) {
-    return jsonResponse(
-      400,
-      "INVALID_REQUEST",
-      "방송 오디오 요청 형식을 확인해 주세요.",
-      origin,
+    const transcriptRequest = parseBroadcastTranscriptQwenProxyRequest(inputValue);
+    if (transcriptRequest === null) {
+      return jsonResponse(
+        400,
+        "INVALID_REQUEST",
+        "방송 오디오 요청 형식을 확인해 주세요.",
+        origin,
+      );
+    }
+    const wavHeader = decodeStrictBase64Prefix(
+      transcriptRequest.audioBase64,
+      WAV_HEADER_BYTES,
     );
+    if (
+      wavHeader === null ||
+      !isCanonicalBroadcastTranscriptWav(
+        wavHeader,
+        base64DecodedByteLength(transcriptRequest.audioBase64),
+        transcriptRequest.durationMs,
+      )
+    ) {
+      wavHeader?.fill(0);
+      return jsonResponse(
+        400,
+        "INVALID_AUDIO",
+        "16kHz 모노 WAV 방송 오디오를 확인해 주세요.",
+        origin,
+      );
+    }
+    wavHeader.fill(0);
+    transcriptTimes = {
+      sourceStartMs: transcriptRequest.sourceStartMs,
+      durationMs: transcriptRequest.durationMs,
+    };
+    transcriptAudio = {
+      kind: "base64",
+      audioBase64: transcriptRequest.audioBase64,
+    };
   }
-  const wavHeader = decodeStrictBase64Prefix(
-    transcriptRequest.audioBase64,
-    WAV_HEADER_BYTES,
-  );
-  if (
-    wavHeader === null ||
-    !isCanonicalBroadcastTranscriptWav(
-      wavHeader,
-      base64DecodedByteLength(transcriptRequest.audioBase64),
-      transcriptRequest.durationMs,
-    )
-  ) {
-    wavHeader?.fill(0);
-    return jsonResponse(
-      400,
-      "INVALID_AUDIO",
-      "16kHz 모노 WAV 방송 오디오를 확인해 주세요.",
-      origin,
-    );
-  }
-  wavHeader.fill(0);
 
   try {
     const clientLimit = await environment.IP_RATE_LIMITER.limit({
@@ -1706,7 +1885,8 @@ export async function handleBroadcastTranscriptRequest(
   const timeoutMs = dependencies.upstreamTimeoutMs ?? UPSTREAM_TIMEOUT_MS;
   const primaryAttempt = await attemptBroadcastTranscriptProvider(
     providerConnection,
-    transcriptRequest,
+    transcriptTimes,
+    transcriptAudio,
     fetchImplementation,
     timeoutMs,
   );
@@ -1728,11 +1908,15 @@ export async function handleBroadcastTranscriptRequest(
       primaryFailureKind = primaryAttempt.kind;
       finalAttempt = await attemptBroadcastTranscriptProvider(
         fallbackConnection,
-        transcriptRequest,
+        transcriptTimes,
+        transcriptAudio,
         fetchImplementation,
         timeoutMs,
       );
     }
+  }
+  if (transcriptAudio.kind === "wav-bytes") {
+    transcriptAudio.wavBytes.fill(0);
   }
   if (!finalAttempt.ok) {
     return broadcastTranscriptProviderFailureResponse(

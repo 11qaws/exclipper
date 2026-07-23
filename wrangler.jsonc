@@ -22,7 +22,7 @@
       "name": "RATE_LIMITER",
       "namespace_id": "20260720",
       "simple": {
-        "limit": 30,
+        "limit": 60,
         "period": 60
       }
     },
@@ -30,7 +30,7 @@
       "name": "IP_RATE_LIMITER",
       "namespace_id": "20260721",
       "simple": {
-        "limit": 30,
+        "limit": 60,
         "period": 60
       }
     }

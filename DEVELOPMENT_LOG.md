@@ -1,5 +1,27 @@
 # Development Log
 
+## 2026-07-23 `0.4.0` 전사 바이너리 전송과 중계 바이트 조립
+
+### Before / 원인
+
+- 전사 청크는 브라우저에서 base64(+33%)로 부풀려 JSON에 담아 보내고, 중계가 그것을 UTF-16 문자열로 디코드→파싱→재직렬화했다. 요청당 약 30MB의 일시 문자열이 128MB isolate를 압박해 동시 2요청부터 빈 503으로 죽었고(2026-07-23 실측), 그 결과 전사 동시성이 1로 고정되어 전체 맥락 단계가 수십 분 걸렸다.
+
+### After / 구현
+
+- `/v1/broadcast-transcript`가 `Content-Type: audio/wav` + `?startMs=&durationMs=` 쿼리로 **WAV 원본 바이트**를 받는다. 기존 JSON 경로는 그대로 수용한다(신·구 병행) — 배포 순서 위험 제거.
+- 중계는 업스트림 본문을 **바이트로 조립**한다: 기존 빌더에 base64-유효 sentinel(`ExclipperAudioSentinel000000`)을 넣어 JSON 템플릿을 prefix/suffix로 쪼개고, WAV를 바이트→base64 바이트로 직접 인코딩해 이어 붙인다. 문자열을 한 번도 만들지 않아 요청당 메모리가 약 30MB → 약 7MB.
+- 검증 규칙은 동일: 쿼리 정수·범위, 헤더 44바이트 canonical WAV, 길이·duration 일치, 413 상한. 실패 시 업스트림 호출 없음.
+- 클라이언트 `requestBroadcastTranscriptChunkBinary` 신설(응답 처리 공유 리팩터), 전사 워커가 base64 인코딩 없이 WAV를 그대로 전송 — 업로드 25% 감소.
+- `MAX_IN_FLIGHT_TRANSCRIPTIONS` 1 → **4**. 병목이 중계 메모리에서 rate limit으로 이동하므로 `wrangler.jsonc` 두 리미터를 30 → **60회/60초**로 상향.
+- provider 폴백(Qwen→Gemini)은 보관한 WAV 바이트로 provider별 본문을 새로 조립 — 스트림 소진 문제 없음. 시도 종료 후 바이트 zero.
+
+### 검증
+
+- **등가성 증명**: 90초 풀사이즈 청크에서 바이너리 경로가 업스트림에 보내는 본문이 기존 JSON 경로와 **문자열 완전 일치**를 회귀로 고정. provider가 차이를 감지할 수 없다.
+- 신규 11개 테스트: canonical 검증·쿼리 거부·413·Gemini 폴백 동일 오디오·레거시 JSON 수용. `npm run check`: strict TS, ESLint 0, **84파일 860 테스트**.
+- `npm run build` 통과, `wrangler deploy --dry-run` 246.57KiB, 리미터 60/60s 확인.
+- **미검증**: 실제 배포 후 바이너리 경로 동시성 실측(합성 부하), 실오디오 업스트림 성공. 배포 전 프로덕션은 기존 JSON 경로로 계속 동작한다.
+
 ## 2026-07-23 `0.3.47` 전사 중계 503 복구와 오류 경계
 
 ### Before / 원인
