@@ -15,6 +15,47 @@ type FetchImplementation = (
   init?: RequestInit,
 ) => Promise<Response>;
 
+/**
+ * Transient proxy or upstream failures are worth another attempt; a missing
+ * caption track is not. Getting this wrong is expensive in one direction only:
+ * giving up on a recoverable blip drops the whole analysis onto the bounded
+ * audio transcription path, which costs money and many minutes of the
+ * editor's time for a broadcast whose captions were available all along.
+ */
+const YOUTUBE_CAPTION_RETRY_DELAYS_MS = Object.freeze([600, 1_800]);
+
+export class YouTubeCaptionRequestError extends Error {
+  readonly retryable: boolean;
+
+  constructor(message: string, retryable: boolean) {
+    super(message);
+    this.name = "YouTubeCaptionRequestError";
+    this.retryable = retryable;
+  }
+}
+
+function isRetryableCaptionStatus(status: number): boolean {
+  return status === 408 || status === 429 || status >= 500;
+}
+
+function delay(milliseconds: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted === true) {
+      reject(signal.reason as Error);
+      return;
+    }
+    const timer = globalThis.setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, milliseconds);
+    function onAbort(): void {
+      globalThis.clearTimeout(timer);
+      reject(signal?.reason as Error);
+    }
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -69,16 +110,13 @@ export function parseYouTubeCaptionProxyResult(
   };
 }
 
-export async function requestYouTubeCaptionTrack(
+async function requestYouTubeCaptionTrackOnce(
   videoId: string,
   options: {
     readonly signal?: AbortSignal;
     readonly fetchImplementation?: FetchImplementation;
-  } = {},
+  },
 ): Promise<YouTubeCaptionTrackResult> {
-  if (!YOUTUBE_VIDEO_ID_PATTERN.test(videoId)) {
-    throw new RangeError("Invalid YouTube video ID.");
-  }
   const response = await (options.fetchImplementation ?? fetch)(
     `${YOUTUBE_CAPTION_PROXY_ENDPOINT}?v=${encodeURIComponent(videoId)}`,
     {
@@ -91,7 +129,10 @@ export async function requestYouTubeCaptionTrack(
   );
   if (!response.ok) {
     await response.body?.cancel().catch(() => undefined);
-    throw new Error("YouTube captions are unavailable.");
+    throw new YouTubeCaptionRequestError(
+      "YouTube captions are unavailable.",
+      isRetryableCaptionStatus(response.status),
+    );
   }
   const declaredLength = response.headers.get("Content-Length");
   if (
@@ -117,4 +158,44 @@ export async function requestYouTubeCaptionTrack(
     throw new Error("YouTube caption response is invalid.");
   }
   return result;
+}
+
+/**
+ * Fetches the caption track, retrying only failures that can plausibly clear
+ * on their own. A network error or a 5xx from the proxy is retried with a
+ * short backoff; a rejected or malformed response is not.
+ */
+export async function requestYouTubeCaptionTrack(
+  videoId: string,
+  options: {
+    readonly signal?: AbortSignal;
+    readonly fetchImplementation?: FetchImplementation;
+    readonly retryDelaysMs?: readonly number[];
+  } = {},
+): Promise<YouTubeCaptionTrackResult> {
+  if (!YOUTUBE_VIDEO_ID_PATTERN.test(videoId)) {
+    throw new RangeError("Invalid YouTube video ID.");
+  }
+  const retryDelaysMs = options.retryDelaysMs ?? YOUTUBE_CAPTION_RETRY_DELAYS_MS;
+  let lastError: unknown;
+  for (let attempt = 0; attempt <= retryDelaysMs.length; attempt += 1) {
+    try {
+      return await requestYouTubeCaptionTrackOnce(videoId, options);
+    } catch (error) {
+      if (options.signal?.aborted === true) {
+        throw error;
+      }
+      // A typed rejection tells us whether another attempt makes sense; an
+      // untyped throw is a transport fault, which usually does.
+      const retryable =
+        !(error instanceof YouTubeCaptionRequestError) || error.retryable;
+      const delayMs = retryDelaysMs[attempt];
+      if (!retryable || delayMs === undefined) {
+        throw error;
+      }
+      lastError = error;
+      await delay(delayMs, options.signal);
+    }
+  }
+  throw lastError;
 }

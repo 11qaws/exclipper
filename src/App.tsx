@@ -363,6 +363,10 @@ import {
 import { ReviewUndoToast } from "./app/components/ReviewUndoToast";
 import { ShortcutHelpOverlay } from "./app/components/ShortcutHelpOverlay";
 import {
+  isPipelineGap,
+  summarizeFinalVerificationGaps,
+} from "./app/finalVerificationGapSummary";
+import {
   nextUnreviewedCandidateId,
   reviewDecisionAdvances,
 } from "./app/reviewNavigation";
@@ -372,7 +376,7 @@ type AnalysisSelectionSummary = DurableAnalysisSelectionSummary;
 type AnalysisCoverageSummary = DurableAnalysisCoverageSummary;
 type AnalysisGapApprovalEvidence = DurableAnalysisGapApprovalEvidence;
 
-const APP_VERSION = "0.3.47";
+const APP_VERSION = "0.3.48";
 const PERSISTENCE_SCHEMA_VERSION = "0.3.0";
 const SIGNAL_ENGINE_VERSION =
   "streamer-reaction-fast-pass-v5-chat-fallback-music-confirmation";
@@ -1457,10 +1461,22 @@ function App() {
    * judgement, so saying "no clips passed verification" would blame the
    * broadcast for a failure that belongs to the analysis.
    */
+  const finalVerificationGapSummary = useMemo(
+    () => summarizeFinalVerificationGaps(finalCandidateVerification.gapByCandidateId),
+    [finalCandidateVerification.gapByCandidateId],
+  );
+  /**
+   * A candidate that never reached a judgement means the pipeline stopped, not
+   * that the broadcast had nothing worth clipping.
+   */
+  const blockedByPipelineGap = finalVerificationGapSummary.some(({ gap }) =>
+    isPipelineGap(gap),
+  );
   const emptyResultReason: "analysis-incomplete" | "no-verified-candidates" =
     wholeContextPhaseFailed ||
     broadcastContextResult === null ||
-    broadcastTranscriptChapters.length === 0
+    broadcastTranscriptChapters.length === 0 ||
+    blockedByPipelineGap
       ? "analysis-incomplete"
       : "no-verified-candidates";
   const candidatePassBTerminal =
@@ -7493,8 +7509,21 @@ function App() {
                   {emptyResultReason === "analysis-incomplete" ? (
                     <>
                       <strong>분석이 끝까지 진행되지 못해서 후보를 만들지 못했어요.</strong>
-                      방송에 쓸 장면이 없다는 뜻이 아니에요. 대사와 맥락을 확보하는 단계에서
-                      멈췄기 때문에 판단 자체를 하지 못했습니다.
+                      방송에 쓸 장면이 없다는 뜻이 아니에요. 근거를 모으는 단계에서 멈췄기
+                      때문에 판단 자체를 하지 못했습니다.
+                      {finalVerificationGapSummary.length > 0 && (
+                        <dl className="rh-verification-gap-list">
+                          {finalVerificationGapSummary.map((entry) => (
+                            <div key={entry.gap} data-pipeline={isPipelineGap(entry.gap)}>
+                              <dt>
+                                {entry.label}
+                                <span>{entry.count}개</span>
+                              </dt>
+                              <dd>{entry.detail}</dd>
+                            </div>
+                          ))}
+                        </dl>
+                      )}
                       <div className="rh-empty-state-actions">
                         <button
                           className="btn btn-primary"
@@ -7518,10 +7547,22 @@ function App() {
                       <strong>AI가 확실하다고 볼 수 있는 장면을 찾지 못했어요.</strong>
                       전체 방송 흐름, 후보 대사, 대표 화면 네 장, 대표 썸네일과 멀티모달 판정이
                       모두 맞아떨어진 장면만 최종 목록에 올립니다. 아래에서 직접 확인해 보실 수 있어요.
+                      {finalVerificationGapSummary.length > 0 && (
+                        <dl className="rh-verification-gap-list">
+                          {finalVerificationGapSummary.map((entry) => (
+                            <div key={entry.gap} data-pipeline={isPipelineGap(entry.gap)}>
+                              <dt>
+                                {entry.label}
+                                <span>{entry.count}개</span>
+                              </dt>
+                              <dd>{entry.detail}</dd>
+                            </div>
+                          ))}
+                        </dl>
+                      )}
                       {candidates.length > 0 && (
                         <p className="rh-help">
                           빠른 탐색이 찾아 둔 구간 {candidates.length}개는 그대로 보관돼 있어요.
-                          검증 근거가 부족해 최종 목록에는 올리지 않았습니다.
                         </p>
                       )}
                       <div className="rh-empty-state-actions">
