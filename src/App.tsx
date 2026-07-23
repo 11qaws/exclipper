@@ -376,7 +376,7 @@ type AnalysisSelectionSummary = DurableAnalysisSelectionSummary;
 type AnalysisCoverageSummary = DurableAnalysisCoverageSummary;
 type AnalysisGapApprovalEvidence = DurableAnalysisGapApprovalEvidence;
 
-const APP_VERSION = "0.3.50";
+const APP_VERSION = "0.3.51";
 const PERSISTENCE_SCHEMA_VERSION = "0.3.0";
 const SIGNAL_ENGINE_VERSION =
   "streamer-reaction-fast-pass-v5-chat-fallback-music-confirmation";
@@ -1488,12 +1488,21 @@ function App() {
     semanticLeadRefinementStatus === "running" || candidatePassBBusy;
   const detailedReviewPhaseFailed =
     semanticLeadRefinementStatus === "failed" || candidatePassBRun?.status === "failed";
+  /**
+   * Candidate detail is the stage that produces the multimodal reading every
+   * final candidate is gated on, so the phase is not complete until it has
+   * actually settled. Treating whole-context completion as sufficient
+   * published the final list while detail analysis had not yet started, and
+   * every candidate was dropped for a result that was still seconds away.
+   */
+  const candidateDetailSettled =
+    candidateDetailCandidateIds.length === 0 || candidatePassBTerminal;
   const detailedReviewPhaseComplete =
     !detailedReviewPhaseActive &&
     !detailedReviewPhaseFailed &&
+    candidateDetailSettled &&
     ((wholeContextPhaseComplete && semanticLeadRefinementStatus === "completed") ||
-      (wholeContextPhaseFailed &&
-        (candidateDetailCandidateIds.length === 0 || candidatePassBTerminal)));
+      wholeContextPhaseFailed);
   const detailedReviewPhaseState = detailedReviewPhaseFailed
     ? "error"
     : detailedReviewPhaseActive
