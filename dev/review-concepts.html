@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="ko" data-theme="light">
+<head>
+<meta charset="utf-8">
+<title>ExClipper — review concepts (α / β)</title>
+<!--
+  Concept harness for the review-screen rebuild. Standalone: it does NOT load
+  the legacy stylesheets, because the contract says the redesign keeps no
+  visual compatibility with them. Styles here are the isolated .rvw-* system
+  in embryo, to be lifted into styles/review-surface.css once a concept is
+  chosen. Chat data is assumed ABSENT — the signal line shows only audio and
+  visual; chat is left as a commented placeholder.
+-->
+<style>
+:root{
+  --bg:#ffffff; --bg2:#f4f3fb; --bg3:#eae9f5;
+  --line:#e4e2f1; --line2:#cbc7e3;
+  --ink:#17162e; --ink2:#403e63; --ink3:#6f6d92; --ink4:#9d9bba;
+  --accent:#5b4df0; --accent-ink:#4a3ee0; --accent-bg:#edebff; --accent-line:#cfc9ff;
+  --ok:#15803d; --ok-bg:#eaf7ef; --warn:#b45309; --stage:#06090f;
+  --audio:#7c3aed; --audio-bg:#f5f3ff; --visual:#c2410c; --visual-bg:#fff7ed;
+  --sh1:0 1px 3px rgba(23,22,46,.07); --sh2:0 10px 30px rgba(23,22,46,.09);
+  --r:12px; --mono:ui-monospace,"Cascadia Mono",Consolas,monospace;
+  --font:"Pretendard Variable",Pretendard,-apple-system,"Segoe UI","Malgun Gothic",sans-serif;
+}
+*{box-sizing:border-box}
+body{margin:0;padding:28px;background:#1b1d24;color:#cfd3e0;font-family:var(--mono);
+  display:flex;flex-direction:column;gap:28px}
+h2.cap{margin:0 0 8px;font-size:13px;color:#9aa2b8;font-weight:600}
+.board{display:flex;gap:28px;flex-wrap:wrap}
+figure{margin:0}
+
+/* ── isolated review surface (.rvw-*) ───────────────────────────── */
+.rvw{width:920px;height:560px;border-radius:16px;overflow:hidden;
+  background:var(--bg2);font-family:var(--font);color:var(--ink);
+  display:grid;grid-template-columns:56px 1fr}
+
+/* rail: status + tools, painted column */
+.rvw-rail{background:linear-gradient(170deg,var(--accent),#4a3ec8);
+  display:flex;flex-direction:column;align-items:center;gap:8px;padding:14px 0}
+.rvw-rail .mk{width:32px;height:32px;border-radius:10px;background:#fff;color:var(--accent);
+  display:grid;place-items:center;font-weight:800;font-size:14px;margin-bottom:6px}
+.rvw-rail button{width:36px;height:36px;border:0;border-radius:10px;background:transparent;
+  color:rgba(255,255,255,.7);cursor:pointer;display:grid;place-items:center;font-size:15px}
+.rvw-rail button[aria-current]{background:#fff;color:var(--accent)}
+.rvw-rail .sp{flex:1}
+.rvw-rail .sep{width:22px;height:1px;background:rgba(255,255,255,.25)}
+
+.rvw-screen{display:flex;flex-direction:column;min-width:0;padding:16px 20px}
+
+/* header + strip */
+.rvw-head{display:flex;justify-content:space-between;align-items:baseline;gap:12px}
+.rvw-head b{font-size:17px;font-weight:800;letter-spacing:-.02em}
+.rvw-head .len{color:var(--ink3);font-size:12px;margin-left:8px;font-family:var(--mono)}
+.rvw-head .chip{font-size:12px;color:var(--ink3);font-family:var(--mono)}
+.rvw-head .chip b{font-size:12px;color:var(--ink)}
+.rvw-strip{position:relative;height:8px;margin:12px 0 4px}
+.rvw-strip .rail{position:absolute;inset:2px 0 auto;height:4px;border-radius:2px;background:var(--bg3)}
+.rvw-strip i{position:absolute;top:0;width:8px;height:8px;border-radius:50%;background:var(--ink4);transform:translateX(-50%)}
+.rvw-strip i.ok{background:var(--ok)} .rvw-strip i.cur{background:var(--accent);box-shadow:0 0 0 3px var(--accent-bg);width:12px;height:12px;top:-2px}
+.rvw-strip-meta{display:flex;justify-content:space-between;font-size:11px;color:var(--ink3);margin-bottom:12px}
+.rvw-strip-meta .tc{font-family:var(--mono)}
+
+/* page tabs (book-turn indicator) */
+.rvw-pagetabs{display:flex;gap:4px;font-size:12px;font-weight:700}
+.rvw-pagetabs button{border:0;background:transparent;color:var(--ink3);padding:4px 10px;border-radius:8px;cursor:pointer;font-family:var(--font)}
+.rvw-pagetabs button[aria-selected="true"]{background:var(--accent-bg);color:var(--accent-ink)}
+.rvw-pagetabs kbd{font-family:var(--mono);font-size:10px;opacity:.7}
+
+/* the body area that turns like a page */
+.rvw-body{flex:1;min-height:0;margin-top:12px}
+
+/* summary page: video left, narrative right */
+.rvw-sum{display:grid;grid-template-columns:58fr 42fr;gap:20px;height:100%}
+.rvw-stagecol{display:flex;flex-direction:column;min-height:0}
+.rvw-stage{flex:1;border-radius:var(--r);background:var(--stage);min-height:0;
+  display:grid;place-items:center;color:#5b6472;box-shadow:var(--sh2)}
+.rvw-dock{display:grid;grid-template-columns:1fr 48px 1.3fr;gap:8px;margin-top:12px}
+.rvw-dock button{min-height:40px;border:1px solid var(--line2);border-radius:10px;background:var(--bg);
+  font-weight:600;font-size:13px;cursor:pointer;position:relative}
+.rvw-dock .use{background:var(--accent);border-color:var(--accent);color:#fff}
+.rvw-dock kbd{position:absolute;right:8px;top:50%;transform:translateY(-50%);font-family:var(--mono);font-size:10px;opacity:.6}
+.rvw-dock .use kbd{opacity:.9;color:#fff}
+.rvw-trim{display:flex;align-items:center;gap:6px;margin-top:8px;font-size:11px;color:var(--ink4)}
+.rvw-trim button{border:1px solid var(--line);background:var(--bg);border-radius:7px;padding:3px 8px;font-size:11px;cursor:pointer;color:var(--ink2)}
+.rvw-narr{min-width:0;display:flex;flex-direction:column;min-height:0}
+.rvw-narr .ttl{font-size:15px;font-weight:800;letter-spacing:-.01em;margin-bottom:6px}
+.rvw-sig{display:flex;gap:14px;font-size:12px;margin-bottom:14px;font-family:var(--mono)}
+.rvw-sig .a{color:var(--audio)} .rvw-sig .v{color:var(--visual)}
+.rvw-sig b{font-size:15px}
+.rvw-lab{font-size:11px;font-weight:700;letter-spacing:.05em;color:var(--ink4);text-transform:uppercase;margin:0 0 4px}
+.rvw-why{font-size:14px;line-height:1.7;color:var(--ink);margin:0 0 14px}
+.rvw-quote{border-left:3px solid var(--accent-line);background:var(--bg2);border-radius:0 8px 8px 0;
+  padding:8px 12px;font-size:13px;color:var(--ink2);line-height:1.6;margin:0 0 14px}
+.rvw-nav{margin-top:auto;display:flex;justify-content:space-between;align-items:center;font-size:12px;color:var(--ink3)}
+.rvw-nav .more{border:1px solid var(--line2);background:var(--bg);border-radius:8px;padding:6px 12px;font-size:12px;font-weight:600;cursor:pointer;color:var(--accent-ink)}
+
+/* β: evidence as a full-width page (video gone, data spread wide) */
+.rvw-ev{height:100%;display:flex;flex-direction:column}
+.rvw-ev-head{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:14px}
+.rvw-ev-head .back{border:0;background:transparent;color:var(--accent-ink);font-weight:700;font-size:12px;cursor:pointer;font-family:var(--font)}
+.rvw-ev-grid{flex:1;min-height:0;display:grid;grid-template-columns:1fr 1fr 1fr;gap:20px}
+.rvw-ev-col h4{margin:0 0 10px;font-size:11px;font-weight:700;letter-spacing:.05em;color:var(--ink4);text-transform:uppercase}
+.rvw-ev-col ul{list-style:none;margin:0;padding:0;display:grid;gap:8px}
+.rvw-ev-col li{font-size:12px;color:var(--ink2);line-height:1.5;display:flex;gap:8px}
+.rvw-ev-col .tc{color:var(--audio);font-family:var(--mono);font-size:11px;flex:0 0 auto}
+.rvw-ev-col.cue .tc{color:var(--accent-ink)}
+.rvw-ev-foot{margin-top:14px;display:flex;justify-content:space-between;align-items:center}
+.rvw-ev-foot .acts{display:flex;gap:8px}
+.rvw-ev-foot button{min-height:36px;padding:0 16px;border:1px solid var(--line2);border-radius:9px;background:var(--bg);font-weight:600;font-size:13px;cursor:pointer}
+.rvw-ev-foot .use{background:var(--accent);border-color:var(--accent);color:#fff}
+.rvw-wave{height:40px;border-radius:8px;background:var(--audio-bg);display:flex;align-items:flex-end;gap:2px;padding:6px 8px;margin-top:6px}
+.rvw-wave span{flex:1;background:var(--audio);opacity:.55;border-radius:1px}
+</style>
+</head>
+<body>
+
+<figure>
+  <h2 class="cap">α — 근거를 "오른쪽 열만" 넘김 (영상 유지) · 요약 페이지</h2>
+  <div class="rvw">
+    <nav class="rvw-rail">
+      <span class="mk">E</span>
+      <button>▣</button><button aria-current>▶</button><button>↓</button>
+      <span class="sp"></span>
+      <span class="sep"></span>
+      <button title="지도">🗺</button><button title="되돌리기">↺</button><button title="키">⌨</button>
+    </nav>
+    <div class="rvw-screen">
+      <div class="rvw-head"><span><b>음식 토크 풀버전</b><span class="len">2:15:14</span></span>
+        <span class="chip">후보 <b>7/23</b> · 남음 <b>16</b></span></div>
+      <div class="rvw-strip"><span class="rail"></span>
+        <i class="ok" style="left:9%"></i><i class="ok" style="left:13%"></i><i style="left:16%"></i>
+        <i class="cur" style="left:22%"></i><i style="left:29%"></i><i style="left:41%"></i>
+        <i style="left:57%"></i><i style="left:71%"></i><i style="left:86%"></i></div>
+      <div class="rvw-strip-meta"><span>▸ 방송 지도 <kbd>M</kbd></span><span class="tc">00:28:19 / 2:15:14</span></div>
+      <div class="rvw-pagetabs"><button aria-selected="true">요약 <kbd>1</kbd></button><button>근거 <kbd>2</kbd></button></div>
+      <div class="rvw-body">
+        <div class="rvw-sum">
+          <div class="rvw-stagecol">
+            <div class="rvw-stage">영상</div>
+            <div class="rvw-dock"><button>빼기 <kbd>R</kbd></button><button>▶</button><button class="use">사용 <kbd>A</kbd></button></div>
+            <div class="rvw-trim"><span>시작</span><button>−5</button><button>+5</button><span>끝</span><button>−5</button><button>+5</button></div>
+          </div>
+          <div class="rvw-narr">
+            <div class="ttl">두바이 초콜릿 첫 시식 리액션</div>
+            <div class="rvw-sig"><span class="a">오디오 <b>상위3%</b></span><span class="v">화면 <b>상위12%</b></span></div>
+            <p class="rvw-lab">왜 이 장면인가</p>
+            <p class="rvw-why">직전에 "이게 그 유명한 거야?"라고 말한 뒤 첫 입에서 큰 웃음과 감탄이 이어집니다.</p>
+            <p class="rvw-lab">확인한 대사</p>
+            <blockquote class="rvw-quote">"아 이거… 이거 진짜네. 이건 좀 심각하게 맛있는데?"</blockquote>
+            <div class="rvw-nav"><span>◀ 이전 <kbd>←</kbd></span><button class="more">근거 보기 <kbd>2</kbd> ▶</button><span>다음 <kbd>→</kbd> ▶</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</figure>
+
+<figure>
+  <h2 class="cap">β — 근거로 "화면 전체" 넘김 (영상 사라지고 데이터 넓게) · 근거 페이지</h2>
+  <div class="rvw">
+    <nav class="rvw-rail">
+      <span class="mk">E</span>
+      <button>▣</button><button aria-current>▶</button><button>↓</button>
+      <span class="sp"></span><span class="sep"></span>
+      <button>🗺</button><button>↺</button><button>⌨</button>
+    </nav>
+    <div class="rvw-screen">
+      <div class="rvw-head"><span><b>음식 토크 풀버전</b><span class="len">2:15:14</span></span>
+        <span class="chip">후보 <b>7/23</b> · 남음 <b>16</b></span></div>
+      <div class="rvw-strip"><span class="rail"></span>
+        <i class="ok" style="left:9%"></i><i class="ok" style="left:13%"></i><i style="left:16%"></i>
+        <i class="cur" style="left:22%"></i><i style="left:29%"></i><i style="left:41%"></i>
+        <i style="left:57%"></i><i style="left:71%"></i><i style="left:86%"></i></div>
+      <div class="rvw-strip-meta"><span>▸ 방송 지도 <kbd>M</kbd></span><span class="tc">00:28:19 / 2:15:14</span></div>
+      <div class="rvw-pagetabs"><button>요약 <kbd>1</kbd></button><button aria-selected="true">근거 <kbd>2</kbd></button></div>
+      <div class="rvw-body">
+        <div class="rvw-ev">
+          <div class="rvw-ev-head"><div class="ttl" style="font-size:15px;font-weight:800">후보 7 · 두바이 초콜릿 첫 시식</div>
+            <button class="back">◀ 요약으로 <kbd>1</kbd></button></div>
+          <div class="rvw-ev-grid">
+            <div class="rvw-ev-col">
+              <h4>반응 종류 (오디오)</h4>
+              <ul><li><span class="tc">28:41</span> 큰 웃음 · 강함</li>
+                  <li><span class="tc">28:55</span> 감탄/외침 · 가능성</li></ul>
+              <div class="rvw-wave"><span style="height:30%"></span><span style="height:55%"></span><span style="height:90%"></span><span style="height:70%"></span><span style="height:40%"></span><span style="height:25%"></span><span style="height:60%"></span><span style="height:35%"></span></div>
+            </div>
+            <div class="rvw-ev-col cue">
+              <h4>대사 위치</h4>
+              <ul><li><span class="tc">28:23</span> "이게 그 유명한 거야?"</li>
+                  <li><span class="tc">28:44</span> "심각하게 맛있는데?"</li>
+                  <li><span class="tc">29:02</span> "이거 어디서 사?"</li></ul>
+            </div>
+            <div class="rvw-ev-col">
+              <h4>인물 · 맥락</h4>
+              <ul><li>주 진행 스트리머 · 화면 2장 일치</li>
+                  <li>직전: 껍데기 논쟁 정리 후 시식 전환</li>
+                  <li>직후: 두 번째 조각 · 가격 화제로</li></ul>
+              <!-- 채팅 반응: 데이터 없음 — 개념적으로만 남김. 확보 시 4번째 열 추가 -->
+            </div>
+          </div>
+          <div class="rvw-ev-foot"><span style="font-size:11px;color:var(--ink4)">채팅 데이터 없음 · 오디오·화면·대사 근거만</span>
+            <div class="acts"><button>빼기 <kbd>R</kbd></button><button>▶ 재생</button><button class="use">사용 <kbd>A</kbd></button></div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</figure>
+
+</body>
+</html>

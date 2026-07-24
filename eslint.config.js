@@ -13,6 +13,10 @@ export default tseslint.config(
       "node_modules",
       ".wrangler",
       ".wrangler-dry-run",
+      // The live design harness mounts shipped components against fixtures.
+      // It is not part of the app build, so it sits outside tsconfig and the
+      // type-aware rules cannot resolve it.
+      "dev/live",
     ],
   },
   eslint.configs.recommended,
@@ -54,6 +58,15 @@ export default tseslint.config(
   },
   {
     files: ["scripts/**/*.mjs"],
+    languageOptions: {
+      globals: {
+        ...globals.node,
+      },
+    },
+  },
+  {
+    // Design-harness generators run under Node, same as scripts/.
+    files: ["dev/**/*.mjs"],
     languageOptions: {
       globals: {
         ...globals.node,

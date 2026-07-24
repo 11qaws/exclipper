@@ -1,0 +1,150 @@
+<!doctype html><html lang="ko"><head><meta charset="utf-8">
+<title>스트리머 팔레트 · 검토 카드</title><style>
+@font-face{font-family:"Pretendard";font-weight:400;src:url("../public/fonts/Pretendard-Regular.woff2")}
+@font-face{font-family:"Pretendard";font-weight:600;src:url("../public/fonts/Pretendard-SemiBold.woff2")}
+@font-face{font-family:"Pretendard";font-weight:800;src:url("../public/fonts/Pretendard-ExtraBold.woff2")}
+body{margin:0;padding:24px;background:#1b1d24;font-family:"Pretendard",sans-serif;display:flex;flex-wrap:wrap;gap:8px 20px}
+.cap{width:100%;color:#9aa2b8;font:11px "SFMono-Regular",monospace;margin-top:14px;display:flex;gap:10px;align-items:baseline}
+.cap .kind{font-size:9px;padding:1px 6px;border-radius:999px;background:#2a2e3a;color:#c7cdda;letter-spacing:.04em}
+.mini{width:440px;height:210px;border-radius:14px;overflow:hidden;display:grid;grid-template-columns:44px 1fr;background:var(--rvw-bg2);box-shadow:0 8px 24px rgba(0,0,0,.3)}
+.rail{background:linear-gradient(170deg,var(--rvw-accent),color-mix(in srgb,var(--rvw-accent) 70%,#000));display:flex;flex-direction:column;align-items:center;gap:7px;padding:10px 0}
+.rail .who{width:30px;height:30px;border-radius:50%;overflow:hidden;background:#fff;color:var(--rvw-accent-ink);display:grid;place-items:center;font-weight:800;font-size:13px}
+.rail .who img{width:100%;height:100%;object-fit:cover}
+.rail .rb{width:26px;height:26px;border-radius:8px;background:rgba(255,255,255,.20)}
+.scr{padding:12px 14px;min-width:0;color:var(--rvw-ink)}
+.hd{display:flex;justify-content:space-between;align-items:baseline}
+.hd b{font-size:14px;font-weight:800;color:var(--rvw-ink)} .hd .chip{font-size:10px;color:var(--rvw-ink3)}
+.row{display:flex;align-items:center;gap:6px;margin-top:10px}
+.row h3{font-size:14px;font-weight:800;margin:0;color:var(--rvw-ink)}
+.badge{font-size:10px;font-weight:700;padding:2px 7px;border-radius:999px;background:color-mix(in srgb,var(--rvw-accent) 16%,#fff);color:var(--rvw-accent-ink)}
+.seg{margin-left:auto;font-size:11px;font-weight:700;color:var(--rvw-ink3);padding:2px 8px;border-radius:6px}
+.seg.on{background:var(--rvw-bg);color:var(--rvw-accent-ink);box-shadow:0 1px 3px rgba(0,0,0,.08)}
+.body{font-size:12px;color:var(--rvw-ink2);line-height:1.6;margin:8px 0}
+.ctx{font-size:11px;color:var(--rvw-ink3);background:var(--rvw-bg3);border-radius:7px;padding:5px 8px;margin-top:4px}
+.ctx.now{background:var(--rvw-accent-bg);color:var(--rvw-accent-ink);border:1px solid var(--rvw-accent-line)}
+.ctx .lb{font-size:9px;font-weight:700;opacity:.75;display:block}
+.acts{display:flex;gap:6px;margin-top:10px}
+.acts button{flex:1;padding:7px;border:1px solid var(--rvw-line2);border-radius:8px;background:var(--rvw-bg);font:600 12px "Pretendard";color:var(--rvw-ink)}
+.acts .use{background:var(--rvw-accent);border-color:var(--rvw-accent);color:#fff}
+</style></head><body>
+<div class="cap"><span class="kind">base</span> 기본 · 교환학생 · hue 350 · 흰글자대비 4.5:1</div>
+<div class="mini" style="--rvw-accent:hsl(350 72% 53%);--rvw-accent-ink:hsl(350 72% 41%);--rvw-accent-bg:hsl(350 60% 94%);--rvw-accent-line:hsl(350 55% 84%);--rvw-bg:hsl(350 0% 100%);--rvw-bg2:hsl(350 22% 97%);--rvw-bg3:hsl(350 20% 93%);--rvw-line:hsl(350 18% 90%);--rvw-line2:hsl(350 20% 80%);--rvw-ink:hsl(350 30% 13%);--rvw-ink2:hsl(350 20% 32%);--rvw-ink3:hsl(350 14% 48%);--rvw-ink4:hsl(350 12% 64%)">
+  <div class="rail"><div class="who">기</div><div class="rb"></div><div class="rb"></div></div>
+  <div class="scr">
+    <div class="hd"><b>음식 토크 풀버전</b><span class="chip">후보 7/23 · 남음 16</span></div>
+    <div class="row"><h3>두바이 초콜릿 첫 시식</h3><span class="badge">● 사용</span><span class="seg">요약</span><span class="seg on">근거</span></div>
+    <p class="body">첫 입에서 큰 웃음과 감탄이 이어집니다.</p>
+    <div class="ctx"><span class="lb">이전 연관</span> 기대 · "이게 그 유명한 거야?"</div>
+    <div class="ctx now"><span class="lb">이 클립</span> 두바이 초콜릿 첫 시식</div>
+    <div class="acts"><button>빼기</button><button class="use">사용 취소</button></div>
+  </div>
+</div>
+<div class="cap"><span class="kind">streamer</span> 아모레또 · hue 344 · 흰글자대비 4.6:1</div>
+<div class="mini" style="--rvw-accent:hsl(344 35% 52%);--rvw-accent-ink:hsl(344 35% 42%);--rvw-accent-bg:hsl(344 35% 94%);--rvw-accent-line:hsl(344 35% 84%);--rvw-bg:hsl(344 0% 100%);--rvw-bg2:hsl(344 22% 97%);--rvw-bg3:hsl(344 20% 93%);--rvw-line:hsl(344 18% 90%);--rvw-line2:hsl(344 20% 80%);--rvw-ink:hsl(344 30% 13%);--rvw-ink2:hsl(344 20% 32%);--rvw-ink3:hsl(344 14% 48%);--rvw-ink4:hsl(344 12% 64%)">
+  <div class="rail"><div class="who"><img src="../public/streamers/amoretto.jpg" alt=""></div><div class="rb"></div><div class="rb"></div></div>
+  <div class="scr">
+    <div class="hd"><b>음식 토크 풀버전</b><span class="chip">후보 7/23 · 남음 16</span></div>
+    <div class="row"><h3>두바이 초콜릿 첫 시식</h3><span class="badge">● 사용</span><span class="seg">요약</span><span class="seg on">근거</span></div>
+    <p class="body">첫 입에서 큰 웃음과 감탄이 이어집니다.</p>
+    <div class="ctx"><span class="lb">이전 연관</span> 기대 · "이게 그 유명한 거야?"</div>
+    <div class="ctx now"><span class="lb">이 클립</span> 두바이 초콜릿 첫 시식</div>
+    <div class="acts"><button>빼기</button><button class="use">사용 취소</button></div>
+  </div>
+</div>
+<div class="cap"><span class="kind">streamer</span> 유레카 · hue 152 · 흰글자대비 4.7:1</div>
+<div class="mini" style="--rvw-accent:hsl(152 68% 31%);--rvw-accent-ink:hsl(152 68% 25%);--rvw-accent-bg:hsl(152 60% 94%);--rvw-accent-line:hsl(152 55% 84%);--rvw-bg:hsl(152 0% 100%);--rvw-bg2:hsl(152 22% 97%);--rvw-bg3:hsl(152 20% 93%);--rvw-line:hsl(152 18% 90%);--rvw-line2:hsl(152 20% 80%);--rvw-ink:hsl(152 30% 13%);--rvw-ink2:hsl(152 20% 32%);--rvw-ink3:hsl(152 14% 48%);--rvw-ink4:hsl(152 12% 64%)">
+  <div class="rail"><div class="who"><img src="../public/streamers/eureka.png" alt=""></div><div class="rb"></div><div class="rb"></div></div>
+  <div class="scr">
+    <div class="hd"><b>음식 토크 풀버전</b><span class="chip">후보 7/23 · 남음 16</span></div>
+    <div class="row"><h3>두바이 초콜릿 첫 시식</h3><span class="badge">● 사용</span><span class="seg">요약</span><span class="seg on">근거</span></div>
+    <p class="body">첫 입에서 큰 웃음과 감탄이 이어집니다.</p>
+    <div class="ctx"><span class="lb">이전 연관</span> 기대 · "이게 그 유명한 거야?"</div>
+    <div class="ctx now"><span class="lb">이 클립</span> 두바이 초콜릿 첫 시식</div>
+    <div class="acts"><button>빼기</button><button class="use">사용 취소</button></div>
+  </div>
+</div>
+<div class="cap"><span class="kind">streamer</span> 세나 아르벨 · hue 276 · 흰글자대비 4.6:1</div>
+<div class="mini" style="--rvw-accent:hsl(276 36% 54%);--rvw-accent-ink:hsl(276 36% 44%);--rvw-accent-bg:hsl(276 36% 94%);--rvw-accent-line:hsl(276 36% 84%);--rvw-bg:hsl(276 0% 100%);--rvw-bg2:hsl(276 22% 97%);--rvw-bg3:hsl(276 20% 93%);--rvw-line:hsl(276 18% 90%);--rvw-line2:hsl(276 20% 80%);--rvw-ink:hsl(276 30% 13%);--rvw-ink2:hsl(276 20% 32%);--rvw-ink3:hsl(276 14% 48%);--rvw-ink4:hsl(276 12% 64%)">
+  <div class="rail"><div class="who"><img src="../public/streamers/sena.png" alt=""></div><div class="rb"></div><div class="rb"></div></div>
+  <div class="scr">
+    <div class="hd"><b>음식 토크 풀버전</b><span class="chip">후보 7/23 · 남음 16</span></div>
+    <div class="row"><h3>두바이 초콜릿 첫 시식</h3><span class="badge">● 사용</span><span class="seg">요약</span><span class="seg on">근거</span></div>
+    <p class="body">첫 입에서 큰 웃음과 감탄이 이어집니다.</p>
+    <div class="ctx"><span class="lb">이전 연관</span> 기대 · "이게 그 유명한 거야?"</div>
+    <div class="ctx now"><span class="lb">이 클립</span> 두바이 초콜릿 첫 시식</div>
+    <div class="acts"><button>빼기</button><button class="use">사용 취소</button></div>
+  </div>
+</div>
+<div class="cap"><span class="kind">streamer</span> 토로리 코코 · hue 202 · 흰글자대비 4.6:1</div>
+<div class="mini" style="--rvw-accent:hsl(202 58% 42%);--rvw-accent-ink:hsl(202 58% 33%);--rvw-accent-bg:hsl(202 58% 94%);--rvw-accent-line:hsl(202 55% 84%);--rvw-bg:hsl(202 0% 100%);--rvw-bg2:hsl(202 22% 97%);--rvw-bg3:hsl(202 20% 93%);--rvw-line:hsl(202 18% 90%);--rvw-line2:hsl(202 20% 80%);--rvw-ink:hsl(202 30% 13%);--rvw-ink2:hsl(202 20% 32%);--rvw-ink3:hsl(202 14% 48%);--rvw-ink4:hsl(202 12% 64%)">
+  <div class="rail"><div class="who"><img src="../public/streamers/torori.png" alt=""></div><div class="rb"></div><div class="rb"></div></div>
+  <div class="scr">
+    <div class="hd"><b>음식 토크 풀버전</b><span class="chip">후보 7/23 · 남음 16</span></div>
+    <div class="row"><h3>두바이 초콜릿 첫 시식</h3><span class="badge">● 사용</span><span class="seg">요약</span><span class="seg on">근거</span></div>
+    <p class="body">첫 입에서 큰 웃음과 감탄이 이어집니다.</p>
+    <div class="ctx"><span class="lb">이전 연관</span> 기대 · "이게 그 유명한 거야?"</div>
+    <div class="ctx now"><span class="lb">이 클립</span> 두바이 초콜릿 첫 시식</div>
+    <div class="acts"><button>빼기</button><button class="use">사용 취소</button></div>
+  </div>
+</div>
+<div class="cap"><span class="kind">streamer</span> 망징이 · hue 216 · 흰글자대비 4.6:1</div>
+<div class="mini" style="--rvw-accent:hsl(216 76% 52%);--rvw-accent-ink:hsl(216 76% 41%);--rvw-accent-bg:hsl(216 60% 94%);--rvw-accent-line:hsl(216 55% 84%);--rvw-bg:hsl(216 0% 100%);--rvw-bg2:hsl(216 22% 97%);--rvw-bg3:hsl(216 20% 93%);--rvw-line:hsl(216 18% 90%);--rvw-line2:hsl(216 20% 80%);--rvw-ink:hsl(216 30% 13%);--rvw-ink2:hsl(216 20% 32%);--rvw-ink3:hsl(216 14% 48%);--rvw-ink4:hsl(216 12% 64%)">
+  <div class="rail"><div class="who"><img src="../public/streamers/mangjing.png" alt=""></div><div class="rb"></div><div class="rb"></div></div>
+  <div class="scr">
+    <div class="hd"><b>음식 토크 풀버전</b><span class="chip">후보 7/23 · 남음 16</span></div>
+    <div class="row"><h3>두바이 초콜릿 첫 시식</h3><span class="badge">● 사용</span><span class="seg">요약</span><span class="seg on">근거</span></div>
+    <p class="body">첫 입에서 큰 웃음과 감탄이 이어집니다.</p>
+    <div class="ctx"><span class="lb">이전 연관</span> 기대 · "이게 그 유명한 거야?"</div>
+    <div class="ctx now"><span class="lb">이 클립</span> 두바이 초콜릿 첫 시식</div>
+    <div class="acts"><button>빼기</button><button class="use">사용 취소</button></div>
+  </div>
+</div>
+<div class="cap"><span class="kind">extra</span> 클래식 바이올렛 · hue 249 · 흰글자대비 5.0:1</div>
+<div class="mini" style="--rvw-accent:hsl(249 72% 62%);--rvw-accent-ink:hsl(249 72% 56%);--rvw-accent-bg:hsl(249 60% 94%);--rvw-accent-line:hsl(249 55% 84%);--rvw-bg:hsl(249 0% 100%);--rvw-bg2:hsl(249 22% 97%);--rvw-bg3:hsl(249 20% 93%);--rvw-line:hsl(249 18% 90%);--rvw-line2:hsl(249 20% 80%);--rvw-ink:hsl(249 30% 13%);--rvw-ink2:hsl(249 20% 32%);--rvw-ink3:hsl(249 14% 48%);--rvw-ink4:hsl(249 12% 64%)">
+  <div class="rail"><div class="who">클</div><div class="rb"></div><div class="rb"></div></div>
+  <div class="scr">
+    <div class="hd"><b>음식 토크 풀버전</b><span class="chip">후보 7/23 · 남음 16</span></div>
+    <div class="row"><h3>두바이 초콜릿 첫 시식</h3><span class="badge">● 사용</span><span class="seg">요약</span><span class="seg on">근거</span></div>
+    <p class="body">첫 입에서 큰 웃음과 감탄이 이어집니다.</p>
+    <div class="ctx"><span class="lb">이전 연관</span> 기대 · "이게 그 유명한 거야?"</div>
+    <div class="ctx now"><span class="lb">이 클립</span> 두바이 초콜릿 첫 시식</div>
+    <div class="acts"><button>빼기</button><button class="use">사용 취소</button></div>
+  </div>
+</div>
+<div class="cap"><span class="kind">extra</span> 앰버 · 골드 · hue 40 · 흰글자대비 4.6:1</div>
+<div class="mini" style="--rvw-accent:hsl(40 76% 34%);--rvw-accent-ink:hsl(40 76% 27%);--rvw-accent-bg:hsl(40 60% 94%);--rvw-accent-line:hsl(40 55% 84%);--rvw-bg:hsl(40 0% 100%);--rvw-bg2:hsl(40 22% 97%);--rvw-bg3:hsl(40 20% 93%);--rvw-line:hsl(40 18% 90%);--rvw-line2:hsl(40 20% 80%);--rvw-ink:hsl(40 30% 13%);--rvw-ink2:hsl(40 20% 32%);--rvw-ink3:hsl(40 14% 48%);--rvw-ink4:hsl(40 12% 64%)">
+  <div class="rail"><div class="who">앰</div><div class="rb"></div><div class="rb"></div></div>
+  <div class="scr">
+    <div class="hd"><b>음식 토크 풀버전</b><span class="chip">후보 7/23 · 남음 16</span></div>
+    <div class="row"><h3>두바이 초콜릿 첫 시식</h3><span class="badge">● 사용</span><span class="seg">요약</span><span class="seg on">근거</span></div>
+    <p class="body">첫 입에서 큰 웃음과 감탄이 이어집니다.</p>
+    <div class="ctx"><span class="lb">이전 연관</span> 기대 · "이게 그 유명한 거야?"</div>
+    <div class="ctx now"><span class="lb">이 클립</span> 두바이 초콜릿 첫 시식</div>
+    <div class="acts"><button>빼기</button><button class="use">사용 취소</button></div>
+  </div>
+</div>
+<div class="cap"><span class="kind">extra</span> 핫핑크 · 교환학생 · hue 338 · 흰글자대비 4.6:1</div>
+<div class="mini" style="--rvw-accent:hsl(338 83% 49%);--rvw-accent-ink:hsl(338 83% 39%);--rvw-accent-bg:hsl(338 60% 94%);--rvw-accent-line:hsl(338 55% 84%);--rvw-bg:hsl(338 0% 100%);--rvw-bg2:hsl(338 22% 97%);--rvw-bg3:hsl(338 20% 93%);--rvw-line:hsl(338 18% 90%);--rvw-line2:hsl(338 20% 80%);--rvw-ink:hsl(338 30% 13%);--rvw-ink2:hsl(338 20% 32%);--rvw-ink3:hsl(338 14% 48%);--rvw-ink4:hsl(338 12% 64%)">
+  <div class="rail"><div class="who">핫</div><div class="rb"></div><div class="rb"></div></div>
+  <div class="scr">
+    <div class="hd"><b>음식 토크 풀버전</b><span class="chip">후보 7/23 · 남음 16</span></div>
+    <div class="row"><h3>두바이 초콜릿 첫 시식</h3><span class="badge">● 사용</span><span class="seg">요약</span><span class="seg on">근거</span></div>
+    <p class="body">첫 입에서 큰 웃음과 감탄이 이어집니다.</p>
+    <div class="ctx"><span class="lb">이전 연관</span> 기대 · "이게 그 유명한 거야?"</div>
+    <div class="ctx now"><span class="lb">이 클립</span> 두바이 초콜릿 첫 시식</div>
+    <div class="acts"><button>빼기</button><button class="use">사용 취소</button></div>
+  </div>
+</div>
+<div class="cap"><span class="kind">extra</span> 브라운 레드 · hue 14 · 흰글자대비 4.6:1</div>
+<div class="mini" style="--rvw-accent:hsl(14 52% 48%);--rvw-accent-ink:hsl(14 52% 38%);--rvw-accent-bg:hsl(14 52% 94%);--rvw-accent-line:hsl(14 52% 84%);--rvw-bg:hsl(14 0% 100%);--rvw-bg2:hsl(14 22% 97%);--rvw-bg3:hsl(14 20% 93%);--rvw-line:hsl(14 18% 90%);--rvw-line2:hsl(14 20% 80%);--rvw-ink:hsl(14 30% 13%);--rvw-ink2:hsl(14 20% 32%);--rvw-ink3:hsl(14 14% 48%);--rvw-ink4:hsl(14 12% 64%)">
+  <div class="rail"><div class="who">브</div><div class="rb"></div><div class="rb"></div></div>
+  <div class="scr">
+    <div class="hd"><b>음식 토크 풀버전</b><span class="chip">후보 7/23 · 남음 16</span></div>
+    <div class="row"><h3>두바이 초콜릿 첫 시식</h3><span class="badge">● 사용</span><span class="seg">요약</span><span class="seg on">근거</span></div>
+    <p class="body">첫 입에서 큰 웃음과 감탄이 이어집니다.</p>
+    <div class="ctx"><span class="lb">이전 연관</span> 기대 · "이게 그 유명한 거야?"</div>
+    <div class="ctx now"><span class="lb">이 클립</span> 두바이 초콜릿 첫 시식</div>
+    <div class="acts"><button>빼기</button><button class="use">사용 취소</button></div>
+  </div>
+</div>
+</body></html>

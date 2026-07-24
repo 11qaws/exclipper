@@ -1,0 +1,23 @@
+<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>ExClipper 디자인 하네스</title>
+<style>
+body{margin:0;padding:40px;background:#1b1d24;color:#e0e3ec;font-family:"Pretendard",-apple-system,"Malgun Gothic",sans-serif}
+h1{font-size:20px;margin:0 0 6px}
+p.sub{color:#9aa2b8;font-size:13px;margin:0 0 28px}
+a{display:block;padding:16px 20px;margin-bottom:10px;background:#24262f;border-radius:12px;color:#e0e3ec;text-decoration:none;border:1px solid #333744}
+a:hover{border-color:#e0426b;background:#2a2d38}
+a.live{border-color:#e0426b;background:#2b1f26}
+a.live b{color:#ff8fa8}
+a b{display:block;font-size:15px;margin-bottom:3px}
+a span{color:#9aa2b8;font-size:12px}
+</style></head><body>
+<h1>ExClipper 검토 화면 — 디자인 하네스</h1>
+<p class="sub">확정된 설계를 브라우저에서 직접 확인. 실제 스타일·폰트·프로필로 렌더됩니다.</p>
+<a href="./live/index.html" class="live"><b>★ 라이브 — 실제 ReviewSurface 컴포넌트</b><span>진짜 React 코드가 픽스처로 동작합니다. 키보드로 조작해 보세요 — A 사용 · R 빼기 · Z 되돌리기 · Q 요약/근거 · Space 재생 · ←→ 후보 이동 · [ ] 앞 구간(⇧ 끝 구간) · ⌫ 전체 초기화(확인창) · Esc 취소</span></a>
+<a href="./review-surface.html"><b>① 검토 화면 정적 시안 (요약 + 근거)</b><span>디자인 원본 · 통합 타임라인 · 연관 맥락 · 등장 인물 · 플레이어 카드 · 상태 배지 · 키캡</span></a>
+<a href="./streamer-palettes.html"><b>② 팔레트 10종 (대비-보정)</b><span>기본·교환학생(핫핑크) · 아모레또(와인모브) · 유레카(그린) · 세나 · 토로리 · 망징이 · 보존: 클래식 바이올렛 · 앰버 골드 · 소프트 로즈 · 브라운 레드 · 전 테마 흰 라벨 ≥4.5:1</span></a>
+<a href="./review-card.html"><b>②-b 검토 카드 (단독 컴포넌트)</b><span>보존된 단독 UI 카드 폼 · --rvw-* 토큰으로 테마 교체</span></a>
+<a href="./review-help.html"><b>③ 도움말 오버레이 (전체 키맵)</b><span>모든 단축키 · 구간 조정 [ ] · Backspace 초기화 · Esc 취소 · / 도움말</span></a>
+<a href="./review-sizes.html"><b>④ 크기 정책 (MIN 1000 / MAX 1280 / 참고 1440)</b><span>1000×600 락 하한 · 1280×720 확정 상한(720p) · 1440은 상한을 1280으로 정한 근거</span></a>
+<a href="./review-worstcase.html"><b>⑤ 최악 케이스 (최소 크기 · 영문 · 긴 데이터)</b><span>1000×600에서 영문 긴 문장이 안 깨지는지</span></a>
+<a href="./review-font-check.html"><b>⑥ 폰트 한글/영문 비교</b><span>Pretendard · 같은 프레임에 ko/en</span></a>
+</body></html>

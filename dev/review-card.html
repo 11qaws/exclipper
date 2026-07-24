@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>검토 카드 · 단독 컴포넌트</title>
+<!--
+  Preserved standalone review card.
+
+  This is the palette-harness card lifted out on its own — it works as a
+  self-contained UI card, not just a swatch backdrop. Keep this form stable.
+
+  Contract:
+    · Two-part: a colour rail (profile + tab stubs) and a screen.
+    · Themed entirely through --rvw-* custom properties on .rvw-card. The
+      canonical token values come from src/app/streamerPalette.ts; the set
+      inlined below is the "기본 · 교환학생" (rose) theme, contrast-solved so
+      the white label on --rvw-accent clears WCAG AA (4.5:1).
+    · Swap theme = replace the --rvw-* block. Nothing else changes.
+-->
+<style>
+  @font-face { font-family: "Pretendard"; font-weight: 400; src: url("../public/fonts/Pretendard-Regular.woff2") format("woff2"); }
+  @font-face { font-family: "Pretendard"; font-weight: 600; src: url("../public/fonts/Pretendard-SemiBold.woff2") format("woff2"); }
+  @font-face { font-family: "Pretendard"; font-weight: 800; src: url("../public/fonts/Pretendard-ExtraBold.woff2") format("woff2"); }
+
+  body { margin: 0; min-height: 100vh; display: grid; place-items: center; gap: 20px;
+         background: #eef0f5; font-family: "Pretendard", -apple-system, "Malgun Gothic", sans-serif; padding: 40px; }
+  .note { color: #6b7180; font: 12px "SFMono-Regular", monospace; }
+
+  /* --- the card --- */
+  .rvw-card {
+    /* 기본 · 교환학생 (소프트 로즈) — from streamerPalette.ts, contrast-solved */
+    --rvw-accent: hsl(350 72% 53%);
+    --rvw-accent-ink: hsl(350 72% 41%);
+    --rvw-accent-bg: hsl(350 60% 94%);
+    --rvw-accent-line: hsl(350 55% 84%);
+    --rvw-bg: hsl(350 0% 100%);
+    --rvw-bg2: hsl(350 22% 97%);
+    --rvw-bg3: hsl(350 20% 93%);
+    --rvw-line: hsl(350 18% 90%);
+    --rvw-line2: hsl(350 20% 80%);
+    --rvw-ink: hsl(350 30% 13%);
+    --rvw-ink2: hsl(350 20% 32%);
+    --rvw-ink3: hsl(350 14% 48%);
+    --rvw-ink4: hsl(350 12% 64%);
+
+    width: 460px; border-radius: 16px; overflow: hidden;
+    display: grid; grid-template-columns: 46px 1fr;
+    background: var(--rvw-bg2); box-shadow: 0 10px 30px rgba(20, 22, 30, .16);
+  }
+  .rvw-card__rail {
+    background: linear-gradient(170deg, var(--rvw-accent), color-mix(in srgb, var(--rvw-accent) 70%, #000));
+    display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 12px 0;
+  }
+  .rvw-card__who { width: 32px; height: 32px; border-radius: 50%; overflow: hidden;
+                   background: #fff; color: var(--rvw-accent-ink); display: grid; place-items: center;
+                   font-weight: 800; font-size: 14px; }
+  .rvw-card__who img { width: 100%; height: 100%; object-fit: cover; }
+  .rvw-card__tab { width: 28px; height: 28px; border-radius: 8px; background: rgba(255, 255, 255, .20); }
+
+  .rvw-card__scr { padding: 14px 16px; min-width: 0; color: var(--rvw-ink); }
+  .rvw-card__hd { display: flex; justify-content: space-between; align-items: baseline; }
+  .rvw-card__hd b { font-size: 15px; font-weight: 800; }
+  .rvw-card__hd .chip { font-size: 11px; color: var(--rvw-ink3); }
+  .rvw-card__row { display: flex; align-items: center; gap: 6px; margin-top: 11px; }
+  .rvw-card__row h3 { font-size: 15px; font-weight: 800; margin: 0; }
+  .rvw-card__badge { font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 999px;
+                     background: color-mix(in srgb, var(--rvw-accent) 16%, #fff); color: var(--rvw-accent-ink); }
+  .rvw-card__seg { margin-left: auto; font-size: 12px; font-weight: 700; color: var(--rvw-ink3); padding: 2px 9px; border-radius: 7px; }
+  .rvw-card__seg.is-on { background: var(--rvw-bg); color: var(--rvw-accent-ink); box-shadow: 0 1px 3px rgba(0, 0, 0, .08); }
+  .rvw-card__body { font-size: 13px; color: var(--rvw-ink2); line-height: 1.6; margin: 9px 0; }
+  .rvw-card__ctx { font-size: 12px; color: var(--rvw-ink3); background: var(--rvw-bg3); border-radius: 8px; padding: 6px 9px; margin-top: 5px; }
+  .rvw-card__ctx.is-now { background: var(--rvw-accent-bg); color: var(--rvw-accent-ink); border: 1px solid var(--rvw-accent-line); }
+  .rvw-card__ctx .lb { font-size: 10px; font-weight: 700; opacity: .75; display: block; }
+  .rvw-card__acts { display: flex; gap: 7px; margin-top: 12px; }
+  .rvw-card__acts button { flex: 1; padding: 8px; border: 1px solid var(--rvw-line2); border-radius: 9px;
+                           background: var(--rvw-bg); font: 600 13px "Pretendard"; color: var(--rvw-ink); cursor: pointer; }
+  .rvw-card__acts .is-primary { background: var(--rvw-accent); border-color: var(--rvw-accent); color: #fff; }
+</style>
+</head>
+<body>
+  <p class="note">preserved standalone review card · theme = 기본·교환학생 (rose)</p>
+  <div class="rvw-card">
+    <div class="rvw-card__rail">
+      <div class="rvw-card__who">교</div>
+      <div class="rvw-card__tab"></div>
+      <div class="rvw-card__tab"></div>
+    </div>
+    <div class="rvw-card__scr">
+      <div class="rvw-card__hd"><b>음식 토크 풀버전</b><span class="chip">후보 7/23 · 남음 16</span></div>
+      <div class="rvw-card__row">
+        <h3>두바이 초콜릿 첫 시식</h3>
+        <span class="rvw-card__badge">● 사용</span>
+        <span class="rvw-card__seg">요약</span>
+        <span class="rvw-card__seg is-on">근거</span>
+      </div>
+      <p class="rvw-card__body">첫 입에서 큰 웃음과 감탄이 이어집니다.</p>
+      <div class="rvw-card__ctx"><span class="lb">이전 연관</span> 기대 · "이게 그 유명한 거야?"</div>
+      <div class="rvw-card__ctx is-now"><span class="lb">이 클립</span> 두바이 초콜릿 첫 시식</div>
+      <div class="rvw-card__acts">
+        <button type="button">빼기</button>
+        <button type="button" class="is-primary">사용 취소</button>
+      </div>
+    </div>
+  </div>
+</body>
+</html>
