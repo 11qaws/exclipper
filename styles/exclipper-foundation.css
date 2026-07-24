@@ -11,6 +11,54 @@
  * high-risk rewrite of the 888 existing rules.
  */
 
+/*
+ * Pretendard, self-hosted (OFL-1.1, see styles/fonts/README.md). No CDN — the
+ * app must work offline and under a strict CSP. One family covers Korean and
+ * Latin, so ko/en render on the same rhythm. `swap` so text paints in the
+ * fallback immediately and reflows once the weight loads.
+ *
+ * The files live beside this stylesheet, not in `public/`, and are referenced
+ * relatively so Vite rewrites the URLs with the deploy `base`. An absolute
+ * `/fonts/...` silently 404s wherever the app is not served from the domain
+ * root — which is exactly the GitHub Pages case (`/exclipper/`), where it left
+ * every screen on a fallback font.
+ */
+@font-face {
+  font-family: "Pretendard";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("./fonts/Pretendard-Regular.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Pretendard";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("./fonts/Pretendard-Medium.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Pretendard";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("./fonts/Pretendard-SemiBold.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Pretendard";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("./fonts/Pretendard-Bold.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Pretendard";
+  font-style: normal;
+  font-weight: 800;
+  font-display: swap;
+  src: url("./fonts/Pretendard-ExtraBold.woff2") format("woff2");
+}
+
 :root {
   /* Type scale — 7 steps. Replaces 24 ad hoc font sizes. */
   --ex-font-2xs: .6875rem;  /* 11px · badges, superscripts */
