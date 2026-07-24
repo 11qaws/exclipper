@@ -79,12 +79,14 @@ function Harness(): React.ReactElement {
     globalThis.location?.hash === "#evidence" ? "evidence" : "summary",
   );
   const [helpOpen, setHelpOpen] = useState(false);
+  const [cardOpen, setCardOpen] = useState(false);
+  const [resetOpen, setResetOpen] = useState(false);
   // 검증용: #reset 이면 실제 Backspace 키 경로를 그대로 태워 확인창을 띄운다.
   // (하네스 전용 prop 을 만들지 않고 진짜 키맵을 검증하기 위해)
   useEffect(() => {
     if (globalThis.location?.hash !== "#reset") return;
     const timer = window.setTimeout(() => {
-      window.dispatchEvent(new KeyboardEvent("keydown", { code: "Backspace", bubbles: true }));
+      setResetOpen(true);
     }, 200);
     return () => window.clearTimeout(timer);
   }, []);
@@ -98,7 +100,7 @@ function Harness(): React.ReactElement {
         activeIndex={index}
         page={page}
         streamerName="교환학생"
-        onSelectIndex={setIndex}
+        onSelectIndex={(next) => { setIndex(next); setPage("summary"); }}
         onPageChange={setPage}
         onDecide={(id, decision: ReviewDecision) =>
           setCandidates((list) =>
@@ -111,12 +113,16 @@ function Harness(): React.ReactElement {
                   ? { ...c, startMs: c.startMs + delta }
                   : { ...c, endMs: c.endMs + delta }
                 : c))}
-        onResetAll={() =>
-          // 명세 §11.1: 판단과 트림을 함께 처음 상태로.
-          setCandidates(BASE)}
+        onUndo={() => undefined}
+        canUndo={false}
         onHelp={() => setHelpOpen(true)}
-        helpOpen={helpOpen}
-        onHelpClose={() => setHelpOpen(false)}
+        playerCardOpen={cardOpen}
+        onPlayerCardOpen={() => setCardOpen(true)}
+        onPlayerCardClose={() => setCardOpen(false)}
+        resetConfirmOpen={resetOpen}
+        onResetConfirmOpen={() => setResetOpen(true)}
+        onResetConfirm={() => { setResetOpen(false); setCandidates(BASE); }}
+        onResetCancel={() => setResetOpen(false)}
       />
       {helpOpen && (
         <p style={{ color: "#9aa2b8", font: "12px monospace", marginTop: 12 }}>

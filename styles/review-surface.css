@@ -182,20 +182,24 @@
   background: var(--rvw-bg3);
   box-shadow: inset 0 0 0 1px var(--rvw-line);
 }
-/* unreviewed = hollow dot; used = filled; dropped = red ring */
-.rvw-strip i {
+/* unreviewed = hollow dot; used = filled; dropped = red ring. Each is also
+   the click target for jumping to that candidate, so it is a real button. */
+.rvw-strip button {
   position: absolute;
   top: 2px;
   width: 8px;
   height: 8px;
+  padding: 0;
   border-radius: 50%;
   background: var(--rvw-bg);
   border: 2px solid var(--rvw-ink4);
   transform: translateX(-50%);
+  cursor: pointer;
 }
-.rvw-strip i.ok { background: var(--rvw-ok); border-color: var(--rvw-ok); }
-.rvw-strip i.no { background: var(--rvw-bg); border-color: var(--rvw-bad); }
-.rvw-strip i.cur {
+.rvw-strip button:hover { border-color: var(--rvw-accent); }
+.rvw-strip button.ok { background: var(--rvw-ok); border-color: var(--rvw-ok); }
+.rvw-strip button.no { background: var(--rvw-bg); border-color: var(--rvw-bad); }
+.rvw-strip button.cur {
   width: 14px;
   height: 14px;
   top: -1px;
@@ -237,8 +241,21 @@
   background: var(--rvw-bg);
   color: var(--rvw-ink2);
 }
-.rvw-pbar .pb { flex: 1; height: 4px; border-radius: 2px; background: var(--rvw-bg3); position: relative; }
+.rvw-pbar .pb {
+  flex: 1;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--rvw-bg3);
+  position: relative;
+  cursor: pointer;
+  touch-action: none;
+}
 .rvw-pbar .pb .played { position: absolute; left: 0; top: 0; bottom: 0; background: var(--rvw-accent); border-radius: 2px; }
+/* Markers: what is worth looking at inside the clip, on the bar you scrub. */
+.rvw-pbar .pb .mk { position: absolute; transform: translateX(-50%); pointer-events: none; }
+.rvw-pbar .pb .mk.peak { top: -4px; width: 2px; height: 12px; background: var(--rvw-ink2); border-radius: 1px; }
+.rvw-pbar .pb .mk.cue { top: -1px; width: 4px; height: 6px; border-radius: 2px; background: var(--rvw-accent-ink); opacity: .75; }
+.rvw-pbar .pb .mk.frame { bottom: -5px; width: 5px; height: 5px; border-radius: 50%; background: var(--rvw-ink4); }
 .rvw-pbar .tc { font: 11px var(--rvw-mono); color: var(--rvw-ink3); font-variant-numeric: tabular-nums; }
 .rvw-play {
   width: 26px;
@@ -532,6 +549,42 @@
   cursor: pointer;
   padding: 0;
 }
+.rvw-tl .cue.sel { background: var(--rvw-accent); }
+/* The peak is why the clip was picked at all, so it reads heavier than a cue. */
+.rvw-tl .peak {
+  position: absolute;
+  top: 43px;
+  transform: translateX(-50%);
+  width: 3px;
+  height: 20px;
+  border: 0;
+  border-radius: 2px;
+  padding: 0;
+  background: var(--rvw-ink2);
+  cursor: pointer;
+}
+.rvw-tl .peak::after {
+  content: "정점";
+  position: absolute;
+  top: -15px;
+  left: 50%;
+  transform: translateX(-50%);
+  font: 700 9px var(--rvw-font);
+  color: var(--rvw-ink3);
+  white-space: nowrap;
+  letter-spacing: .02em;
+}
+/* No frames is still information: keep the lane and say so, never collapse. */
+.rvw-tl-empty {
+  position: absolute;
+  inset: 0 0 26px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--rvw-r-sm);
+  background: var(--rvw-bg3);
+  color: var(--rvw-ink4);
+  font-size: var(--rvw-fs-sm);
+}
 .rvw-tl .tc {
   position: absolute;
   top: 64px;
@@ -540,11 +593,16 @@
   color: var(--rvw-ink4);
 }
 
+/*
+ * Two columns, not three (§6): what was actually said, then how it connects and
+ * who is in it. The dialogue is the deciding evidence for a talk clip, so it
+ * gets the wider half rather than an equal third.
+ */
 .rvw-evcols {
   flex: 1;
   display: grid;
-  grid-template-columns: 1.1fr 1fr .9fr;
-  gap: 22px;
+  grid-template-columns: 1.15fr 1fr;
+  gap: 26px;
   min-height: 0;
 }
 .rvw-evcol { display: flex; flex-direction: column; gap: 12px; min-height: 0; overflow-y: auto; }
@@ -648,17 +706,25 @@
 .rvw-evfoot .use { background: var(--rvw-accent); border-color: var(--rvw-accent); color: #fff; }
 
 /* Slide-in player card (evidence page keeps its context). */
+/*
+ * The card grows out of the item that opened it (§7.4). The trigger's centre
+ * comes in as --rvw-card-x/y, so the transform origin is the thing you clicked
+ * rather than a corner of the screen — the UI reads as the same space opening
+ * up, not a panel flying in over it.
+ */
 .rvw-pcard {
-  position: absolute;
-  right: 22px;
-  bottom: 64px;
+  position: fixed;
+  left: clamp(16px, calc(var(--rvw-card-x, 50vw) - 170px), calc(100vw - 356px));
+  top: clamp(16px, calc(var(--rvw-card-y, 50vh) + 24px), calc(100vh - 280px));
   width: 340px;
   border-radius: var(--rvw-r);
   overflow: hidden;
   background: var(--rvw-bg);
   box-shadow: var(--rvw-sh2);
   border: 1px solid var(--rvw-line);
-  animation: rvw-card-in 220ms cubic-bezier(.2, .6, .3, 1);
+  transform-origin: center top;
+  animation: rvw-card-in 220ms cubic-bezier(.32, .72, 0, 1);
+  z-index: 9;
 }
 .rvw-pcard .scr { aspect-ratio: 16 / 9; background: var(--rvw-stage); display: grid; place-items: center; color: #42506a; font-size: var(--rvw-fs-data); }
 .rvw-pcard .scr video { width: 100%; height: 100%; object-fit: contain; }
@@ -669,16 +735,56 @@
 .rvw-pcard .bar .pb span { position: absolute; left: 0; top: 0; bottom: 0; background: var(--rvw-accent); border-radius: 2px; }
 
 @keyframes rvw-card-in {
-  from { opacity: 0; transform: translateY(8px) scale(.98); }
+  from { opacity: 0; transform: scale(.86) translateY(-6px); }
   to { opacity: 1; transform: none; }
 }
 
-/* Page turn between 요약 and 근거. */
-.rvw-body > * { animation: rvw-page-in 180ms cubic-bezier(.2, .6, .3, 1); }
+/*
+ * Two different movements, deliberately distinguishable (§3):
+ *   · turning the page is a horizontal move — a face turns over
+ *   · changing candidate is a fade — the contents swap in place
+ * Blurring the two would make "did I move, or did it reload?" unanswerable.
+ */
+.rvw-body[data-page="evidence"] > * { animation: rvw-page-in 200ms cubic-bezier(.2, .6, .3, 1); }
+.rvw-body[data-page="summary"] > * { animation: rvw-page-back 200ms cubic-bezier(.2, .6, .3, 1); }
 @keyframes rvw-page-in {
-  from { opacity: 0; transform: translateX(10px); }
+  from { opacity: 0; transform: translateX(18px); }
   to { opacity: 1; transform: none; }
 }
+@keyframes rvw-page-back {
+  from { opacity: 0; transform: translateX(-18px); }
+  to { opacity: 1; transform: none; }
+}
+
+/* Candidate change: fade only, but carrying the direction of travel. */
+.rvw[data-move="forward"] .rvw-narr,
+.rvw[data-move="forward"] .rvw-evcols { animation: rvw-cand-fwd 160ms ease; }
+.rvw[data-move="back"] .rvw-narr,
+.rvw[data-move="back"] .rvw-evcols { animation: rvw-cand-back 160ms ease; }
+@keyframes rvw-cand-fwd {
+  from { opacity: 0; transform: translateX(6px); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes rvw-cand-back {
+  from { opacity: 0; transform: translateX(-6px); }
+  to { opacity: 1; transform: none; }
+}
+
+/* Screen-reader-only live region for candidate moves. */
+.rvw-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.rvw-person .nm.unknown { color: var(--rvw-ink3); font-weight: 500; }
+.rvw-ctx.sel { background: var(--rvw-accent-bg); }
 
 /* Empty state. */
 .rvw-empty {
@@ -693,8 +799,20 @@
 }
 .rvw-empty strong { display: block; color: var(--rvw-ink); font-size: var(--rvw-fs-lg); margin-bottom: 6px; }
 
+/* Keycap presses back (§7.2) — the panel answers the key, not just the click. */
+.rvw .kc { transition: transform var(--rvw-kc, 120ms) ease-out, background var(--rvw-kc, 120ms) ease-out; }
+.rvw button:active .kc { transform: translateY(1px); background: var(--rvw-accent-bg); }
+
 @media (prefers-reduced-motion: reduce) {
+  /* Movement and scale go; a short fade stays so changes are still noticed. */
   .rvw-pcard,
   .rvw-confirm,
-  .rvw-body > * { animation: none; }
+  .rvw-narr,
+  .rvw-evcols,
+  .rvw-body > * {
+    animation-name: rvw-fade-in;
+    animation-duration: 100ms;
+  }
+  .rvw .kc,
+  .rvw button:active .kc { transition: none; transform: none; }
 }

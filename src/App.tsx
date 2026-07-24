@@ -389,8 +389,14 @@ import {
 } from "./app/reviewNavigation";
 import {
   useReviewShortcuts,
-  type DossierTab,
+  type ReviewPage,
 } from "./app/useReviewShortcuts";
+
+/**
+ * 레거시 검토 섹션의 3탭. 새 화면은 요약/근거 두 페이지(`ReviewPage`)를 쓰므로
+ * 이 타입은 그 섹션이 걷힐 때 함께 사라진다.
+ */
+type DossierTab = "summary" | "clues" | "context";
 
 type AnalysisSelectionSummary = DurableAnalysisSelectionSummary;
 type AnalysisCoverageSummary = DurableAnalysisCoverageSummary;
@@ -573,6 +579,13 @@ function App() {
    * boundaries or review state.
    */
   const [dossierTab, setDossierTab] = useState<DossierTab>("summary");
+  /**
+   * 새 검토 화면의 페이지(요약 ⇄ 근거)와 그 위에 겹치는 두 층.
+   * 위의 `dossierTab`(3탭)을 대체하며, 레거시 검토 섹션이 걷히면 그쪽이 사라진다.
+   */
+  const [reviewPage, setReviewPage] = useState<ReviewPage>("summary");
+  const [playerCardOpen, setPlayerCardOpen] = useState(false);
+  const [resetConfirmOpen, setResetConfirmOpen] = useState(false);
   /**
    * User-edited candidate titles. View-only — never persisted to IndexedDB or
    * exports beyond the current session's downloads; a refresh reverts to the
@@ -4639,6 +4652,24 @@ function App() {
     setReviewUndo(null);
   };
 
+  /**
+   * 후보 전체 리셋 (명세 §11.1).
+   *
+   * 이 화면의 변경 수단은 트림과 판단 둘뿐이므로 리셋은 **둘 다** 되돌려야
+   * 일관된다 — 일부만 지우면 "나머지는 왜 남았지?"가 된다. 새 상태 기계를
+   * 만들지 않고 기존 두 경로(`resetCandidateBoundary`, `updateReview`)를
+   * 후보마다 순서대로 호출한다. 파괴적이라 확인창을 거친 뒤에만 불린다.
+   */
+  const resetAllCandidateReview = (): void => {
+    for (const candidate of orderedCandidates) {
+      resetCandidateBoundary(candidate);
+      if (candidate.reviewState !== "unreviewed") {
+        updateReview(candidate.id, "unreviewed");
+      }
+    }
+    setReviewUndo(null);
+  };
+
   const focusedCandidate =
     focusedCandidateId === null
       ? null
@@ -4749,11 +4780,17 @@ function App() {
         );
       },
       undo: undoLastReview,
-      mapSheetOpen,
-      toggleMapSheet: () => setMapSheetOpen((open) => !open),
-      closeMapSheet: () => setMapSheetOpen(false),
-      dossierTab,
-      setDossierTab,
+      page: reviewPage,
+      setPage: setReviewPage,
+      playerCardOpen,
+      closePlayerCard: () => setPlayerCardOpen(false),
+      resetConfirmOpen,
+      openResetConfirm: () => setResetConfirmOpen(true),
+      confirmReset: () => {
+        setResetConfirmOpen(false);
+        resetAllCandidateReview();
+      },
+      cancelReset: () => setResetConfirmOpen(false),
   });
 
   useEffect(() => {

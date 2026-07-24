@@ -5,17 +5,23 @@
  * analysis types stay on the App side, so this file never has to track their
  * churn, and the screen can be rendered from fixtures in a harness.
  *
- * Two pages (요약 / 근거) turn in place, driven keyboard-first: the whole screen
- * is one instrument, closer to a game equipment panel than a form. Styling is
- * isolated in styles/review-surface.css under `.rvw-*`; colour comes from the
- * app's `--ex-accent*`, so the active streamer's palette applies automatically.
+ * It binds no keys. The review keymap lives only in `useReviewShortcuts`, so
+ * there is one table to check against the spec instead of two that drift — an
+ * earlier duplicate here had already drifted in seven places. For the same
+ * reason the layered states the keymap must reason about (page, player card,
+ * reset confirmation) are owned by the container and passed in, not held here.
+ *
+ * Motion follows §7.4: the UI is not a separate layer floating over the
+ * content, it is the same space in another state. The player card grows out of
+ * the item that opened it, the evidence page unfolds from the summary in place,
+ * and moving between candidates carries a direction.
  */
 import {
   useCallback,
-  useEffect,
   useMemo,
   useRef,
   useState,
+  type CSSProperties,
   type ReactElement,
 } from "react";
 
@@ -23,7 +29,8 @@ export type ReviewDecision = "pending" | "used" | "dropped";
 export type ReviewPage = "summary" | "evidence";
 
 export interface ReviewPerson {
-  readonly name: string;
+  /** 이름이 확인되지 않았으면 비운다 — 화면에는 "이름 미확인"으로 나온다. */
+  readonly name?: string;
   /** 진행자 / 게스트 등, 이미 확정된 표시용 문자열. */
   readonly role: string;
   readonly imageUrl?: string;
@@ -35,6 +42,8 @@ export interface ReviewCue {
   readonly text: string;
   /** 화자 이름이 확인된 경우에만. */
   readonly speaker?: string;
+  /** 신뢰도가 낮을 때만 채운다. 높은 값은 표시하지 않는다(§6). */
+  readonly lowConfidenceNote?: string;
 }
 
 export interface ReviewContextItem {
@@ -68,13 +77,21 @@ export interface ReviewCandidate {
   readonly frames: readonly ReviewFrame[];
 }
 
+/** 카드가 자라날 출발점. 클릭한 요소의 화면 좌표(§7.4 연결감). */
+export interface PlayerCardOrigin {
+  readonly atMs: number;
+  readonly x: number;
+  readonly y: number;
+}
+
 export interface ReviewSurfaceProps {
   readonly sourceTitle: string;
   readonly sourceDurationMs: number;
   readonly candidates: readonly ReviewCandidate[];
   readonly activeIndex: number;
   readonly page: ReviewPage;
-  /** 레일 상단 인물 아이콘. */
+  /** 후보 이동 방향. 전환 애니가 방향을 갖게 한다(다음=우, 이전=좌). */
+  readonly lastMoveDirection?: "forward" | "back";
   readonly streamerName: string;
   readonly streamerImageUrl?: string;
   /** 재생용. 없으면 포스터 자리표시자만 보여준다. */
@@ -82,18 +99,21 @@ export interface ReviewSurfaceProps {
   readonly onSelectIndex: (index: number) => void;
   readonly onPageChange: (page: ReviewPage) => void;
   readonly onDecide: (id: string, decision: ReviewDecision) => void;
-  /** 앞/끝 구간 조정. deltaMs 는 음수도 들어온다. */
   readonly onTrim: (id: string, edge: "start" | "end", deltaMs: number) => void;
-  /**
-   * 후보 전체 리셋 (명세 §11.1). 판단만이 아니라 **트림도 함께** AI 첫 제안으로
-   * 되돌려야 한다 — 이 화면의 변경 수단이 그 둘뿐이라 일부만 지우면 "나머지는?"
-   * 혼란이 생긴다. 파괴적이므로 이 컴포넌트가 확인창을 거친 뒤에만 호출한다.
-   */
-  readonly onResetAll: () => void;
+  readonly onUndo?: () => void;
+  readonly canUndo?: boolean;
   readonly onHelp?: () => void;
-  /** 도움말 오버레이는 부모가 소유한다. Esc 체인에 끼우기 위해 상태만 받는다. */
-  readonly helpOpen?: boolean;
-  readonly onHelpClose?: () => void;
+  readonly onToggleTheme?: () => void;
+  readonly themeLabel?: string;
+  /** 슬라이드인 플레이어 카드 — 컨테이너가 소유(Esc 체인이 알아야 함). */
+  readonly playerCardOpen: boolean;
+  readonly onPlayerCardOpen: (origin: PlayerCardOrigin) => void;
+  readonly onPlayerCardClose: () => void;
+  /** 후보 전체 리셋 확인창 — 컨테이너가 소유. */
+  readonly resetConfirmOpen: boolean;
+  readonly onResetConfirmOpen: () => void;
+  readonly onResetConfirm: () => void;
+  readonly onResetCancel: () => void;
 }
 
 function formatTime(ms: number): string {
@@ -110,7 +130,7 @@ function Keycap({ children }: { readonly children: string }): ReactElement {
   return <kbd className="kc">{children}</kbd>;
 }
 
-const TRIM_STEP_MS = 500;
+const TRIM_STEP_MS = 5_000;
 
 export function ReviewSurface({
   sourceTitle,
@@ -118,6 +138,7 @@ export function ReviewSurface({
   candidates,
   activeIndex,
   page,
+  lastMoveDirection = "forward",
   streamerName,
   streamerImageUrl,
   videoSrc,
@@ -125,46 +146,28 @@ export function ReviewSurface({
   onPageChange,
   onDecide,
   onTrim,
-  onResetAll,
+  onUndo,
+  canUndo = false,
   onHelp,
-  helpOpen = false,
-  onHelpClose,
+  onToggleTheme,
+  themeLabel,
+  playerCardOpen,
+  onPlayerCardOpen,
+  onPlayerCardClose,
+  resetConfirmOpen,
+  onResetConfirmOpen,
+  onResetConfirm,
+  onResetCancel,
 }: ReviewSurfaceProps): ReactElement {
   const active = candidates[activeIndex];
   const videoRef = useRef<HTMLVideoElement | null>(null);
-  const rootRef = useRef<HTMLDivElement | null>(null);
+  const barRef = useRef<HTMLDivElement | null>(null);
+  /** 카드를 연 요소. 닫을 때 포커스를 여기로 돌려준다(§7.7). */
+  const cardTriggerRef = useRef<HTMLElement | null>(null);
   const [playing, setPlaying] = useState(false);
   const [positionMs, setPositionMs] = useState(active?.startMs ?? 0);
-  /** 근거 페이지에서 조각을 고르면 뜨는 슬라이드인 플레이어. */
-  const [cardOpen, setCardOpen] = useState(false);
-  const [selectedCueId, setSelectedCueId] = useState<string | null>(null);
-  /** 전체 리셋은 파괴적이라 확인을 거친다 (명세 §11.1). */
-  const [confirmingReset, setConfirmingReset] = useState(false);
-  /**
-   * 되돌리기(`Z`)는 "방금 판단 1개"만 되돌린다. 판단은 전부 `decide()`를 지나므로
-   * 여기 쌓인 직전 값 하나를 되돌리면 정확히 그 의미가 된다.
-   */
-  const undoRef = useRef<{ id: string; previous: ReviewDecision }[]>([]);
-
-  const decide = useCallback(
-    (id: string, next: ReviewDecision) => {
-      const previous = candidates.find((c) => c.id === id)?.decision ?? "pending";
-      undoRef.current.push({ id, previous });
-      onDecide(id, next);
-    },
-    [candidates, onDecide],
-  );
-
-  const undoLastDecision = useCallback(() => {
-    const last = undoRef.current.pop();
-    if (last !== undefined) onDecide(last.id, last.previous);
-  }, [onDecide]);
-
-  const confirmReset = useCallback(() => {
-    undoRef.current = [];
-    setConfirmingReset(false);
-    onResetAll();
-  }, [onResetAll]);
+  const [selectedMarkId, setSelectedMarkId] = useState<string | null>(null);
+  const [cardOrigin, setCardOrigin] = useState<PlayerCardOrigin | null>(null);
 
   const approvedCount = useMemo(
     () => candidates.filter((c) => c.decision === "used").length,
@@ -177,28 +180,40 @@ export function ReviewSurface({
 
   /*
    * Moving to another candidate resets the transient playback state — a stale
-   * position from the previous clip must never look like this one's.
-   *
-   * This is done while rendering rather than in an effect. React re-runs this
-   * component immediately with the corrected state and never commits the stale
-   * frame, so the surface cannot flash the previous clip's position; an effect
-   * would paint once with the old values and then cascade a second render.
+   * position from the previous clip must never look like this one's. Done while
+   * rendering rather than in an effect so the stale frame is never committed.
    */
   const [syncedCandidateId, setSyncedCandidateId] = useState(active?.id);
   if (active?.id !== syncedCandidateId) {
     setSyncedCandidateId(active?.id);
     setPositionMs(active?.startMs ?? 0);
     setPlaying(false);
-    setCardOpen(false);
-    setSelectedCueId(null);
-    setConfirmingReset(false);
+    setSelectedMarkId(null);
+    setCardOrigin(null);
   }
 
-  const seek = useCallback((ms: number) => {
-    setPositionMs(ms);
-    const video = videoRef.current;
-    if (video !== null) video.currentTime = ms / 1000;
-  }, []);
+  /**
+   * 재생은 후보 구간 안으로 묶는다(§7.6). 구간 밖으로 흘러가면 검토 대상이
+   * 아닌 장면을 보고 판단하게 된다. 트림 확인을 위해 **드래그로는** 경계 밖으로
+   * 나갈 수 있게 열어 두되, 자동 재생은 끝에서 멈춘다.
+   */
+  const clampToClip = useCallback(
+    (ms: number): number => {
+      if (active === undefined) return ms;
+      return Math.min(Math.max(ms, active.startMs), active.endMs);
+    },
+    [active],
+  );
+
+  const seek = useCallback(
+    (ms: number, options?: { readonly allowOutside?: boolean }) => {
+      const next = options?.allowOutside === true ? ms : clampToClip(ms);
+      setPositionMs(next);
+      const video = videoRef.current;
+      if (video !== null) video.currentTime = next / 1000;
+    },
+    [clampToClip],
+  );
 
   const togglePlay = useCallback(() => {
     const video = videoRef.current;
@@ -207,150 +222,45 @@ export function ReviewSurface({
       return;
     }
     if (video.paused) {
+      if (active !== undefined && video.currentTime * 1000 >= active.endMs - 50) {
+        video.currentTime = active.startMs / 1000;
+      }
       void video.play().then(() => setPlaying(true)).catch(() => setPlaying(false));
     } else {
       video.pause();
       setPlaying(false);
     }
-  }, []);
+  }, [active]);
 
-  const step = useCallback(
-    (delta: number) => {
-      const next = activeIndex + delta;
-      if (next >= 0 && next < candidates.length) onSelectIndex(next);
+  /** 근거의 모든 표기는 재생 진입점이다(§7.5). 카드는 그 요소에서 자라난다. */
+  const playFrom = useCallback(
+    (atMs: number, markId: string, element: HTMLElement | null) => {
+      seek(atMs);
+      setSelectedMarkId(markId);
+      if (element !== null) {
+        cardTriggerRef.current = element;
+        const rect = element.getBoundingClientRect();
+        const origin = {
+          atMs,
+          x: rect.left + rect.width / 2,
+          y: rect.top + rect.height / 2,
+        };
+        setCardOrigin(origin);
+        // 이미 열려 있으면 재생성하지 않고 위치만 옮긴다(§7.7).
+        if (!playerCardOpen) onPlayerCardOpen(origin);
+      }
     },
-    [activeIndex, candidates.length, onSelectIndex],
+    [onPlayerCardOpen, playerCardOpen, seek],
   );
 
-  /*
-   * Keymap — 명세 §11 그대로.
-   *
-   * Letter keys are matched on `event.code`, not `event.key`, so the physical
-   * key works no matter what the IME is doing (한글 입력 중에도 `KeyA`는 A 자리).
-   * Nothing binds Alt+Arrow: in Chromium that is browser Back and would leave
-   * the page. Typing into an input disables the whole map.
-   */
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent): void => {
-      const target = event.target as HTMLElement | null;
-      if (
-        target !== null &&
-        (target.tagName === "INPUT" ||
-          target.tagName === "TEXTAREA" ||
-          target.isContentEditable)
-      ) {
-        return;
-      }
-      if (event.ctrlKey || event.metaKey || event.altKey) return;
-      const id = active?.id;
-
-      // 확인창이 열려 있는 동안은 확인/취소만 받는다. 여는 키(Backspace)와
-      // 확정 키(Enter)가 달라 연타로 실수할 수 없다 (§11.1).
-      if (confirmingReset) {
-        if (event.code === "Enter" || event.code === "NumpadEnter") {
-          event.preventDefault();
-          confirmReset();
-        } else if (event.code === "Escape") {
-          event.preventDefault();
-          setConfirmingReset(false);
-        }
-        return;
-      }
-
-      switch (event.code) {
-        case "KeyQ":
-          event.preventDefault();
-          onPageChange(page === "summary" ? "evidence" : "summary");
-          return;
-        case "Space":
-          event.preventDefault();
-          togglePlay();
-          return;
-        case "ArrowRight":
-          event.preventDefault();
-          step(1);
-          return;
-        case "ArrowLeft":
-          event.preventDefault();
-          step(-1);
-          return;
-        case "KeyA": // 사용 (토글: 사용 ↔ 미검토)
-          if (id !== undefined) {
-            event.preventDefault();
-            decide(id, active?.decision === "used" ? "pending" : "used");
-          }
-          return;
-        case "KeyR": // 빼기 (토글: 탈락 ↔ 미검토)
-          if (id !== undefined) {
-            event.preventDefault();
-            decide(id, active?.decision === "dropped" ? "pending" : "dropped");
-          }
-          return;
-        case "KeyZ": // 되돌리기 — 방금 판단 1개
-          event.preventDefault();
-          undoLastDecision();
-          return;
-        case "Backspace": // 후보 전체 리셋 — 확인창을 연다
-          event.preventDefault();
-          setConfirmingReset(true);
-          return;
-        case "BracketLeft":
-          if (id !== undefined) {
-            event.preventDefault();
-            onTrim(id, event.shiftKey ? "end" : "start", -TRIM_STEP_MS);
-          }
-          return;
-        case "BracketRight":
-          if (id !== undefined) {
-            event.preventDefault();
-            onTrim(id, event.shiftKey ? "end" : "start", TRIM_STEP_MS);
-          }
-          return;
-        case "Slash": // `/` 또는 `?` — 도움말
-          event.preventDefault();
-          onHelp?.();
-          return;
-        case "Escape": {
-          // Esc = 한 방향 "취소" 체인. 항상 한 겹만 벗긴다 (§11.2).
-          event.preventDefault();
-          if (cardOpen) {
-            setCardOpen(false); // 1. 재생 카드 취소
-          } else if (page === "evidence") {
-            onPageChange("summary"); // 2. 근거 취소
-          } else if (helpOpen) {
-            onHelpClose?.(); // 3. 도움말 취소
-          } else {
-            (document.activeElement as HTMLElement | null)?.blur(); // 4. 포커스 취소
-          }
-          return;
-        }
-        default:
-          break;
-      }
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [
-    active?.decision,
-    active?.id,
-    cardOpen,
-    confirmReset,
-    confirmingReset,
-    decide,
-    helpOpen,
-    onHelp,
-    onHelpClose,
-    onPageChange,
-    onTrim,
-    page,
-    step,
-    togglePlay,
-    undoLastDecision,
-  ]);
+  const closeCard = useCallback(() => {
+    onPlayerCardClose();
+    cardTriggerRef.current?.focus();
+  }, [onPlayerCardClose]);
 
   if (active === undefined) {
     return (
-      <div className="rvw" ref={rootRef}>
+      <div className="rvw">
         <nav className="rvw-rail" aria-label="검토 도구">
           <span className="who" aria-hidden="true">
             {streamerImageUrl !== undefined
@@ -372,9 +282,68 @@ export function ReviewSurface({
 
   const durationMs = Math.max(1, active.endMs - active.startMs);
   const playedRatio = Math.min(1, Math.max(0, (positionMs - active.startMs) / durationMs));
+  const ratioOf = (atMs: number): number =>
+    Math.min(1, Math.max(0, (atMs - active.startMs) / durationMs));
+
+  /** 진행 바 드래그 seek. 트림 확인을 위해 경계 밖도 허용한다(§7.6). */
+  const seekFromPointer = (clientX: number): void => {
+    const bar = barRef.current;
+    if (bar === null) return;
+    const rect = bar.getBoundingClientRect();
+    const ratio = (clientX - rect.left) / Math.max(1, rect.width);
+    seek(active.startMs + ratio * durationMs, { allowOutside: true });
+  };
+
+  const decisionBadge = active.decision !== "pending" && (
+    <span className={`rvw-stbadge ${active.decision === "used" ? "use" : "no"}`}>
+      ● {active.decision === "used" ? "사용" : "뺌"}
+    </span>
+  );
+
+  const pageTabs = (
+    <div className="rvw-tabs" role="tablist" aria-label="요약과 근거">
+      <Keycap>Q</Keycap>
+      <button
+        type="button"
+        role="tab"
+        aria-selected={page === "summary"}
+        onClick={() => onPageChange("summary")}
+      >
+        요약
+      </button>
+      <button
+        type="button"
+        role="tab"
+        aria-selected={page === "evidence"}
+        onClick={() => onPageChange("evidence")}
+      >
+        근거
+      </button>
+    </div>
+  );
+
+  const decisionButtons = (
+    <>
+      <button
+        type="button"
+        onClick={() => onDecide(active.id, active.decision === "dropped" ? "pending" : "dropped")}
+      >
+        {active.decision === "dropped" ? "빼기 취소" : "빼기"}
+        <Keycap>R</Keycap>
+      </button>
+      <button
+        className="use"
+        type="button"
+        onClick={() => onDecide(active.id, active.decision === "used" ? "pending" : "used")}
+      >
+        {active.decision === "used" ? "사용 취소" : "사용"}
+        <Keycap>A</Keycap>
+      </button>
+    </>
+  );
 
   return (
-    <div className="rvw" ref={rootRef}>
+    <div className="rvw" data-move={lastMoveDirection}>
       <nav className="rvw-rail" aria-label="검토 도구">
         <span className="who" title={streamerName}>
           {streamerImageUrl !== undefined
@@ -383,7 +352,8 @@ export function ReviewSurface({
         </span>
         <button
           type="button"
-          onClick={undoLastDecision}
+          onClick={onUndo}
+          disabled={!canUndo}
           aria-label="방금 판단 되돌리기"
           title="되돌리기 (Z)"
         >
@@ -395,6 +365,11 @@ export function ReviewSurface({
           </button>
         )}
         <span className="sp" />
+        {onToggleTheme !== undefined && (
+          <button type="button" onClick={onToggleTheme} aria-label={themeLabel ?? "테마 전환"}>
+            ☾
+          </button>
+        )}
       </nav>
 
       <div className="rvw-screen">
@@ -410,29 +385,41 @@ export function ReviewSurface({
           </span>
         </header>
 
-        {/* 후보 위치 스트립: 방송 전체에서 어디를 보고 있는지 + 각 후보의 상태 */}
-        <div className="rvw-strip" aria-hidden="true">
-          <div className="r" />
+        {/* 화면을 보지 않는 사용자에게 후보 이동을 알린다(§2). */}
+        <p className="rvw-sr" role="status" aria-live="polite">
+          후보 {activeIndex + 1} / {candidates.length} · {active.title}
+        </p>
+
+        {/* 마커는 클릭으로도 후보를 옮긴다(§2) — 키보드만의 화면이 아니다. */}
+        <div className="rvw-strip">
+          <div className="r" aria-hidden="true" />
           {candidates.map((candidate, index) => {
             const left = `${(candidate.peakMs / Math.max(1, sourceDurationMs)) * 100}%`;
             const state = candidate.decision === "used"
               ? "ok"
               : candidate.decision === "dropped" ? "no" : "";
+            const decisionLabel = candidate.decision === "used"
+              ? "사용"
+              : candidate.decision === "dropped" ? "뺌" : "미검토";
             return (
-              <i
+              <button
                 key={candidate.id}
+                type="button"
                 className={`${state}${index === activeIndex ? " cur" : ""}`.trim()}
                 style={{ left }}
+                aria-current={index === activeIndex ? "true" : undefined}
+                aria-label={`후보 ${index + 1} · ${candidate.title} · ${decisionLabel}`}
+                onClick={() => onSelectIndex(index)}
               />
             );
           })}
         </div>
         <div className="rvw-stripmeta">
-          <span>0:00</span>
-          <span>{formatTime(sourceDurationMs)}</span>
+          <span>사용 ● 뺌 ✕ 미검토 ○</span>
+          <span>{formatTime(active.peakMs)} / {formatTime(sourceDurationMs)}</span>
         </div>
 
-        <div className="rvw-body">
+        <div className="rvw-body" data-page={page}>
           {page === "summary" ? (
             <div className="rvw-sum" key="summary">
               <div className="rvw-stagecol">
@@ -441,8 +428,15 @@ export function ReviewSurface({
                     <video
                       ref={videoRef}
                       src={videoSrc}
-                      onTimeUpdate={(event) =>
-                        setPositionMs(event.currentTarget.currentTime * 1000)}
+                      onTimeUpdate={(event) => {
+                        const ms = event.currentTarget.currentTime * 1000;
+                        setPositionMs(ms);
+                        // 구간 끝에서 멈춘다 — 다음 장면으로 흘러가지 않게(§7.6).
+                        if (ms >= active.endMs) {
+                          event.currentTarget.pause();
+                          setPlaying(false);
+                        }
+                      }}
                       onPlay={() => setPlaying(true)}
                       onPause={() => setPlaying(false)}
                     />
@@ -459,9 +453,33 @@ export function ReviewSurface({
                       {playing ? "❚❚" : "▶"}
                     </button>
                     <span className="tc">{formatTime(positionMs)}</span>
-                    <span className="pb">
+                    <div
+                      className="pb"
+                      ref={barRef}
+                      role="slider"
+                      tabIndex={0}
+                      aria-label="재생 위치"
+                      aria-valuemin={active.startMs}
+                      aria-valuemax={active.endMs}
+                      aria-valuenow={Math.round(positionMs)}
+                      onPointerDown={(event) => {
+                        event.currentTarget.setPointerCapture(event.pointerId);
+                        seekFromPointer(event.clientX);
+                      }}
+                      onPointerMove={(event) => {
+                        if (event.buttons === 1) seekFromPointer(event.clientX);
+                      }}
+                    >
                       <span className="played" style={{ width: `${playedRatio * 100}%` }} />
-                    </span>
+                      {/* 정점·대사·프레임을 진행 바 위 마커로(§7.6) */}
+                      <span className="mk peak" style={{ left: `${ratioOf(active.peakMs) * 100}%` }} />
+                      {active.cues.map((cue) => (
+                        <span key={cue.id} className="mk cue" style={{ left: `${ratioOf(cue.atMs) * 100}%` }} />
+                      ))}
+                      {active.frames.map((frame) => (
+                        <span key={frame.id} className="mk frame" style={{ left: `${ratioOf(frame.atMs) * 100}%` }} />
+                      ))}
+                    </div>
                     <span className="tc">{formatTime(active.endMs)}</span>
                   </div>
                 </div>
@@ -469,7 +487,7 @@ export function ReviewSurface({
                 <div className="rvw-dock">
                   <button
                     type="button"
-                    onClick={() => decide(active.id, active.decision === "dropped" ? "pending" : "dropped")}
+                    onClick={() => onDecide(active.id, active.decision === "dropped" ? "pending" : "dropped")}
                   >
                     {active.decision === "dropped" ? "빼기 취소" : "빼기"}
                     <Keycap>R</Keycap>
@@ -481,7 +499,7 @@ export function ReviewSurface({
                   <button
                     className="use"
                     type="button"
-                    onClick={() => decide(active.id, active.decision === "used" ? "pending" : "used")}
+                    onClick={() => onDecide(active.id, active.decision === "used" ? "pending" : "used")}
                   >
                     {active.decision === "used" ? "사용 취소" : "사용"}
                     <Keycap>A</Keycap>
@@ -503,12 +521,13 @@ export function ReviewSurface({
                   <button type="button" onClick={() => onTrim(active.id, "end", TRIM_STEP_MS)}>
                     <Keycap>⇧]</Keycap>
                   </button>
-                  <span className="rvw-range">{formatTime(active.startMs)} – {formatTime(active.endMs)}</span>
-                  {/* 리셋은 파괴적이라 자주 쓰는 트림 옆이 아니라 판단 영역 구석에 둔다 (§11.1). */}
+                  <span className="rvw-range">
+                    {formatTime(active.startMs)} – {formatTime(active.endMs)}
+                  </span>
                   <button
                     type="button"
                     className="rvw-reset"
-                    onClick={() => setConfirmingReset(true)}
+                    onClick={onResetConfirmOpen}
                     aria-label="후보 전체 초기화"
                     title="후보 전체 초기화 (Backspace)"
                   >
@@ -523,31 +542,9 @@ export function ReviewSurface({
                   <div className="rvw-titlerow">
                     <h3 className="ttl">
                       {active.title}
-                      {active.decision !== "pending" && (
-                        <span className={`rvw-stbadge ${active.decision === "used" ? "use" : "no"}`}>
-                          ● {active.decision === "used" ? "사용" : "뺌"}
-                        </span>
-                      )}
+                      {decisionBadge}
                     </h3>
-                    <div className="rvw-tabs" role="tablist" aria-label="요약과 근거">
-                      <Keycap>Q</Keycap>
-                      <button
-                        type="button"
-                        role="tab"
-                        aria-selected={true}
-                        onClick={() => onPageChange("summary")}
-                      >
-                        요약
-                      </button>
-                      <button
-                        type="button"
-                        role="tab"
-                        aria-selected={false}
-                        onClick={() => onPageChange("evidence")}
-                      >
-                        근거
-                      </button>
-                    </div>
+                    {pageTabs}
                   </div>
                   <p className="rvw-why">{active.why}</p>
                 </div>
@@ -583,62 +580,65 @@ export function ReviewSurface({
                 </div>
 
                 <div className="rvw-nav">
-                  <span>
-                    <Keycap>←</Keycap> <Keycap>→</Keycap> 후보 이동
-                  </span>
-                  <span>
-                    <Keycap>Space</Keycap> 재생
-                  </span>
+                  <span><Keycap>←</Keycap> <Keycap>→</Keycap> 후보 이동</span>
+                  <span><Keycap>Space</Keycap> 재생</span>
                 </div>
               </div>
             </div>
           ) : (
             <div className="rvw-ev" key="evidence">
               <div className="rvw-evhead">
-                <h3 className="ttl">{active.title}</h3>
-                <div className="rvw-tabs" role="tablist" aria-label="요약과 근거">
-                  <Keycap>Q</Keycap>
-                  <button type="button" role="tab" aria-selected={false} onClick={() => onPageChange("summary")}>
-                    요약
-                  </button>
-                  <button type="button" role="tab" aria-selected={true} onClick={() => onPageChange("evidence")}>
-                    근거
-                  </button>
-                </div>
+                <h3 className="ttl">{active.title}{decisionBadge}</h3>
+                {pageTabs}
               </div>
 
-              {/* 통합 타임라인: 프레임 · 대사 위치 · 정점이 한 축 위에 */}
+              {/* 통합 타임라인: 프레임 · 대사 · 정점이 한 축 위에(§10.5) */}
               <div className="rvw-tl">
                 <div className="axis" />
-                {active.frames.map((frame) => {
-                  // Clamp so the first/last thumbnail never hangs off the axis.
-                  const raw = ((frame.atMs - active.startMs) / durationMs) * 100;
-                  const left = `clamp(46px, ${raw}%, calc(100% - 46px))`;
-                  return (
-                    <button
-                      key={frame.id}
-                      type="button"
-                      className="fr"
-                      style={{ left }}
-                      onClick={() => { seek(frame.atMs); setCardOpen(true); }}
-                      aria-label={`${formatTime(frame.atMs)} 장면 보기`}
-                    >
-                      <span className="img">
-                        {frame.imageUrl !== undefined ? <img src={frame.imageUrl} alt="" /> : "장면"}
-                      </span>
-                    </button>
-                  );
-                })}
+                {active.frames.length === 0 ? (
+                  // 프레임이 없어도 숨기지 않는다 — 회색 판으로 자리와 시각을 남긴다(§2).
+                  <div className="rvw-tl-empty">이 구간의 장면 이미지는 준비되지 않았습니다</div>
+                ) : (
+                  active.frames.map((frame) => {
+                    const raw = ratioOf(frame.atMs) * 100;
+                    const left = `clamp(46px, ${raw}%, calc(100% - 46px))`;
+                    const markId = `frame-${frame.id}`;
+                    return (
+                      <button
+                        key={frame.id}
+                        type="button"
+                        className={`fr${selectedMarkId === markId ? " sel" : ""}`}
+                        style={{ left }}
+                        onClick={(event) => playFrom(frame.atMs, markId, event.currentTarget)}
+                        aria-label={`${formatTime(frame.atMs)} 장면부터 재생`}
+                      >
+                        <span className="img">
+                          {frame.imageUrl !== undefined
+                            ? <img src={frame.imageUrl} alt="" />
+                            : formatTime(frame.atMs)}
+                        </span>
+                      </button>
+                    );
+                  })
+                )}
+                {/* 정점 — 이 구간이 뽑힌 이유의 중심 지점 */}
+                <button
+                  type="button"
+                  className="peak"
+                  style={{ left: `${ratioOf(active.peakMs) * 100}%` }}
+                  onClick={(event) => playFrom(active.peakMs, "peak", event.currentTarget)}
+                  aria-label={`정점 ${formatTime(active.peakMs)}부터 재생`}
+                />
                 {active.cues.map((cue) => {
-                  const left = `${((cue.atMs - active.startMs) / durationMs) * 100}%`;
+                  const markId = `cue-${cue.id}`;
                   return (
                     <button
                       key={cue.id}
                       type="button"
-                      className="cue"
-                      style={{ left }}
-                      onClick={() => { seek(cue.atMs); setSelectedCueId(cue.id); setCardOpen(true); }}
-                      aria-label={`${formatTime(cue.atMs)} 대사 재생`}
+                      className={`cue${selectedMarkId === markId ? " sel" : ""}`}
+                      style={{ left: `${ratioOf(cue.atMs) * 100}%` }}
+                      onClick={(event) => playFrom(cue.atMs, markId, event.currentTarget)}
+                      aria-label={`${formatTime(cue.atMs)} 대사부터 재생`}
                     />
                   );
                 })}
@@ -646,6 +646,7 @@ export function ReviewSurface({
                 <span className="tc" style={{ left: "100%" }}>{formatTime(active.endMs)}</span>
               </div>
 
+              {/* 하단 2열: 확인한 대사 / 흐름·인물 (§6) */}
               <div className="rvw-evcols">
                 <div className="rvw-evcol">
                   <span className="rvw-sub">확인한 대사</span>
@@ -653,66 +654,77 @@ export function ReviewSurface({
                     {active.cues.length === 0 ? (
                       <p className="rvw-note">이 구간에서 확인된 대사가 없습니다.</p>
                     ) : (
-                      active.cues.map((cue) => (
-                        <button
-                          key={cue.id}
-                          type="button"
-                          className={`rvw-cue${cue.id === selectedCueId ? " sel" : ""}`}
-                          onClick={() => { seek(cue.atMs); setSelectedCueId(cue.id); setCardOpen(true); }}
-                        >
-                          <span className="tc">{formatTime(cue.atMs)}</span>
-                          <span>
-                            {cue.speaker !== undefined && <b>{cue.speaker} </b>}
-                            {cue.text}
-                          </span>
-                        </button>
-                      ))
+                      active.cues.map((cue) => {
+                        const markId = `cue-${cue.id}`;
+                        return (
+                          <button
+                            key={cue.id}
+                            type="button"
+                            className={`rvw-cue${selectedMarkId === markId ? " sel" : ""}`}
+                            onClick={(event) => playFrom(cue.atMs, markId, event.currentTarget)}
+                          >
+                            <span className="tc">{formatTime(cue.atMs)}</span>
+                            <span>
+                              {cue.speaker !== undefined && <b>{cue.speaker} </b>}
+                              {cue.text}
+                              {cue.lowConfidenceNote !== undefined && (
+                                <span className="rvw-conf">{cue.lowConfidenceNote}</span>
+                              )}
+                            </span>
+                          </button>
+                        );
+                      })
                     )}
                   </div>
                 </div>
 
                 <div className="rvw-evcol">
-                  <span className="rvw-sub">연관된 맥락</span>
                   <div className="rvw-grp">
+                    <span className="rvw-sub">연관 맥락</span>
                     {active.context.length === 0 ? (
                       <p className="rvw-note">연관된 다른 구간이 확인되지 않았습니다.</p>
                     ) : (
-                      active.context.map((item) => (
-                        <button
-                          key={item.id}
-                          type="button"
-                          className="rvw-ctx"
-                          onClick={() => { seek(item.atMs); setCardOpen(true); }}
-                        >
-                          <span className="when">{item.label} · {formatTime(item.atMs)}</span>
-                          <span className="tx">{item.text}</span>
-                        </button>
-                      ))
+                      active.context.map((item) => {
+                        const markId = `ctx-${item.id}`;
+                        return (
+                          <button
+                            key={item.id}
+                            type="button"
+                            className={`rvw-ctx${selectedMarkId === markId ? " sel" : ""}`}
+                            onClick={(event) => playFrom(item.atMs, markId, event.currentTarget)}
+                          >
+                            <span className="when">{item.label} · {formatTime(item.atMs)}</span>
+                            <span className="tx">{item.text}</span>
+                          </button>
+                        );
+                      })
                     )}
                   </div>
-                </div>
 
-                <div className="rvw-evcol">
-                  <span className="rvw-sub">등장 인물</span>
-                  <div className="rvw-people">
-                    {active.people.length === 0 ? (
-                      <p className="rvw-note">확인된 인물이 없습니다.</p>
-                    ) : (
-                      active.people.map((person) => (
-                        <div className="rvw-person" key={person.name}>
-                          <span className="pf">
-                            {person.imageUrl !== undefined
-                              ? <img src={person.imageUrl} alt="" />
-                              : person.name.slice(0, 1)}
-                          </span>
-                          <span>
-                            <span className="nm">{person.name}</span>
-                            <br />
-                            <span className="rl">{person.role}</span>
-                          </span>
-                        </div>
-                      ))
-                    )}
+                  <div className="rvw-grp">
+                    <span className="rvw-sub">등장 인물</span>
+                    <div className="rvw-people">
+                      {active.people.length === 0 ? (
+                        <p className="rvw-note">확인된 인물이 없습니다.</p>
+                      ) : (
+                        active.people.map((person, index) => (
+                          <div className="rvw-person" key={person.name ?? `unknown-${index}`}>
+                            <span className="pf">
+                              {person.imageUrl !== undefined
+                                ? <img src={person.imageUrl} alt="" />
+                                : (person.name?.slice(0, 1) ?? "?")}
+                            </span>
+                            <span>
+                              <span className={`nm${person.name === undefined ? " unknown" : ""}`}>
+                                {person.name ?? "화면에 있으나 이름 미확인"}
+                              </span>
+                              <br />
+                              <span className="rl">{person.role}</span>
+                            </span>
+                          </div>
+                        ))
+                      )}
+                    </div>
                   </div>
                 </div>
               </div>
@@ -721,58 +733,39 @@ export function ReviewSurface({
                 <span className="m">
                   {formatTime(active.startMs)} – {formatTime(active.endMs)} · {formatTime(durationMs)}
                 </span>
-                <div className="acts">
-                  <button
-                    type="button"
-                    onClick={() => decide(active.id, active.decision === "dropped" ? "pending" : "dropped")}
-                  >
-                    {active.decision === "dropped" ? "빼기 취소" : "빼기"}
-                    <Keycap>R</Keycap>
-                  </button>
-                  <button
-                    className="use"
-                    type="button"
-                    onClick={() => decide(active.id, active.decision === "used" ? "pending" : "used")}
-                  >
-                    {active.decision === "used" ? "사용 취소" : "사용"}
-                    <Keycap>A</Keycap>
-                  </button>
-                </div>
+                <div className="acts">{decisionButtons}</div>
               </div>
-
-              {cardOpen && (
-                <aside className="rvw-pcard" aria-label="선택한 지점 미리보기">
-                  <div className="scr">
-                    {videoSrc !== undefined ? (
-                      <video ref={videoRef} src={videoSrc} controls={false} />
-                    ) : (
-                      "원본 없음"
-                    )}
-                  </div>
-                  <div className="bar">
-                    <button className="rvw-play" type="button" onClick={togglePlay} aria-label={playing ? "일시정지" : "재생"}>
-                      {playing ? "❚❚" : "▶"}
-                    </button>
-                    <span className="tc">{formatTime(positionMs)}</span>
-                    <span className="pb">
-                      <span style={{ width: `${playedRatio * 100}%` }} />
-                    </span>
-                    <button className="x" type="button" onClick={() => setCardOpen(false)} aria-label="미리보기 닫기">
-                      닫기 <Keycap>Esc</Keycap>
-                    </button>
-                  </div>
-                </aside>
-              )}
             </div>
           )}
         </div>
 
-        {/*
-          후보 전체 리셋 확인 (§11.1). 트림과 판단을 한꺼번에 되돌리는 파괴적
-          동작이라 확인을 거친다. 여는 키(Backspace)와 확정 키(Enter)가 달라
-          연타로 실수할 수 없다.
-        */}
-        {confirmingReset && (
+        {/* 카드는 고른 항목에서 자라난다 — 화면 구석에서 튀어나오지 않는다(§7.4). */}
+        {playerCardOpen && cardOrigin !== null && (
+          <aside
+            className="rvw-pcard"
+            aria-label="선택한 지점 미리보기"
+            style={{
+              "--rvw-card-x": `${cardOrigin.x}px`,
+              "--rvw-card-y": `${cardOrigin.y}px`,
+            } as CSSProperties}
+          >
+            <div className="scr">
+              {videoSrc !== undefined ? <video src={videoSrc} controls={false} /> : "원본 없음"}
+            </div>
+            <div className="bar">
+              <button className="rvw-play" type="button" onClick={togglePlay} aria-label={playing ? "일시정지" : "재생"}>
+                {playing ? "❚❚" : "▶"}
+              </button>
+              <span className="tc">{formatTime(positionMs)}</span>
+              <span className="pb"><span style={{ width: `${playedRatio * 100}%` }} /></span>
+              <button className="x" type="button" onClick={closeCard} aria-label="미리보기 닫기">
+                닫기 <Keycap>Esc</Keycap>
+              </button>
+            </div>
+          </aside>
+        )}
+
+        {resetConfirmOpen && (
           <div className="rvw-confirm" role="alertdialog" aria-modal="true" aria-labelledby="rvw-confirm-title">
             <div className="rvw-confirm__box">
               <strong id="rvw-confirm-title">후보 전체를 처음 상태로 되돌릴까요?</strong>
@@ -781,10 +774,10 @@ export function ReviewSurface({
                 상태로 돌아갑니다. 되돌릴 수 없습니다.
               </p>
               <div className="rvw-confirm__acts">
-                <button type="button" onClick={() => setConfirmingReset(false)}>
+                <button type="button" onClick={onResetCancel}>
                   취소 <Keycap>Esc</Keycap>
                 </button>
-                <button type="button" className="danger" onClick={confirmReset}>
+                <button type="button" className="danger" onClick={onResetConfirm}>
                   초기화 <Keycap>↵</Keycap>
                 </button>
               </div>
