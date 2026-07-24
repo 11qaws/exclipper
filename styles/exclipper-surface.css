@@ -219,6 +219,54 @@
   flex: 1;
 }
 
+/* The steps report where the run is; the tools act on the review. Keeping
+ * them one group apart is what stops the rail reading as four decorative
+ * icons — the divider is the whole distinction. */
+.rh-app .ex-rail-sep {
+  flex: 0 0 auto;
+  align-self: stretch;
+  background: rgba(255, 255, 255, .22);
+}
+
+.rh-app .ex-rail-tools {
+  display: flex;
+  align-items: center;
+  gap: var(--ex-space-3xs);
+}
+
+.rh-app .ex-rail-tools > button {
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border: 0;
+  border-radius: 12px;
+  background: none;
+  color: rgba(255, 255, 255, .72);
+  cursor: pointer;
+  transition: background var(--ex-motion-fast), color var(--ex-motion-fast);
+}
+
+.rh-app .ex-rail-tools > button svg {
+  width: 18px;
+  height: 18px;
+}
+
+.rh-app .ex-rail-tools > button:hover:not(:disabled) {
+  background: rgba(255, 255, 255, .16);
+  color: #fff;
+}
+
+.rh-app .ex-rail-tools > button[aria-expanded="true"] {
+  background: #fff;
+  color: var(--ex-accent);
+}
+
+.rh-app .ex-rail-tools > button:disabled {
+  color: rgba(255, 255, 255, .3);
+  cursor: not-allowed;
+}
+
 /* The rail left `.rh-shell`, so the flex row it used to sit in now only
  * strands the footer out beside the content. */
 .rh-app .rh-shell {
@@ -244,13 +292,10 @@
 }
 
 .rh-app .ex-sur-head-title strong {
-  overflow: hidden;
   color: var(--ex-ink);
-  font-size: 1.25rem;
+  font-size: clamp(1rem, 1.35vw, 1.25rem);
   font-weight: 800;
   letter-spacing: -.018em;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .rh-app .ex-sur-head-title span {
@@ -779,6 +824,163 @@
   color: var(--ex-ok);
 }
 
+/* ══ 8b. Signal tiles ══════════════════════════════════════════════════
+ * The reference tablets all lead with a row of saturated stat tiles, and
+ * this screen has exactly the data for it: the reason the AI surfaced this
+ * moment at all. It was buried three levels down in the evidence list,
+ * where the one question a reviewer actually asks — "why am I looking at
+ * this?" — needed a tab change and a fold to answer.
+ *
+ * The colours are the signal palette the app already uses elsewhere, so a
+ * green tile means chat here and everywhere else. */
+
+.rh-app .ex-signals {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(92px, 1fr));
+  gap: var(--ex-space-2xs);
+  flex: 0 0 auto;
+  margin-top: var(--ex-space-sm);
+}
+
+.rh-app .ex-signal {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  padding: 8px 11px;
+  border: 1px solid var(--ex-line);
+  border-radius: var(--rh-radius-lg);
+  background: var(--ex-bg2);
+}
+
+.rh-app .ex-signal-k {
+  color: var(--ex-ink3);
+  font-size: .6875rem;
+  font-weight: 700;
+}
+
+.rh-app .ex-signal strong {
+  color: var(--ex-ink);
+  font-size: clamp(1.125rem, 1.6vw, 1.5rem);
+  font-weight: 800;
+  letter-spacing: -.02em;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+}
+
+.rh-app .ex-signal strong small {
+  margin-left: 1px;
+  font-size: .75rem;
+  font-weight: 700;
+}
+
+.rh-app .ex-signal-n {
+  color: var(--ex-ink4);
+  font-size: .625rem;
+}
+
+.rh-app .ex-signal[data-signal="chat"] {
+  border-color: var(--rh-chat-border);
+  background: var(--rh-chat-bg);
+}
+
+.rh-app .ex-signal[data-signal="chat"] .ex-signal-k,
+.rh-app .ex-signal[data-signal="chat"] strong {
+  color: var(--rh-chat);
+}
+
+.rh-app .ex-signal[data-signal="audio"] {
+  border-color: var(--rh-audio-border);
+  background: var(--rh-audio-bg);
+}
+
+.rh-app .ex-signal[data-signal="audio"] .ex-signal-k,
+.rh-app .ex-signal[data-signal="audio"] strong {
+  color: var(--rh-audio);
+}
+
+.rh-app .ex-signal[data-signal="visual"] {
+  border-color: var(--rh-visual-border);
+  background: var(--rh-visual-bg);
+}
+
+.rh-app .ex-signal[data-signal="visual"] .ex-signal-k,
+.rh-app .ex-signal[data-signal="visual"] strong {
+  color: var(--rh-visual);
+}
+
+/* ══ 8c. Candidate filmstrip ═══════════════════════════════════════════
+ * Paging with two text buttons made every candidate a blind jump. The run
+ * already stores a representative frame per candidate, so the strip shows
+ * the actual moments and their review state — the reviewer can see what is
+ * coming and skip to it, and progress through the broadcast is legible
+ * without opening the map. */
+
+.rh-app .ex-film {
+  display: flex;
+  gap: var(--ex-space-xs);
+  flex: 0 0 auto;
+  margin-top: var(--ex-space-md);
+  padding-bottom: var(--ex-space-3xs);
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+}
+
+.rh-app .ex-film-item {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  flex: 0 0 auto;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+}
+
+.rh-app .ex-film-thumb {
+  display: block;
+  width: 84px;
+  height: 47px;
+  border: 2px solid transparent;
+  border-radius: var(--rh-radius-md);
+  background: var(--ex-bg3) center / cover no-repeat;
+  transition: border-color var(--ex-motion-fast), transform var(--ex-motion-fast);
+}
+
+.rh-app .ex-film-item:hover .ex-film-thumb {
+  border-color: var(--ex-line2);
+}
+
+.rh-app .ex-film-item[data-state="approved"] .ex-film-thumb {
+  border-color: var(--ex-ok);
+}
+
+.rh-app .ex-film-item[data-state="rejected"] {
+  opacity: .45;
+}
+
+.rh-app .ex-film-item[data-current="true"] .ex-film-thumb {
+  border-color: var(--ex-accent);
+  box-shadow: 0 0 0 3px var(--ex-accent-bg);
+}
+
+.rh-app .ex-film-tc {
+  color: var(--ex-ink4);
+  font-family: var(--ex-mono);
+  font-size: .625rem;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+.rh-app .ex-film-item[data-current="true"] .ex-film-tc {
+  color: var(--ex-accent-ink);
+  font-weight: 700;
+}
+
+.rh-app .ex-trim-fill {
+  flex: 1;
+}
+
 /* ══ 9. Bookmark tabs and panes ════════════════════════════════════════
  * The tabs dwell across candidates on purpose: keeping 단서 open while
  * paging with ←/→ is how evidence gets compared without a mouse. That
@@ -791,7 +993,7 @@
   flex: 0 0 auto;
   width: max-content;
   max-width: 100%;
-  margin-top: var(--ex-space-md);
+  margin-top: var(--ex-space-sm);
   padding: var(--ex-space-3xs);
   border-radius: 12px;
   background: var(--ex-bg3);
@@ -840,7 +1042,7 @@
   flex-direction: column;
   flex: 1 1 auto;
   min-height: 0;
-  margin-top: var(--ex-space-md);
+  margin-top: var(--ex-space-sm);
 }
 
 .rh-app .ex-pane-label {
@@ -861,7 +1063,7 @@
 }
 
 .rh-app .ex-quote {
-  margin-top: var(--ex-space-lg);
+  margin-top: var(--ex-space-md);
 }
 
 .rh-app .ex-quote blockquote {
@@ -877,7 +1079,7 @@
 
 .rh-app .ex-caveat {
   margin: auto 0 0;
-  padding-top: var(--ex-space-lg);
+  padding-top: var(--ex-space-md);
   color: var(--ex-ink4);
   font-size: .78125rem;
 }
@@ -1243,9 +1445,16 @@
     padding: var(--ex-space-md) var(--ex-space-sm);
   }
 
-  .rh-app .ex-device-screen > .ex-rail .ex-rail-steps {
+  .rh-app .ex-device-screen > .ex-rail .ex-rail-steps,
+  .rh-app .ex-device-screen > .ex-rail .ex-rail-tools {
     flex-direction: column;
     gap: var(--ex-space-2xs);
+  }
+
+  .rh-app .ex-device-screen > .ex-rail .ex-rail-sep {
+    width: 22px;
+    height: 1px;
+    align-self: center;
   }
 
   .rh-app .ex-device-screen > .ex-rail .ex-rail-brand {
@@ -1365,12 +1574,30 @@
     flex: 1 1 auto;
   }
 
-  /* On the fixed canvas every field has a copy budget: what overflows is
-   * clipped, not scrolled, because the text is authored to fit. */
+  /*
+   * Copy budget, and the route out of it.
+   *
+   * Each slot holds a fixed amount of text so the canvas never reflows into
+   * a different shape as the window moves. What does not fit is not thrown
+   * away — it is somewhere the reviewer can reach:
+   *
+   *   요약 is a precis. Its two fields are budgeted, and the fuller versions
+   *   of the same material are one keystroke away in 단서 and 맥락, whose
+   *   tabs sit directly above the text.
+   *
+   *   단서 and 맥락 hold lists and long-form whose length is set by the
+   *   analysis, not by an author, so those panes scroll rather than clamp.
+   *
+   *   Anything broader than the candidate — the broadcast map, diagnostics —
+   *   is a sheet (§4.11), not a pane.
+   *
+   * The one thing never done here is silently cutting a sentence with no
+   * way to see the rest.
+   */
   .rh-app .ex-lede p {
     display: -webkit-box;
     -webkit-box-orient: vertical;
-    -webkit-line-clamp: 4;
+    -webkit-line-clamp: 3;
     overflow: hidden;
   }
 
@@ -1381,21 +1608,10 @@
     overflow: hidden;
   }
 
-  .rh-app .ex-step p,
-  .rh-app .ex-ev-text {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  /*
-   * Deliberate exception. 요약 and 맥락 are written to a budget, so clipping
-   * them is honest. 단서 is a *list*: its length is whatever the analysis
-   * found, and there is no sheet to spill into yet. Clipping it would hide
-   * evidence with no way to reach it, which is worse than a scrollbar.
-   * Revisit once the diagnostic sheet exists (PART E).
-   */
-  .rh-app .ex-pane[data-pane="clues"] {
+  /* The budget sets the shape; this guarantees the promise. If a translation
+   * runs long or the device lands on an awkward height, the pane scrolls
+   * rather than letting the card edge eat a sentence. */
+  .rh-app .ex-pane {
     overflow-y: auto;
     overscroll-behavior: contain;
     padding-right: var(--ex-space-2xs);
@@ -1470,6 +1686,12 @@
     gap: var(--ex-space-2xs);
   }
 
+  .rh-app .ex-rail-sep {
+    width: 1px;
+    height: 22px;
+    align-self: center;
+  }
+
   .rh-app .ex-sheet-scrim,
   .rh-app .ex-map-close {
     display: none;
@@ -1535,6 +1757,43 @@
   }
 
   .rh-app .ex-bmk-keys {
+    display: none;
+  }
+}
+
+/* ══ 11b. Progressive omission ═════════════════════════════════════════
+ * The rule, applied in one place so it stays a rule: as the frame narrows,
+ * decoration goes and content stays. Nothing here hides a sentence, a
+ * number or a control — only labels that repeat what is already visible,
+ * key hints, and the strip's tick marks. */
+
+@container (max-width: 560px) {
+  .rh-app .ex-signal-n {
+    display: none;
+  }
+}
+
+@media (max-width: 1360px) {
+  .rh-app .ex-bmk-keys {
+    display: none;
+  }
+}
+
+@media (max-width: 1240px) {
+  .rh-app .ex-pos-rail::after {
+    display: none;
+  }
+
+  .rh-app .ex-signal-n {
+    display: none;
+  }
+}
+
+/* The filmstrip is orientation, not a control of record — the strip and the
+ * map both still place the candidate — so on a short frame it goes rather
+ * than stealing height from the video. */
+@media (max-height: 720px) and (min-width: 1101px) {
+  .rh-app .ex-film {
     display: none;
   }
 }

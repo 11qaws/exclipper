@@ -380,6 +380,7 @@ import {
   estimateRemainingMs,
   formatRemainingLabel,
 } from "./app/progressEstimate";
+import { buildCandidateSignalTiles } from "./app/candidateSignals";
 import { candidateStripPositionPercent } from "./app/positionStrip";
 import {
   nextUnreviewedCandidateId,
@@ -394,7 +395,7 @@ type AnalysisSelectionSummary = DurableAnalysisSelectionSummary;
 type AnalysisCoverageSummary = DurableAnalysisCoverageSummary;
 type AnalysisGapApprovalEvidence = DurableAnalysisGapApprovalEvidence;
 
-const APP_VERSION = "0.5.2";
+const APP_VERSION = "0.5.3";
 const PERSISTENCE_SCHEMA_VERSION = "0.3.0";
 const SIGNAL_ENGINE_VERSION =
   "streamer-reaction-fast-pass-v5-chat-fallback-music-confirmation";
@@ -6522,6 +6523,52 @@ function App() {
             );
           })}
         </ol>
+        {/* Session tools. The steps above report where the run is; these act
+            on the review itself, and each was previously either buried in a
+            text link or had nowhere to live at all. */}
+        <span className="ex-rail-sep" aria-hidden="true" />
+        <div className="ex-rail-tools">
+          <button
+            type="button"
+            title={ui("방송 지도", "Broadcast map")}
+            aria-keyshortcuts="M"
+            aria-expanded={mapSheetOpen}
+            disabled={!reviewShortcutsActive}
+            onClick={() => setMapSheetOpen((open) => !open)}
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M9 4.5 3.5 6.8v12.7L9 17.2l6 2.3 5.5-2.3V4.5L15 6.8Z" />
+              <path d="M9 4.5v12.7M15 6.8v12.7" />
+            </svg>
+            <span className="rh-screen-reader-only">{ui("방송 지도 열고 닫기", "Toggle broadcast map")}</span>
+          </button>
+          <button
+            type="button"
+            title={ui("되돌리기", "Undo")}
+            aria-keyshortcuts="Z"
+            disabled={reviewUndo === null}
+            onClick={undoLastReview}
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M4 9h11a4.5 4.5 0 0 1 0 9h-6" />
+              <path d="m7.5 5.5-3.5 3.5 3.5 3.5" />
+            </svg>
+            <span className="rh-screen-reader-only">{ui("방금 한 판단 되돌리기", "Undo last judgement")}</span>
+          </button>
+          <button
+            type="button"
+            title={ui("단축키", "Shortcuts")}
+            aria-keyshortcuts="?"
+            aria-expanded={shortcutHelpOpen}
+            onClick={() => setShortcutHelpOpen(true)}
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <rect x="2.5" y="6" width="19" height="12" rx="2.5" />
+              <path d="M6.5 10h.01M10 10h.01M13.5 10h.01M17 10h.01M8 14h8" />
+            </svg>
+            <span className="rh-screen-reader-only">{ui("단축키 안내 열기", "Open shortcuts")}</span>
+          </button>
+        </div>
         <span className="ex-rail-fill" aria-hidden="true" />
         <button
           className="ex-rail-theme"
@@ -8846,40 +8893,6 @@ function App() {
                       </div>
                     )}
 
-                    <div className="ex-navrow">
-                      <button
-                        type="button"
-                        disabled={previousFocusedCandidate === null}
-                        onClick={() => {
-                          if (previousFocusedCandidate !== null) {
-                            focusCandidateForReview(previousFocusedCandidate);
-                          }
-                        }}
-                      >
-                        ← 이전 후보
-                      </button>
-                      <button
-                        type="button"
-                        aria-label="검토 단축키 안내 열기"
-                        aria-keyshortcuts="?"
-                        aria-expanded={shortcutHelpOpen}
-                        onClick={() => setShortcutHelpOpen(true)}
-                      >
-                        단축키 <kbd>?</kbd>
-                      </button>
-                      <button
-                        type="button"
-                        disabled={nextFocusedCandidate === null}
-                        onClick={() => {
-                          if (nextFocusedCandidate !== null) {
-                            focusCandidateForReview(nextFocusedCandidate);
-                          }
-                        }}
-                      >
-                        다음 후보 →
-                      </button>
-                    </div>
-
                     {focusedCandidate !== null && (
                       <div className="ex-trim" aria-label="시작·끝 다듬기">
                         {([
@@ -9116,6 +9129,7 @@ function App() {
                       candidate.approvedBoundaryRevision !== null &&
                       (boundaryRevision?.revision ?? 0) > candidate.approvedBoundaryRevision;
                     const aiProjection = candidateAiProjectionById[candidate.id];
+                    const candidateSignalTiles = buildCandidateSignalTiles(candidate);
                     return (
                     <article
                       className="rh-candidate-card rh-candidate-card--signal"
@@ -9193,6 +9207,20 @@ function App() {
                             </span>
                           )}
                         </div>
+                        {candidateSignalTiles.length > 0 && (
+                          <div className="ex-signals" aria-label="AI가 이 후보를 고른 신호">
+                            {candidateSignalTiles.map((tile) => (
+                              <div className="ex-signal" data-signal={tile.kind} key={tile.kind}>
+                                <span className="ex-signal-k">{tile.label}</span>
+                                <strong>
+                                  {tile.value}
+                                  <small>{tile.unit}</small>
+                                </strong>
+                                <span className="ex-signal-n">{tile.note}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
                         <div
                           className="ex-bmk"
                           role="tablist"
@@ -9685,6 +9713,39 @@ function App() {
                   </div>
                   </div>
                   </section>
+                  )}
+
+                  {/* Paging used to be two text buttons, which made every jump
+                      blind. The run already stores a frame per candidate, so
+                      the strip shows the moments themselves and their state. */}
+                  {contextualCandidatePublicationReady && orderedCandidates.length > 1 && (
+                    <div className="ex-film" aria-label="후보 건너뛰기">
+                      {orderedCandidates.map((filmCandidate, filmIndex) => {
+                        const frame = candidateTimelineFramesById[filmCandidate.id]?.[0];
+                        return (
+                          <button
+                            type="button"
+                            className="ex-film-item"
+                            key={filmCandidate.id}
+                            data-state={filmCandidate.reviewState}
+                            data-current={filmCandidate.id === focusedCandidateId}
+                            aria-current={filmCandidate.id === focusedCandidateId}
+                            aria-label={`후보 ${filmIndex + 1} · ${formatDuration(filmCandidate.peakMs)}`}
+                            onClick={() => focusCandidateForReview(filmCandidate)}
+                          >
+                            <span
+                              className="ex-film-thumb"
+                              style={
+                                frame === undefined
+                                  ? undefined
+                                  : { backgroundImage: `url(data:${frame.mimeType};base64,${frame.dataBase64})` }
+                              }
+                            />
+                            <span className="ex-film-tc">{formatDuration(filmCandidate.peakMs)}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
                   )}
                   </div>
                 </>
