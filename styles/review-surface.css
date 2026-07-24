@@ -1,0 +1,700 @@
+/*
+ * Review surface — isolated styles for the rebuilt review screen.
+ *
+ * This file deliberately does NOT maintain visual compatibility with the
+ * legacy review markup. It owns its own namespace (`.rvw-*`) and its own token
+ * set (`--rvw-*`), so nothing here is an override stacked on top of
+ * retto-highlight.css. The legacy selectors it replaces are removed rather
+ * than fought with (see DEVELOPMENT_LOG, review-surface ingestion).
+ *
+ * Colour: the `--rvw-*` tokens are ALIASES of the app's `--ex-*` accent and
+ * neutral tokens. That is the whole integration — App.tsx already rewrites
+ * `--ex-accent*` per streamer, so the surface follows the active streamer's
+ * palette automatically, in both themes, with no extra wiring.
+ */
+
+.rvw {
+  /* accent — driven by the streamer palette via --ex-accent* */
+  --rvw-accent: var(--ex-accent);
+  --rvw-accent-ink: var(--ex-accent-ink);
+  --rvw-accent-bg: var(--ex-accent-bg);
+  --rvw-accent-line: var(--ex-accent-line);
+  /* neutrals — the app's own scale */
+  --rvw-ink: var(--ex-ink);
+  --rvw-ink2: var(--ex-ink2);
+  --rvw-ink3: var(--ex-ink3);
+  --rvw-ink4: var(--ex-ink4);
+  --rvw-bg: var(--ex-bg);
+  --rvw-bg2: var(--ex-bg2);
+  --rvw-bg3: var(--ex-bg3);
+  --rvw-line: var(--ex-line);
+  --rvw-line2: var(--ex-line2);
+  --rvw-stage: var(--ex-stage);
+  --rvw-ok: var(--ex-ok);
+  --rvw-ok-bg: var(--ex-ok-bg);
+  --rvw-bad: var(--ex-bad);
+  --rvw-bad-bg: var(--ex-bad-bg);
+  --rvw-warn: var(--ex-warn);
+  --rvw-warn-bg: var(--ex-warn-bg);
+
+  --rvw-r-sm: 8px;
+  --rvw-r: 12px;
+  --rvw-r-lg: 16px;
+  --rvw-sh1: 0 1px 3px rgba(23, 22, 46, .07);
+  --rvw-sh2: 0 12px 34px rgba(23, 22, 46, .12);
+  --rvw-font: "Pretendard", -apple-system, BlinkMacSystemFont, "Segoe UI",
+    "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+  --rvw-mono: ui-monospace, "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
+
+  /* Type scale. Every component references these — no ad hoc sizes. */
+  --rvw-fs-title: 1.1875rem;
+  --rvw-fs-lg: .9375rem;
+  --rvw-fs-body: .875rem;
+  --rvw-fs-sm: .8125rem;
+  --rvw-fs-sub: .6875rem;
+  --rvw-fs-data: .75rem;
+  --rvw-lh-body: 1.7;
+}
+
+[data-theme="dark"] .rvw {
+  --rvw-sh1: 0 1px 2px rgba(0, 0, 0, .4);
+  --rvw-sh2: 0 10px 30px rgba(0, 0, 0, .5);
+}
+
+/* ── Shell ────────────────────────────────────────────────────
+ * Minimum size is a floor, not a fixed size: the surface never shrinks below
+ * 1000×600 (it scrolls instead), and grows to fill what it is given. */
+.rvw {
+  font-family: var(--rvw-font);
+  color: var(--rvw-ink);
+  /* Locked working surface (spec §12): never below 1000×600, never wider than
+   * 1280 — past that the fixed-length narrative leaves the right column empty.
+   * Wider viewports centre it and keep side margins instead of stretching. */
+  min-width: 1000px;
+  min-height: 600px;
+  max-width: 1280px;
+  margin-inline: auto;
+  height: min(74vh, 720px);
+  border-radius: 18px;
+  overflow: hidden;
+  background: var(--rvw-bg2);
+  display: grid;
+  grid-template-columns: 56px 1fr;
+  box-shadow: var(--rvw-sh2);
+  /* Lets the vertical rhythm below respond to the panel, not the viewport. */
+  container-type: size;
+  container-name: rvw;
+}
+
+.rvw h1,
+.rvw h2,
+.rvw h3,
+.rvw h4 { margin: 0; }
+
+.rvw *:focus-visible {
+  outline: 2px solid var(--rvw-accent);
+  outline-offset: 2px;
+}
+
+.rvw ::selection { background: var(--rvw-accent-bg); }
+
+/* Keycap. */
+.rvw .kc {
+  display: inline-grid;
+  place-items: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 5px;
+  border: 1px solid var(--rvw-line2);
+  border-bottom-width: 2px;
+  border-radius: 6px;
+  background: var(--rvw-bg2);
+  color: var(--rvw-ink3);
+  font: 700 11px var(--rvw-mono);
+}
+
+/* ── Rail (toolbox; streamer identity on top) ─────────────── */
+.rvw-rail {
+  background: linear-gradient(170deg, var(--rvw-accent),
+    color-mix(in srgb, var(--rvw-accent) 80%, #000));
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 0;
+}
+.rvw-rail .who {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, .92);
+  color: var(--rvw-accent-ink);
+  display: grid;
+  place-items: center;
+  font-weight: 800;
+  font-size: 14px;
+  margin-bottom: 8px;
+  overflow: hidden;
+}
+.rvw-rail .who img { width: 100%; height: 100%; object-fit: cover; }
+.rvw-rail button {
+  width: 36px;
+  height: 36px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: rgba(255, 255, 255, .72);
+  cursor: pointer;
+  font-size: 15px;
+  display: grid;
+  place-items: center;
+}
+.rvw-rail button:hover { background: rgba(255, 255, 255, .16); color: #fff; }
+.rvw-rail .sp { flex: 1; }
+
+.rvw-screen {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  padding: 16px 22px;
+  position: relative;
+  overflow: hidden;
+}
+
+/* ── Header + candidate strip ─────────────────────────────── */
+.rvw-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+}
+.rvw-head .ttl { font-size: var(--rvw-fs-title); font-weight: 800; letter-spacing: -.02em; }
+.rvw-head .len { color: var(--rvw-ink3); font-size: var(--rvw-fs-data); margin-left: 10px; }
+.rvw-head .chip { font-size: var(--rvw-fs-data); color: var(--rvw-ink3); white-space: nowrap; }
+.rvw-head .chip b { color: var(--rvw-ink); font-variant-numeric: tabular-nums; }
+
+.rvw-strip { position: relative; height: 10px; margin: 14px 0 4px; }
+.rvw-strip .r {
+  position: absolute;
+  inset: 3px 0 auto;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--rvw-bg3);
+  box-shadow: inset 0 0 0 1px var(--rvw-line);
+}
+/* unreviewed = hollow dot; used = filled; dropped = red ring */
+.rvw-strip i {
+  position: absolute;
+  top: 2px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--rvw-bg);
+  border: 2px solid var(--rvw-ink4);
+  transform: translateX(-50%);
+}
+.rvw-strip i.ok { background: var(--rvw-ok); border-color: var(--rvw-ok); }
+.rvw-strip i.no { background: var(--rvw-bg); border-color: var(--rvw-bad); }
+.rvw-strip i.cur {
+  width: 14px;
+  height: 14px;
+  top: -1px;
+  box-shadow: 0 0 0 4px var(--rvw-accent-bg);
+  border-color: var(--rvw-accent);
+  z-index: 2;
+}
+.rvw-stripmeta {
+  display: flex;
+  justify-content: space-between;
+  font-size: var(--rvw-fs-sub);
+  color: var(--rvw-ink3);
+  margin-bottom: 14px;
+}
+
+.rvw-body { flex: 1; min-height: 0; margin-top: 2px; display: flex; }
+
+/* ── Summary page: stage left, narrative right ────────────── */
+.rvw-sum { display: grid; grid-template-columns: 58fr 42fr; gap: 22px; width: 100%; }
+.rvw-stagecol { display: flex; flex-direction: column; min-height: 0; }
+.rvw-player {
+  flex: 1;
+  border-radius: var(--rvw-r);
+  background: var(--rvw-stage);
+  position: relative;
+  overflow: hidden;
+  box-shadow: var(--rvw-sh1);
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.rvw-player video { width: 100%; height: 100%; object-fit: contain; flex: 1; min-height: 0; }
+.rvw-poster { flex: 1; display: grid; place-items: center; color: #42506a; font-size: var(--rvw-fs-data); }
+.rvw-pbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  background: var(--rvw-bg);
+  color: var(--rvw-ink2);
+}
+.rvw-pbar .pb { flex: 1; height: 4px; border-radius: 2px; background: var(--rvw-bg3); position: relative; }
+.rvw-pbar .pb .played { position: absolute; left: 0; top: 0; bottom: 0; background: var(--rvw-accent); border-radius: 2px; }
+.rvw-pbar .tc { font: 11px var(--rvw-mono); color: var(--rvw-ink3); font-variant-numeric: tabular-nums; }
+.rvw-play {
+  width: 26px;
+  height: 26px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--rvw-accent);
+  color: #fff;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  font-size: 11px;
+}
+/* 빼기 · 재생 · 사용. 사용이 주 행동이라 가장 넓다. */
+.rvw-dock { display: grid; grid-template-columns: 1fr auto 1.3fr; gap: 8px; margin-top: 12px; }
+.rvw-dock .kc { min-width: auto; }
+.rvw-dock button {
+  min-height: 42px;
+  border: 1px solid var(--rvw-line2);
+  border-radius: 10px;
+  background: var(--rvw-bg);
+  font-size: var(--rvw-fs-sm);
+  font-weight: 600;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: var(--rvw-ink);
+}
+.rvw-dock button:disabled { opacity: .5; cursor: default; }
+.rvw-dock .use { background: var(--rvw-accent); border-color: var(--rvw-accent); color: #fff; }
+.rvw-trim {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  font-size: var(--rvw-fs-sub);
+  color: var(--rvw-ink4);
+}
+.rvw-trim button {
+  border: 1px solid var(--rvw-line);
+  background: var(--rvw-bg);
+  border-radius: 7px;
+  padding: 4px 9px;
+  font: 11px var(--rvw-font);
+  cursor: pointer;
+  color: var(--rvw-ink2);
+}
+.rvw-trim .rvw-range { margin-left: auto; font-variant-numeric: tabular-nums; }
+/* Reset sits apart from the trim controls it would undo — it is not a
+ * neighbouring adjustment, it is the thing that throws them all away. */
+.rvw-trim .rvw-reset { margin-left: 4px; color: var(--rvw-ink4); }
+.rvw-trim .rvw-reset:hover { color: var(--rvw-bad); border-color: var(--rvw-bad); }
+
+/* ── Destructive confirmation (§11.1) ─────────────────────── */
+.rvw-confirm {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: color-mix(in srgb, var(--rvw-ink) 38%, transparent);
+  z-index: 10;
+  animation: rvw-fade-in 160ms cubic-bezier(.2, .6, .3, 1);
+}
+.rvw-confirm__box {
+  width: min(420px, 80%);
+  background: var(--rvw-bg);
+  border-radius: var(--rvw-r);
+  box-shadow: var(--rvw-sh2);
+  padding: 22px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.rvw-confirm__box strong { font-size: var(--rvw-fs-lg); color: var(--rvw-ink); }
+.rvw-confirm__box p {
+  margin: 0;
+  font-size: var(--rvw-fs-sm);
+  line-height: 1.65;
+  color: var(--rvw-ink3);
+  word-break: keep-all;
+}
+.rvw-confirm__acts { display: flex; justify-content: flex-end; gap: 8px; margin-top: 6px; }
+.rvw-confirm__acts button {
+  min-height: 38px;
+  padding: 0 16px;
+  border: 1px solid var(--rvw-line2);
+  border-radius: 9px;
+  background: var(--rvw-bg);
+  font: 600 13px var(--rvw-font);
+  color: var(--rvw-ink);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.rvw-confirm__acts .danger {
+  background: var(--rvw-bad);
+  border-color: var(--rvw-bad);
+  color: #fff;
+}
+.rvw-confirm__acts .danger .kc { background: rgba(255, 255, 255, .16); border-color: rgba(255, 255, 255, .4); color: #fff; }
+
+@keyframes rvw-fade-in { from { opacity: 0; } to { opacity: 1; } }
+
+.rvw-narr { min-width: 0; display: flex; flex-direction: column; gap: 16px; }
+
+/*
+ * Spacing has three tiers, tightest first, so the eye groups before it reads:
+ *   1. inside the context flow — fixed, minimal (one sequence)
+ *   2. 확인한 대사 ↔ 연관 맥락 — fixed (one evidence pair)
+ *   3. between the claim and the evidence — the only tier that flexes
+ *
+ * The claim is the title ("what is this") plus the one sentence explaining why
+ * it was picked. They answer one question together, so slack must never open
+ * between them.
+ */
+.rvw-claim { display: flex; flex-direction: column; gap: 12px; }
+.rvw-grps { display: flex; flex-direction: column; gap: 12px; }
+.rvw-titlerow { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+.rvw-titlerow .ttl {
+  font-size: var(--rvw-fs-title);
+  font-weight: 800;
+  letter-spacing: -.02em;
+  line-height: 1.3;
+  overflow-wrap: break-word;
+  word-break: keep-all;
+  min-width: 0;
+}
+.rvw-stbadge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: var(--rvw-fs-sub);
+  font-weight: 700;
+  padding: 3px 9px;
+  border-radius: 999px;
+  margin-left: 9px;
+  white-space: nowrap;
+}
+.rvw-stbadge.use { background: var(--rvw-ok-bg); color: var(--rvw-ok); }
+.rvw-stbadge.no { background: var(--rvw-bad-bg); color: var(--rvw-bad); }
+
+.rvw-tabs {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  background: var(--rvw-bg3);
+  border-radius: 9px;
+  padding: 3px;
+  flex: 0 0 auto;
+}
+.rvw-tabs .qk { margin: 0 4px 0 3px; color: var(--rvw-ink4); }
+.rvw-tabs button {
+  border: 0;
+  background: transparent;
+  color: var(--rvw-ink3);
+  padding: 4px 12px;
+  border-radius: 7px;
+  cursor: pointer;
+  font-size: var(--rvw-fs-sm);
+  font-weight: 700;
+}
+.rvw-tabs button[aria-selected="true"] {
+  background: var(--rvw-bg);
+  color: var(--rvw-accent-ink);
+  box-shadow: var(--rvw-sh1);
+}
+
+.rvw-why {
+  font-size: var(--rvw-fs-body);
+  line-height: var(--rvw-lh-body);
+  color: var(--rvw-ink);
+  margin: 0;
+  word-break: keep-all;
+  overflow-wrap: break-word;
+}
+.rvw-quote {
+  border-left: 3px solid var(--rvw-accent-line);
+  background: var(--rvw-bg);
+  border-radius: 0 8px 8px 0;
+  padding: 8px 12px;
+  font-size: var(--rvw-fs-sm);
+  color: var(--rvw-ink2);
+  line-height: 1.6;
+}
+
+/* Flow: 이전 연관 → 이 클립 → 이후 연관 (neighbours only when present) */
+.rvw-flow { display: flex; flex-direction: column; gap: 4px; }
+.rvw-flseg {
+  border-radius: var(--rvw-r-sm);
+  padding: 7px 11px;
+  background: var(--rvw-bg3);
+  color: var(--rvw-ink3);
+}
+.rvw-flseg.now {
+  background: var(--rvw-accent-bg);
+  color: var(--rvw-accent-ink);
+  border: 1px solid var(--rvw-accent-line);
+}
+.rvw-flseg .lb {
+  display: block;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: .04em;
+  opacity: .75;
+  margin-bottom: 1px;
+}
+.rvw-flseg .tx { font-size: var(--rvw-fs-sm); line-height: 1.45; margin-top: 1px; }
+.rvw-flcon { width: 2px; height: 6px; background: var(--rvw-line2); margin-left: 11px; }
+
+.rvw-nav {
+  margin-top: auto;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: var(--rvw-fs-data);
+  color: var(--rvw-ink3);
+}
+
+/*
+ * Vertical breathing room, grown from the panel's own height.
+ *
+ * At the 600px lock the rhythm stays tight so everything fits. Above it the
+ * narrative column would otherwise keep its fixed text length and dump all the
+ * slack at the bottom as one dead gap. Instead the quote and the context flow
+ * take real internal room and the leftover distributes between the groups —
+ * the column reads as filled without a single element being added to it.
+ */
+@container rvw (min-height: 660px) {
+  .rvw-narr { gap: 24px; justify-content: space-between; }
+  .rvw-narr .rvw-nav { margin-top: 0; }
+  .rvw-grp { gap: 12px; }
+  .rvw-why { line-height: 1.85; }
+  .rvw-quote { padding: 15px 16px; }
+  .rvw-flseg { padding: 13px 14px; }
+  /* Tier 2 stays fixed at roughly half the flexing tier: the pair reads as one
+   * evidence block however tall the panel gets. */
+  .rvw-grps { gap: 30px; }
+  /* The three context cells are one sequence, so the spacing *between* them
+   * stays tight at every size — only the cells themselves take more room.
+   * Letting the connectors stretch would break them into unrelated blocks. */
+}
+
+/* ── Evidence page ────────────────────────────────────────── */
+.rvw-ev { width: 100%; display: flex; flex-direction: column; gap: 14px; }
+.rvw-evhead { display: flex; justify-content: space-between; align-items: center; }
+
+/* Unified segment timeline: frames + cues + peak on one axis. */
+.rvw-tl { position: relative; height: 74px; margin-top: 2px; }
+.rvw-tl .axis { position: absolute; left: 0; right: 0; top: 52px; height: 2px; background: var(--rvw-line); }
+.rvw-tl .fr {
+  position: absolute;
+  top: 0;
+  transform: translateX(-50%);
+  width: 88px;
+  text-align: center;
+  cursor: pointer;
+  border: 0;
+  background: none;
+  padding: 0;
+}
+.rvw-tl .fr .img {
+  width: 88px;
+  aspect-ratio: 16 / 9;
+  border-radius: var(--rvw-r-sm);
+  background: var(--rvw-bg3);
+  border: 2px solid transparent;
+  display: grid;
+  place-items: center;
+  color: var(--rvw-ink4);
+  font-size: 10px;
+  overflow: hidden;
+}
+.rvw-tl .fr .img img { width: 100%; height: 100%; object-fit: cover; }
+.rvw-tl .fr.sel .img,
+.rvw-tl .fr:focus-visible .img {
+  border-color: var(--rvw-accent);
+  box-shadow: 0 0 0 3px var(--rvw-accent-bg);
+}
+.rvw-tl .cue {
+  position: absolute;
+  top: 48px;
+  transform: translateX(-50%);
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--rvw-bg);
+  border: 2px solid var(--rvw-accent);
+  cursor: pointer;
+  padding: 0;
+}
+.rvw-tl .tc {
+  position: absolute;
+  top: 64px;
+  transform: translateX(-50%);
+  font: 9px var(--rvw-mono);
+  color: var(--rvw-ink4);
+}
+
+.rvw-evcols {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 1.1fr 1fr .9fr;
+  gap: 22px;
+  min-height: 0;
+}
+.rvw-evcol { display: flex; flex-direction: column; gap: 12px; min-height: 0; overflow-y: auto; }
+.rvw-grp { display: flex; flex-direction: column; gap: 6px; }
+
+.rvw-sub {
+  font-size: var(--rvw-fs-sub);
+  font-weight: 700;
+  letter-spacing: .05em;
+  color: var(--rvw-ink4);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.rvw-sub::before {
+  content: "";
+  width: 3px;
+  height: 12px;
+  border-radius: 2px;
+  background: var(--rvw-accent);
+  opacity: .55;
+}
+
+.rvw-cue {
+  border: 0;
+  background: none;
+  padding: 3px 6px;
+  margin-left: -6px;
+  cursor: pointer;
+  text-align: left;
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  color: var(--rvw-ink2);
+  font-size: var(--rvw-fs-sm);
+  line-height: 1.5;
+  border-radius: 6px;
+}
+.rvw-cue .tc {
+  color: var(--rvw-accent-ink);
+  font: 11px var(--rvw-mono);
+  flex: 0 0 auto;
+  font-variant-numeric: tabular-nums;
+}
+.rvw-cue.sel { background: var(--rvw-accent-bg); }
+
+.rvw-note { font-size: var(--rvw-fs-sm); color: var(--rvw-ink3); line-height: 1.6; }
+
+/* Related context items are selectable-to-play. */
+.rvw-ctx {
+  border: 0;
+  background: none;
+  padding: 5px 6px;
+  margin-left: -6px;
+  text-align: left;
+  cursor: pointer;
+  border-radius: 7px;
+  display: block;
+  width: 100%;
+}
+.rvw-ctx:hover { background: var(--rvw-bg); }
+.rvw-ctx .when { display: block; font: 700 10px var(--rvw-mono); color: var(--rvw-ink4); margin-bottom: 1px; }
+.rvw-ctx .tx { font-size: var(--rvw-fs-sm); color: var(--rvw-ink2); line-height: 1.5; margin-top: 1px; }
+
+/* 등장 인물 */
+.rvw-people { display: flex; flex-direction: column; gap: 8px; }
+.rvw-person { display: flex; align-items: center; gap: 9px; }
+.rvw-person .pf {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: var(--rvw-bg3);
+  border: 1px solid var(--rvw-line2);
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  color: var(--rvw-ink4);
+  font-size: 9px;
+  overflow: hidden;
+}
+.rvw-person .pf img { width: 100%; height: 100%; object-fit: cover; }
+.rvw-person .nm { font-size: var(--rvw-fs-sm); color: var(--rvw-ink); font-weight: 600; }
+.rvw-person .rl { font-size: 10px; color: var(--rvw-ink4); }
+
+.rvw-evfoot { display: flex; justify-content: space-between; align-items: center; }
+.rvw-evfoot .m { font-size: var(--rvw-fs-sub); color: var(--rvw-ink4); }
+.rvw-evfoot .acts { display: flex; gap: 8px; }
+.rvw-evfoot button {
+  min-height: 38px;
+  padding: 0 16px;
+  border: 1px solid var(--rvw-line2);
+  border-radius: 9px;
+  background: var(--rvw-bg);
+  font: 600 13px var(--rvw-font);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--rvw-ink);
+}
+.rvw-evfoot .use { background: var(--rvw-accent); border-color: var(--rvw-accent); color: #fff; }
+
+/* Slide-in player card (evidence page keeps its context). */
+.rvw-pcard {
+  position: absolute;
+  right: 22px;
+  bottom: 64px;
+  width: 340px;
+  border-radius: var(--rvw-r);
+  overflow: hidden;
+  background: var(--rvw-bg);
+  box-shadow: var(--rvw-sh2);
+  border: 1px solid var(--rvw-line);
+  animation: rvw-card-in 220ms cubic-bezier(.2, .6, .3, 1);
+}
+.rvw-pcard .scr { aspect-ratio: 16 / 9; background: var(--rvw-stage); display: grid; place-items: center; color: #42506a; font-size: var(--rvw-fs-data); }
+.rvw-pcard .scr video { width: 100%; height: 100%; object-fit: contain; }
+.rvw-pcard .bar { display: flex; align-items: center; gap: 8px; padding: 8px 12px; }
+.rvw-pcard .bar .tc { font: 11px var(--rvw-mono); color: var(--rvw-ink3); }
+.rvw-pcard .bar .x { margin-left: auto; border: 0; background: none; color: var(--rvw-ink3); cursor: pointer; font-size: 12px; }
+.rvw-pcard .bar .pb { flex: 1; height: 4px; border-radius: 2px; background: var(--rvw-bg3); position: relative; }
+.rvw-pcard .bar .pb span { position: absolute; left: 0; top: 0; bottom: 0; background: var(--rvw-accent); border-radius: 2px; }
+
+@keyframes rvw-card-in {
+  from { opacity: 0; transform: translateY(8px) scale(.98); }
+  to { opacity: 1; transform: none; }
+}
+
+/* Page turn between 요약 and 근거. */
+.rvw-body > * { animation: rvw-page-in 180ms cubic-bezier(.2, .6, .3, 1); }
+@keyframes rvw-page-in {
+  from { opacity: 0; transform: translateX(10px); }
+  to { opacity: 1; transform: none; }
+}
+
+/* Empty state. */
+.rvw-empty {
+  flex: 1;
+  display: grid;
+  place-items: center;
+  text-align: center;
+  color: var(--rvw-ink3);
+  font-size: var(--rvw-fs-body);
+  line-height: var(--rvw-lh-body);
+  padding: 24px;
+}
+.rvw-empty strong { display: block; color: var(--rvw-ink); font-size: var(--rvw-fs-lg); margin-bottom: 6px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .rvw-pcard,
+  .rvw-confirm,
+  .rvw-body > * { animation: none; }
+}

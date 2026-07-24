@@ -8,6 +8,7 @@ import "../styles/exclipper-foundation.css";
 import "../styles/retto-highlight.css";
 import "../styles/exclipper-app.css";
 import "../styles/exclipper-surface.css";
+import "../styles/review-surface.css";
 
 const rootElement = document.getElementById("root");
 
