@@ -124,6 +124,7 @@ import {
   candidatePassBCastRosterIdForSourceName,
   canonicalCandidatePassBCastDisplayName,
 } from "./analysis/participantRoster";
+import { activeAccentCssVars } from "./app/streamerPaletteForRoster";
 import {
   mergeCandidatePassBEvidence,
   type CandidatePassBEvidenceById,
@@ -648,6 +649,21 @@ function App() {
       // Keep the selected theme for this tab even when persistence is blocked.
     }
   }, [theme]);
+
+  // Follow the source's streamer: when the analysed source resolves to one
+  // streamer, prefer their palette for the global accent; group/unknown sources
+  // fall back to the base (soft rose). Accent tokens only — surfaces are left
+  // on the app's own neutral scale.
+  useEffect(() => {
+    const root = document.documentElement;
+    const vars = activeAccentCssVars(
+      sourceCastRosterId,
+      theme === "dark" ? "dark" : "light",
+    );
+    for (const [name, value] of Object.entries(vars)) {
+      root.style.setProperty(name, value);
+    }
+  }, [sourceCastRosterId, theme]);
 
   useEffect(() => {
     document.documentElement.lang = analysisLanguage;

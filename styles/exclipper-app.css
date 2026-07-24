@@ -21,10 +21,13 @@
   --ex-ink2: #403e63;
   --ex-ink3: #6f6d92;
   --ex-ink4: #9d9bba;
-  --ex-accent: #5b4df0;
-  --ex-accent-ink: #4a3ee0;
-  --ex-accent-bg: #edebff;
-  --ex-accent-line: #cfc9ff;
+  /* Base accent = 교환학생 group soft rose, mirroring the streamerPalette base
+   * (src/app/streamerPalette.ts). App.tsx overrides these per streamer at
+   * runtime; this static default just avoids a first-paint flash. */
+  --ex-accent: hsl(350 72% 53%);
+  --ex-accent-ink: hsl(350 72% 41%);
+  --ex-accent-bg: hsl(350 60% 94%);
+  --ex-accent-line: hsl(350 55% 84%);
   --ex-ok: #15803d;
   --ex-ok-bg: #eaf7ef;
   --ex-ok-line: #b5e2c6;
@@ -47,10 +50,12 @@
   --ex-ink2: #c6c3e8;
   --ex-ink3: #918eba;
   --ex-ink4: #676390;
-  --ex-accent: #8f84ff;
-  --ex-accent-ink: #a79dff;
-  --ex-accent-bg: #241f4d;
-  --ex-accent-line: #3a3480;
+  /* Base accent (dark) mirrors the streamerPalette base dark tokens. Dark is
+   * not yet contrast-audited (deferred); overridden per streamer at runtime. */
+  --ex-accent: hsl(350 80% 74%);
+  --ex-accent-ink: hsl(350 80% 80%);
+  --ex-accent-bg: hsl(350 42% 21%);
+  --ex-accent-line: hsl(350 40% 35%);
   --ex-ok: #7ee2a8;
   --ex-ok-bg: #0e2b1c;
   --ex-ok-line: #1e4d33;
