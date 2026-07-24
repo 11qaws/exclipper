@@ -613,7 +613,7 @@ function App() {
   const autoSemanticLeadRefinementSourceRef = useRef<string | null>(null);
   const recoveredContextRestoreEpoch = useRef(0);
   const runCandidatePassBRef = useRef<
-    (targetCandidateIds?: readonly string[]) => Promise<void>
+    (targetCandidateIds?: readonly string[], autoStartKey?: string) => Promise<void>
   >(() => Promise.resolve());
   const candidatePassBMachine = useRef<CandidatePassBRunState | null>(null);
   const candidatePassBIdentity = useRef<CandidatePassBWorkerIdentity | null>(null);
@@ -3262,6 +3262,13 @@ function App() {
 
   const runCandidatePassB = async (
     targetCandidateIds?: readonly string[],
+    /**
+     * Set by the automatic trigger so the "already handled" guard can be
+     * claimed at the commit point below rather than when the run was merely
+     * scheduled. A run that bails out in the checks above leaves the key free,
+     * so the trigger retries once the blocking condition clears.
+     */
+    autoStartKey?: string,
   ): Promise<void> => {
     const requestedCandidateIds =
       targetCandidateIds === undefined ? null : new Set(targetCandidateIds);
@@ -3297,6 +3304,9 @@ function App() {
     }
 
     candidatePassBStartPendingRef.current = true;
+    if (autoStartKey !== undefined) {
+      autoCandidatePassBSourceRef.current = autoStartKey;
+    }
     setCandidatePassBStartPending(true);
     candidatePassBOperationEpoch.current += 1;
     const operationEpoch = candidatePassBOperationEpoch.current;
@@ -5424,9 +5434,25 @@ function App() {
     ) {
       return;
     }
-    autoCandidatePassBSourceRef.current = operationKey;
+    /*
+     * The guard records what has *started*, never what was merely scheduled.
+     *
+     * It used to be set here, beside the timer. But this effect's deps settle
+     * over several renders — semantic refinement appends candidates, which
+     * rebuilds the context map, which rebuilds the id list — so a dep almost
+     * always changes inside the 450ms wait. Cleanup then cancelled the timer
+     * while the guard still held the key, and because the key is built from
+     * the ids rather than from object identity, the re-run produced the *same*
+     * key and short-circuited. Pass B never ran, every candidate stopped at
+     * `detail-result-missing`, and the editor got an empty review screen for a
+     * broadcast whose moments had been found correctly.
+     *
+     * The key now travels with the call and is claimed at the commit point
+     * inside `runCandidatePassB`, so both a cancelled timer and a run that
+     * bails out in its own checks leave it free for the next attempt.
+     */
     const timer = window.setTimeout(() => {
-      void runCandidatePassBRef.current(automaticCandidateDetailIds);
+      void runCandidatePassBRef.current(automaticCandidateDetailIds, operationKey);
     }, 450);
     return () => window.clearTimeout(timer);
   }, [
