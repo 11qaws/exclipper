@@ -54,7 +54,7 @@ describe("streamer palette", () => {
       const p = buildAllStreamerPalettes().find((x) => x.id === id)!;
       return Number(/hsl\(\d+ \d+% (\d+)%\)/.exec(p.light.accent)![1]);
     };
-    expect(lightnessOf("torori") - lightnessOf("mangjing")).toBeGreaterThanOrEqual(20);
+    expect(lightnessOf("torori") - lightnessOf("mangjing")).toBeGreaterThanOrEqual(15);
     const satOf = (id: string): number => {
       const p = buildAllStreamerPalettes().find((x) => x.id === id)!;
       return Number(/hsl\(\d+ (\d+)%/.exec(p.light.accent)![1]);
@@ -77,8 +77,29 @@ describe("streamer palette", () => {
     expect(pales.length).toBeGreaterThan(0);
     for (const pale of pales) {
       for (const solid of solids) {
-        expect(lightnessOf(pale) - lightnessOf(solid)).toBeGreaterThanOrEqual(20);
+        // 15 이상이면 밝기대가 겹치지 않는다. solid 명도가 글자에 맞춰 조금씩
+        // 올라갔으므로 간격은 좁아졌지만, pale 은 여전히 확실히 위에 있다.
+        expect(lightnessOf(pale) - lightnessOf(solid)).toBeGreaterThanOrEqual(15);
       }
+    }
+  });
+
+  it("puts the same dark label on every solid theme's button", () => {
+    // Pinning one lightness for all put the accents right at the white-label
+    // threshold, so themes a viewer cannot tell apart (4.24 vs 4.56) ended up
+    // with opposite label colours. Lightness is now chosen per hue so the dark
+    // label lands at the same weight everywhere.
+    const labelLightness = (v: string): number =>
+      Number(/hsl\(\d+ \d+% (\d+)%\)/.exec(v)![1]);
+    const paleIds = new Set(
+      STREAMER_PALETTE_SEEDS.filter((s) => s.tone === "pale").map((s) => s.id),
+    );
+    for (const p of buildAllStreamerPalettes()) {
+      // 흰 글자는 어느 테마에서도 쓰지 않는다.
+      expect(p.light.accentOn).not.toBe("hsl(0 0% 100%)");
+      if (paleIds.has(p.id)) continue; // pale 은 면 자체가 훨씬 밝아 글자대도 다르다
+      expect(labelLightness(p.light.accentOn)).toBeLessThanOrEqual(24);
+      expect(labelLightness(p.light.accentOn)).toBeGreaterThanOrEqual(14);
     }
   });
 

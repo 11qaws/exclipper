@@ -185,7 +185,43 @@ const REFINED_SAT_MIN = 38;
 const REFINED_SAT_MAX = 58;
 const REFINED_CHROMA_MIN = 0.3;
 const REFINED_CHROMA_MAX = 1.15;
-const SOLID_LIGHT_L = 56;
+/**
+ * solid 테마의 accent 명도.
+ *
+ * 이 화면의 주 버튼은 **모든 테마에서 짙은 글자**를 쓴다. 명도를 한 값으로
+ * 못박으면 흰 글자 기준선(4.5:1) 근처에 걸쳐 색상만 달라도 글자색이 뒤집혔고
+ * (기본 4.24 → 검정, 망징이 4.56 → 흰색), 눈으로 구분되지 않는 차이로 규칙이
+ * 자의적으로 보였다.
+ *
+ * 그래서 명도를 글자에 맞춘다. 색상마다 실제 밝기가 다르므로, **글자의 어둡기가
+ * 같아지는 지점**을 색상별로 찾는다. 결과적으로 accent 명도는 조금씩 다르지만
+ * (56~66) 버튼 위 글자는 어느 테마에서나 같은 무게로 앉는다 — 통일되는 것은
+ * 명도 숫자가 아니라 보이는 결과다.
+ */
+const SOLID_LABEL_L = 19;
+const SOLID_L_MIN = 56;
+const SOLID_L_MAX = 72;
+
+/** 짙은 글자가 `SOLID_LABEL_L` 에 가장 가까워지는 accent 명도. */
+function solidLightnessForLabel(h: number, s: number): number {
+  let best = 62;
+  let bestDiff = Number.POSITIVE_INFINITY;
+  for (let l = SOLID_L_MIN; l <= SOLID_L_MAX; l += 1) {
+    let labelL = 6;
+    for (let d = 30; d >= 6; d -= 1) {
+      if (contrastBetween(hsl(h, Math.min(60, s), d), hsl(h, s, l)) >= 4.5) {
+        labelL = d;
+        break;
+      }
+    }
+    const diff = Math.abs(labelL - SOLID_LABEL_L);
+    if (diff < bestDiff) {
+      bestDiff = diff;
+      best = l;
+    }
+  }
+  return best;
+}
 
 function refinedSat(chroma: number): number {
   const t =
@@ -331,7 +367,7 @@ export function buildStreamerPalette(seed: StreamerPaletteSeed): StreamerPalette
    * stays light and the label goes dark instead; the ink token still solves
    * downward, because coloured *text* on a light ground has the opposite need.
    */
-  const accentL = pale ? PALE_LIGHT_L : SOLID_LIGHT_L;
+  const accentL = pale ? PALE_LIGHT_L : solidLightnessForLabel(h, accentSat);
   const darkSatPreview = Math.min(100, accentSat + 8);
   const darkAccentLPreview = pale ? PALE_DARK_L : 74;
   // Solved at the same saturation it is emitted with — solving at one chroma

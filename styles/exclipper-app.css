@@ -24,14 +24,14 @@
   /* Base accent = 교환학생 group soft rose, mirroring the streamerPalette base
    * (src/app/streamerPalette.ts). App.tsx overrides these per streamer at
    * runtime; this static default just avoids a first-paint flash. */
-  --ex-accent: hsl(350 72% 53%);
+  --ex-accent: hsl(350 54% 64%);
   /* 채운 accent 위의 글자색. 라이트는 흰색, 다크는 같은 색조의 짙은 잉크 —
    * 다크에서 accent 를 어둡게 죽이지 않고도 대비를 확보한다. */
-  --ex-accent-on: hsl(350 0% 100%);
+  --ex-accent-on: hsl(350 54% 19%);
   /* 레일 그라데이션 끝 색. solid 는 어두워지고, pale 테마는 흰색 쪽으로 밝아진다. */
-  --ex-rail-start: hsl(350 72% 53%);
+  --ex-rail-start: hsl(350 54% 64%);
   --ex-rail-end: rgb(174 35 63);
-  --ex-accent-ink: hsl(350 72% 41%);
+  --ex-accent-ink: hsl(350 54% 41%);
   --ex-accent-bg: hsl(350 60% 94%);
   --ex-accent-line: hsl(350 55% 84%);
   --ex-ok: #15803d;

@@ -57,6 +57,6 @@ describe("streamer palette for roster", () => {
   it("falls back to the base soft rose for a null source", () => {
     const vars = activeAccentCssVars(null, "light");
     // 정제 밴드 적용값. 밴드가 바뀌면 여기도 함께 바뀌어야 한다.
-    expect(vars["--ex-accent"]).toBe("hsl(350 54% 56%)");
+    expect(vars["--ex-accent"]).toBe("hsl(350 54% 64%)");
   });
 });
