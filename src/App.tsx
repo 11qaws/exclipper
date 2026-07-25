@@ -391,6 +391,15 @@ import {
   useReviewShortcuts,
   type ReviewPage,
 } from "./app/useReviewShortcuts";
+import { ReviewStage } from "./app/ReviewStage";
+import {
+  decisionForReviewState,
+  reviewStateForDecision,
+} from "./app/reviewDecisionVocabulary";
+import { buildReviewCandidates } from "./app/reviewSurfaceModel";
+import { STREAMER_PROFILE_IMAGE_BY_NAME } from "./app/streamerProfiles";
+import { STREAMER_PALETTE_SEEDS } from "./app/streamerPalette";
+import { paletteIdForCastRosterId } from "./app/streamerPaletteForRoster";
 
 /**
  * 레거시 검토 섹션의 3탭. 새 화면은 요약/근거 두 페이지(`ReviewPage`)를 쓰므로
@@ -1127,6 +1136,70 @@ function App() {
     orderedCandidates.some(({ id }) => id === previewCandidateId)
       ? previewCandidateId
       : orderedCandidates[0]?.id ?? null;
+
+  /**
+   * 검토 화면 레일 최상단의 인물. 팔레트와 같은 신호(어느 스트리머의 방송인가)를
+   * 쓰므로 색과 얼굴이 항상 같은 사람을 가리킨다.
+   */
+  const reviewStreamerName = useMemo(() => {
+    const paletteId = paletteIdForCastRosterId(sourceCastRosterId);
+    return (
+      STREAMER_PALETTE_SEEDS.find(({ id }) => id === paletteId)?.name ?? "교환학생"
+    );
+  }, [sourceCastRosterId]);
+  const reviewStreamerImageUrl = STREAMER_PROFILE_IMAGE_BY_NAME[reviewStreamerName];
+
+  /**
+   * 검토 화면이 받는 뷰모델. 분석 결과를 화면 어휘로 옮기는 일은 전부
+   * `buildReviewCandidates` 한 곳에서만 일어나므로, 화면은 분석 타입을 모른다.
+   */
+  const reviewViewCandidates = useMemo(
+    () =>
+      buildReviewCandidates({
+        candidates: orderedCandidates.map((candidate) => {
+          const revision = boundaryRevisions[candidate.id] ?? null;
+          const range = effectiveCandidateRange(candidate, revision);
+          return {
+            id: candidate.id,
+            startMs: range.startMs,
+            endMs: range.endMs,
+            peakMs: candidate.peakMs,
+          };
+        }),
+        insightById: candidateGeminiInsightById,
+        contextById: candidatePassBContextById,
+        cuesById: Object.fromEntries(
+          orderedCandidates.map((candidate) => [
+            candidate.id,
+            buildCandidatePassBPresentation(
+              candidate.id,
+              buildHighlightNarrative(candidate),
+              candidatePassBEvidenceById[candidate.id]?.candidateId === candidate.id
+                ? candidatePassBEvidenceById[candidate.id]
+                : undefined,
+            ).cues,
+          ]),
+        ),
+        framesById: candidateTimelineFramesById,
+        decisionById: Object.fromEntries(
+          orderedCandidates.map((candidate) => [
+            candidate.id,
+            decisionForReviewState(candidate.reviewState),
+          ]),
+        ),
+        titleById: candidateTitleById,
+        profileImageByName: STREAMER_PROFILE_IMAGE_BY_NAME,
+      }),
+    [
+      boundaryRevisions,
+      candidateGeminiInsightById,
+      candidatePassBContextById,
+      candidatePassBEvidenceById,
+      candidateTimelineFramesById,
+      candidateTitleById,
+      orderedCandidates,
+    ],
+  );
   const sourceCheckBusy =
     sourceCheck !== null && ["checking", "committing", "cancelling"].includes(sourceCheck.status);
   const showStatusBar =
@@ -8111,6 +8184,61 @@ function App() {
                     </>
                   )}
                 </div>
+              ) : contextualCandidatePublicationReady && orderedCandidates.length > 0 ? (
+                /*
+                 * 검토가 준비되면 새 검토 화면이 이 자리를 대신한다. 아래 레거시
+                 * 분기는 분석이 아직 진행 중일 때의 탐색 타임라인이라 남아 있으며,
+                 * 분석 화면을 재설계할 때 함께 걷힌다.
+                 */
+                <ReviewStage
+                  sourceTitle={preflight?.metadata.name ?? "저장된 AI 분석 결과"}
+                  sourceDurationMs={boundarySourceDurationMs}
+                  candidates={reviewViewCandidates}
+                  focusedCandidateId={focusedCandidateId}
+                  onFocusCandidateId={(candidateId) => {
+                    const target = orderedCandidates.find(({ id }) => id === candidateId);
+                    if (target !== undefined) focusCandidateForReview(target);
+                  }}
+                  streamerName={reviewStreamerName}
+                  {...(reviewStreamerImageUrl === undefined
+                    ? {}
+                    : { streamerImageUrl: reviewStreamerImageUrl })}
+                  {...(sourcePreviewUrl === null ? {} : { videoSrc: sourcePreviewUrl })}
+                  onDecide={(candidateId, decision) => {
+                    const target = orderedCandidates.find(({ id }) => id === candidateId);
+                    if (target !== undefined) {
+                      reviewCandidateAndAdvance(target, reviewStateForDecision(decision));
+                    }
+                  }}
+                  onTrim={(candidateId, edge, deltaMs) => {
+                    const target = orderedCandidates.find(({ id }) => id === candidateId);
+                    if (target !== undefined) {
+                      nudgeCandidateBoundary(
+                        target,
+                        edge === "start" ? "SHIFT_START" : "SHIFT_END",
+                        deltaMs < 0 ? -5_000 : 5_000,
+                      );
+                    }
+                  }}
+                  onUndo={undoLastReview}
+                  canUndo={reviewUndo !== null}
+                  onHelp={() => setShortcutHelpOpen(true)}
+                  onToggleTheme={() =>
+                    setTheme((current) => (current === "light" ? "dark" : "light"))}
+                  themeLabel={theme === "light" ? "어두운 테마로" : "밝은 테마로"}
+                  page={reviewPage}
+                  onPageChange={setReviewPage}
+                  playerCardOpen={playerCardOpen}
+                  onPlayerCardOpen={() => setPlayerCardOpen(true)}
+                  onPlayerCardClose={() => setPlayerCardOpen(false)}
+                  resetConfirmOpen={resetConfirmOpen}
+                  onResetConfirmOpen={() => setResetConfirmOpen(true)}
+                  onResetConfirm={() => {
+                    setResetConfirmOpen(false);
+                    resetAllCandidateReview();
+                  }}
+                  onResetCancel={() => setResetConfirmOpen(false)}
+                />
               ) : (
                 <>
                   <div

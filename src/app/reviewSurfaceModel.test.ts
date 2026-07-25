@@ -9,7 +9,7 @@ function input(overrides: Partial<ReviewModelInput> = {}): ReviewModelInput {
     candidates: [CANDIDATE],
     insightById: {},
     contextById: {},
-    segmentsById: {},
+    cuesById: {},
     framesById: {},
     decisionById: {},
     ...overrides,
@@ -76,15 +76,66 @@ describe("review surface model", () => {
   it("drops blank transcript segments and keeps absolute timestamps", () => {
     const [candidate] = buildReviewCandidates(
       input({
-        segmentsById: {
+        cuesById: {
           c1: [
-            { startMs: 12_000, endMs: 13_000, text: "이게 그거구나" },
-            { startMs: 14_000, endMs: 15_000, text: "   " },
+            {
+              phase: "near-peak",
+              phaseLabel: "반응 시점 부근",
+              absoluteStartMs: 12_000,
+              absoluteEndMs: 13_000,
+              text: "이게 그거구나",
+            },
+            {
+              phase: "after-peak",
+              phaseLabel: "반응 뒤",
+              absoluteStartMs: 14_000,
+              absoluteEndMs: 15_000,
+              text: "   ",
+            },
           ],
         },
       }),
     );
     expect(candidate?.cues).toHaveLength(1);
     expect(candidate?.cues[0]?.atMs).toBe(12_000);
+  });
+
+  it("keeps a participant whose name was never identified", () => {
+    // Being on screen is itself review material, so an unnamed participant is
+    // carried through with an empty name rather than dropped.
+    const [candidate] = buildReviewCandidates(
+      input({
+        insightById: {
+          c1: {
+            identifiedParticipants: [
+              { displayName: "  ", role: "guest" },
+              { displayName: "세라 교수님", role: "streamer" },
+            ],
+          },
+        } as unknown as ReviewModelInput["insightById"],
+      }),
+    );
+    expect(candidate?.people).toHaveLength(2);
+    expect(candidate?.people[0]?.name).toBeUndefined();
+    expect(candidate?.people[0]?.role).toBe("게스트");
+  });
+
+  it("turns candidate-relative frame times into absolute ones", () => {
+    // Frames are captured relative to the clip's start; the surface places
+    // everything on the broadcast's own clock, so the offset must be added back.
+    const [candidate] = buildReviewCandidates(
+      input({
+        framesById: {
+          c1: [
+            { timestampMs: 0 },
+            { timestampMs: 4_000, mimeType: "image/webp", dataBase64: "AAA" },
+          ],
+        },
+      }),
+    );
+    expect(candidate?.frames[0]?.atMs).toBe(CANDIDATE.startMs);
+    expect(candidate?.frames[1]?.atMs).toBe(CANDIDATE.startMs + 4_000);
+    expect(candidate?.frames[1]?.imageUrl).toBe("data:image/webp;base64,AAA");
+    expect(candidate?.frames[0]?.imageUrl).toBeUndefined();
   });
 });

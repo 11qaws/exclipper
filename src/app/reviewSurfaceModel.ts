@@ -5,14 +5,12 @@
  * analysis type, and the mapping itself stays unit-testable without a DOM.
  *
  * Everything here is defensive about missing data: Pass B may not have produced
- * an insight, a transcript, or participants for a given candidate, and the
- * surface must render honestly in that case rather than inventing content.
+ * an insight, a transcript, participants or frames for a given candidate, and
+ * the surface must render honestly in that case rather than inventing content.
  */
-import type {
-  CandidatePassBContextPacket,
-  CandidatePassBInsight,
-  CandidatePassBTranscriptSegment,
-} from "../analysis/candidatePassBWorkerProtocol";
+import type { CandidatePassBContextPacket } from "../analysis/candidatePassBWorkerProtocol";
+import type { CandidatePassBInsight } from "../analysis/candidatePassBWorkerProtocol";
+import type { CandidatePassBPresentationCue } from "../analysis/candidatePassBPresentation";
 import type {
   ReviewCandidate,
   ReviewContextItem,
@@ -31,16 +29,26 @@ export interface ReviewSourceCandidate {
   readonly titleKo?: string;
 }
 
+/** A captured frame. `timestampMs` is relative to the candidate's start. */
+export interface ReviewSourceFrame {
+  readonly timestampMs: number;
+  readonly mimeType?: string;
+  readonly dataBase64?: string;
+}
+
 export interface ReviewModelInput {
   readonly candidates: readonly ReviewSourceCandidate[];
   readonly insightById: Readonly<Record<string, CandidatePassBInsight | undefined>>;
   readonly contextById: Readonly<Record<string, CandidatePassBContextPacket | undefined>>;
-  readonly segmentsById: Readonly<
-    Record<string, readonly CandidatePassBTranscriptSegment[] | undefined>
+  /** 이미 절대 시각으로 정규화된 대사 cue (`buildCandidatePassBPresentation`). */
+  readonly cuesById: Readonly<
+    Record<string, readonly CandidatePassBPresentationCue[] | undefined>
   >;
-  readonly framesById: Readonly<Record<string, readonly number[] | undefined>>;
-  /** 사용 결정. 없으면 미검토. */
+  readonly framesById: Readonly<Record<string, readonly ReviewSourceFrame[] | undefined>>;
+  /** 사용/빼기 결정. 없으면 미검토. */
   readonly decisionById: Readonly<Record<string, ReviewDecision | undefined>>;
+  /** 사용자가 고친 제목이 있으면 그것을 우선한다. */
+  readonly titleById?: Readonly<Record<string, string | undefined>>;
   /** 인물 이름 → 프로필 이미지. 없으면 이니셜로 그린다. */
   readonly profileImageByName?: Readonly<Record<string, string | undefined>>;
 }
@@ -63,6 +71,10 @@ function fallbackTitle(insight: CandidatePassBInsight | undefined): string {
   return firstSentence.length > 40 ? `${firstSentence.slice(0, 39)}…` : firstSentence;
 }
 
+/**
+ * 등장 인물 전원. 이름이 확인되지 않은 참가자도 **빼지 않는다** — 화면에
+ * 있었다는 사실 자체가 판단 재료이므로, 이름만 비워 "이름 미확인"으로 보낸다.
+ */
 function toPeople(
   insight: CandidatePassBInsight | undefined,
   profileImageByName: Readonly<Record<string, string | undefined>>,
@@ -72,7 +84,11 @@ function toPeople(
   const people: ReviewPerson[] = [];
   for (const attribution of attributions) {
     const name = attribution.displayName.trim();
-    if (name.length === 0 || seen.has(name)) continue;
+    if (name.length === 0) {
+      people.push({ role: roleLabel(attribution.role) });
+      continue;
+    }
+    if (seen.has(name)) continue;
     seen.add(name);
     const imageUrl = profileImageByName[name];
     people.push({
@@ -85,16 +101,16 @@ function toPeople(
 }
 
 function toCues(
-  segments: readonly CandidatePassBTranscriptSegment[] | undefined,
+  cues: readonly CandidatePassBPresentationCue[] | undefined,
   candidateId: string,
 ): readonly ReviewCue[] {
-  if (segments === undefined) return [];
-  return segments
-    .filter((segment) => segment.text.trim().length > 0)
-    .map((segment, index) => ({
+  if (cues === undefined) return [];
+  return cues
+    .filter((cue) => cue.text.trim().length > 0)
+    .map((cue, index) => ({
       id: `${candidateId}-cue-${index}`,
-      atMs: segment.startMs,
-      text: segment.text.trim(),
+      atMs: cue.absoluteStartMs,
+      text: cue.text.trim(),
     }));
 }
 
@@ -130,24 +146,40 @@ function toContext(
   return items;
 }
 
+/** 프레임 시각은 후보 시작 기준 상대값이라 절대 시각으로 되돌린다. */
 function toFrames(
-  timestamps: readonly number[] | undefined,
-  candidateId: string,
+  frames: readonly ReviewSourceFrame[] | undefined,
+  candidate: ReviewSourceCandidate,
 ): readonly ReviewFrame[] {
-  if (timestamps === undefined) return [];
-  return timestamps.map((atMs, index) => ({ id: `${candidateId}-frame-${index}`, atMs }));
+  if (frames === undefined) return [];
+  return frames.map((frame, index) => {
+    const imageUrl =
+      frame.mimeType !== undefined && frame.dataBase64 !== undefined
+        ? `data:${frame.mimeType};base64,${frame.dataBase64}`
+        : undefined;
+    return {
+      id: `${candidate.id}-frame-${index}`,
+      atMs: candidate.startMs + frame.timestampMs,
+      ...(imageUrl === undefined ? {} : { imageUrl }),
+    };
+  });
 }
 
 export function buildReviewCandidates(input: ReviewModelInput): readonly ReviewCandidate[] {
   const profiles = input.profileImageByName ?? {};
+  const titles = input.titleById ?? {};
   return input.candidates.map((candidate) => {
     const insight = input.insightById[candidate.id];
     const packet = input.contextById[candidate.id];
     const why = insight?.eventSummaryKo?.trim() ?? "";
     const reaction = insight?.reactionSummaryKo?.trim() ?? "";
+    const editedTitle = titles[candidate.id]?.trim();
     return {
       id: candidate.id,
-      title: candidate.titleKo?.trim() ?? fallbackTitle(insight),
+      title:
+        editedTitle !== undefined && editedTitle.length > 0
+          ? editedTitle
+          : candidate.titleKo?.trim() ?? fallbackTitle(insight),
       startMs: candidate.startMs,
       endMs: candidate.endMs,
       peakMs: candidate.peakMs,
@@ -155,9 +187,9 @@ export function buildReviewCandidates(input: ReviewModelInput): readonly ReviewC
       why: why.length > 0 ? why : "이 구간에 대한 설명이 아직 준비되지 않았습니다.",
       ...(reaction.length > 0 ? { quote: reaction } : {}),
       people: toPeople(insight, profiles),
-      cues: toCues(input.segmentsById[candidate.id], candidate.id),
+      cues: toCues(input.cuesById[candidate.id], candidate.id),
       context: toContext(packet, candidate),
-      frames: toFrames(input.framesById[candidate.id], candidate.id),
+      frames: toFrames(input.framesById[candidate.id], candidate),
     };
   });
 }
