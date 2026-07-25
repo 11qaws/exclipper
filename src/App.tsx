@@ -378,6 +378,7 @@ import {
   transcriptPhaseFor,
 } from "./app/transcriptPhase";
 import {
+  clampToMonotonic,
   estimateRemainingMs,
   formatRemainingLabel,
 } from "./app/progressEstimate";
@@ -483,6 +484,12 @@ function App() {
    */
   const analysisStartedAtMsRef = useRef<number | null>(null);
   const [progressClockNowMs, setProgressClockNowMs] = useState<number | null>(null);
+  /**
+   * Last remaining time the editor was actually shown. State, not a ref: the
+   * label is derived from it during render, and it is reset per run so a new
+   * analysis never inherits the previous run's floor.
+   */
+  const [shownRemainingMs, setShownRemainingMs] = useState<number | null>(null);
   const [analysisError, setAnalysisError] = useState<string | null>(null);
   const [candidatePassBRun, setCandidatePassBRun] =
     useState<CandidatePassBRunState | null>(null);
@@ -859,6 +866,7 @@ function App() {
     if (!analysisBusy) {
       analysisStartedAtMsRef.current = null;
       setProgressClockNowMs(null);
+      setShownRemainingMs(null);
       return;
     }
     if (analysisStartedAtMsRef.current === null) {
@@ -1856,7 +1864,23 @@ function App() {
     elapsedMs: analysisElapsedMs,
     ratio: analysisProgress !== null || audioAnalysisProgress !== null ? fastScanTrackRatio : null,
   });
-  const progressRemainingLabel = formatRemainingLabel(progressRemainingEstimate);
+  /**
+   * The label may only count down. Adjusting during render (rather than in an
+   * effect) keeps a risen projection from being painted for one frame before
+   * being corrected — the upward flicker is exactly what erodes trust here.
+   * clampToMonotonic is idempotent, so this settles after one extra render.
+   */
+  const progressRemainingShownMs = clampToMonotonic(
+    shownRemainingMs,
+    progressRemainingEstimate.remainingMs,
+  );
+  if (progressRemainingShownMs !== shownRemainingMs) {
+    setShownRemainingMs(progressRemainingShownMs);
+  }
+  const progressRemainingLabel = formatRemainingLabel({
+    basis: progressRemainingEstimate.basis,
+    remainingMs: progressRemainingShownMs,
+  });
   const liveAnalysisPhaseSteps = [
     {
       number: 1,

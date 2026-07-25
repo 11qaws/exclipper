@@ -10,7 +10,9 @@
  *
  * Every output is deliberately a range or an "약" (about) prefix — never a
  * precise-looking number for a process whose real duration depends on the
- * user's hardware and the broadcast's content.
+ * user's hardware and the broadcast's content. Shown numbers are also padded
+ * and held monotonically decreasing; see REMAINING_ESTIMATE_PADDING_FACTOR and
+ * clampToMonotonic for why.
  */
 
 export interface AnalysisDurationRangeMs {
@@ -55,9 +57,23 @@ export interface RemainingEstimate {
 }
 
 /**
+ * Padding applied to every remaining-time estimate before it is shown.
+ *
+ * Finishing earlier than promised costs nothing; overrunning a promise reads as
+ * a hung run, because the editor cannot tell a slow machine from a stuck one.
+ * So the shown number is deliberately generous rather than centred.
+ *
+ * The padding multiplies the *remaining* amount, not the projected total: that
+ * keeps the estimate converging to zero as the run completes, instead of
+ * leaving a permanent 18% tail that never counts down.
+ */
+const REMAINING_ESTIMATE_PADDING_FACTOR = 1.18;
+
+/**
  * Projects remaining time from elapsed time and completion ratio once both
  * are large enough to trust, falling back to the static duration-based range
- * (using its midpoint) otherwise.
+ * (using its midpoint) otherwise. Both paths carry the same padding, since the
+ * editor reads one label and cannot tell which basis produced it.
  */
 export function estimateRemainingMs(
   input: RemainingEstimateInput,
@@ -70,15 +86,44 @@ export function estimateRemainingMs(
     const projectedTotalMs = input.elapsedMs / input.ratio;
     return {
       basis: "measured",
-      remainingMs: Math.max(0, projectedTotalMs - input.elapsedMs),
+      remainingMs:
+        Math.max(0, projectedTotalMs - input.elapsedMs) *
+        REMAINING_ESTIMATE_PADDING_FACTOR,
     };
   }
   const range = estimateAnalysisDurationRangeMs(input.sourceDurationMs);
   const midpointMs = (range.lowMs + range.highMs) / 2;
   return {
     basis: "static",
-    remainingMs: Math.max(0, midpointMs - input.elapsedMs),
+    remainingMs:
+      Math.max(0, midpointMs - input.elapsedMs) * REMAINING_ESTIMATE_PADDING_FACTOR,
   };
+}
+
+/**
+ * Holds the shown remaining time to what the editor has already seen, so the
+ * displayed number only ever falls.
+ *
+ * A remaining time that jumps back up ("4분 남음" → "6분 남음") is worse than a
+ * number that sits still: it exposes the label as guesswork and cancels the
+ * padding above, whose whole point is that the run beats its promise. When a
+ * fresh projection rises — a slower stage, a stalled worker, a noisy ratio — we
+ * keep showing the previous value; as soon as reality drops below it, the label
+ * follows reality down again.
+ *
+ * Deliberately pure and stateless: the caller owns the previous value, so a new
+ * analysis run resets the sequence simply by passing null. Applying it twice to
+ * the same input is a no-op, which makes it safe to run during a render.
+ */
+export function clampToMonotonic(
+  previousShownMs: number | null,
+  nextEstimateMs: number,
+): number {
+  const nextMs = Number.isFinite(nextEstimateMs) ? Math.max(0, nextEstimateMs) : 0;
+  if (previousShownMs === null || !Number.isFinite(previousShownMs)) {
+    return nextMs;
+  }
+  return Math.min(Math.max(0, previousShownMs), nextMs);
 }
 
 /** Rounds to the nearest whole minute, never showing zero for real remaining work. */
