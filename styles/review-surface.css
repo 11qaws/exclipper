@@ -673,9 +673,10 @@
  * off the bottom, where nothing indicated it was still there — and who is in
  * the clip is first-class evidence, not an appendix.
  */
-.rvw-evcols > .rvw-evcol:last-child { overflow: hidden; display: grid; grid-template-rows: 1fr auto; gap: 16px; }
-.rvw-evcols > .rvw-evcol:last-child > .rvw-grp:first-child { min-height: 0; overflow-y: auto; }
-.rvw-evcols > .rvw-evcol:last-child > .rvw-grp:last-child { max-height: 45%; overflow-y: auto; }
+/* 두 그룹은 내용만큼만 차지하고, 넘칠 때에만 각자 스크롤한다. 한쪽에 1fr 을
+   주면 짧은 맥락이 빈 공간을 붙들고 인물이 눌린다. */
+.rvw-evcols > .rvw-evcol:last-child { overflow: hidden; gap: 16px; }
+.rvw-evcols > .rvw-evcol:last-child > .rvw-grp { min-height: 0; flex: 0 1 auto; overflow-y: auto; }
 .rvw-grp { display: flex; flex-direction: column; gap: 6px; }
 
 .rvw-sub {

@@ -45,6 +45,8 @@ export interface ReviewStageProps {
   readonly onResetConfirmOpen: () => void;
   readonly onResetConfirm: () => void;
   readonly onResetCancel: () => void;
+  /** 키맵이 근거 항목 이동을 호출할 수 있도록 App 이 받아 간다. */
+  readonly onItemFocusMover?: (move: (delta: 1 | -1) => void) => void;
 }
 
 export function ReviewStage({
@@ -72,6 +74,7 @@ export function ReviewStage({
   onResetConfirmOpen,
   onResetConfirm,
   onResetCancel,
+  onItemFocusMover,
 }: ReviewStageProps): ReactElement {
   const activeIndex = useMemo(() => {
     const found = candidates.findIndex(({ id }) => id === focusedCandidateId);
@@ -124,6 +127,7 @@ export function ReviewStage({
       onResetConfirmOpen={onResetConfirmOpen}
       onResetConfirm={onResetConfirm}
       onResetCancel={onResetCancel}
+      {...(onItemFocusMover === undefined ? {} : { onItemFocusMover })}
     />
   );
 }

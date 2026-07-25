@@ -18,6 +18,7 @@
  */
 import {
   useCallback,
+  useEffect,
   useMemo,
   useRef,
   useState,
@@ -114,6 +115,8 @@ export interface ReviewSurfaceProps {
   readonly onResetConfirmOpen: () => void;
   readonly onResetConfirm: () => void;
   readonly onResetCancel: () => void;
+  /** 컨테이너가 키맵에 연결할 수 있도록, 항목 이동 함수를 넘겨준다. */
+  readonly onItemFocusMover?: (move: (delta: 1 | -1) => void) => void;
 }
 
 function formatTime(ms: number): string {
@@ -158,6 +161,7 @@ export function ReviewSurface({
   onResetConfirmOpen,
   onResetConfirm,
   onResetCancel,
+  onItemFocusMover,
 }: ReviewSurfaceProps): ReactElement {
   const active = candidates[activeIndex];
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -232,23 +236,27 @@ export function ReviewSurface({
     }
   }, [active]);
 
-  /** 근거의 모든 표기는 재생 진입점이다(§7.5). 카드는 그 요소에서 자라난다. */
+  /**
+   * 근거의 모든 표기는 재생 진입점이다(§7.5).
+   *
+   * 카드는 처음 연 요소에서 자라나고, **열려 있는 동안에는 움직이지 않는다**.
+   * 다른 조각을 고르면 재생 위치만 바뀐다(§7.7) — 카드가 매번 새 자리로 뛰면
+   * 어디를 보고 있었는지 놓치고, 자라나는 연출도 의미를 잃는다.
+   */
   const playFrom = useCallback(
     (atMs: number, markId: string, element: HTMLElement | null) => {
       seek(atMs);
       setSelectedMarkId(markId);
-      if (element !== null) {
-        cardTriggerRef.current = element;
-        const rect = element.getBoundingClientRect();
-        const origin = {
-          atMs,
-          x: rect.left + rect.width / 2,
-          y: rect.top + rect.height / 2,
-        };
-        setCardOrigin(origin);
-        // 이미 열려 있으면 재생성하지 않고 위치만 옮긴다(§7.7).
-        if (!playerCardOpen) onPlayerCardOpen(origin);
-      }
+      if (playerCardOpen || element === null) return;
+      cardTriggerRef.current = element;
+      const rect = element.getBoundingClientRect();
+      const origin = {
+        atMs,
+        x: rect.left + rect.width / 2,
+        y: rect.top + rect.height / 2,
+      };
+      setCardOrigin(origin);
+      onPlayerCardOpen(origin);
     },
     [onPlayerCardOpen, playerCardOpen, seek],
   );
@@ -257,6 +265,53 @@ export function ReviewSurface({
     onPlayerCardClose();
     cardTriggerRef.current?.focus();
   }, [onPlayerCardClose]);
+
+  /*
+   * 근거 항목 사이 이동 (§7.7). `←/→` 는 후보 축이라 쓰지 않고, `↑/↓` 와
+   * `J/K` 로 옮긴다. 순서는 DOM 순서를 그대로 쓴다 — 화면에 보이는 순서가 곧
+   * 이동 순서여야 예측할 수 있다.
+   */
+  const evidenceRef = useRef<HTMLDivElement | null>(null);
+  const moveItemFocus = useCallback((delta: 1 | -1) => {
+    const root = evidenceRef.current;
+    if (root === null) return;
+    const items = [...root.querySelectorAll<HTMLElement>("button:not(:disabled)")];
+    if (items.length === 0) return;
+    const current = items.indexOf(document.activeElement as HTMLElement);
+    const next = current === -1
+      ? (delta === 1 ? 0 : items.length - 1)
+      : (current + delta + items.length) % items.length;
+    items[next]?.focus();
+  }, []);
+
+  /*
+   * 카드가 열려 있는 동안 Tab 은 카드 안에서만 돈다 (§7.7 focus trap). 뒤의
+   * 근거 목록은 살아 있지만 지금 조작 대상은 카드이므로, 포커스가 그 밖으로
+   * 새면 무엇이 선택돼 있는지 알 수 없게 된다.
+   */
+  // 컨테이너의 키맵이 이 함수를 부를 수 있도록 올려 보낸다. 화면만이 자기
+  // DOM 순서를 알고 있으므로, 이동 자체는 여기 두고 호출권만 넘긴다.
+  useEffect(() => {
+    onItemFocusMover?.(moveItemFocus);
+  }, [moveItemFocus, onItemFocusMover]);
+
+  const cardRef = useRef<HTMLElement | null>(null);
+  const onCardKeyDown = (event: React.KeyboardEvent<HTMLElement>): void => {
+    if (event.key !== "Tab") return;
+    const root = cardRef.current;
+    if (root === null) return;
+    const items = [...root.querySelectorAll<HTMLElement>("button:not(:disabled)")];
+    if (items.length === 0) return;
+    const first = items[0];
+    const last = items[items.length - 1];
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last?.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first?.focus();
+    }
+  };
 
   if (active === undefined) {
     return (
@@ -586,7 +641,7 @@ export function ReviewSurface({
               </div>
             </div>
           ) : (
-            <div className="rvw-ev" key="evidence">
+            <div className="rvw-ev" key="evidence" ref={evidenceRef}>
               <div className="rvw-evhead">
                 <h3 className="ttl">{active.title}{decisionBadge}</h3>
                 {pageTabs}
@@ -744,6 +799,8 @@ export function ReviewSurface({
           <aside
             className="rvw-pcard"
             aria-label="선택한 지점 미리보기"
+            ref={cardRef}
+            onKeyDown={onCardKeyDown}
             style={{
               "--rvw-card-x": `${cardOrigin.x}px`,
               "--rvw-card-y": `${cardOrigin.y}px`,

@@ -595,6 +595,8 @@ function App() {
   const [reviewPage, setReviewPage] = useState<ReviewPage>("summary");
   const [playerCardOpen, setPlayerCardOpen] = useState(false);
   const [resetConfirmOpen, setResetConfirmOpen] = useState(false);
+  /** 근거 항목 이동은 화면이 자기 DOM 을 알아야 해서, 화면이 함수를 올려준다. */
+  const reviewItemFocusMoverRef = useRef<((delta: 1 | -1) => void) | null>(null);
   /**
    * User-edited candidate titles. View-only — never persisted to IndexedDB or
    * exports beyond the current session's downloads; a refresh reverts to the
@@ -4829,6 +4831,7 @@ function App() {
           );
         }
       },
+      moveItemFocus: (delta) => reviewItemFocusMoverRef.current?.(delta),
       nudgeEnd: (direction) => {
         if (focusedCandidate !== null) {
           nudgeCandidateBoundary(
@@ -8238,6 +8241,9 @@ function App() {
                     resetAllCandidateReview();
                   }}
                   onResetCancel={() => setResetConfirmOpen(false)}
+                  onItemFocusMover={(move) => {
+                    reviewItemFocusMoverRef.current = move;
+                  }}
                 />
               ) : (
                 <>

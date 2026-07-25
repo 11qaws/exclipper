@@ -1,5 +1,5 @@
 /** Live harness: mounts the real ReviewSurface against fixtures. */
-import { StrictMode, useEffect, useState } from "react";
+import { StrictMode, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 
 import {
@@ -81,6 +81,21 @@ function Harness(): React.ReactElement {
   const [helpOpen, setHelpOpen] = useState(false);
   const [cardOpen, setCardOpen] = useState(false);
   const [resetOpen, setResetOpen] = useState(false);
+  // 실제 앱처럼 키맵이 항목 이동을 호출하도록 연결한다 (↑↓ / J K).
+  const moverRef = useRef<((delta: 1 | -1) => void) | null>(null);
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent): void => {
+      const map: Record<string, 1 | -1> = { ArrowDown: 1, KeyJ: 1, ArrowUp: -1, KeyK: -1 };
+      const delta = map[event.code];
+      if (delta === undefined) return;
+      const target = event.target as HTMLElement | null;
+      if (target !== null && ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName)) return;
+      event.preventDefault();
+      moverRef.current?.(delta);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
   // 검증용: #reset 이면 실제 Backspace 키 경로를 그대로 태워 확인창을 띄운다.
   // (하네스 전용 prop 을 만들지 않고 진짜 키맵을 검증하기 위해)
   useEffect(() => {
@@ -123,6 +138,7 @@ function Harness(): React.ReactElement {
         onResetConfirmOpen={() => setResetOpen(true)}
         onResetConfirm={() => { setResetOpen(false); setCandidates(BASE); }}
         onResetCancel={() => setResetOpen(false)}
+        onItemFocusMover={(move) => { moverRef.current = move; }}
       />
       {helpOpen && (
         <p style={{ color: "#9aa2b8", font: "12px monospace", marginTop: 12 }}>

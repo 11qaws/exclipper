@@ -19,6 +19,11 @@ export interface ReviewShortcutActions {
   /** -1 moves the boundary earlier, 1 moves it later. */
   readonly nudgeStart: (direction: -1 | 1) => void;
   readonly nudgeEnd: (direction: -1 | 1) => void;
+  /**
+   * 근거 항목 사이 포커스 이동. `←/→` 는 후보 축이라 쓰지 않는다(§7.7).
+   * 1 은 다음, -1 은 이전.
+   */
+  readonly moveItemFocus: (delta: 1 | -1) => void;
   readonly toggleApprove: () => void;
   readonly toggleReject: () => void;
   readonly undo: () => void;
@@ -127,6 +132,18 @@ export function useReviewShortcuts(actions: ReviewShortcutActions): void {
         case "ArrowLeft": {
           event.preventDefault();
           current.focusPreviousCandidate();
+          return;
+        }
+        case "ArrowDown":
+        case "KeyJ": {
+          event.preventDefault();
+          current.moveItemFocus(1);
+          return;
+        }
+        case "ArrowUp":
+        case "KeyK": {
+          event.preventDefault();
+          current.moveItemFocus(-1);
           return;
         }
         case "ArrowRight": {
