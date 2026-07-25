@@ -36,10 +36,10 @@ body{margin:0;padding:24px;background:#1b1d24;font-family:"Pretendard",sans-seri
 .pair{display:contents}
 .cap .kind{font-size:9px;padding:1px 6px;border-radius:999px;background:#2a2e3a;color:#c7cdda;letter-spacing:.04em}
 .mini{width:440px;height:290px;border-radius:14px;overflow:hidden;display:grid;grid-template-columns:44px 1fr;background:var(--rvw-bg2);box-shadow:0 8px 24px rgba(0,0,0,.3)}
-.rail{background:linear-gradient(170deg,var(--rvw-accent),var(--rvw-rail-end));display:flex;flex-direction:column;align-items:center;gap:7px;padding:10px 0}
-.rail .who{width:30px;height:30px;border-radius:50%;overflow:hidden;background:var(--rvw-bg);color:var(--rvw-accent-ink);display:grid;place-items:center;font-weight:800;font-size:13px}
+.rail{background:linear-gradient(170deg,var(--rvw-rail-start),var(--rvw-rail-end));display:flex;flex-direction:column;align-items:center;gap:7px;padding:10px 0}
+.rail .who{width:30px;height:30px;border-radius:50%;overflow:hidden;background:var(--rvw-bg);color:var(--rvw-accent-ink);display:grid;place-items:center;font-weight:800;font-size:13px;box-shadow:0 0 0 1px color-mix(in srgb,var(--rvw-accent-ink) 35%,transparent)}
 .rail .who img{width:100%;height:100%;object-fit:cover}
-.rail .rb{width:26px;height:26px;border-radius:8px;background:rgba(255,255,255,.20)}
+.rail .rb{width:26px;height:26px;border-radius:8px;background:color-mix(in srgb,var(--rvw-accent-on) 20%,transparent)}
 .scr{padding:12px 14px;min-width:0;color:var(--rvw-ink)}
 .hd{display:flex;justify-content:space-between;align-items:baseline}
 .hd b{font-size:14px;font-weight:800;color:var(--rvw-ink)} .hd .chip{font-size:10px;color:var(--rvw-ink3)}

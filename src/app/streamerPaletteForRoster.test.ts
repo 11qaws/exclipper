@@ -44,8 +44,9 @@ describe("streamer palette for roster", () => {
         "--ex-accent-line",
         // 채운 accent 위의 글자색. 다크에서 accent 를 죽이지 않고 대비를 맞춘다.
         "--ex-accent-on",
-        // 레일 그라데이션 끝 색 — solid 는 어두워지고 pale 은 밝아진다.
+        // 레일 그라데이션 — 어느 테마든 아래가 더 무겁다.
         "--ex-rail-end",
+        "--ex-rail-start",
       ]);
       expect((vars["--ex-accent"] ?? "").startsWith("hsl(152")).toBe(true); // eureka green
     }

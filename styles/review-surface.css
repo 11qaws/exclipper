@@ -17,6 +17,7 @@
   /* accent — driven by the streamer palette via --ex-accent* */
   --rvw-accent: var(--ex-accent);
   --rvw-accent-on: var(--ex-accent-on);
+  --rvw-rail-start: var(--ex-rail-start);
   --rvw-rail-end: var(--ex-rail-end);
   --rvw-accent-ink: var(--ex-accent-ink);
   --rvw-accent-bg: var(--ex-accent-bg);
@@ -117,10 +118,11 @@
 
 /* ── Rail (toolbox; streamer identity on top) ─────────────── */
 .rvw-rail {
-  /* The end colour comes from the palette, not from a fixed mix: solid themes
-   * deepen, pale ones lighten toward white. Mixing everything with black was
-   * what made the ice blue grey. */
-  background: linear-gradient(170deg, var(--rvw-accent), var(--rvw-rail-end));
+  /* Both stops come from the palette so every theme shades the same way — the
+   * bottom is always the heavier end. Solid themes run accent → near-black;
+   * pale ones run near-white → their own sky. Mixing a pale theme with black
+   * instead is what turned the ice blue grey. */
+  background: linear-gradient(170deg, var(--rvw-rail-start), var(--rvw-rail-end));
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -131,7 +133,7 @@
   width: 36px;
   height: 36px;
   border-radius: 50%;
-  background: rgba(255, 255, 255, .92);
+  background: var(--rvw-bg);
   color: var(--rvw-accent-ink);
   display: grid;
   place-items: center;
@@ -139,6 +141,8 @@
   font-size: 14px;
   margin-bottom: 8px;
   overflow: hidden;
+  /* Keeps the avatar visible when the rail's top is near-white. */
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--rvw-accent-ink) 35%, transparent);
 }
 .rvw-rail .who img { width: 100%; height: 100%; object-fit: cover; }
 .rvw-rail button {
@@ -147,13 +151,19 @@
   border: 0;
   border-radius: 10px;
   background: transparent;
-  color: rgba(255, 255, 255, .72);
+  /* The rail can be dark (solid themes) or near-white at the top (pale ones),
+   * so the icons take the colour already solved to sit on this accent rather
+   * than assuming a dark ground. */
+  color: color-mix(in srgb, var(--rvw-accent-on) 78%, transparent);
   cursor: pointer;
   font-size: 15px;
   display: grid;
   place-items: center;
 }
-.rvw-rail button:hover { background: rgba(255, 255, 255, .16); color: #fff; }
+.rvw-rail button:hover {
+  background: color-mix(in srgb, var(--rvw-accent-on) 14%, transparent);
+  color: var(--rvw-accent-on);
+}
 .rvw-rail .sp { flex: 1; }
 
 .rvw-screen {

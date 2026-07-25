@@ -78,8 +78,10 @@ export interface StreamerPaletteSeed {
  * belongs to that group and her own overlay is the same pink toned right down
  * to a dusty wine-mauve (hue ~344 at ~35% sat, from her "BAR AMORE" profile),
  * so base and 아모레또 share a hue and are held apart by a large chroma gap.
- * Separately, 토로리's sky (202) and 망징이's deeper blue (216) share a family
- * and are held apart by a smaller hue+chroma gap. Hues are read from brand art.
+ * Separately, 토로리 and 망징이 both live in the blue family: 토로리 is a bright
+ * sky read from her schedule art, 망징이 a periwinkle leaning to violet read
+ * from her model. They are held apart by tone — one pale, one solid — which
+ * puts a wide lightness gap between them. Hues are measured, never guessed.
  */
 export const STREAMER_PALETTE_SEEDS: readonly StreamerPaletteSeed[] = [
   { id: "default", name: "기본 · 교환학생", kind: "base", hue: 350, chroma: 1 }, // group rose, softened from the 1기 poster hot pink
@@ -87,7 +89,7 @@ export const STREAMER_PALETTE_SEEDS: readonly StreamerPaletteSeed[] = [
   { id: "eureka", name: "유레카", kind: "streamer", hue: 152, chroma: 0.95 }, // brand green-teal
   { id: "sena", name: "세나 아르벨", kind: "streamer", hue: 276, chroma: 0.5 }, // muted periwinkle-violet (beret)
   { id: "torori", name: "토로리 코코", kind: "streamer", hue: 211, chroma: 1.04, tone: "pale" }, // 맑은 하늘빛 (공식 스케줄 아트 실측 hsl 212 75% 84%) — 밝고 선명한 것이 정체성이라 pale
-  { id: "mangjing", name: "망징이", kind: "streamer", hue: 216, chroma: 1.05 }, // deeper blue
+  { id: "mangjing", name: "망징이", kind: "streamer", hue: 226, chroma: 0.78 }, // 페리윙클 남보라 (모델 실측 hsl 227 38% 68% · 카디건·머리결 하이라이트)
   { id: "violet", name: "클래식 바이올렛", kind: "extra", hue: 249, chroma: 1 }, // preserved original default
   { id: "amber", name: "앰버 · 골드", kind: "extra", hue: 40, chroma: 1.05 }, // preserved gold
   { id: "hotpink", name: "핫핑크 · 교환학생", kind: "extra", hue: 338, chroma: 1.15 }, // full-intensity group pink (1기 poster)
@@ -108,12 +110,15 @@ export interface ThemeTokens {
   readonly ink2: string;
   readonly ink3: string;
   readonly ink4: string;
+  /** 레일 그라데이션의 시작(위) 색. */
+  readonly railStart: string;
   /**
-   * 레일 그라데이션의 끝 색.
+   * 레일 그라데이션의 끝(아래) 색.
    *
-   * 진한 정체성은 예전처럼 검정 쪽으로 어두워진다. 밝은(pale) 정체성은 반대로
-   * **흰색 쪽으로 밝아진다** — 얼음은 어두워지며 탁해지는 게 아니라 빛으로
-   * 옅어진다. 검정을 섞으면 밝은 하늘빛이 회청색이 되어 정체성이 사라진다.
+   * 어느 테마든 **아래가 더 무겁다**. 진한 정체성은 위의 accent 에서 검정 쪽으로
+   * 어두워지고, 밝은(pale) 정체성은 위의 흰빛에서 자기 하늘색으로 내려온다.
+   * 방향이 같아야 여러 테마를 오갈 때 같은 화면으로 읽힌다. pale 을 검정과
+   * 섞지 않는 이유는 그러면 밝은 하늘빛이 회청색이 되어 정체성이 사라져서다.
    */
   readonly railEnd: string;
   /**
@@ -304,15 +309,22 @@ export function buildStreamerPalette(seed: StreamerPaletteSeed): StreamerPalette
    * black as before. A pale theme lightens toward white instead: ice reads as
    * light thinning out, and mixing it with black just makes grey.
    */
+  const railStartLight = pale
+    ? mixSrgb([h, accentSat, accentL], [1, 1, 1], 0.34)
+    : hsl(h, accentSat, accentL);
   const railEndLight = pale
-    ? mixSrgb([h, accentSat, accentL], [1, 1, 1], 0.42)
+    ? hsl(h, accentSat, accentL)
     : mixSrgb([h, accentSat, accentL], [0, 0, 0], 0.8);
+  const railStartDark = pale
+    ? mixSrgb([h, darkSatPreview, darkAccentLPreview], [1, 1, 1], 0.42)
+    : hsl(h, darkSatPreview, darkAccentLPreview);
   const railEndDark = pale
-    ? mixSrgb([h, darkSatPreview, darkAccentLPreview], [1, 1, 1], 0.5)
+    ? hsl(h, darkSatPreview, darkAccentLPreview)
     : mixSrgb([h, darkSatPreview, darkAccentLPreview], [0, 0, 0], 0.8);
 
   const light: ThemeTokens = {
     accent: hsl(h, accentSat, accentL),
+    railStart: railStartLight,
     railEnd: railEndLight,
     accentOn: solveAccentOn(h, accentSat, accentL),
     accentInk: hsl(h, accentSat, inkL),
@@ -365,6 +377,7 @@ export function buildStreamerPalette(seed: StreamerPaletteSeed): StreamerPalette
 
   const dark: ThemeTokens = {
     accent: hsl(h, darkSat, darkAccentL),
+    railStart: railStartDark,
     railEnd: railEndDark,
     accentOn: solveAccentOn(h, darkSat, darkAccentL),
     accentInk: hsl(h, darkInkSat, darkInkL),
@@ -401,6 +414,7 @@ export function accentCssVars(theme: ThemeTokens): Record<string, string> {
     "--ex-accent-ink": theme.accentInk,
     "--ex-accent-bg": theme.accentBg,
     "--ex-accent-line": theme.accentLine,
+    "--ex-rail-start": theme.railStart,
     "--ex-rail-end": theme.railEnd,
   };
 }
