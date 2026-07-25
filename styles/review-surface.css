@@ -168,7 +168,17 @@
   align-items: baseline;
   gap: 12px;
 }
-.rvw-head .ttl { font-size: var(--rvw-fs-title); font-weight: 800; letter-spacing: -.02em; }
+/* The source title is whatever the file was called; it must never grow a second
+ * line and push the working area down. It is context, not the subject. */
+.rvw-head .ttl {
+  font-size: var(--rvw-fs-title);
+  font-weight: 800;
+  letter-spacing: -.02em;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .rvw-head .len { color: var(--rvw-ink3); font-size: var(--rvw-fs-data); margin-left: 10px; }
 .rvw-head .chip { font-size: var(--rvw-fs-data); color: var(--rvw-ink3); white-space: nowrap; }
 .rvw-head .chip b { color: var(--rvw-ink); font-variant-numeric: tabular-nums; }
@@ -218,8 +228,26 @@
 .rvw-body { flex: 1; min-height: 0; margin-top: 2px; display: flex; }
 
 /* ── Summary page: stage left, narrative right ────────────── */
-.rvw-sum { display: grid; grid-template-columns: 58fr 42fr; gap: 22px; width: 100%; }
+/* Both pages are bounded by the panel, never by their content: the body is the
+ * scroll boundary, so the video shrinks and the columns scroll instead of the
+ * whole layout growing past the locked size. */
+.rvw-sum {
+  display: grid;
+  grid-template-columns: 58fr 42fr;
+  gap: 22px;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+}
+/*
+ * The decision dock and the trim row are the main action; they keep their size
+ * and the video gives way instead. Without this the player grows with the
+ * column and, at the locked minimum size with maximum-length data, pushes 사용
+ * and 빼기 off the bottom — the one thing this screen exists to do.
+ */
 .rvw-stagecol { display: flex; flex-direction: column; min-height: 0; }
+.rvw-stagecol > .rvw-dock,
+.rvw-stagecol > .rvw-trim { flex: 0 0 auto; }
 .rvw-player {
   flex: 1;
   border-radius: var(--rvw-r);
@@ -362,7 +390,20 @@
 
 @keyframes rvw-fade-in { from { opacity: 0; } to { opacity: 1; } }
 
-.rvw-narr { min-width: 0; display: flex; flex-direction: column; gap: 16px; }
+/*
+ * The narrative column scrolls rather than overflowing. Pass B may return the
+ * full 600-character insight, which at the locked minimum size is taller than
+ * the column; without a scroll boundary it pushed the quote and the context
+ * flow out of the panel entirely.
+ */
+.rvw-narr {
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
 
 /*
  * Spacing has three tiers, tightest first, so the eye groups before it reads:
@@ -426,6 +467,12 @@
   box-shadow: var(--rvw-sh1);
 }
 
+/*
+ * The summary answers "why this scene" at a glance, so it is capped at five
+ * lines here; the evidence page carries the full text. Letting it run to the
+ * pipeline's 600-character limit turned the claim into the whole column and
+ * buried the evidence under it.
+ */
 .rvw-why {
   font-size: var(--rvw-fs-body);
   line-height: var(--rvw-lh-body);
@@ -433,6 +480,10 @@
   margin: 0;
   word-break: keep-all;
   overflow-wrap: break-word;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 5;
+  overflow: hidden;
 }
 .rvw-quote {
   border-left: 3px solid var(--rvw-accent-line);
@@ -502,7 +553,7 @@
 }
 
 /* ── Evidence page ────────────────────────────────────────── */
-.rvw-ev { width: 100%; display: flex; flex-direction: column; gap: 14px; }
+.rvw-ev { width: 100%; height: 100%; min-height: 0; display: flex; flex-direction: column; gap: 14px; }
 .rvw-evhead { display: flex; justify-content: space-between; align-items: center; }
 
 /* Unified segment timeline: frames + cues + peak on one axis. */
@@ -563,17 +614,9 @@
   background: var(--rvw-ink2);
   cursor: pointer;
 }
-.rvw-tl .peak::after {
-  content: "정점";
-  position: absolute;
-  top: -15px;
-  left: 50%;
-  transform: translateX(-50%);
-  font: 700 9px var(--rvw-font);
-  color: var(--rvw-ink3);
-  white-space: nowrap;
-  letter-spacing: .02em;
-}
+/* No text label: it would sit inside the frame thumbnails above the axis.
+   The mark is taller and carries the accent instead, and names itself to
+   assistive tech through aria-label. */
 /* No frames is still information: keep the lane and say so, never collapse. */
 .rvw-tl-empty {
   position: absolute;
@@ -606,6 +649,15 @@
   min-height: 0;
 }
 .rvw-evcol { display: flex; flex-direction: column; gap: 12px; min-height: 0; overflow-y: auto; }
+/*
+ * In the right-hand column the context and the cast each scroll inside their
+ * own half. Sharing one scroller let a maximum-length context push 등장 인물
+ * off the bottom, where nothing indicated it was still there — and who is in
+ * the clip is first-class evidence, not an appendix.
+ */
+.rvw-evcols > .rvw-evcol:last-child { overflow: hidden; display: grid; grid-template-rows: 1fr auto; gap: 16px; }
+.rvw-evcols > .rvw-evcol:last-child > .rvw-grp:first-child { min-height: 0; overflow-y: auto; }
+.rvw-evcols > .rvw-evcol:last-child > .rvw-grp:last-child { max-height: 45%; overflow-y: auto; }
 .rvw-grp { display: flex; flex-direction: column; gap: 6px; }
 
 .rvw-sub {
@@ -684,7 +736,17 @@
   overflow: hidden;
 }
 .rvw-person .pf img { width: 100%; height: 100%; object-fit: cover; }
-.rvw-person .nm { font-size: var(--rvw-fs-sm); color: var(--rvw-ink); font-weight: 600; }
+.rvw-person .nm {
+  font-size: var(--rvw-fs-sm);
+  color: var(--rvw-ink);
+  font-weight: 600;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  word-break: break-all;
+}
+.rvw-person > span:last-child { min-width: 0; }
 .rvw-person .rl { font-size: 10px; color: var(--rvw-ink4); }
 
 .rvw-evfoot { display: flex; justify-content: space-between; align-items: center; }
