@@ -99,6 +99,14 @@ export interface ThemeTokens {
   readonly ink2: string;
   readonly ink3: string;
   readonly ink4: string;
+  /**
+   * 채운 accent 위에 얹는 글자색.
+   *
+   * 다크에서 대비를 맞추려고 accent 를 어둡게 죽이면 스트리머 색이 사라진다.
+   * 그래서 accent 는 선명하게 두고 **글자색을 바꾼다** — 라이트에선 흰 글자,
+   * 다크에선 그 색조의 짙은 잉크. 색은 살고 대비는 확보된다.
+   */
+  readonly accentOn: string;
 }
 
 export interface StreamerPalette {
@@ -167,11 +175,49 @@ function solveLightness(
   return loL;
 }
 
+function parseHsl(value: string): [number, number, number] | null {
+  const m = /hsl\((\d+) (\d+)% (\d+)%\)/.exec(value);
+  return m === null ? null : [Number(m[1]), Number(m[2]), Number(m[3])];
+}
+
 /** Contrast of an `hsl(H S% L%)` string against white — exported for tests. */
 export function contrastOnWhite(hslString: string): number {
-  const m = /hsl\((\d+) (\d+)% (\d+)%\)/.exec(hslString);
-  if (!m) return 0;
-  return contrastWithWhite(Number(m[1]), Number(m[2]), Number(m[3]));
+  const parsed = parseHsl(hslString);
+  if (parsed === null) return 0;
+  return contrastWithWhite(parsed[0], parsed[1], parsed[2]);
+}
+
+/** Contrast ratio between any two `hsl(...)` strings — exported for tests. */
+export function contrastBetween(a: string, b: string): number {
+  const left = parseHsl(a);
+  const right = parseHsl(b);
+  if (left === null || right === null) return 0;
+  const lumA = relativeLuminance(hslToRgb(left[0], left[1], left[2]));
+  const lumB = relativeLuminance(hslToRgb(right[0], right[1], right[2]));
+  const hi = Math.max(lumA, lumB);
+  const lo = Math.min(lumA, lumB);
+  return (hi + 0.05) / (lo + 0.05);
+}
+
+/**
+ * The label colour to put on a filled accent.
+ *
+ * White first, because that is the familiar look on a saturated button. When
+ * the accent is light — which is exactly what a dark theme wants, so the
+ * streamer's colour still reads — white fails, so a deep ink of the same hue is
+ * solved instead. Darkening the accent itself would pass the check by throwing
+ * away the identity the palette exists to carry.
+ */
+function solveAccentOn(h: number, s: number, accentL: number): string {
+  const white = hsl(h, 0, 100);
+  const accent = hsl(h, s, accentL);
+  if (contrastBetween(white, accent) >= 4.5) return white;
+  for (let l = 30; l >= 6; l -= 1) {
+    if (contrastBetween(hsl(h, Math.min(60, s), l), accent) >= 4.5) {
+      return hsl(h, Math.min(60, s), l);
+    }
+  }
+  return hsl(h, 40, 8);
 }
 
 /**
@@ -192,6 +238,7 @@ export function buildStreamerPalette(seed: StreamerPaletteSeed): StreamerPalette
 
   const light: ThemeTokens = {
     accent: hsl(h, accentSat, accentL),
+    accentOn: solveAccentOn(h, accentSat, accentL),
     accentInk: hsl(h, accentSat, inkL),
     accentBg: hsl(h, Math.min(60, accentSat), 94),
     accentLine: hsl(h, Math.min(55, accentSat), 84),
@@ -206,13 +253,30 @@ export function buildStreamerPalette(seed: StreamerPaletteSeed): StreamerPalette
     ink4: hsl(h, 12, 64),
   };
 
-  // Dark theme is deferred (not rendered anywhere yet) and not contrast-audited.
+  /*
+   * Dark keeps the accent bright and saturated. A dark ground is where a
+   * streamer's colour can actually show, so the fix for contrast is the label
+   * on top — not a duller accent. The coloured ink is then solved upward until
+   * it clears the dark surface, since on this ground the danger is text that is
+   * too dark rather than too light.
+   */
+  const darkSat = Math.min(100, accentSat + 8);
+  const darkBg = hsl(h, 30, 14);
+  let darkInkL = 80;
+  for (let l = 60; l <= 92; l += 1) {
+    if (contrastBetween(hsl(h, darkSat, l), darkBg) >= 4.5) {
+      darkInkL = l;
+      break;
+    }
+  }
+
   const dark: ThemeTokens = {
-    accent: hsl(h, Math.min(100, accentSat + 8), 74),
-    accentInk: hsl(h, Math.min(100, accentSat + 8), 80),
+    accent: hsl(h, darkSat, 74),
+    accentOn: solveAccentOn(h, darkSat, 74),
+    accentInk: hsl(h, darkSat, darkInkL),
     accentBg: hsl(h, 42, 21),
     accentLine: hsl(h, 40, 35),
-    bg: hsl(h, 30, 14),
+    bg: darkBg,
     bg2: hsl(h, 34, 9),
     bg3: hsl(h, 28, 20),
     line: hsl(h, 26, 24),
@@ -239,6 +303,7 @@ export function buildAllStreamerPalettes(): readonly StreamerPalette[] {
 export function accentCssVars(theme: ThemeTokens): Record<string, string> {
   return {
     "--ex-accent": theme.accent,
+    "--ex-accent-on": theme.accentOn,
     "--ex-accent-ink": theme.accentInk,
     "--ex-accent-bg": theme.accentBg,
     "--ex-accent-line": theme.accentLine,

@@ -16,6 +16,7 @@
 .rvw {
   /* accent — driven by the streamer palette via --ex-accent* */
   --rvw-accent: var(--ex-accent);
+  --rvw-accent-on: var(--ex-accent-on);
   --rvw-accent-ink: var(--ex-accent-ink);
   --rvw-accent-bg: var(--ex-accent-bg);
   --rvw-accent-line: var(--ex-accent-line);
@@ -291,7 +292,7 @@
   border: 0;
   border-radius: 50%;
   background: var(--rvw-accent);
-  color: #fff;
+  color: var(--rvw-accent-on);
   cursor: pointer;
   display: grid;
   place-items: center;
@@ -315,7 +316,7 @@
   color: var(--rvw-ink);
 }
 .rvw-dock button:disabled { opacity: .5; cursor: default; }
-.rvw-dock .use { background: var(--rvw-accent); border-color: var(--rvw-accent); color: #fff; }
+.rvw-dock .use { background: var(--rvw-accent); border-color: var(--rvw-accent); color: var(--rvw-accent-on); }
 .rvw-trim {
   display: flex;
   align-items: center;
@@ -765,7 +766,7 @@
   gap: 8px;
   color: var(--rvw-ink);
 }
-.rvw-evfoot .use { background: var(--rvw-accent); border-color: var(--rvw-accent); color: #fff; }
+.rvw-evfoot .use { background: var(--rvw-accent); border-color: var(--rvw-accent); color: var(--rvw-accent-on); }
 
 /* Slide-in player card (evidence page keeps its context). */
 /*

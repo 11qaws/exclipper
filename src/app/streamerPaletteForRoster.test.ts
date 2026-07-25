@@ -33,7 +33,7 @@ describe("streamer palette for roster", () => {
     expect(paletteIdForCastRosterId(MANGJING_CHANNEL_CAST_ROSTER_ID)).toBe("mangjing");
   });
 
-  it("emits the four global accent tokens, theme-aware", () => {
+  it("emits the global accent tokens, theme-aware", () => {
     const light = activeAccentCssVars(EUREKA_CHANNEL_CAST_ROSTER_ID, "light");
     const dark = activeAccentCssVars(EUREKA_CHANNEL_CAST_ROSTER_ID, "dark");
     for (const vars of [light, dark]) {
@@ -42,6 +42,8 @@ describe("streamer palette for roster", () => {
         "--ex-accent-bg",
         "--ex-accent-ink",
         "--ex-accent-line",
+        // 채운 accent 위의 글자색. 다크에서 accent 를 죽이지 않고 대비를 맞춘다.
+        "--ex-accent-on",
       ]);
       expect((vars["--ex-accent"] ?? "").startsWith("hsl(152")).toBe(true); // eureka green
     }

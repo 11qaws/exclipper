@@ -25,6 +25,9 @@
    * (src/app/streamerPalette.ts). App.tsx overrides these per streamer at
    * runtime; this static default just avoids a first-paint flash. */
   --ex-accent: hsl(350 72% 53%);
+  /* 채운 accent 위의 글자색. 라이트는 흰색, 다크는 같은 색조의 짙은 잉크 —
+   * 다크에서 accent 를 어둡게 죽이지 않고도 대비를 확보한다. */
+  --ex-accent-on: hsl(350 0% 100%);
   --ex-accent-ink: hsl(350 72% 41%);
   --ex-accent-bg: hsl(350 60% 94%);
   --ex-accent-line: hsl(350 55% 84%);
@@ -53,6 +56,7 @@
   /* Base accent (dark) mirrors the streamerPalette base dark tokens. Dark is
    * not yet contrast-audited (deferred); overridden per streamer at runtime. */
   --ex-accent: hsl(350 80% 74%);
+  --ex-accent-on: hsl(350 60% 28%);
   --ex-accent-ink: hsl(350 80% 80%);
   --ex-accent-bg: hsl(350 42% 21%);
   --ex-accent-line: hsl(350 40% 35%);

@@ -13,7 +13,7 @@ import { dirname, join } from "node:path";
 
 import {
   buildAllStreamerPalettes,
-  contrastOnWhite,
+  contrastBetween,
 } from "../src/app/streamerPalette.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -31,12 +31,13 @@ const HEAD = `<!doctype html><html lang="ko"><head><meta charset="utf-8">
 @font-face{font-family:"Pretendard";font-weight:400;src:url("../public/fonts/Pretendard-Regular.woff2")}
 @font-face{font-family:"Pretendard";font-weight:600;src:url("../public/fonts/Pretendard-SemiBold.woff2")}
 @font-face{font-family:"Pretendard";font-weight:800;src:url("../public/fonts/Pretendard-ExtraBold.woff2")}
-body{margin:0;padding:24px;background:#1b1d24;font-family:"Pretendard",sans-serif;display:flex;flex-wrap:wrap;gap:8px 20px}
-.cap{width:100%;color:#9aa2b8;font:11px "SFMono-Regular",monospace;margin-top:14px;display:flex;gap:10px;align-items:baseline}
+body{margin:0;padding:24px;background:#1b1d24;font-family:"Pretendard",sans-serif;display:grid;grid-template-columns:auto auto;gap:6px 18px;justify-content:start;align-items:start}
+.cap{grid-column:1/-1;color:#9aa2b8;font:11px "SFMono-Regular",monospace;margin-top:14px;display:flex;gap:10px;align-items:baseline}
+.pair{display:contents}
 .cap .kind{font-size:9px;padding:1px 6px;border-radius:999px;background:#2a2e3a;color:#c7cdda;letter-spacing:.04em}
-.mini{width:440px;height:210px;border-radius:14px;overflow:hidden;display:grid;grid-template-columns:44px 1fr;background:var(--rvw-bg2);box-shadow:0 8px 24px rgba(0,0,0,.3)}
+.mini{width:440px;height:250px;border-radius:14px;overflow:hidden;display:grid;grid-template-columns:44px 1fr;background:var(--rvw-bg2);box-shadow:0 8px 24px rgba(0,0,0,.3)}
 .rail{background:linear-gradient(170deg,var(--rvw-accent),color-mix(in srgb,var(--rvw-accent) 70%,#000));display:flex;flex-direction:column;align-items:center;gap:7px;padding:10px 0}
-.rail .who{width:30px;height:30px;border-radius:50%;overflow:hidden;background:#fff;color:var(--rvw-accent-ink);display:grid;place-items:center;font-weight:800;font-size:13px}
+.rail .who{width:30px;height:30px;border-radius:50%;overflow:hidden;background:var(--rvw-bg);color:var(--rvw-accent-ink);display:grid;place-items:center;font-weight:800;font-size:13px}
 .rail .who img{width:100%;height:100%;object-fit:cover}
 .rail .rb{width:26px;height:26px;border-radius:8px;background:rgba(255,255,255,.20)}
 .scr{padding:12px 14px;min-width:0;color:var(--rvw-ink)}
@@ -53,7 +54,7 @@ body{margin:0;padding:24px;background:#1b1d24;font-family:"Pretendard",sans-seri
 .ctx .lb{font-size:9px;font-weight:700;opacity:.75;display:block}
 .acts{display:flex;gap:6px;margin-top:10px}
 .acts button{flex:1;padding:7px;border:1px solid var(--rvw-line2);border-radius:8px;background:var(--rvw-bg);font:600 12px "Pretendard";color:var(--rvw-ink)}
-.acts .use{background:var(--rvw-accent);border-color:var(--rvw-accent);color:#fff}
+.acts .use{background:var(--rvw-accent);border-color:var(--rvw-accent);color:var(--rvw-accent-on)}
 </style></head><body>
 `;
 
@@ -63,14 +64,12 @@ function vars(t) {
     .join(";");
 }
 
-function card(p) {
-  const t = p.light;
+function card(p, mode) {
+  const t = mode === "dark" ? p.dark : p.light;
   const who = IMG[p.id]
     ? `<img src="../public/streamers/${IMG[p.id]}" alt="">`
     : p.name.replace(/[^가-힣A-Za-z]/g, "")[0];
-  const c = contrastOnWhite(t.accent).toFixed(1);
-  return `<div class="cap"><span class="kind">${p.kind}</span> ${p.name} · hue ${/hsl\((\d+)/.exec(t.accent)[1]} · 흰글자대비 ${c}:1</div>
-<div class="mini" style="${vars(t)}">
+  return `<div class="mini" style="${vars(t)}">
   <div class="rail"><div class="who">${who}</div><div class="rb"></div><div class="rb"></div></div>
   <div class="scr">
     <div class="hd"><b>음식 토크 풀버전</b><span class="chip">후보 7/23 · 남음 16</span></div>
@@ -83,12 +82,23 @@ function card(p) {
 </div>`;
 }
 
+/** 라이트와 다크를 나란히. 같은 색이 두 바탕에서 어떻게 사는지가 판단 기준이다. */
+function row(p) {
+  const hue = /hsl\((\d+)/.exec(p.light.accent)[1];
+  const lc = contrastBetween(p.light.accentOn, p.light.accent).toFixed(2);
+  const dc = contrastBetween(p.dark.accentOn, p.dark.accent).toFixed(2);
+  const di = contrastBetween(p.dark.accentInk, p.dark.bg).toFixed(2);
+  return `<div class="cap"><span class="kind">${p.kind}</span> ${p.name} · hue ${hue} · 버튼글자 라이트 ${lc}:1 / 다크 ${dc}:1 · 다크 잉크 ${di}:1</div>
+${card(p, "light")}
+${card(p, "dark")}`;
+}
+
 const html =
-  HEAD + buildAllStreamerPalettes().map(card).join("\n") + "\n</body></html>\n";
+  HEAD + buildAllStreamerPalettes().map(row).join("\n") + "\n</body></html>\n";
 writeFileSync(join(here, "streamer-palettes.html"), html, "utf-8");
 console.log("wrote dev/streamer-palettes.html");
 for (const p of buildAllStreamerPalettes()) {
   console.log(
-    `  ${p.name.padEnd(14)} accent ${p.light.accent}  white ${contrastOnWhite(p.light.accent).toFixed(2)}:1  ink ${p.light.accentInk} ${contrastOnWhite(p.light.accentInk).toFixed(2)}:1`,
+    `  ${p.name.padEnd(14)} light-on ${contrastBetween(p.light.accentOn, p.light.accent).toFixed(2)}:1  dark-on ${contrastBetween(p.dark.accentOn, p.dark.accent).toFixed(2)}:1  dark-ink ${contrastBetween(p.dark.accentInk, p.dark.bg).toFixed(2)}:1`,
   );
 }

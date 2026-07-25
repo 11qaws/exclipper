@@ -4,6 +4,7 @@ import {
   STREAMER_PALETTE_SEEDS,
   buildAllStreamerPalettes,
   buildStreamerPalette,
+  contrastBetween,
   contrastOnWhite,
 } from "./streamerPalette";
 
@@ -46,6 +47,27 @@ describe("streamer palette", () => {
     expect(
       Math.abs((torori.chroma ?? 1) - (mangjing.chroma ?? 1)),
     ).toBeGreaterThanOrEqual(0.15);
+  });
+
+  it("keeps button labels legible on the accent in both themes", () => {
+    // Dark is where a streamer's colour can actually show, so the accent stays
+    // bright there and the *label* changes instead. Darkening the accent to
+    // pass this check would throw away the identity the palette carries.
+    for (const p of buildAllStreamerPalettes()) {
+      expect(contrastBetween(p.light.accentOn, p.light.accent)).toBeGreaterThanOrEqual(4.5);
+      expect(contrastBetween(p.dark.accentOn, p.dark.accent)).toBeGreaterThanOrEqual(4.5);
+      // coloured text on the dark ground has to clear it too
+      expect(contrastBetween(p.dark.accentInk, p.dark.bg)).toBeGreaterThanOrEqual(4.5);
+    }
+  });
+
+  it("keeps the dark accent bright enough to still read as the streamer's colour", () => {
+    for (const p of buildAllStreamerPalettes()) {
+      const m = /hsl\(\d+ (\d+)% (\d+)%\)/.exec(p.dark.accent);
+      expect(m).not.toBeNull();
+      expect(Number(m![1])).toBeGreaterThanOrEqual(35); // saturated, not greyed
+      expect(Number(m![2])).toBeGreaterThanOrEqual(60); // bright on a dark ground
+    }
   });
 
   it("keeps every auto-assigned theme (base + streamer) distinguishable", () => {
