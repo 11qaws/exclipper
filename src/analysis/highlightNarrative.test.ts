@@ -175,10 +175,14 @@ describe("buildHighlightNarrative", () => {
       );
 
       expect(narrative.event).toContain(expectedTiming);
+      expect(narrative.event).toContain("화면 변화가 있어요");
       expect(narrative.event).toContain("원인이라고 단정할 수는 없");
       expect(narrative.event).not.toMatch(
         /화면 변화(?:가|로 인해) 반응(?:을|이) (?:일으켰|만들었|유발했)/u,
       );
+      // The rank percentile is an internal priority input only: it carries too
+      // much false signal to be shown to the editor as a "상위 N%" grade.
+      expect(JSON.stringify(narrative)).not.toMatch(/상위\s*\d/u);
     },
   );
 
@@ -256,6 +260,9 @@ describe("buildHighlightNarrative", () => {
     expect(narrative.basis).toBe("visual-exploration");
     expect(narrative.basisLabel).toContain("반응 근거 부족");
     expect(narrative.whyRecommended).toContain("낮은 우선순위");
+    // Keeps the raw observation while the internal rank stays out of the copy.
+    expect(narrative.event).toContain("장면 변화 강도 5.00");
+    expect(JSON.stringify(narrative)).not.toMatch(/상위\s*\d/u);
   });
 
   it("does not attribute an audio-only signal to the streamer or invent its cause", () => {

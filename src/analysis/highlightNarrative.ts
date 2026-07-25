@@ -64,10 +64,13 @@ function relationBetween(
   return "overlap";
 }
 
-function topPercent(rankPercentile: number): number {
-  return Math.max(1, Math.round((1 - rankPercentile) * 100));
-}
-
+/**
+ * rankPercentile stays in the internal priority maths, but it is deliberately
+ * absent from every user-facing sentence: the ranking carries a lot of false
+ * signal and bunches up in a few situations (title cards, scene wipes, camera
+ * cuts), so a "상위 N%" reading is read as a quality grade the number cannot
+ * back up. State the observation, not its rank.
+ */
 function eventExplanation(candidate: UnifiedHighlightCandidate): string {
   const visual = candidate.evidence.visual;
   if (visual === undefined) {
@@ -84,10 +87,9 @@ function eventExplanation(candidate: UnifiedHighlightCandidate): string {
           ? "반응 신호와 겹치는 시간대에"
           : "이 후보 구간에";
   const strength = visual.sceneChangeStrength;
-  const rank = topPercent(visual.rankPercentile);
   return strength === undefined
-    ? `${timing} 영상 내 상위 ${rank}%의 화면 변화가 있어요. 반응의 원인이라고 단정할 수는 없지만 사건 맥락을 찾을 단서예요.`
-    : `${timing} 장면 변화 ${strength.toFixed(2)}(영상 내 상위 ${rank}%)가 있어요. 반응의 원인이라고 단정할 수는 없지만 화면상 사건을 찾을 단서예요.`;
+    ? `${timing} 화면 변화가 있어요. 반응의 원인이라고 단정할 수는 없지만 사건 맥락을 찾을 단서예요.`
+    : `${timing} 화면 변화가 있어요(장면 변화 강도 ${strength.toFixed(2)}). 반응의 원인이라고 단정할 수는 없지만 화면상 사건을 찾을 단서예요.`;
 }
 
 function streamerReactionExplanation(candidate: UnifiedHighlightCandidate): string {

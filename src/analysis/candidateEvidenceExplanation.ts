@@ -249,10 +249,6 @@ function observedStatement(
   });
 }
 
-function topPercent(rankPercentile: number): number {
-  return Math.max(1, Math.round((1 - rankPercentile) * 100));
-}
-
 /** Normalizes untrusted model text and truncates by Unicode code point. */
 export function normalizeCandidateEvidenceQuote(value: string): string {
   const normalized = value
@@ -409,17 +405,22 @@ function chatObservation(candidate: UnifiedHighlightCandidate): string | null {
   return `채팅 5초 구간에 메시지 ${chat.messageCount}개와 고유 작성자 키 ${chat.uniqueAuthorCount}개가 집계됐고, 메시지 수는 분석 기준의 ${chat.burstRatio.toFixed(1)}배였어요.${reactionText}`;
 }
 
+/**
+ * rankPercentile still drives internal prioritisation, but it never reaches the
+ * reader: the visual ranking produces a lot of false signal and clusters in a
+ * few situations, so "상위 N%" would present a rank as evidence quality. The
+ * observation stays; the rank does not.
+ */
 function visualObservation(candidate: UnifiedHighlightCandidate): string | null {
   const visual = candidate.evidence.visual;
   if (visual === undefined) {
     return null;
   }
-  const rank = topPercent(visual.rankPercentile);
   const strengthText =
     visual.sceneChangeStrength === undefined
       ? ""
-      : ` 변화 강도는 ${visual.sceneChangeStrength.toFixed(2)}였고,`;
-  return `후보 구간에서 화면 변화가 감지됐어요.${strengthText} 영상 안에서는 상위 ${rank}%의 변화 신호예요. 화면 변화가 반응의 원인인지는 알 수 없어요.`;
+      : ` 변화 강도는 ${visual.sceneChangeStrength.toFixed(2)}였어요.`;
+  return `후보 구간에서 화면 변화가 감지됐어요.${strengthText} 화면 변화가 반응의 원인인지는 알 수 없어요.`;
 }
 
 function audioEventObservation(

@@ -281,6 +281,10 @@ describe("buildCandidateEvidenceExplanation", () => {
     const text = allExplanationText(explanation);
     expect(text).toContain("고유 작성자 키 25개");
     expect(text).toContain("소리의 주체는 구분되지 않았어요");
+    expect(text).toContain("후보 구간에서 화면 변화가 감지됐어요. 변화 강도는 4.20였어요.");
+    // rankPercentile keeps driving internal priority, but a "상위 N%" grade is
+    // never shown: the ranking carries too much false signal to read as quality.
+    expect(text).not.toMatch(/상위\s*\d/u);
     expect(text).not.toMatch(/참여자\s*25명|25명이|합의|공감대/u);
     expect(text).not.toMatch(
       /화면 변화(?:가|로 인해) 반응(?:을|이).*(?:일으켰|유발했|만들었)/u,
@@ -326,6 +330,7 @@ describe("buildCandidateEvidenceExplanation", () => {
     expect(explanation.headline).toBe(headline);
     expect(explanation.whyWorthReviewing.basisCodes).toContain(worthBasis);
     expect(explanation.unknowns).toEqual(["event", "actor", "cause", "outcome"]);
+    expect(allExplanationText(explanation)).not.toMatch(/상위\s*\d/u);
     if (kinds.length === 1 && kinds[0] === "visual") {
       expect(explanation.reactionClue.basisCodes).toEqual([
         "fast-visual-context",
