@@ -19,7 +19,7 @@ import {
   contrastOfRgb,
 } from "../src/app/streamerPalette.ts";
 import { streamerPortraitCrop } from "../src/app/streamerProfiles.ts";
-import { readRowHeight } from "./formTokens.mjs";
+import { readRowMetrics } from "./formTokens.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -50,8 +50,10 @@ const TINT = { light: 0.14, dark: 0.22 };
 
 const palettes = buildAllStreamerPalettes();
 
-/** 행 높이는 ui-forms.css 가 갖고 있다. 여기서 따로 정하면 둘이 갈라진다. */
-const ROW_HEIGHT = readRowHeight();
+/** 행 치수는 ui-forms.css 가 갖고 있다. 여기서 따로 정하면 둘이 갈라진다. */
+const { rowHeight: ROW_HEIGHT, bleedWidth: BLEED_WIDTH } = readRowMetrics();
+/** 글자가 놓이는 평평한 구간의 끝. 사진이 시작하는 자리에서 역산한다. */
+const FLAT = 100 - BLEED_WIDTH;
 
 /**
  * 글자가 실제로 놓이는 색을 계산한다. 사진 쪽이 아니라 **글자가 있는 쪽**의
@@ -199,11 +201,11 @@ h1{font-size:15px;margin:0 0 4px}
 .row.on{box-shadow:inset 0 0 0 2px var(--accent)}
 
 .row.a{padding:0 0 0 19px}
-.row.a .bleed{position:absolute;inset:0 0 0 auto;width:52%;z-index:1}
+.row.a .bleed{position:absolute;inset:0 0 0 auto;width:${BLEED_WIDTH}%;z-index:1}
 .row.a .scrim{position:absolute;inset:0;z-index:2;background:linear-gradient(90deg,
   color-mix(in srgb,var(--accent) calc(var(--tint)*100%),var(--bg2)) 0%,
-  color-mix(in srgb,var(--accent) calc(var(--tint)*100%),var(--bg2)) 46%,
-  color-mix(in srgb,var(--accent) calc(var(--tint)*70%),transparent) 72%,
+  color-mix(in srgb,var(--accent) calc(var(--tint)*100%),var(--bg2)) ${FLAT - 2}%,
+  color-mix(in srgb,var(--accent) calc(var(--tint)*70%),transparent) ${FLAT + 24}%,
   transparent 100%)}
 
 /* 초점 조정 */

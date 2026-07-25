@@ -246,6 +246,17 @@
   --uf-row-rail: 0.42em;
   /* uf-row-height: dev/focus-picker 가 고쳐 쓰는 줄이다. 손으로 바꾸지 않는다. */
   --uf-row-height: 74px;
+  /* uf-row-bleed: dev/focus-picker 가 고쳐 쓰는 줄이다. 손으로 바꾸지 않는다. */
+  --uf-row-bleed: 52%;
+
+  /*
+   * 글자가 놓이는 평평한 구간의 끝. 사진이 시작하는 자리에서 **역산한다.**
+   *
+   * 대비 보장(최저 5.82)은 글자가 이 구간 안에 있을 때만 성립한다. 사진 폭을
+   * 손으로 넓히면서 막을 그대로 두면 글자 뒤가 사진으로 바뀌는데, 화면은 그냥
+   * 예뻐 보이고 대비만 조용히 무너진다. 하나에서 끌어내면 갈라질 수 없다.
+   */
+  --uf-row-flat: calc(100% - var(--uf-row-bleed));
 
   position: relative;
   display: flex;
@@ -301,7 +312,7 @@
 .uf-row__bleed {
   position: absolute;
   inset: 0 0 0 auto;
-  width: 52%;
+  width: var(--uf-row-bleed);
   z-index: 1;
   background-size: cover;
   background-repeat: no-repeat;
@@ -333,8 +344,10 @@
   background: linear-gradient(
     90deg,
     color-mix(in srgb, var(--uf-accent) var(--uf-row-tint), var(--uf-surface2)) 0%,
-    color-mix(in srgb, var(--uf-accent) var(--uf-row-tint), var(--uf-surface2)) 46%,
-    color-mix(in srgb, var(--uf-accent) var(--uf-row-tint), transparent) 72%,
+    color-mix(in srgb, var(--uf-accent) var(--uf-row-tint), var(--uf-surface2))
+      calc(var(--uf-row-flat) - 2%),
+    color-mix(in srgb, var(--uf-accent) var(--uf-row-tint), transparent)
+      calc(var(--uf-row-flat) + 24%),
     transparent 100%
   );
 }

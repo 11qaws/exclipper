@@ -17,7 +17,7 @@ import { readFile, readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join, normalize, sep } from "node:path";
 
-import { readRowHeight, writeRowHeight } from "./formTokens.mjs";
+import { readRowMetrics, writeToken } from "./formTokens.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, "..");
@@ -112,12 +112,13 @@ async function apply(request, response) {
       throw new Error("crops 가 비어 있다.");
     }
     writeCrops(payload.crops);
-    const height = writeRowHeight(payload.rowHeight);
+    const rowHeight = writeToken("rowHeight", payload.rowHeight);
+    const bleedWidth = writeToken("bleedWidth", payload.bleedWidth);
     // 하네스를 다시 만들어야 화면과 소스가 같아진다. 여기서 빼먹으면 툴이
     // "반영됨" 이라고 말한 뒤에도 하네스는 옛 값을 보여 준다.
     await Promise.all(GENERATORS.map(runGenerator));
     response.writeHead(200, { "content-type": MIME[".json"] });
-    response.end(JSON.stringify({ ok: true, rowHeight: height }));
+    response.end(JSON.stringify({ ok: true, rowHeight, bleedWidth }));
   } catch (cause) {
     response.writeHead(500, { "content-type": MIME[".json"] });
     response.end(JSON.stringify({ ok: false, error: String(cause?.message ?? cause) }));
@@ -154,7 +155,10 @@ createServer((request, response) => {
   }
   serveStatic(request, response);
 }).listen(PORT, "127.0.0.1", () => {
+  const metrics = readRowMetrics();
   console.log(`초점 툴  http://localhost:${PORT}/`);
   console.log(`하네스   http://localhost:${PORT}/dev/theme-list.html`);
-  console.log(`현재 행 높이 ${readRowHeight()}px · 적용은 툴에서 Ctrl+S`);
+  console.log(
+    `현재 행 높이 ${metrics.rowHeight}px · 사진 폭 ${metrics.bleedWidth}% · 적용은 툴에서 Ctrl+S`,
+  );
 });

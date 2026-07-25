@@ -13,6 +13,7 @@ import { dirname, join } from "node:path";
 
 import { buildAllStreamerPalettes } from "../src/app/streamerPalette.ts";
 import { streamerPortraitCrop } from "../src/app/streamerProfiles.ts";
+import { readRowMetrics } from "./formTokens.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -40,6 +41,9 @@ const SUBTITLE = {
 const TINT = { light: "14%", dark: "22%" };
 
 const palettes = buildAllStreamerPalettes();
+
+/** 카탈로그 머리말에 실제 값을 적는다 — 문서가 코드와 갈라지지 않게. */
+const METRICS = readRowMetrics();
 const byId = Object.fromEntries(palettes.map((p) => [p.id, p]));
 
 /** 호스트가 이어 주는 토큰. 라이브러리는 이 여섯 개만 알면 된다. */
@@ -158,7 +162,8 @@ h1{font-size:16px;margin:0 0 4px}
 <h1>ui-forms — 공용 폼 목록</h1>
 <p class="lead">실물은 <code>styles/forms/ui-forms.css</code> 를 <b>그대로 링크</b>해서 그린다 — 이 페이지가 라이브러리에 없는 것을 보여 줄 수 없다.
 색은 팔레트 모듈에서 온다. 호스트가 이어 주는 토큰은 <code>--uf-accent</code> · <code>--uf-accent-on</code> · <code>--uf-ink</code> · <code>--uf-ink2</code> · <code>--uf-surface</code> · <code>--uf-surface2</code> · <code>--uf-line</code> 일곱 개뿐이고,
-아무것도 안 이어 줘도 기본값으로 그려진다. 세로로 쌓이는 예시는 부모에 <code>container-type: inline-size</code> 가 켜져 있다.</p>
+아무것도 안 이어 줘도 기본값으로 그려진다. 세로로 쌓이는 예시는 부모에 <code>container-type: inline-size</code> 가 켜져 있다.<br>
+현재 행 치수: 높이 <b>${METRICS.rowHeight}px</b> · 사진 폭 <b>${METRICS.bleedWidth}%</b> — <code>dev/focus-picker</code> 에서 조절한다.</p>
 <div class="grid">
 ${demo("light")}
 ${demo("dark")}

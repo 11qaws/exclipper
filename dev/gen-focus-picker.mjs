@@ -19,7 +19,7 @@ import { dirname, join } from "node:path";
 
 import { buildAllStreamerPalettes } from "../src/app/streamerPalette.ts";
 import { streamerPortraitCrop } from "../src/app/streamerProfiles.ts";
-import { readRowHeight } from "./formTokens.mjs";
+import { readRowMetrics } from "./formTokens.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -33,8 +33,8 @@ const IMG = {
 
 const palettes = buildAllStreamerPalettes().filter((p) => IMG[p.id]);
 
-/** 행 높이는 ui-forms.css 가 갖고 있다. 여기서 따로 정하면 둘이 갈라진다. */
-const ROW_HEIGHT = readRowHeight();
+/** 행 치수는 ui-forms.css 가 갖고 있다. 여기서 따로 정하면 둘이 갈라진다. */
+const { rowHeight: ROW_HEIGHT, bleedWidth: BLEED_WIDTH } = readRowMetrics();
 
 const SUBJECTS = palettes.map((p) => {
   const { focus, zoom } = streamerPortraitCrop(p.name);
@@ -100,14 +100,18 @@ h1{font-size:16px;margin:0 0 6px}
 /* 오른쪽 — 실제 행 미리보기 */
 .right{display:flex;flex-direction:column;gap:10px;min-width:0}
 .who{font-size:13px;font-weight:800}
-.prev{position:relative;height:var(--row-h,74px);border-radius:10px;overflow:hidden;display:flex;align-items:center;
-  padding:0 0 0 19px;isolation:isolate;transition:height 120ms ease-out}
+.prev{position:relative;height:var(--row-h);border-radius:10px;overflow:hidden;display:flex;align-items:center;
+  padding:0 0 0 19px;isolation:isolate;transition:height 120ms ease-out;--flat:calc(100% - var(--bleed-w))}
 .prev .rail{position:absolute;inset:0 auto 0 0;width:7px;z-index:3}
 /* 그림 자체를 왼쪽에서 페이드시킨다 — 실제 행과 같은 마스크라야 여기서 본 것이
    그대로 나온다. */
-.prev .bleed{position:absolute;inset:0 0 0 auto;width:52%;z-index:1;background-size:cover;background-repeat:no-repeat;
+.prev .bleed{position:absolute;inset:0 0 0 auto;width:var(--bleed-w);z-index:1;background-size:cover;background-repeat:no-repeat;
   -webkit-mask-image:linear-gradient(90deg,transparent 0%,#000 38%);mask-image:linear-gradient(90deg,transparent 0%,#000 38%)}
-.prev .scrim{position:absolute;inset:0;z-index:2}
+.prev .scrim{position:absolute;inset:0;z-index:2;background:linear-gradient(90deg,
+  color-mix(in srgb,var(--accent) 14%,var(--bg2)) 0%,
+  color-mix(in srgb,var(--accent) 14%,var(--bg2)) calc(var(--flat) - 2%),
+  color-mix(in srgb,var(--accent) 10%,transparent) calc(var(--flat) + 24%),
+  transparent 100%)}
 .prev .txt{position:relative;z-index:3;display:flex;flex-direction:column;gap:2px}
 .prev .txt b{font-size:14px;font-weight:800;line-height:1.2}
 .prev .txt span{font-size:11px;font-weight:600;letter-spacing:.02em}
@@ -137,13 +141,26 @@ const SCRIPT = `
 const SUBJECTS = ${JSON.stringify(SUBJECTS)};
 const INITIAL = JSON.parse(JSON.stringify(SUBJECTS));
 let rowHeight = ${ROW_HEIGHT};
+let bleedWidth = ${BLEED_WIDTH};
 const INITIAL_HEIGHT = rowHeight;
+const INITIAL_BLEED = bleedWidth;
 
 function setRowHeight(px) {
   rowHeight = px;
   document.documentElement.style.setProperty("--row-h", px + "px");
   document.querySelector(".hv").textContent = px + "px";
-  document.querySelector(".bar input[type=range]").value = String(px);
+  document.getElementById("rowh").value = String(px);
+}
+
+/**
+ * 사진 폭을 바꾸면 글자 뒤의 평평한 구간도 같이 움직인다. 막을 그대로 두면
+ * 글자 뒤가 사진으로 바뀌면서 대비 보장이 조용히 무너진다.
+ */
+function setBleedWidth(percent) {
+  bleedWidth = percent;
+  document.documentElement.style.setProperty("--bleed-w", percent + "%");
+  document.querySelector(".bv").textContent = percent + "%";
+  document.getElementById("bleedw").value = String(percent);
 }
 
 function status(text, kind) {
@@ -166,7 +183,7 @@ async function applyToSource() {
     const response = await fetch("/apply", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ crops: SUBJECTS, rowHeight }),
+      body: JSON.stringify({ crops: SUBJECTS, rowHeight, bleedWidth }),
     });
     const result = await response.json();
     if (!result.ok) throw new Error(result.error);
@@ -244,9 +261,19 @@ for (const s of SUBJECTS) {
 }
 
 setRowHeight(rowHeight);
+setBleedWidth(bleedWidth);
 
-document.querySelector(".bar input[type=range]").addEventListener("input", (event) => {
+// 다 맞춰 놓고 저장하려는 순간에 알려 주면 늦다. 열자마자 말한다.
+if (location.protocol === "file:") {
+  document.querySelector(".apply").disabled = true;
+  status("파일로 열려 있어 소스에 쓸 수 없다 — npm run dev:focus 로 열거나, 아래 코드를 복사한다.", "bad");
+}
+
+document.getElementById("rowh").addEventListener("input", (event) => {
   setRowHeight(Number(event.target.value));
+});
+document.getElementById("bleedw").addEventListener("input", (event) => {
+  setBleedWidth(Number(event.target.value));
 });
 
 document.querySelector(".apply").addEventListener("click", () => { void applyToSource(); });
@@ -258,6 +285,7 @@ document.querySelector(".bar .revert").addEventListener("click", () => {
     paint(s, document.getElementById("card-" + s.id));
   }
   setRowHeight(INITIAL_HEIGHT);
+  setBleedWidth(INITIAL_BLEED);
   status("불러온 값으로 되돌림 — 아직 반영하지 않았다");
 });
 
@@ -285,11 +313,6 @@ document.querySelector(".copy").addEventListener("click", async (event) => {
 `;
 
 function card(s) {
-  const scrim = `linear-gradient(90deg,
-    color-mix(in srgb, ${s.accent} 14%, ${s.bg2}) 0%,
-    color-mix(in srgb, ${s.accent} 14%, ${s.bg2}) 46%,
-    color-mix(in srgb, ${s.accent} 10%, transparent) 72%,
-    transparent 100%)`;
   return `<div class="card" id="card-${s.id}">
   <div>
     <div class="aim">
@@ -300,10 +323,10 @@ function card(s) {
   </div>
   <div class="right">
     <div class="who">${s.name}</div>
-    <div class="prev" style="background:${s.bg2}">
+    <div class="prev" style="background:${s.bg2};--accent:${s.accent};--bg2:${s.bg2}">
       <div class="rail" style="background:linear-gradient(170deg, ${s.railStart}, ${s.railEnd})"></div>
       <div class="bleed" style="background-image:url('../public/streamers/${s.file}')"></div>
-      <div class="scrim" style="background:${scrim}"></div>
+      <div class="scrim"></div>
       <div class="txt"><b style="color:${s.ink}">${s.name}</b><span style="color:${s.ink2}">스트리머</span></div>
     </div>
     <div class="ctrl">
@@ -328,6 +351,9 @@ const html = `<!doctype html><html lang="ko"><head><meta charset="utf-8">
   <label for="rowh">행 높이</label>
   <input id="rowh" type="range" min="52" max="120" step="1" value="${ROW_HEIGHT}">
   <span class="hv"></span>
+  <label for="bleedw">사진 폭</label>
+  <input id="bleedw" type="range" min="25" max="70" step="1" value="${BLEED_WIDTH}">
+  <span class="bv"></span>
   <button class="reset revert" type="button">전부 되돌리기</button>
   <span class="status"></span>
   <button class="apply" type="button">반영 <kbd>Ctrl+S</kbd></button>

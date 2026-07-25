@@ -71,11 +71,11 @@ export interface PortraitCrop {
  * 말고 도구를 다시 열어 맞춘다 — 눈으로 확인하지 않은 좌표는 반드시 빗나간다.
  */
 const PORTRAIT_CROP_BY_NAME: Readonly<Record<string, PortraitCrop>> = {
-  "아모레또": { focus: "57% 74%", zoom: 1 },
-  "유레카": { focus: "48% 38%", zoom: 1 },
-  "세나 아르벨": { focus: "46% 42%", zoom: 1 },
-  "토로리 코코": { focus: "31% 54%", zoom: 1.5 },
-  "망징이": { focus: "50% 51%", zoom: 1.55 },
+  "아모레또": { focus: "62% 89%", zoom: 1 },
+  "유레카": { focus: "54% 53%", zoom: 1 },
+  "세나 아르벨": { focus: "66% 57%", zoom: 1 },
+  "토로리 코코": { focus: "38% 59%", zoom: 1.5 },
+  "망징이": { focus: "54% 57%", zoom: 1.55 },
 };
 
 /** 초점을 모르는 그림은 가운데를 확대 없이 쓴다 — 잘못 잘라 놓는 것보다 낫다. */

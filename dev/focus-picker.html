@@ -43,14 +43,18 @@ h1{font-size:16px;margin:0 0 6px}
 /* 오른쪽 — 실제 행 미리보기 */
 .right{display:flex;flex-direction:column;gap:10px;min-width:0}
 .who{font-size:13px;font-weight:800}
-.prev{position:relative;height:var(--row-h,74px);border-radius:10px;overflow:hidden;display:flex;align-items:center;
-  padding:0 0 0 19px;isolation:isolate;transition:height 120ms ease-out}
+.prev{position:relative;height:var(--row-h);border-radius:10px;overflow:hidden;display:flex;align-items:center;
+  padding:0 0 0 19px;isolation:isolate;transition:height 120ms ease-out;--flat:calc(100% - var(--bleed-w))}
 .prev .rail{position:absolute;inset:0 auto 0 0;width:7px;z-index:3}
 /* 그림 자체를 왼쪽에서 페이드시킨다 — 실제 행과 같은 마스크라야 여기서 본 것이
    그대로 나온다. */
-.prev .bleed{position:absolute;inset:0 0 0 auto;width:52%;z-index:1;background-size:cover;background-repeat:no-repeat;
+.prev .bleed{position:absolute;inset:0 0 0 auto;width:var(--bleed-w);z-index:1;background-size:cover;background-repeat:no-repeat;
   -webkit-mask-image:linear-gradient(90deg,transparent 0%,#000 38%);mask-image:linear-gradient(90deg,transparent 0%,#000 38%)}
-.prev .scrim{position:absolute;inset:0;z-index:2}
+.prev .scrim{position:absolute;inset:0;z-index:2;background:linear-gradient(90deg,
+  color-mix(in srgb,var(--accent) 14%,var(--bg2)) 0%,
+  color-mix(in srgb,var(--accent) 14%,var(--bg2)) calc(var(--flat) - 2%),
+  color-mix(in srgb,var(--accent) 10%,transparent) calc(var(--flat) + 24%),
+  transparent 100%)}
 .prev .txt{position:relative;z-index:3;display:flex;flex-direction:column;gap:2px}
 .prev .txt b{font-size:14px;font-weight:800;line-height:1.2}
 .prev .txt span{font-size:11px;font-weight:600;letter-spacing:.02em}
@@ -85,6 +89,9 @@ textarea{width:100%;height:220px;background:#0f1116;color:#cfd6e6;border:1px sol
   <label for="rowh">행 높이</label>
   <input id="rowh" type="range" min="52" max="120" step="1" value="74">
   <span class="hv"></span>
+  <label for="bleedw">사진 폭</label>
+  <input id="bleedw" type="range" min="25" max="70" step="1" value="52">
+  <span class="bv"></span>
   <button class="reset revert" type="button">전부 되돌리기</button>
   <span class="status"></span>
   <button class="apply" type="button">반영 <kbd>Ctrl+S</kbd></button>
@@ -101,14 +108,10 @@ textarea{width:100%;height:220px;background:#0f1116;color:#cfd6e6;border:1px sol
   </div>
   <div class="right">
     <div class="who">아모레또</div>
-    <div class="prev" style="background:hsl(344 22% 97%)">
+    <div class="prev" style="background:hsl(344 22% 97%);--accent:hsl(344 42% 63%);--bg2:hsl(344 22% 97%)">
       <div class="rail" style="background:linear-gradient(170deg, hsl(344 42% 63%), rgb(160 97 114))"></div>
       <div class="bleed" style="background-image:url('../public/streamers/amoretto.jpg')"></div>
-      <div class="scrim" style="background:linear-gradient(90deg,
-    color-mix(in srgb, hsl(344 42% 63%) 14%, hsl(344 22% 97%)) 0%,
-    color-mix(in srgb, hsl(344 42% 63%) 14%, hsl(344 22% 97%)) 46%,
-    color-mix(in srgb, hsl(344 42% 63%) 10%, transparent) 72%,
-    transparent 100%)"></div>
+      <div class="scrim"></div>
       <div class="txt"><b style="color:hsl(344 30% 13%)">아모레또</b><span style="color:hsl(344 20% 32%)">스트리머</span></div>
     </div>
     <div class="ctrl">
@@ -129,14 +132,10 @@ textarea{width:100%;height:220px;background:#0f1116;color:#cfd6e6;border:1px sol
   </div>
   <div class="right">
     <div class="who">유레카</div>
-    <div class="prev" style="background:hsl(152 22% 97%)">
+    <div class="prev" style="background:hsl(152 22% 97%);--accent:hsl(152 53% 56%);--bg2:hsl(152 22% 97%)">
       <div class="rail" style="background:linear-gradient(170deg, hsl(152 53% 56%), rgb(67 162 117))"></div>
       <div class="bleed" style="background-image:url('../public/streamers/eureka.png')"></div>
-      <div class="scrim" style="background:linear-gradient(90deg,
-    color-mix(in srgb, hsl(152 53% 56%) 14%, hsl(152 22% 97%)) 0%,
-    color-mix(in srgb, hsl(152 53% 56%) 14%, hsl(152 22% 97%)) 46%,
-    color-mix(in srgb, hsl(152 53% 56%) 10%, transparent) 72%,
-    transparent 100%)"></div>
+      <div class="scrim"></div>
       <div class="txt"><b style="color:hsl(152 30% 13%)">유레카</b><span style="color:hsl(152 20% 32%)">스트리머</span></div>
     </div>
     <div class="ctrl">
@@ -157,14 +156,10 @@ textarea{width:100%;height:220px;background:#0f1116;color:#cfd6e6;border:1px sol
   </div>
   <div class="right">
     <div class="who">세나 아르벨</div>
-    <div class="prev" style="background:hsl(277 22% 97%)">
+    <div class="prev" style="background:hsl(277 22% 97%);--accent:hsl(277 38% 63%);--bg2:hsl(277 22% 97%)">
       <div class="rail" style="background:linear-gradient(170deg, hsl(277 38% 63%), rgb(135 100 157))"></div>
       <div class="bleed" style="background-image:url('../public/streamers/sena.png')"></div>
-      <div class="scrim" style="background:linear-gradient(90deg,
-    color-mix(in srgb, hsl(277 38% 63%) 14%, hsl(277 22% 97%)) 0%,
-    color-mix(in srgb, hsl(277 38% 63%) 14%, hsl(277 22% 97%)) 46%,
-    color-mix(in srgb, hsl(277 38% 63%) 10%, transparent) 72%,
-    transparent 100%)"></div>
+      <div class="scrim"></div>
       <div class="txt"><b style="color:hsl(277 30% 13%)">세나 아르벨</b><span style="color:hsl(277 20% 32%)">스트리머</span></div>
     </div>
     <div class="ctrl">
@@ -185,14 +180,10 @@ textarea{width:100%;height:220px;background:#0f1116;color:#cfd6e6;border:1px sol
   </div>
   <div class="right">
     <div class="who">토로리 코코</div>
-    <div class="prev" style="background:hsl(211 34% 97%)">
+    <div class="prev" style="background:hsl(211 34% 97%);--accent:hsl(211 55% 84%);--bg2:hsl(211 34% 97%)">
       <div class="rail" style="background:linear-gradient(170deg, rgb(233 241 249), hsl(211 55% 84%))"></div>
       <div class="bleed" style="background-image:url('../public/streamers/torori.png')"></div>
-      <div class="scrim" style="background:linear-gradient(90deg,
-    color-mix(in srgb, hsl(211 55% 84%) 14%, hsl(211 34% 97%)) 0%,
-    color-mix(in srgb, hsl(211 55% 84%) 14%, hsl(211 34% 97%)) 46%,
-    color-mix(in srgb, hsl(211 55% 84%) 10%, transparent) 72%,
-    transparent 100%)"></div>
+      <div class="scrim"></div>
       <div class="txt"><b style="color:hsl(211 30% 13%)">토로리 코코</b><span style="color:hsl(211 20% 32%)">스트리머</span></div>
     </div>
     <div class="ctrl">
@@ -213,14 +204,10 @@ textarea{width:100%;height:220px;background:#0f1116;color:#cfd6e6;border:1px sol
   </div>
   <div class="right">
     <div class="who">망징이</div>
-    <div class="prev" style="background:hsl(226 22% 97%)">
+    <div class="prev" style="background:hsl(226 22% 97%);--accent:hsl(226 49% 64%);--bg2:hsl(226 22% 97%)">
       <div class="rail" style="background:linear-gradient(170deg, hsl(226 49% 64%), rgb(95 111 167))"></div>
       <div class="bleed" style="background-image:url('../public/streamers/mangjing.png')"></div>
-      <div class="scrim" style="background:linear-gradient(90deg,
-    color-mix(in srgb, hsl(226 49% 64%) 14%, hsl(226 22% 97%)) 0%,
-    color-mix(in srgb, hsl(226 49% 64%) 14%, hsl(226 22% 97%)) 46%,
-    color-mix(in srgb, hsl(226 49% 64%) 10%, transparent) 72%,
-    transparent 100%)"></div>
+      <div class="scrim"></div>
       <div class="txt"><b style="color:hsl(226 30% 13%)">망징이</b><span style="color:hsl(226 20% 32%)">스트리머</span></div>
     </div>
     <div class="ctrl">
@@ -243,16 +230,29 @@ textarea{width:100%;height:220px;background:#0f1116;color:#cfd6e6;border:1px sol
 </div>
 
 <script>
-const SUBJECTS = [{"id":"amoretto","name":"아모레또","file":"amoretto.jpg","x":57,"y":74,"zoom":1,"accent":"hsl(344 42% 63%)","ink":"hsl(344 30% 13%)","ink2":"hsl(344 20% 32%)","bg2":"hsl(344 22% 97%)","railStart":"hsl(344 42% 63%)","railEnd":"rgb(160 97 114)"},{"id":"eureka","name":"유레카","file":"eureka.png","x":48,"y":38,"zoom":1,"accent":"hsl(152 53% 56%)","ink":"hsl(152 30% 13%)","ink2":"hsl(152 20% 32%)","bg2":"hsl(152 22% 97%)","railStart":"hsl(152 53% 56%)","railEnd":"rgb(67 162 117)"},{"id":"sena","name":"세나 아르벨","file":"sena.png","x":46,"y":42,"zoom":1,"accent":"hsl(277 38% 63%)","ink":"hsl(277 30% 13%)","ink2":"hsl(277 20% 32%)","bg2":"hsl(277 22% 97%)","railStart":"hsl(277 38% 63%)","railEnd":"rgb(135 100 157)"},{"id":"torori","name":"토로리 코코","file":"torori.png","x":31,"y":54,"zoom":1.5,"accent":"hsl(211 55% 84%)","ink":"hsl(211 30% 13%)","ink2":"hsl(211 20% 32%)","bg2":"hsl(211 34% 97%)","railStart":"rgb(233 241 249)","railEnd":"hsl(211 55% 84%)"},{"id":"mangjing","name":"망징이","file":"mangjing.png","x":50,"y":51,"zoom":1.55,"accent":"hsl(226 49% 64%)","ink":"hsl(226 30% 13%)","ink2":"hsl(226 20% 32%)","bg2":"hsl(226 22% 97%)","railStart":"hsl(226 49% 64%)","railEnd":"rgb(95 111 167)"}];
+const SUBJECTS = [{"id":"amoretto","name":"아모레또","file":"amoretto.jpg","x":62,"y":89,"zoom":1,"accent":"hsl(344 42% 63%)","ink":"hsl(344 30% 13%)","ink2":"hsl(344 20% 32%)","bg2":"hsl(344 22% 97%)","railStart":"hsl(344 42% 63%)","railEnd":"rgb(160 97 114)"},{"id":"eureka","name":"유레카","file":"eureka.png","x":54,"y":53,"zoom":1,"accent":"hsl(152 53% 56%)","ink":"hsl(152 30% 13%)","ink2":"hsl(152 20% 32%)","bg2":"hsl(152 22% 97%)","railStart":"hsl(152 53% 56%)","railEnd":"rgb(67 162 117)"},{"id":"sena","name":"세나 아르벨","file":"sena.png","x":66,"y":57,"zoom":1,"accent":"hsl(277 38% 63%)","ink":"hsl(277 30% 13%)","ink2":"hsl(277 20% 32%)","bg2":"hsl(277 22% 97%)","railStart":"hsl(277 38% 63%)","railEnd":"rgb(135 100 157)"},{"id":"torori","name":"토로리 코코","file":"torori.png","x":38,"y":59,"zoom":1.5,"accent":"hsl(211 55% 84%)","ink":"hsl(211 30% 13%)","ink2":"hsl(211 20% 32%)","bg2":"hsl(211 34% 97%)","railStart":"rgb(233 241 249)","railEnd":"hsl(211 55% 84%)"},{"id":"mangjing","name":"망징이","file":"mangjing.png","x":54,"y":57,"zoom":1.55,"accent":"hsl(226 49% 64%)","ink":"hsl(226 30% 13%)","ink2":"hsl(226 20% 32%)","bg2":"hsl(226 22% 97%)","railStart":"hsl(226 49% 64%)","railEnd":"rgb(95 111 167)"}];
 const INITIAL = JSON.parse(JSON.stringify(SUBJECTS));
 let rowHeight = 74;
+let bleedWidth = 52;
 const INITIAL_HEIGHT = rowHeight;
+const INITIAL_BLEED = bleedWidth;
 
 function setRowHeight(px) {
   rowHeight = px;
   document.documentElement.style.setProperty("--row-h", px + "px");
   document.querySelector(".hv").textContent = px + "px";
-  document.querySelector(".bar input[type=range]").value = String(px);
+  document.getElementById("rowh").value = String(px);
+}
+
+/**
+ * 사진 폭을 바꾸면 글자 뒤의 평평한 구간도 같이 움직인다. 막을 그대로 두면
+ * 글자 뒤가 사진으로 바뀌면서 대비 보장이 조용히 무너진다.
+ */
+function setBleedWidth(percent) {
+  bleedWidth = percent;
+  document.documentElement.style.setProperty("--bleed-w", percent + "%");
+  document.querySelector(".bv").textContent = percent + "%";
+  document.getElementById("bleedw").value = String(percent);
 }
 
 function status(text, kind) {
@@ -275,7 +275,7 @@ async function applyToSource() {
     const response = await fetch("/apply", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ crops: SUBJECTS, rowHeight }),
+      body: JSON.stringify({ crops: SUBJECTS, rowHeight, bleedWidth }),
     });
     const result = await response.json();
     if (!result.ok) throw new Error(result.error);
@@ -353,9 +353,19 @@ for (const s of SUBJECTS) {
 }
 
 setRowHeight(rowHeight);
+setBleedWidth(bleedWidth);
 
-document.querySelector(".bar input[type=range]").addEventListener("input", (event) => {
+// 다 맞춰 놓고 저장하려는 순간에 알려 주면 늦다. 열자마자 말한다.
+if (location.protocol === "file:") {
+  document.querySelector(".apply").disabled = true;
+  status("파일로 열려 있어 소스에 쓸 수 없다 — npm run dev:focus 로 열거나, 아래 코드를 복사한다.", "bad");
+}
+
+document.getElementById("rowh").addEventListener("input", (event) => {
   setRowHeight(Number(event.target.value));
+});
+document.getElementById("bleedw").addEventListener("input", (event) => {
+  setBleedWidth(Number(event.target.value));
 });
 
 document.querySelector(".apply").addEventListener("click", () => { void applyToSource(); });
@@ -367,6 +377,7 @@ document.querySelector(".bar .revert").addEventListener("click", () => {
     paint(s, document.getElementById("card-" + s.id));
   }
   setRowHeight(INITIAL_HEIGHT);
+  setBleedWidth(INITIAL_BLEED);
   status("불러온 값으로 되돌림 — 아직 반영하지 않았다");
 });
 
