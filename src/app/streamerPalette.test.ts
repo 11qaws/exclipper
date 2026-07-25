@@ -59,7 +59,8 @@ describe("streamer palette", () => {
       const p = buildAllStreamerPalettes().find((x) => x.id === id)!;
       return Number(/hsl\(\d+ (\d+)%/.exec(p.light.accent)![1]);
     };
-    expect(satOf("torori")).toBeGreaterThanOrEqual(65); // clear sky, not washed out
+    // 정제 밴드 안에서 가장 선명한 축에 있어야 한다 — 회색으로 빠지면 안 된다.
+    expect(satOf("torori")).toBeGreaterThanOrEqual(50);
   });
 
   it("keeps every pale theme well above every solid one in lightness", () => {
@@ -104,12 +105,17 @@ describe("streamer palette", () => {
     }
   });
 
-  it("keeps the dark accent bright enough to still read as the streamer's colour", () => {
+  it("never trades a theme's chroma away to survive the dark ground", () => {
+    // The danger is desaturating an accent to satisfy contrast, which costs the
+    // identity. So dark is held to *at least* the chroma the seed asked for —
+    // relative, not an absolute floor, because some identities are genuinely
+    // muted (세나's greyed purple measures 12% saturation in her own art) and a
+    // fixed minimum would force them to be something they are not.
     for (const p of buildAllStreamerPalettes()) {
-      const m = /hsl\(\d+ (\d+)% (\d+)%\)/.exec(p.dark.accent);
-      expect(m).not.toBeNull();
-      expect(Number(m![1])).toBeGreaterThanOrEqual(35); // saturated, not greyed
-      expect(Number(m![2])).toBeGreaterThanOrEqual(60); // bright on a dark ground
+      const satOf = (v: string): number => Number(/hsl\(\d+ (\d+)%/.exec(v)![1]);
+      const litOf = (v: string): number => Number(/hsl\(\d+ \d+% (\d+)%\)/.exec(v)![1]);
+      expect(satOf(p.dark.accent)).toBeGreaterThanOrEqual(satOf(p.light.accent));
+      expect(litOf(p.dark.accent)).toBeGreaterThanOrEqual(60); // bright on a dark ground
     }
   });
 

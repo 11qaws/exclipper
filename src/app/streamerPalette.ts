@@ -87,7 +87,7 @@ export const STREAMER_PALETTE_SEEDS: readonly StreamerPaletteSeed[] = [
   { id: "default", name: "기본 · 교환학생", kind: "base", hue: 350, chroma: 1 }, // group rose, softened from the 1기 poster hot pink
   { id: "amoretto", name: "아모레또", kind: "streamer", hue: 344, chroma: 0.48 }, // dusty wine-mauve (BAR AMORE)
   { id: "eureka", name: "유레카", kind: "streamer", hue: 152, chroma: 0.95 }, // brand green-teal
-  { id: "sena", name: "세나 아르벨", kind: "streamer", hue: 276, chroma: 0.5 }, // muted periwinkle-violet (beret)
+  { id: "sena", name: "세나 아르벨", kind: "streamer", hue: 277, chroma: 0.3 }, // 흐린 잿빛 보라 (베레모 실측 hsl 278 12% 50% · 의상 275 12% 30%) — 쨍한 보라가 아니다
   { id: "torori", name: "토로리 코코", kind: "streamer", hue: 211, chroma: 1.04, tone: "pale" }, // 맑은 하늘빛 (공식 스케줄 아트 실측 hsl 212 75% 84%) — 밝고 선명한 것이 정체성이라 pale
   { id: "mangjing", name: "망징이", kind: "streamer", hue: 226, chroma: 0.78 }, // 페리윙클 남보라 (모델 실측 hsl 227 38% 68% · 카디건·머리결 하이라이트)
   { id: "violet", name: "클래식 바이올렛", kind: "extra", hue: 249, chroma: 1 }, // preserved original default
@@ -115,10 +115,13 @@ export interface ThemeTokens {
   /**
    * 레일 그라데이션의 끝(아래) 색.
    *
-   * 어느 테마든 **아래가 더 무겁다**. 진한 정체성은 위의 accent 에서 검정 쪽으로
-   * 어두워지고, 밝은(pale) 정체성은 위의 흰빛에서 자기 하늘색으로 내려온다.
-   * 방향이 같아야 여러 테마를 오갈 때 같은 화면으로 읽힌다. pale 을 검정과
-   * 섞지 않는 이유는 그러면 밝은 하늘빛이 회청색이 되어 정체성이 사라져서다.
+   * 어느 테마든 위는 자기 색이고 아래로 갈수록 **한쪽으로 빠진다**. 진한 정체성은
+   * 검정 쪽으로 가라앉고, 밝은(pale) 정체성은 흰빛으로 옅어진다.
+   *
+   * pale 테마가 검정 대신 빛으로 빠지는 것은 일관성을 깬 것이 아니라 성격을
+   * 따른 것이다. 얼음빛은 어두워지며 무거워지는 색이 아니고, 검정을 섞으면
+   * 회청색이 되어 정체성 자체가 없어진다. 흐르는 방향은
+   * `PALE_RAIL_DIRECTION` 이 정한다.
    */
   readonly railEnd: string;
   /**
@@ -150,6 +153,47 @@ export interface StreamerPalette {
  */
 const PALE_LIGHT_L = 84;
 const PALE_DARK_L = 88;
+
+/*
+ * 정제된 밴드 (refined bands).
+ *
+ * 목표는 스트리머의 원색을 그대로 옮기는 것이 아니라, 개성은 남기되 쨍하지
+ * 않고 한 가족으로 읽히게 하는 것이다. 그래서 두 가지를 밴드로 묶는다.
+ *
+ * 채도: 시드의 chroma 를 날것으로 쓰면 22%와 75%가 나란히 놓여 서로 무관한
+ * 색이 된다. 순서(누가 더 선명한가)는 지키되 폭을 좁혀 옮긴다.
+ *
+ * 명도: 흰 글자에 맞춰 풀면 초록·노랑처럼 본래 밝은 색상만 어두워져 가족이
+ * 깨진다(유레카 L31 옆에 기본 L53). 이제 글자색이 적응하므로(`accentOn`)
+ * 명도는 한 값으로 고정할 수 있고, 모든 테마의 버튼이 같은 무게를 갖는다.
+ */
+/**
+ * pale 테마 레일이 어느 쪽으로 흐르는가.
+ *
+ * `light-to-colour` — 위가 흰빛, 아래로 갈수록 자기 색이 진해진다. **현재 값.**
+ * `colour-to-light` — 위가 자기 색, 아래로 빛에 옅어진다. 다른 테마와 시작점이
+ *   같아 구조가 더 통일적이지만 **아직 공개하지 않는다.**
+ *
+ * 이건 `extra` 보관 서랍과는 다른 분류다. `extra` 는 사용자가 직접 고르는 테마
+ * 목록이고, 이쪽은 같은 테마를 그리는 방식의 대안이라 UI 에 노출되지 않는다.
+ * 지우지 않는 이유는 판단이 뒤집힐 수 있고, 그때 다시 만들 필요가 없어서다.
+ */
+type PaleRailDirection = "light-to-colour" | "colour-to-light";
+const PALE_RAIL_DIRECTION: PaleRailDirection = "light-to-colour";
+
+const REFINED_SAT_MIN = 38;
+const REFINED_SAT_MAX = 58;
+const REFINED_CHROMA_MIN = 0.3;
+const REFINED_CHROMA_MAX = 1.15;
+const SOLID_LIGHT_L = 56;
+
+function refinedSat(chroma: number): number {
+  const t =
+    (Math.min(Math.max(chroma, REFINED_CHROMA_MIN), REFINED_CHROMA_MAX) -
+      REFINED_CHROMA_MIN) /
+    (REFINED_CHROMA_MAX - REFINED_CHROMA_MIN);
+  return Math.round(REFINED_SAT_MIN + t * (REFINED_SAT_MAX - REFINED_SAT_MIN));
+}
 
 function hsl(h: number, s: number, l: number): string {
   const hue = ((h % 360) + 360) % 360;
@@ -274,7 +318,7 @@ function solveAccentOn(h: number, s: number, accentL: number): string {
 export function buildStreamerPalette(seed: StreamerPaletteSeed): StreamerPalette {
   const h = seed.hue;
   const c = seed.chroma ?? 1;
-  const accentSat = Math.round(72 * c);
+  const accentSat = refinedSat(c);
   const pale = seed.tone === "pale";
 
   /*
@@ -287,7 +331,7 @@ export function buildStreamerPalette(seed: StreamerPaletteSeed): StreamerPalette
    * stays light and the label goes dark instead; the ink token still solves
    * downward, because coloured *text* on a light ground has the opposite need.
    */
-  const accentL = pale ? PALE_LIGHT_L : solveLightness(h, accentSat, 4.5);
+  const accentL = pale ? PALE_LIGHT_L : SOLID_LIGHT_L;
   const darkSatPreview = Math.min(100, accentSat + 8);
   const darkAccentLPreview = pale ? PALE_DARK_L : 74;
   // Solved at the same saturation it is emitted with — solving at one chroma
@@ -309,17 +353,23 @@ export function buildStreamerPalette(seed: StreamerPaletteSeed): StreamerPalette
    * black as before. A pale theme lightens toward white instead: ice reads as
    * light thinning out, and mixing it with black just makes grey.
    */
+  const paleLightsFirst = PALE_RAIL_DIRECTION === "light-to-colour";
+  const lightColour = hsl(h, accentSat, accentL);
+  const lightFaded = mixSrgb([h, accentSat, accentL], [1, 1, 1], 0.34);
+  const darkColour = hsl(h, darkSatPreview, darkAccentLPreview);
+  const darkFaded = mixSrgb([h, darkSatPreview, darkAccentLPreview], [1, 1, 1], 0.42);
+
   const railStartLight = pale
-    ? mixSrgb([h, accentSat, accentL], [1, 1, 1], 0.34)
-    : hsl(h, accentSat, accentL);
+    ? (paleLightsFirst ? lightFaded : lightColour)
+    : lightColour;
   const railEndLight = pale
-    ? hsl(h, accentSat, accentL)
+    ? (paleLightsFirst ? lightColour : lightFaded)
     : mixSrgb([h, accentSat, accentL], [0, 0, 0], 0.8);
   const railStartDark = pale
-    ? mixSrgb([h, darkSatPreview, darkAccentLPreview], [1, 1, 1], 0.42)
-    : hsl(h, darkSatPreview, darkAccentLPreview);
+    ? (paleLightsFirst ? darkFaded : darkColour)
+    : darkColour;
   const railEndDark = pale
-    ? hsl(h, darkSatPreview, darkAccentLPreview)
+    ? (paleLightsFirst ? darkColour : darkFaded)
     : mixSrgb([h, darkSatPreview, darkAccentLPreview], [0, 0, 0], 0.8);
 
   const light: ThemeTokens = {
