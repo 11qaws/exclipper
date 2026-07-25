@@ -24,7 +24,13 @@ export const UI_FORMS_CSS = join(here, "..", "styles", "forms", "ui-forms.css");
 export const TUNABLE_TOKENS = {
   rowHeight: { name: "--uf-row-height", unit: "px", min: 52, max: 120 },
   bleedWidth: { name: "--uf-row-bleed", unit: "%", min: 25, max: 70 },
+  designWidth: { name: "--uf-row-design-width", unit: "px", min: 260, max: 560 },
+  titleSize: { name: "--uf-row-title-size", unit: "px", min: 10, max: 28 },
+  subSize: { name: "--uf-row-sub-size", unit: "px", min: 8, max: 20 },
 };
+
+/** 도구의 % 슬라이더가 기준으로 삼는 100% 크기. */
+export const TEXT_SIZE_BASE = { titleSize: 15, subSize: 11 };
 
 function patternFor(token) {
   return new RegExp(`(${token.name}:\\s*)(\\d+)(${token.unit};)`);
@@ -58,7 +64,13 @@ export function writeToken(key, value) {
 
 /** 하네스 생성기가 쓰는 묶음 읽기. */
 export function readRowMetrics() {
-  return { rowHeight: readToken("rowHeight"), bleedWidth: readToken("bleedWidth") };
+  return {
+    rowHeight: readToken("rowHeight"),
+    bleedWidth: readToken("bleedWidth"),
+    designWidth: readToken("designWidth"),
+    titleSize: readToken("titleSize"),
+    subSize: readToken("subSize"),
+  };
 }
 
 export function readRowHeight() {

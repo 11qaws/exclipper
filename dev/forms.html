@@ -20,13 +20,13 @@ h1{font-size:16px;margin:0 0 4px}
 .bay{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
 .narrow{gap:14px}
 .squeeze{width:20em;display:flex;flex-direction:column;gap:14px;container-type:inline-size}
-.list{display:flex;flex-direction:column;gap:6px}
+.list{display:flex;flex-direction:column;gap:6px;width:440px;max-width:100%}
 </style></head><body>
 <h1>ui-forms — 공용 폼 목록</h1>
 <p class="lead">실물은 <code>styles/forms/ui-forms.css</code> 를 <b>그대로 링크</b>해서 그린다 — 이 페이지가 라이브러리에 없는 것을 보여 줄 수 없다.
 색은 팔레트 모듈에서 온다. 호스트가 이어 주는 토큰은 <code>--uf-accent</code> · <code>--uf-accent-on</code> · <code>--uf-ink</code> · <code>--uf-ink2</code> · <code>--uf-surface</code> · <code>--uf-surface2</code> · <code>--uf-line</code> 일곱 개뿐이고,
 아무것도 안 이어 줘도 기본값으로 그려진다. 세로로 쌓이는 예시는 부모에 <code>container-type: inline-size</code> 가 켜져 있다.<br>
-현재 행 치수: 높이 <b>74px</b> · 사진 폭 <b>52%</b> — <code>dev/focus-picker</code> 에서 조절한다.</p>
+현재 행 치수: <b>440×120px</b> · 사진 폭 <b>60%</b> — 초점은 이 비율에서 맞춘 값이다 — <code>dev/focus-picker</code> 에서 조절한다.</p>
 <div class="grid">
 <section class="panel" style="background:hsl(350 0% 100%);color:hsl(350 30% 13%)">
 <h2>라이트</h2>
@@ -106,33 +106,33 @@ h1{font-size:16px;margin:0 0 4px}
 </button></div>
 <div style="--uf-accent:hsl(344 42% 63%);--uf-accent-on:hsl(344 42% 19%);--uf-ink:hsl(344 30% 13%);--uf-ink2:hsl(344 20% 32%);--uf-surface:hsl(344 0% 100%);--uf-surface2:hsl(344 22% 97%);--uf-line:hsl(344 20% 80%);--uf-row-rail-start:hsl(344 42% 63%);--uf-row-rail-end:rgb(160 97 114);--uf-row-tint:14%"><button class="uf-row" aria-pressed="true">
   <span class="uf-row__rail"></span>
-  <span class="uf-row__bleed" style="background-image:url('../public/streamers/amoretto.jpg');--uf-row-focus:62% 89%;--uf-row-zoom:1"></span>
+  <span class="uf-row__bleed" style="background-image:url('../public/streamers/amoretto.jpg');--uf-row-focus:53% 41%;--uf-row-zoom:2.15"></span>
   <span class="uf-row__scrim"></span>
-  <span class="uf-row__text"><b>아모레또</b><span>스트리머</span></span>
+  <span class="uf-row__text"><b>아모레또</b><span>교환학생 1기 ORIENT</span></span>
 </button></div>
 <div style="--uf-accent:hsl(152 53% 56%);--uf-accent-on:hsl(152 53% 20%);--uf-ink:hsl(152 30% 13%);--uf-ink2:hsl(152 20% 32%);--uf-surface:hsl(152 0% 100%);--uf-surface2:hsl(152 22% 97%);--uf-line:hsl(152 20% 80%);--uf-row-rail-start:hsl(152 53% 56%);--uf-row-rail-end:rgb(67 162 117);--uf-row-tint:14%"><button class="uf-row" aria-pressed="false">
   <span class="uf-row__rail"></span>
-  <span class="uf-row__bleed" style="background-image:url('../public/streamers/eureka.png');--uf-row-focus:54% 53%;--uf-row-zoom:1"></span>
+  <span class="uf-row__bleed" style="background-image:url('../public/streamers/eureka.png');--uf-row-focus:60% 82%;--uf-row-zoom:1.15"></span>
   <span class="uf-row__scrim"></span>
-  <span class="uf-row__text"><b>유레카</b><span>스트리머</span></span>
+  <span class="uf-row__text"><b>유레카</b><span>교환학생 1기 ORIENT</span></span>
 </button></div>
 <div style="--uf-accent:hsl(277 38% 63%);--uf-accent-on:hsl(277 38% 19%);--uf-ink:hsl(277 30% 13%);--uf-ink2:hsl(277 20% 32%);--uf-surface:hsl(277 0% 100%);--uf-surface2:hsl(277 22% 97%);--uf-line:hsl(277 20% 80%);--uf-row-rail-start:hsl(277 38% 63%);--uf-row-rail-end:rgb(135 100 157);--uf-row-tint:14%"><button class="uf-row" aria-pressed="false">
   <span class="uf-row__rail"></span>
-  <span class="uf-row__bleed" style="background-image:url('../public/streamers/sena.png');--uf-row-focus:66% 57%;--uf-row-zoom:1"></span>
+  <span class="uf-row__bleed" style="background-image:url('../public/streamers/sena.jpg');--uf-row-focus:22% 70%;--uf-row-zoom:1.15"></span>
   <span class="uf-row__scrim"></span>
-  <span class="uf-row__text"><b>세나 아르벨</b><span>스트리머</span></span>
+  <span class="uf-row__text"><b>세나 아르벨</b><span>교환학생 1기 ORIENT</span></span>
 </button></div>
 <div style="--uf-accent:hsl(211 55% 84%);--uf-accent-on:hsl(211 55% 30%);--uf-ink:hsl(211 30% 13%);--uf-ink2:hsl(211 20% 32%);--uf-surface:hsl(211 0% 100%);--uf-surface2:hsl(211 34% 97%);--uf-line:hsl(211 31% 80%);--uf-row-rail-start:rgb(233 241 249);--uf-row-rail-end:hsl(211 55% 84%);--uf-row-tint:14%"><button class="uf-row" aria-pressed="false">
   <span class="uf-row__rail"></span>
-  <span class="uf-row__bleed" style="background-image:url('../public/streamers/torori.png');--uf-row-focus:38% 59%;--uf-row-zoom:1.5"></span>
+  <span class="uf-row__bleed" style="background-image:url('../public/streamers/torori.png');--uf-row-focus:40% 61%;--uf-row-zoom:1.8"></span>
   <span class="uf-row__scrim"></span>
-  <span class="uf-row__text"><b>토로리 코코</b><span>스트리머</span></span>
+  <span class="uf-row__text"><b>토로리 코코</b><span>교환학생 1기 ORIENT</span></span>
 </button></div>
 <div style="--uf-accent:hsl(226 49% 64%);--uf-accent-on:hsl(226 49% 19%);--uf-ink:hsl(226 30% 13%);--uf-ink2:hsl(226 20% 32%);--uf-surface:hsl(226 0% 100%);--uf-surface2:hsl(226 22% 97%);--uf-line:hsl(226 20% 80%);--uf-row-rail-start:hsl(226 49% 64%);--uf-row-rail-end:rgb(95 111 167);--uf-row-tint:14%"><button class="uf-row" aria-pressed="false">
   <span class="uf-row__rail"></span>
-  <span class="uf-row__bleed" style="background-image:url('../public/streamers/mangjing.png');--uf-row-focus:54% 57%;--uf-row-zoom:1.55"></span>
+  <span class="uf-row__bleed" style="background-image:url('../public/streamers/mangjing.jpg');--uf-row-focus:54% 38%;--uf-row-zoom:3.5"></span>
   <span class="uf-row__scrim"></span>
-  <span class="uf-row__text"><b>망징이</b><span>스트리머</span></span>
+  <span class="uf-row__text"><b>망징이</b><span>교환학생 1기 ORIENT</span></span>
 </button></div>
 <div style="--uf-accent:hsl(249 54% 66%);--uf-accent-on:hsl(249 54% 19%);--uf-ink:hsl(249 30% 13%);--uf-ink2:hsl(249 20% 32%);--uf-surface:hsl(249 0% 100%);--uf-surface2:hsl(249 22% 97%);--uf-line:hsl(249 20% 80%);--uf-row-rail-start:hsl(249 54% 66%);--uf-row-rail-end:rgb(108 97 172);--uf-row-tint:14%"><button class="uf-row" aria-pressed="false">
   <span class="uf-row__rail"></span>
@@ -237,33 +237,33 @@ h1{font-size:16px;margin:0 0 4px}
 </button></div>
 <div style="--uf-accent:hsl(344 50% 74%);--uf-accent-on:hsl(344 50% 30%);--uf-ink:hsl(344 24% 93%);--uf-ink2:hsl(344 18% 84%);--uf-surface:hsl(344 30% 14%);--uf-surface2:hsl(344 34% 9%);--uf-line:hsl(344 26% 34%);--uf-row-rail-start:hsl(344 50% 74%);--uf-row-rail-end:rgb(177 124 139);--uf-row-tint:22%"><button class="uf-row" aria-pressed="true">
   <span class="uf-row__rail"></span>
-  <span class="uf-row__bleed" style="background-image:url('../public/streamers/amoretto.jpg');--uf-row-focus:62% 89%;--uf-row-zoom:1"></span>
+  <span class="uf-row__bleed" style="background-image:url('../public/streamers/amoretto.jpg');--uf-row-focus:53% 41%;--uf-row-zoom:2.15"></span>
   <span class="uf-row__scrim"></span>
-  <span class="uf-row__text"><b>아모레또</b><span>스트리머</span></span>
+  <span class="uf-row__text"><b>아모레또</b><span>교환학생 1기 ORIENT</span></span>
 </button></div>
 <div style="--uf-accent:hsl(152 61% 74%);--uf-accent-on:hsl(152 60% 25%);--uf-ink:hsl(152 24% 93%);--uf-ink2:hsl(152 18% 84%);--uf-surface:hsl(152 30% 14%);--uf-surface2:hsl(152 34% 9%);--uf-line:hsl(152 26% 34%);--uf-row-rail-start:hsl(152 61% 74%);--uf-row-rail-end:rgb(119 183 153);--uf-row-tint:22%"><button class="uf-row" aria-pressed="false">
   <span class="uf-row__rail"></span>
-  <span class="uf-row__bleed" style="background-image:url('../public/streamers/eureka.png');--uf-row-focus:54% 53%;--uf-row-zoom:1"></span>
+  <span class="uf-row__bleed" style="background-image:url('../public/streamers/eureka.png');--uf-row-focus:60% 82%;--uf-row-zoom:1.15"></span>
   <span class="uf-row__scrim"></span>
-  <span class="uf-row__text"><b>유레카</b><span>스트리머</span></span>
+  <span class="uf-row__text"><b>유레카</b><span>교환학생 1기 ORIENT</span></span>
 </button></div>
 <div style="--uf-accent:hsl(277 46% 74%);--uf-accent-on:hsl(277 46% 30%);--uf-ink:hsl(277 24% 93%);--uf-ink2:hsl(277 18% 84%);--uf-surface:hsl(277 30% 14%);--uf-surface2:hsl(277 34% 9%);--uf-line:hsl(277 26% 34%);--uf-row-rail-start:hsl(277 46% 74%);--uf-row-rail-end:rgb(157 127 175);--uf-row-tint:22%"><button class="uf-row" aria-pressed="false">
   <span class="uf-row__rail"></span>
-  <span class="uf-row__bleed" style="background-image:url('../public/streamers/sena.png');--uf-row-focus:66% 57%;--uf-row-zoom:1"></span>
+  <span class="uf-row__bleed" style="background-image:url('../public/streamers/sena.jpg');--uf-row-focus:22% 70%;--uf-row-zoom:1.15"></span>
   <span class="uf-row__scrim"></span>
-  <span class="uf-row__text"><b>세나 아르벨</b><span>스트리머</span></span>
+  <span class="uf-row__text"><b>세나 아르벨</b><span>교환학생 1기 ORIENT</span></span>
 </button></div>
 <div style="--uf-accent:hsl(211 63% 88%);--uf-accent-on:hsl(211 60% 30%);--uf-ink:hsl(211 24% 93%);--uf-ink2:hsl(211 18% 84%);--uf-surface:hsl(211 30% 14%);--uf-surface2:hsl(211 53% 9%);--uf-line:hsl(211 40% 34%);--uf-row-rail-start:rgb(234 242 250);--uf-row-rail-end:hsl(211 63% 88%);--uf-row-tint:22%"><button class="uf-row" aria-pressed="false">
   <span class="uf-row__rail"></span>
-  <span class="uf-row__bleed" style="background-image:url('../public/streamers/torori.png');--uf-row-focus:38% 59%;--uf-row-zoom:1.5"></span>
+  <span class="uf-row__bleed" style="background-image:url('../public/streamers/torori.png');--uf-row-focus:40% 61%;--uf-row-zoom:1.8"></span>
   <span class="uf-row__scrim"></span>
-  <span class="uf-row__text"><b>토로리 코코</b><span>스트리머</span></span>
+  <span class="uf-row__text"><b>토로리 코코</b><span>교환학생 1기 ORIENT</span></span>
 </button></div>
 <div style="--uf-accent:hsl(226 57% 74%);--uf-accent-on:hsl(226 57% 30%);--uf-ink:hsl(226 24% 93%);--uf-ink2:hsl(226 18% 84%);--uf-surface:hsl(226 30% 14%);--uf-surface2:hsl(226 34% 9%);--uf-line:hsl(226 26% 34%);--uf-row-rail-start:hsl(226 57% 74%);--uf-row-rail-end:rgb(121 135 181);--uf-row-tint:22%"><button class="uf-row" aria-pressed="false">
   <span class="uf-row__rail"></span>
-  <span class="uf-row__bleed" style="background-image:url('../public/streamers/mangjing.png');--uf-row-focus:54% 57%;--uf-row-zoom:1.55"></span>
+  <span class="uf-row__bleed" style="background-image:url('../public/streamers/mangjing.jpg');--uf-row-focus:54% 38%;--uf-row-zoom:3.5"></span>
   <span class="uf-row__scrim"></span>
-  <span class="uf-row__text"><b>망징이</b><span>스트리머</span></span>
+  <span class="uf-row__text"><b>망징이</b><span>교환학생 1기 ORIENT</span></span>
 </button></div>
 <div style="--uf-accent:hsl(249 62% 74%);--uf-accent-on:hsl(249 60% 30%);--uf-ink:hsl(249 24% 93%);--uf-ink2:hsl(249 18% 84%);--uf-surface:hsl(249 30% 14%);--uf-surface2:hsl(249 34% 9%);--uf-line:hsl(249 26% 34%);--uf-row-rail-start:hsl(249 62% 74%);--uf-row-rail-end:rgb(128 118 184);--uf-row-tint:22%"><button class="uf-row" aria-pressed="false">
   <span class="uf-row__rail"></span>

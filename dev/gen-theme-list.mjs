@@ -18,32 +18,27 @@ import {
   compositeOver,
   contrastOfRgb,
 } from "../src/app/streamerPalette.ts";
-import { streamerPortraitCrop } from "../src/app/streamerProfiles.ts";
+import { streamerPortraitCrop, streamerProfileFileName, streamerSubtitle } from "../src/app/streamerProfiles.ts";
 import { readRowMetrics } from "./formTokens.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
-const IMG = {
-  amoretto: "amoretto.jpg",
-  eureka: "eureka.png",
-  sena: "sena.png",
-  torori: "torori.png",
-  mangjing: "mangjing.png",
-};
-
 /** 각 테마가 무엇인지 한 줄. 이름 아래 작은 글씨로 들어간다. */
-const SUBTITLE = {
+/**
+ * 스트리머가 아닌 항목의 설명. 스트리머 것은 `streamerSubtitle` 이 갖고 있으므로
+ * 여기에 사본을 두지 않는다 — 두 벌이 되면 반드시 한쪽이 낡는다.
+ */
+const NON_STREAMER_SUBTITLE = {
   default: "교환학생 · 기본",
-  amoretto: "스트리머",
-  eureka: "스트리머",
-  sena: "스트리머",
-  torori: "스트리머",
-  mangjing: "스트리머",
   violet: "기본 색상",
   amber: "기본 색상",
   hotpink: "기본 색상",
   brick: "기본 색상",
 };
+
+function subtitleOf(p) {
+  return streamerSubtitle(p.name) || NON_STREAMER_SUBTITLE[p.id] || "";
+}
 
 /** 반투명 테마색의 알파. 라이트는 옅게, 다크는 조금 더 실어야 색이 보인다. */
 const TINT = { light: 0.14, dark: 0.22 };
@@ -51,7 +46,8 @@ const TINT = { light: 0.14, dark: 0.22 };
 const palettes = buildAllStreamerPalettes();
 
 /** 행 치수는 ui-forms.css 가 갖고 있다. 여기서 따로 정하면 둘이 갈라진다. */
-const { rowHeight: ROW_HEIGHT, bleedWidth: BLEED_WIDTH } = readRowMetrics();
+const { rowHeight: ROW_HEIGHT, bleedWidth: BLEED_WIDTH, designWidth: DESIGN_WIDTH,
+  titleSize: TITLE_PX, subSize: SUB_PX } = readRowMetrics();
 /** 글자가 놓이는 평평한 구간의 끝. 사진이 시작하는 자리에서 역산한다. */
 const FLAT = 100 - BLEED_WIDTH;
 
@@ -73,7 +69,7 @@ function badge(value, floor) {
 }
 
 function bleed(p, extraClass = "") {
-  const file = IMG[p.id];
+  const file = streamerProfileFileName(p.name);
   if (!file) return "";
   const { focus, zoom } = streamerPortraitCrop(p.name);
   // 초점 하나가 background-position 과 transform-origin 을 둘 다 정한다 —
@@ -91,7 +87,7 @@ function rowA(p) {
   <div class="rail"></div>
   ${bleed(p)}
   <div class="scrim"></div>
-  <div class="txt"><b>${p.name}</b><span>${SUBTITLE[p.id]}</span></div>
+  <div class="txt"><b>${p.name}</b><span>${subtitleOf(p)}</span></div>
 </div>`;
 }
 
@@ -141,15 +137,15 @@ ${variant.build(p)}
  */
 function focusStrip() {
   const cards = palettes
-    .filter((p) => IMG[p.id])
+    .filter((p) => streamerProfileFileName(p.name))
     .map((p) => {
       const { focus, zoom } = streamerPortraitCrop(p.name);
       // 확대를 여기서도 그대로 적용해야 한다. 안 하면 이 칸이 행과 다른 그림을
       // 보여 주면서 맞다고 말하게 된다.
       return `<div class="fcard" style="${themeVars(p.light, "light")}">
-  <div class="fsrc" style="background-image:url('../public/streamers/${IMG[p.id]}')"></div>
+  <div class="fsrc" style="background-image:url('../public/streamers/${streamerProfileFileName(p.name)}')"></div>
   <div class="fcrop">
-    <div class="fimg" style="background-image:url('../public/streamers/${IMG[p.id]}');--focus:${focus};--zoom:${zoom}"></div>
+    <div class="fimg" style="background-image:url('../public/streamers/${streamerProfileFileName(p.name)}');--focus:${focus};--zoom:${zoom}"></div>
     <div class="feye"></div>
   </div>
   <div class="fname">${p.name}</div>
@@ -158,7 +154,7 @@ function focusStrip() {
     })
     .join("\n");
   return `<section class="fpanel">
-<header><b>초점 조정 — 눈이 남았는가</b><span>왼쪽 원본 · 오른쪽은 행과 같은 비율로 자른 결과 · 빨간 가로선이 행의 세로 가운데</span></header>
+<header><b>초점 조정 — 눈이 남았는가 (${DESIGN_WIDTH}×${ROW_HEIGHT}px)</b><span>왼쪽 원본 · 오른쪽은 행과 같은 비율로 자른 결과 · 빨간 가로선이 행의 세로 가운데</span></header>
 <div class="fgrid">${cards}</div>
 </section>`;
 }
@@ -172,12 +168,12 @@ body{margin:0;padding:22px;background:#12141a;font-family:"Pretendard",sans-seri
 h1{font-size:15px;margin:0 0 4px}
 .lead{font-size:12px;color:#98a0b5;margin:0 0 18px;line-height:1.6;max-width:80ch}
 .lead code{font:11px "SFMono-Regular",monospace;background:#1d212b;padding:1px 5px;border-radius:4px}
-.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin-bottom:18px;max-width:920px}
+.grid{display:grid;grid-template-columns:repeat(2,max-content);gap:16px;margin-bottom:18px;justify-content:start}
 .panel{background:var(--pbg);border-radius:14px;padding:12px;min-width:0}
 .panel header{display:flex;flex-direction:column;gap:2px;margin-bottom:10px;padding:0 2px}
 .panel header b{font-size:12px;color:var(--pink)}
 .panel header span{font-size:10px;color:#8b93a8}
-.list{display:flex;flex-direction:column;gap:6px}
+.list{display:flex;flex-direction:column;gap:6px;width:${DESIGN_WIDTH}px;max-width:100%}
 .slot{display:flex;flex-direction:column;gap:2px}
 .meas{font:9px "SFMono-Regular",monospace;color:#7d8598;padding-left:4px}
 .meas i{font-style:normal;font-weight:700}
@@ -189,10 +185,10 @@ h1{font-size:15px;margin:0 0 4px}
    이것이 유일한 정체성이라 항상 그린다. */
 .row .rail{position:absolute;inset:0 auto 0 0;width:7px;z-index:3;background:linear-gradient(170deg,var(--rail-start),var(--rail-end))}
 .row .txt{position:relative;z-index:3;display:flex;flex-direction:column;gap:1px;min-width:0}
-.row .txt b{font-size:13px;font-weight:800;color:var(--ink);line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.row .txt b{font-size:${TITLE_PX}px;font-weight:800;color:var(--ink);line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 /* 설명은 ink2 다. ink3 는 평평한 배경 기준으로 잡힌 색이라 틴트를 얹으면
    라이트 전 테마에서 4.5:1 아래로 떨어진다(실측 3.21~4.12). */
-.row .txt span{font-size:10px;font-weight:600;color:var(--ink2);letter-spacing:.02em}
+.row .txt span{font-size:${SUB_PX}px;font-weight:600;color:var(--ink2);letter-spacing:.02em}
 /* 그림 자체를 왼쪽에서 페이드시킨다 — 확대 배율과 초점이 그림마다 다르므로
    덮는 막만 믿으면 어떤 그림에서는 잘린 세로 모서리가 드러난다. */
 .row .bleed{background-size:cover;background-repeat:no-repeat;
@@ -213,10 +209,10 @@ h1{font-size:15px;margin:0 0 4px}
 .fpanel header{display:flex;flex-direction:column;gap:2px;margin-bottom:12px}
 .fpanel header b{font-size:12px}
 .fpanel header span{font-size:10px;color:#8b93a8}
-.fgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:14px}
-.fcard{display:grid;grid-template-columns:74px 1fr;grid-template-rows:auto auto;gap:4px 10px;align-items:start}
+.fgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(${DESIGN_WIDTH + 96}px,max-content));gap:14px;justify-content:start}
+.fcard{display:grid;grid-template-columns:74px max-content;grid-template-rows:auto auto;gap:4px 10px;align-items:start}
 .fsrc{grid-row:1/3;width:74px;height:74px;border-radius:8px;background-size:cover;background-position:center;background-color:#0d0f14}
-.fcrop{position:relative;height:${ROW_HEIGHT}px;border-radius:8px;overflow:hidden;background:#0d0f14}
+.fcrop{position:relative;width:${DESIGN_WIDTH}px;max-width:100%;height:${ROW_HEIGHT}px;border-radius:8px;overflow:hidden;background:#0d0f14}
 .fimg{position:absolute;inset:0;background-size:cover;background-repeat:no-repeat;
   background-position:var(--focus,50% 50%);transform:scale(var(--zoom,1));transform-origin:var(--focus,50% 50%)}
 .feye{position:absolute;left:0;right:0;top:50%;height:1px;background:rgba(255,80,80,.85);z-index:2}

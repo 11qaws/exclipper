@@ -8,27 +8,27 @@ body{margin:0;padding:22px;background:#12141a;font-family:"Pretendard",sans-seri
 h1{font-size:15px;margin:0 0 4px}
 .lead{font-size:12px;color:#98a0b5;margin:0 0 18px;line-height:1.6;max-width:80ch}
 .lead code{font:11px "SFMono-Regular",monospace;background:#1d212b;padding:1px 5px;border-radius:4px}
-.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin-bottom:18px;max-width:920px}
+.grid{display:grid;grid-template-columns:repeat(2,max-content);gap:16px;margin-bottom:18px;justify-content:start}
 .panel{background:var(--pbg);border-radius:14px;padding:12px;min-width:0}
 .panel header{display:flex;flex-direction:column;gap:2px;margin-bottom:10px;padding:0 2px}
 .panel header b{font-size:12px;color:var(--pink)}
 .panel header span{font-size:10px;color:#8b93a8}
-.list{display:flex;flex-direction:column;gap:6px}
+.list{display:flex;flex-direction:column;gap:6px;width:440px;max-width:100%}
 .slot{display:flex;flex-direction:column;gap:2px}
 .meas{font:9px "SFMono-Regular",monospace;color:#7d8598;padding-left:4px}
 .meas i{font-style:normal;font-weight:700}
 .meas .ok{color:#5fbf87}.meas .no{color:#e0736b}
 
 /* 공통 행 */
-.row{position:relative;height:74px;border-radius:10px;overflow:hidden;display:flex;align-items:center;isolation:isolate;cursor:pointer}
+.row{position:relative;height:120px;border-radius:10px;overflow:hidden;display:flex;align-items:center;isolation:isolate;cursor:pointer}
 /* 왼쪽 색 띠 — 카드 폼의 레일과 같은 그라디언트를 짧게. 사진이 없는 테마에서는
    이것이 유일한 정체성이라 항상 그린다. */
 .row .rail{position:absolute;inset:0 auto 0 0;width:7px;z-index:3;background:linear-gradient(170deg,var(--rail-start),var(--rail-end))}
 .row .txt{position:relative;z-index:3;display:flex;flex-direction:column;gap:1px;min-width:0}
-.row .txt b{font-size:13px;font-weight:800;color:var(--ink);line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.row .txt b{font-size:21px;font-weight:800;color:var(--ink);line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 /* 설명은 ink2 다. ink3 는 평평한 배경 기준으로 잡힌 색이라 틴트를 얹으면
    라이트 전 테마에서 4.5:1 아래로 떨어진다(실측 3.21~4.12). */
-.row .txt span{font-size:10px;font-weight:600;color:var(--ink2);letter-spacing:.02em}
+.row .txt span{font-size:16px;font-weight:600;color:var(--ink2);letter-spacing:.02em}
 /* 그림 자체를 왼쪽에서 페이드시킨다 — 확대 배율과 초점이 그림마다 다르므로
    덮는 막만 믿으면 어떤 그림에서는 잘린 세로 모서리가 드러난다. */
 .row .bleed{background-size:cover;background-repeat:no-repeat;
@@ -37,11 +37,11 @@ h1{font-size:15px;margin:0 0 4px}
 .row.on{box-shadow:inset 0 0 0 2px var(--accent)}
 
 .row.a{padding:0 0 0 19px}
-.row.a .bleed{position:absolute;inset:0 0 0 auto;width:52%;z-index:1}
+.row.a .bleed{position:absolute;inset:0 0 0 auto;width:60%;z-index:1}
 .row.a .scrim{position:absolute;inset:0;z-index:2;background:linear-gradient(90deg,
   color-mix(in srgb,var(--accent) calc(var(--tint)*100%),var(--bg2)) 0%,
-  color-mix(in srgb,var(--accent) calc(var(--tint)*100%),var(--bg2)) 46%,
-  color-mix(in srgb,var(--accent) calc(var(--tint)*70%),transparent) 72%,
+  color-mix(in srgb,var(--accent) calc(var(--tint)*100%),var(--bg2)) 38%,
+  color-mix(in srgb,var(--accent) calc(var(--tint)*70%),transparent) 64%,
   transparent 100%)}
 
 /* 초점 조정 */
@@ -49,10 +49,10 @@ h1{font-size:15px;margin:0 0 4px}
 .fpanel header{display:flex;flex-direction:column;gap:2px;margin-bottom:12px}
 .fpanel header b{font-size:12px}
 .fpanel header span{font-size:10px;color:#8b93a8}
-.fgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:14px}
-.fcard{display:grid;grid-template-columns:74px 1fr;grid-template-rows:auto auto;gap:4px 10px;align-items:start}
+.fgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(536px,max-content));gap:14px;justify-content:start}
+.fcard{display:grid;grid-template-columns:74px max-content;grid-template-rows:auto auto;gap:4px 10px;align-items:start}
 .fsrc{grid-row:1/3;width:74px;height:74px;border-radius:8px;background-size:cover;background-position:center;background-color:#0d0f14}
-.fcrop{position:relative;height:74px;border-radius:8px;overflow:hidden;background:#0d0f14}
+.fcrop{position:relative;width:440px;max-width:100%;height:120px;border-radius:8px;overflow:hidden;background:#0d0f14}
 .fimg{position:absolute;inset:0;background-size:cover;background-repeat:no-repeat;
   background-position:var(--focus,50% 50%);transform:scale(var(--zoom,1));transform-origin:var(--focus,50% 50%)}
 .feye{position:absolute;left:0;right:0;top:50%;height:1px;background:rgba(255,80,80,.85);z-index:2}
@@ -80,45 +80,45 @@ h1{font-size:15px;margin:0 0 4px}
 <div class="slot" style="--accent:hsl(344 42% 63%);--ink:hsl(344 30% 13%);--ink2:hsl(344 20% 32%);--bg2:hsl(344 22% 97%);--bg3:hsl(344 20% 93%);--rail-start:hsl(344 42% 63%);--rail-end:rgb(160 97 114);--tint:0.14">
 <div class="row a on">
   <div class="rail"></div>
-  <div class="bleed " style="background-image:url('../public/streamers/amoretto.jpg');--focus:62% 89%;--zoom:1"></div>
+  <div class="bleed " style="background-image:url('../public/streamers/amoretto.jpg');--focus:53% 41%;--zoom:2.15"></div>
   <div class="scrim"></div>
-  <div class="txt"><b>아모레또</b><span>스트리머</span></div>
+  <div class="txt"><b>아모레또</b><span>교환학생 1기 ORIENT</span></div>
 </div>
 <div class="meas">이름 <i class="ok">13.69</i> · 설명 <i class="ok">7.16</i></div>
 </div>
 <div class="slot" style="--accent:hsl(152 53% 56%);--ink:hsl(152 30% 13%);--ink2:hsl(152 20% 32%);--bg2:hsl(152 22% 97%);--bg3:hsl(152 20% 93%);--rail-start:hsl(152 53% 56%);--rail-end:rgb(67 162 117);--tint:0.14">
 <div class="row a">
   <div class="rail"></div>
-  <div class="bleed " style="background-image:url('../public/streamers/eureka.png');--focus:54% 53%;--zoom:1"></div>
+  <div class="bleed " style="background-image:url('../public/streamers/eureka.png');--focus:60% 82%;--zoom:1.15"></div>
   <div class="scrim"></div>
-  <div class="txt"><b>유레카</b><span>스트리머</span></div>
+  <div class="txt"><b>유레카</b><span>교환학생 1기 ORIENT</span></div>
 </div>
 <div class="meas">이름 <i class="ok">12.81</i> · 설명 <i class="ok">5.82</i></div>
 </div>
 <div class="slot" style="--accent:hsl(277 38% 63%);--ink:hsl(277 30% 13%);--ink2:hsl(277 20% 32%);--bg2:hsl(277 22% 97%);--bg3:hsl(277 20% 93%);--rail-start:hsl(277 38% 63%);--rail-end:rgb(135 100 157);--tint:0.14">
 <div class="row a">
   <div class="rail"></div>
-  <div class="bleed " style="background-image:url('../public/streamers/sena.png');--focus:66% 57%;--zoom:1"></div>
+  <div class="bleed " style="background-image:url('../public/streamers/sena.jpg');--focus:22% 70%;--zoom:1.15"></div>
   <div class="scrim"></div>
-  <div class="txt"><b>세나 아르벨</b><span>스트리머</span></div>
+  <div class="txt"><b>세나 아르벨</b><span>교환학생 1기 ORIENT</span></div>
 </div>
 <div class="meas">이름 <i class="ok">13.87</i> · 설명 <i class="ok">7.34</i></div>
 </div>
 <div class="slot" style="--accent:hsl(211 55% 84%);--ink:hsl(211 30% 13%);--ink2:hsl(211 20% 32%);--bg2:hsl(211 34% 97%);--bg3:hsl(211 31% 93%);--rail-start:rgb(233 241 249);--rail-end:hsl(211 55% 84%);--tint:0.14">
 <div class="row a">
   <div class="rail"></div>
-  <div class="bleed " style="background-image:url('../public/streamers/torori.png');--focus:38% 59%;--zoom:1.5"></div>
+  <div class="bleed " style="background-image:url('../public/streamers/torori.png');--focus:40% 61%;--zoom:1.8"></div>
   <div class="scrim"></div>
-  <div class="txt"><b>토로리 코코</b><span>스트리머</span></div>
+  <div class="txt"><b>토로리 코코</b><span>교환학생 1기 ORIENT</span></div>
 </div>
 <div class="meas">이름 <i class="ok">14.58</i> · 설명 <i class="ok">7.27</i></div>
 </div>
 <div class="slot" style="--accent:hsl(226 49% 64%);--ink:hsl(226 30% 13%);--ink2:hsl(226 20% 32%);--bg2:hsl(226 22% 97%);--bg3:hsl(226 20% 93%);--rail-start:hsl(226 49% 64%);--rail-end:rgb(95 111 167);--tint:0.14">
 <div class="row a">
   <div class="rail"></div>
-  <div class="bleed " style="background-image:url('../public/streamers/mangjing.png');--focus:54% 57%;--zoom:1.55"></div>
+  <div class="bleed " style="background-image:url('../public/streamers/mangjing.jpg');--focus:54% 38%;--zoom:3.5"></div>
   <div class="scrim"></div>
-  <div class="txt"><b>망징이</b><span>스트리머</span></div>
+  <div class="txt"><b>망징이</b><span>교환학생 1기 ORIENT</span></div>
 </div>
 <div class="meas">이름 <i class="ok">13.77</i> · 설명 <i class="ok">7.23</i></div>
 </div>
@@ -173,45 +173,45 @@ h1{font-size:15px;margin:0 0 4px}
 <div class="slot" style="--accent:hsl(344 50% 74%);--ink:hsl(344 24% 93%);--ink2:hsl(344 18% 84%);--bg2:hsl(344 34% 9%);--bg3:hsl(344 28% 20%);--rail-start:hsl(344 50% 74%);--rail-end:rgb(177 124 139);--tint:0.22">
 <div class="row a on">
   <div class="rail"></div>
-  <div class="bleed " style="background-image:url('../public/streamers/amoretto.jpg');--focus:62% 89%;--zoom:1"></div>
+  <div class="bleed " style="background-image:url('../public/streamers/amoretto.jpg');--focus:53% 41%;--zoom:2.15"></div>
   <div class="scrim"></div>
-  <div class="txt"><b>아모레또</b><span>스트리머</span></div>
+  <div class="txt"><b>아모레또</b><span>교환학생 1기 ORIENT</span></div>
 </div>
 <div class="meas">이름 <i class="ok">10.20</i> · 설명 <i class="ok">8.08</i></div>
 </div>
 <div class="slot" style="--accent:hsl(152 61% 74%);--ink:hsl(152 24% 93%);--ink2:hsl(152 18% 84%);--bg2:hsl(152 34% 9%);--bg3:hsl(152 28% 20%);--rail-start:hsl(152 61% 74%);--rail-end:rgb(119 183 153);--tint:0.22">
 <div class="row a">
   <div class="rail"></div>
-  <div class="bleed " style="background-image:url('../public/streamers/eureka.png');--focus:54% 53%;--zoom:1"></div>
+  <div class="bleed " style="background-image:url('../public/streamers/eureka.png');--focus:60% 82%;--zoom:1.15"></div>
   <div class="scrim"></div>
-  <div class="txt"><b>유레카</b><span>스트리머</span></div>
+  <div class="txt"><b>유레카</b><span>교환학생 1기 ORIENT</span></div>
 </div>
 <div class="meas">이름 <i class="ok">8.51</i> · 설명 <i class="ok">6.98</i></div>
 </div>
 <div class="slot" style="--accent:hsl(277 46% 74%);--ink:hsl(277 24% 93%);--ink2:hsl(277 18% 84%);--bg2:hsl(277 34% 9%);--bg3:hsl(277 28% 20%);--rail-start:hsl(277 46% 74%);--rail-end:rgb(157 127 175);--tint:0.22">
 <div class="row a">
   <div class="rail"></div>
-  <div class="bleed " style="background-image:url('../public/streamers/sena.png');--focus:66% 57%;--zoom:1"></div>
+  <div class="bleed " style="background-image:url('../public/streamers/sena.jpg');--focus:22% 70%;--zoom:1.15"></div>
   <div class="scrim"></div>
-  <div class="txt"><b>세나 아르벨</b><span>스트리머</span></div>
+  <div class="txt"><b>세나 아르벨</b><span>교환학생 1기 ORIENT</span></div>
 </div>
 <div class="meas">이름 <i class="ok">10.30</i> · 설명 <i class="ok">8.14</i></div>
 </div>
 <div class="slot" style="--accent:hsl(211 63% 88%);--ink:hsl(211 24% 93%);--ink2:hsl(211 18% 84%);--bg2:hsl(211 53% 9%);--bg3:hsl(211 43% 20%);--rail-start:rgb(234 242 250);--rail-end:hsl(211 63% 88%);--tint:0.22">
 <div class="row a">
   <div class="rail"></div>
-  <div class="bleed " style="background-image:url('../public/streamers/torori.png');--focus:38% 59%;--zoom:1.5"></div>
+  <div class="bleed " style="background-image:url('../public/streamers/torori.png');--focus:40% 61%;--zoom:1.8"></div>
   <div class="scrim"></div>
-  <div class="txt"><b>토로리 코코</b><span>스트리머</span></div>
+  <div class="txt"><b>토로리 코코</b><span>교환학생 1기 ORIENT</span></div>
 </div>
 <div class="meas">이름 <i class="ok">8.59</i> · 설명 <i class="ok">6.89</i></div>
 </div>
 <div class="slot" style="--accent:hsl(226 57% 74%);--ink:hsl(226 24% 93%);--ink2:hsl(226 18% 84%);--bg2:hsl(226 34% 9%);--bg3:hsl(226 28% 20%);--rail-start:hsl(226 57% 74%);--rail-end:rgb(121 135 181);--tint:0.22">
 <div class="row a">
   <div class="rail"></div>
-  <div class="bleed " style="background-image:url('../public/streamers/mangjing.png');--focus:54% 57%;--zoom:1.55"></div>
+  <div class="bleed " style="background-image:url('../public/streamers/mangjing.jpg');--focus:54% 38%;--zoom:3.5"></div>
   <div class="scrim"></div>
-  <div class="txt"><b>망징이</b><span>스트리머</span></div>
+  <div class="txt"><b>망징이</b><span>교환학생 1기 ORIENT</span></div>
 </div>
 <div class="meas">이름 <i class="ok">10.34</i> · 설명 <i class="ok">8.20</i></div>
 </div>
@@ -254,51 +254,51 @@ h1{font-size:15px;margin:0 0 4px}
 </section>
 </div>
 <section class="fpanel">
-<header><b>초점 조정 — 눈이 남았는가</b><span>왼쪽 원본 · 오른쪽은 행과 같은 비율로 자른 결과 · 빨간 가로선이 행의 세로 가운데</span></header>
+<header><b>초점 조정 — 눈이 남았는가 (440×120px)</b><span>왼쪽 원본 · 오른쪽은 행과 같은 비율로 자른 결과 · 빨간 가로선이 행의 세로 가운데</span></header>
 <div class="fgrid"><div class="fcard" style="--accent:hsl(344 42% 63%);--ink:hsl(344 30% 13%);--ink2:hsl(344 20% 32%);--bg2:hsl(344 22% 97%);--bg3:hsl(344 20% 93%);--rail-start:hsl(344 42% 63%);--rail-end:rgb(160 97 114);--tint:0.14">
   <div class="fsrc" style="background-image:url('../public/streamers/amoretto.jpg')"></div>
   <div class="fcrop">
-    <div class="fimg" style="background-image:url('../public/streamers/amoretto.jpg');--focus:62% 89%;--zoom:1"></div>
+    <div class="fimg" style="background-image:url('../public/streamers/amoretto.jpg');--focus:53% 41%;--zoom:2.15"></div>
     <div class="feye"></div>
   </div>
   <div class="fname">아모레또</div>
-  <div class="fval">62% 89% · ×1</div>
+  <div class="fval">53% 41% · ×2.15</div>
 </div>
 <div class="fcard" style="--accent:hsl(152 53% 56%);--ink:hsl(152 30% 13%);--ink2:hsl(152 20% 32%);--bg2:hsl(152 22% 97%);--bg3:hsl(152 20% 93%);--rail-start:hsl(152 53% 56%);--rail-end:rgb(67 162 117);--tint:0.14">
   <div class="fsrc" style="background-image:url('../public/streamers/eureka.png')"></div>
   <div class="fcrop">
-    <div class="fimg" style="background-image:url('../public/streamers/eureka.png');--focus:54% 53%;--zoom:1"></div>
+    <div class="fimg" style="background-image:url('../public/streamers/eureka.png');--focus:60% 82%;--zoom:1.15"></div>
     <div class="feye"></div>
   </div>
   <div class="fname">유레카</div>
-  <div class="fval">54% 53% · ×1</div>
+  <div class="fval">60% 82% · ×1.15</div>
 </div>
 <div class="fcard" style="--accent:hsl(277 38% 63%);--ink:hsl(277 30% 13%);--ink2:hsl(277 20% 32%);--bg2:hsl(277 22% 97%);--bg3:hsl(277 20% 93%);--rail-start:hsl(277 38% 63%);--rail-end:rgb(135 100 157);--tint:0.14">
-  <div class="fsrc" style="background-image:url('../public/streamers/sena.png')"></div>
+  <div class="fsrc" style="background-image:url('../public/streamers/sena.jpg')"></div>
   <div class="fcrop">
-    <div class="fimg" style="background-image:url('../public/streamers/sena.png');--focus:66% 57%;--zoom:1"></div>
+    <div class="fimg" style="background-image:url('../public/streamers/sena.jpg');--focus:22% 70%;--zoom:1.15"></div>
     <div class="feye"></div>
   </div>
   <div class="fname">세나 아르벨</div>
-  <div class="fval">66% 57% · ×1</div>
+  <div class="fval">22% 70% · ×1.15</div>
 </div>
 <div class="fcard" style="--accent:hsl(211 55% 84%);--ink:hsl(211 30% 13%);--ink2:hsl(211 20% 32%);--bg2:hsl(211 34% 97%);--bg3:hsl(211 31% 93%);--rail-start:rgb(233 241 249);--rail-end:hsl(211 55% 84%);--tint:0.14">
   <div class="fsrc" style="background-image:url('../public/streamers/torori.png')"></div>
   <div class="fcrop">
-    <div class="fimg" style="background-image:url('../public/streamers/torori.png');--focus:38% 59%;--zoom:1.5"></div>
+    <div class="fimg" style="background-image:url('../public/streamers/torori.png');--focus:40% 61%;--zoom:1.8"></div>
     <div class="feye"></div>
   </div>
   <div class="fname">토로리 코코</div>
-  <div class="fval">38% 59% · ×1.5</div>
+  <div class="fval">40% 61% · ×1.8</div>
 </div>
 <div class="fcard" style="--accent:hsl(226 49% 64%);--ink:hsl(226 30% 13%);--ink2:hsl(226 20% 32%);--bg2:hsl(226 22% 97%);--bg3:hsl(226 20% 93%);--rail-start:hsl(226 49% 64%);--rail-end:rgb(95 111 167);--tint:0.14">
-  <div class="fsrc" style="background-image:url('../public/streamers/mangjing.png')"></div>
+  <div class="fsrc" style="background-image:url('../public/streamers/mangjing.jpg')"></div>
   <div class="fcrop">
-    <div class="fimg" style="background-image:url('../public/streamers/mangjing.png');--focus:54% 57%;--zoom:1.55"></div>
+    <div class="fimg" style="background-image:url('../public/streamers/mangjing.jpg');--focus:54% 38%;--zoom:3.5"></div>
     <div class="feye"></div>
   </div>
   <div class="fname">망징이</div>
-  <div class="fval">54% 57% · ×1.55</div>
+  <div class="fval">54% 38% · ×3.5</div>
 </div></div>
 </section>
 </body></html>

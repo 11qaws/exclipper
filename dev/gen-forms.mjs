@@ -12,31 +12,26 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
 import { buildAllStreamerPalettes } from "../src/app/streamerPalette.ts";
-import { streamerPortraitCrop } from "../src/app/streamerProfiles.ts";
+import { streamerPortraitCrop, streamerProfileFileName, streamerSubtitle } from "../src/app/streamerProfiles.ts";
 import { readRowMetrics } from "./formTokens.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
-const IMG = {
-  amoretto: "amoretto.jpg",
-  eureka: "eureka.png",
-  sena: "sena.png",
-  torori: "torori.png",
-  mangjing: "mangjing.png",
-};
-
-const SUBTITLE = {
+/**
+ * 스트리머가 아닌 항목의 설명. 스트리머 것은 `streamerSubtitle` 이 갖고 있으므로
+ * 여기에 사본을 두지 않는다 — 두 벌이 되면 반드시 한쪽이 낡는다.
+ */
+const NON_STREAMER_SUBTITLE = {
   default: "교환학생 · 기본",
-  amoretto: "스트리머",
-  eureka: "스트리머",
-  sena: "스트리머",
-  torori: "스트리머",
-  mangjing: "스트리머",
   violet: "기본 색상",
   amber: "기본 색상",
   hotpink: "기본 색상",
   brick: "기본 색상",
 };
+
+function subtitleOf(p) {
+  return streamerSubtitle(p.name) || NON_STREAMER_SUBTITLE[p.id] || "";
+}
 
 const TINT = { light: "14%", dark: "22%" };
 
@@ -63,7 +58,7 @@ function tokens(theme, mode) {
 }
 
 function row(p, selected) {
-  const file = IMG[p.id];
+  const file = streamerProfileFileName(p.name);
   // 초점과 확대는 그림마다 다르다 — 눈이 남아야 누구인지 알아본다.
   const { focus, zoom } = streamerPortraitCrop(p.name);
   const bleed = file
@@ -73,7 +68,7 @@ function row(p, selected) {
   <span class="uf-row__rail"></span>
   ${bleed}
   <span class="uf-row__scrim"></span>
-  <span class="uf-row__text"><b>${p.name}</b><span>${SUBTITLE[p.id]}</span></span>
+  <span class="uf-row__text"><b>${p.name}</b><span>${subtitleOf(p)}</span></span>
 </button>`;
 }
 
@@ -157,13 +152,13 @@ h1{font-size:16px;margin:0 0 4px}
 .bay{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
 .narrow{gap:14px}
 .squeeze{width:20em;display:flex;flex-direction:column;gap:14px;container-type:inline-size}
-.list{display:flex;flex-direction:column;gap:6px}
+.list{display:flex;flex-direction:column;gap:6px;width:${METRICS.designWidth}px;max-width:100%}
 </style></head><body>
 <h1>ui-forms — 공용 폼 목록</h1>
 <p class="lead">실물은 <code>styles/forms/ui-forms.css</code> 를 <b>그대로 링크</b>해서 그린다 — 이 페이지가 라이브러리에 없는 것을 보여 줄 수 없다.
 색은 팔레트 모듈에서 온다. 호스트가 이어 주는 토큰은 <code>--uf-accent</code> · <code>--uf-accent-on</code> · <code>--uf-ink</code> · <code>--uf-ink2</code> · <code>--uf-surface</code> · <code>--uf-surface2</code> · <code>--uf-line</code> 일곱 개뿐이고,
 아무것도 안 이어 줘도 기본값으로 그려진다. 세로로 쌓이는 예시는 부모에 <code>container-type: inline-size</code> 가 켜져 있다.<br>
-현재 행 치수: 높이 <b>${METRICS.rowHeight}px</b> · 사진 폭 <b>${METRICS.bleedWidth}%</b> — <code>dev/focus-picker</code> 에서 조절한다.</p>
+현재 행 치수: <b>${METRICS.designWidth}×${METRICS.rowHeight}px</b> · 사진 폭 <b>${METRICS.bleedWidth}%</b> — 초점은 이 비율에서 맞춘 값이다 — <code>dev/focus-picker</code> 에서 조절한다.</p>
 <div class="grid">
 ${demo("light")}
 ${demo("dark")}

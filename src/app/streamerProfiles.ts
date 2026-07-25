@@ -14,11 +14,11 @@ const BASE = import.meta.env?.BASE_URL ?? "/";
 
 /** 이름은 `participantRoster` 의 `displayName` 과 정확히 일치해야 한다. */
 const PROFILE_FILE_BY_NAME: Readonly<Record<string, string>> = {
-  아모레또: "amoretto.jpg",
-  유레카: "eureka.png",
-  "세나 아르벨": "sena.png",
+  "아모레또": "amoretto.jpg",
+  "유레카": "eureka.png",
+  "세나 아르벨": "sena.jpg",
   "토로리 코코": "torori.png",
-  망징이: "mangjing.png",
+  "망징이": "mangjing.jpg",
 };
 
 /**
@@ -37,6 +37,19 @@ export const STREAMER_PROFILE_IMAGE_BY_NAME: Readonly<
 export function streamerProfileImage(name: string | undefined): string | undefined {
   if (name === undefined) return undefined;
   return STREAMER_PROFILE_IMAGE_BY_NAME[name];
+}
+
+/**
+ * 그림의 **파일명**. 배포 base 가 붙지 않은 날것이다.
+ *
+ * 하네스 생성기가 쓴다. 생성기가 자기 파일명 표를 따로 들면, 그림을 다른 형식으로
+ * 바꾸는 순간(`sena.png` → `sena.jpg`) 소스만 바뀌고 하네스는 옛 파일을 계속
+ * 가리킨다. 옛 파일이 아직 디스크에 있으면 404 조차 나지 않아서, 화면은 멀쩡한데
+ * 바뀐 그림만 안 보인다.
+ */
+export function streamerProfileFileName(name: string | undefined): string | undefined {
+  if (name === undefined) return undefined;
+  return PROFILE_FILE_BY_NAME[name];
 }
 
 /**
@@ -71,12 +84,35 @@ export interface PortraitCrop {
  * 말고 도구를 다시 열어 맞춘다 — 눈으로 확인하지 않은 좌표는 반드시 빗나간다.
  */
 const PORTRAIT_CROP_BY_NAME: Readonly<Record<string, PortraitCrop>> = {
-  "아모레또": { focus: "62% 89%", zoom: 1 },
-  "유레카": { focus: "54% 53%", zoom: 1 },
-  "세나 아르벨": { focus: "66% 57%", zoom: 1 },
-  "토로리 코코": { focus: "38% 59%", zoom: 1.5 },
-  "망징이": { focus: "54% 57%", zoom: 1.55 },
+  "아모레또": { focus: "53% 41%", zoom: 2.15 },
+  "유레카": { focus: "60% 82%", zoom: 1.15 },
+  "세나 아르벨": { focus: "22% 70%", zoom: 1.15 },
+  "토로리 코코": { focus: "40% 61%", zoom: 1.8 },
+  "망징이": { focus: "54% 38%", zoom: 3.5 },
 };
+
+/**
+ * 이름 아래 한 줄. 그 항목이 **무엇인지** 말한다.
+ *
+ * 목록에서 이름만 보면 그것이 사람인지 색 이름인지 알 수 없다. 한 줄이 붙으면
+ * 읽지 않고도 종류가 구분된다.
+ *
+ * 값은 `dev/focus-picker.html` 에서 고친다.
+ */
+const SUBTITLE_BY_NAME: Readonly<Record<string, string>> = {
+  "아모레또": "교환학생 1기 ORIENT",
+  "유레카": "교환학생 1기 ORIENT",
+  "세나 아르벨": "교환학생 1기 ORIENT",
+  "토로리 코코": "교환학생 1기 ORIENT",
+  "망징이": "교환학생 1기 ORIENT",
+};
+
+export const DEFAULT_SUBTITLE = "";
+
+export function streamerSubtitle(name: string | undefined): string {
+  if (name === undefined) return DEFAULT_SUBTITLE;
+  return SUBTITLE_BY_NAME[name] ?? DEFAULT_SUBTITLE;
+}
 
 /** 초점을 모르는 그림은 가운데를 확대 없이 쓴다 — 잘못 잘라 놓는 것보다 낫다. */
 export const DEFAULT_PORTRAIT_CROP: PortraitCrop = { focus: "50% 50%", zoom: 1 };
