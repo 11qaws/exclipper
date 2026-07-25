@@ -22,6 +22,7 @@ import {
   cloneBroadcastContextSessionRecord,
   type BroadcastContextSessionRecord,
 } from "./broadcastContextSessionStore";
+import type { AnalysisJob } from "../domain/analysisJob";
 
 export type JsonPrimitive = string | number | boolean | null;
 
@@ -96,7 +97,29 @@ export interface SourceCapabilitySnapshotRecord {
   readonly recordedAt: string;
 }
 
+/**
+ * 작업 하나의 저장 레코드.
+ *
+ * 실행 결과와 **같은 데이터베이스에 있다.** 작업을 지우려면 그 작업이 만든 모든
+ * Run 의 레코드도 함께 지워야 하는데, 데이터베이스가 갈리면 그 삭제가 원자적이지
+ * 않다. 절반만 지워지면 인사이트·대사가 주인 없이 남아 용량을 차지하고, 어느
+ * 화면에서도 보이지 않으므로 사용자가 지울 방법조차 없다.
+ */
+export interface AnalysisJobRecord {
+  readonly jobId: string;
+  readonly job: AnalysisJob;
+  /** 마지막으로 무언가 확정된 시각. 보존 기간과 "N일 방치됨" 의 기준. */
+  readonly lastActivityAt: string;
+  /** 이 작업이 차지하는 대략의 바이트. 상한 판단에 쓴다. */
+  readonly bytes: number;
+}
+
 export interface AnalysisResultStore {
+  putJob(record: AnalysisJobRecord): Promise<void>;
+  getJob(jobId: string): Promise<AnalysisJobRecord | null>;
+  listJobs(): Promise<readonly AnalysisJobRecord[]>;
+  /** 작업과 그 작업이 만든 모든 실행 결과를 함께 지운다. */
+  deleteJob(jobId: string): Promise<void>;
   putManifest(record: AnalysisManifestRecord): Promise<void>;
   getManifest(runId: string): Promise<AnalysisManifestRecord | null>;
   putProvisionalResult(record: ProvisionalAnalysisResultRecord): Promise<void>;
@@ -146,9 +169,10 @@ export class AnalysisResultStoreError extends Error {
 }
 
 export const DEFAULT_ANALYSIS_RESULT_DB_NAME = "retto-highlight-analysis-results";
-export const ANALYSIS_RESULT_DB_VERSION = 4;
+export const ANALYSIS_RESULT_DB_VERSION = 5;
 
 export const ANALYSIS_RESULT_OBJECT_STORES = {
+  jobs: "analysisJobs",
   manifests: "analysisManifests",
   provisionalResults: "provisionalAnalysisResults",
   finalResults: "finalAnalysisResults",
@@ -556,6 +580,36 @@ function validateAndCloneTerminalRecord(
   return cloneJson(record);
 }
 
+function assertJobRecord(value: unknown): asserts value is AnalysisJobRecord {
+  if (typeof value !== "object" || value === null) {
+    throw payloadError("Analysis job record must be an object.");
+  }
+  const record = value as Partial<AnalysisJobRecord>;
+  assertIdentifier(record.jobId, "jobId");
+  assertRecordedAt(record.lastActivityAt);
+  if (typeof record.bytes !== "number" || !Number.isFinite(record.bytes) || record.bytes < 0) {
+    throw payloadError("Analysis job record must carry a non-negative byte count.");
+  }
+  if (typeof record.job !== "object" || record.job === null) {
+    throw payloadError("Analysis job record must carry a job.");
+  }
+  assertIdentifier(record.job.jobId, "job.jobId");
+  if (record.job.jobId !== record.jobId) {
+    // 키와 내용이 어긋나면 조회는 되는데 잘못된 작업을 지우게 된다.
+    throw payloadError("Analysis job record key does not match the job it holds.");
+  }
+  if (!Array.isArray(record.job.runIds)) {
+    throw payloadError("Analysis job must carry the list of runs it spawned.");
+  }
+  // 나머지는 JSON 안전성만 확인한다 — 상태 규칙은 도메인의 전이표가 지킨다.
+  assertSafeJsonValue(record.job, "job", new Set());
+}
+
+function validateAndCloneJobRecord(record: AnalysisJobRecord): AnalysisJobRecord {
+  assertJobRecord(record);
+  return cloneJson(record);
+}
+
 function terminalRecordsAreEquivalent(
   left: AnalysisTerminalRecord,
   right: AnalysisTerminalRecord,
@@ -597,7 +651,55 @@ export class InMemoryAnalysisResultStore implements AnalysisResultStore {
   private readonly sourceSnapshots = new Map<string, SourceCapabilitySnapshotRecord>();
   private readonly candidatePassBInsights = new Map<string, CandidatePassBInsightsRecord>();
   private readonly broadcastContextSessions = new Map<string, BroadcastContextSessionRecord>();
+  private readonly jobs = new Map<string, AnalysisJobRecord>();
   private closed = false;
+
+  public putJob(record: AnalysisJobRecord): Promise<void> {
+    return rejectedOperation(() => {
+      this.assertOpen();
+      const snapshot = validateAndCloneJobRecord(record);
+      this.jobs.set(snapshot.jobId, snapshot);
+    });
+  }
+
+  public getJob(jobId: string): Promise<AnalysisJobRecord | null> {
+    return rejectedOperation(() => {
+      this.assertOpen();
+      assertIdentifier(jobId, "jobId");
+      const record = this.jobs.get(jobId);
+      return record === undefined ? null : cloneJson(record);
+    });
+  }
+
+  public listJobs(): Promise<readonly AnalysisJobRecord[]> {
+    return rejectedOperation(() => {
+      this.assertOpen();
+      return [...this.jobs.values()].map((record) => cloneJson(record));
+    });
+  }
+
+  public deleteJob(jobId: string): Promise<void> {
+    return rejectedOperation(() => {
+      this.assertOpen();
+      assertIdentifier(jobId, "jobId");
+      const record = this.jobs.get(jobId);
+      if (record === undefined) {
+        return;
+      }
+      // 실행 결과를 먼저 지운다. 작업 레코드가 먼저 사라지면 `runIds` 를 잃어
+      // 남은 결과를 찾을 방법이 없어진다.
+      for (const runId of record.job.runIds) {
+        this.manifests.delete(runId);
+        this.provisionalResults.delete(runId);
+        this.finalResults.delete(runId);
+        this.failures.delete(runId);
+        this.terminals.delete(runId);
+        this.candidatePassBInsights.delete(runId);
+        this.broadcastContextSessions.delete(runId);
+      }
+      this.jobs.delete(jobId);
+    });
+  }
 
   public putManifest(record: AnalysisManifestRecord): Promise<void> {
     return this.putAnalysisRecord(this.manifests, record, "manifest");
@@ -797,6 +899,52 @@ export class IndexedDbAnalysisResultStore implements AnalysisResultStore {
     }
   }
 
+  public putJob(record: AnalysisJobRecord): Promise<void> {
+    return rejectedOperation(() => {
+      const snapshot = validateAndCloneJobRecord(record);
+      return this.writeRecord(ANALYSIS_RESULT_OBJECT_STORES.jobs, snapshot);
+    }).then((operation) => operation);
+  }
+
+  public getJob(jobId: string): Promise<AnalysisJobRecord | null> {
+    return rejectedOperation(() => {
+      assertIdentifier(jobId, "jobId");
+      return this.readRecord(ANALYSIS_RESULT_OBJECT_STORES.jobs, jobId, (value) => {
+        assertJobRecord(value);
+        return cloneJson(value);
+      });
+    }).then((operation) => operation);
+  }
+
+  public listJobs(): Promise<readonly AnalysisJobRecord[]> {
+    return this.readAllRecords(ANALYSIS_RESULT_OBJECT_STORES.jobs, (value) => value).then(
+      (values) => {
+        const records: AnalysisJobRecord[] = [];
+        for (const value of values) {
+          // 레코드 하나가 깨졌다고 목록 전체를 못 보여 주면, 사용자는 멀쩡한
+          // 작업까지 잃은 것으로 본다. 깨진 것만 건너뛴다.
+          try {
+            assertJobRecord(value);
+            records.push(cloneJson(value));
+          } catch {
+            continue;
+          }
+        }
+        return records;
+      },
+    );
+  }
+
+  public deleteJob(jobId: string): Promise<void> {
+    return rejectedOperation(() => {
+      assertIdentifier(jobId, "jobId");
+      return this.getJob(jobId).then((record) => {
+        if (record === null) return;
+        return this.deleteJobAndRuns(jobId, record.job.runIds);
+      });
+    }).then((operation) => operation);
+  }
+
   public putManifest(record: AnalysisManifestRecord): Promise<void> {
     return this.putAnalysisRecord(
       ANALYSIS_RESULT_OBJECT_STORES.manifests,
@@ -994,6 +1142,81 @@ export class IndexedDbAnalysisResultStore implements AnalysisResultStore {
       const snapshot = validateAndCloneAnalysisRecord(record, kind);
       return this.writeRecord(storeName, snapshot);
     }).then((operation) => operation);
+  }
+
+  /**
+   * 작업과 그 작업이 만든 실행 결과를 **한 트랜잭션에서** 지운다.
+   *
+   * 나눠서 지우면 중간에 실패했을 때 결과만 주인 없이 남는다. 그 레코드는 어느
+   * 화면에도 나타나지 않으므로 사용자가 지울 수도 없고, 용량만 계속 차지한다.
+   */
+  private deleteJobAndRuns(jobId: string, runIds: readonly string[]): Promise<void> {
+    const storeNames = [ANALYSIS_RESULT_OBJECT_STORES.jobs, ...RUN_KEYED_OBJECT_STORES];
+    return this.openDatabase().then(
+      (database) =>
+        new Promise<void>((resolve, reject) => {
+          let settled = false;
+          let transaction: IDBTransaction;
+
+          const rejectOnce = (error: AnalysisResultStoreError): void => {
+            if (!settled) {
+              settled = true;
+              reject(error);
+            }
+          };
+
+          try {
+            transaction = database.transaction(storeNames, "readwrite");
+          } catch (cause) {
+            rejectOnce(
+              normalizeStoreFailure(
+                cause,
+                "TRANSACTION_FAILED",
+                `Could not start a delete transaction for job ${jobId}.`,
+              ),
+            );
+            return;
+          }
+
+          transaction.oncomplete = () => {
+            if (!settled) {
+              settled = true;
+              resolve();
+            }
+          };
+          transaction.onerror = () => {
+            rejectOnce(requestError(transaction.error, `delete transaction for job ${jobId}`));
+          };
+          transaction.onabort = () => {
+            rejectOnce(requestError(transaction.error, `aborted delete for job ${jobId}`));
+          };
+
+          try {
+            for (const storeName of RUN_KEYED_OBJECT_STORES) {
+              const objectStore = transaction.objectStore(storeName);
+              for (const runId of runIds) {
+                objectStore.delete(runId);
+              }
+            }
+            // 작업 레코드를 마지막에 지운다 — 앞이 실패해 트랜잭션이 되돌아가면
+            // `runIds` 가 남아 있어 다시 시도할 수 있다.
+            transaction.objectStore(ANALYSIS_RESULT_OBJECT_STORES.jobs).delete(jobId);
+          } catch (cause) {
+            try {
+              transaction.abort();
+            } catch {
+              // 이미 끝난 트랜잭션이면 무시한다.
+            }
+            rejectOnce(
+              normalizeStoreFailure(
+                cause,
+                "TRANSACTION_FAILED",
+                `Could not delete job ${jobId}.`,
+              ),
+            );
+          }
+        }),
+    );
   }
 
   private writeRecord(storeName: AnalysisStoreName, record: unknown): Promise<void> {
@@ -1524,11 +1747,16 @@ export class IndexedDbAnalysisResultStore implements AnalysisResultStore {
   }
 }
 
-function keyPathFor(storeName: AnalysisStoreName): "runId" | "sourceCheckId" {
-  return storeName === ANALYSIS_RESULT_OBJECT_STORES.sourceSnapshots
-    ? "sourceCheckId"
-    : "runId";
+function keyPathFor(storeName: AnalysisStoreName): "runId" | "sourceCheckId" | "jobId" {
+  if (storeName === ANALYSIS_RESULT_OBJECT_STORES.sourceSnapshots) return "sourceCheckId";
+  if (storeName === ANALYSIS_RESULT_OBJECT_STORES.jobs) return "jobId";
+  return "runId";
 }
+
+/** 실행 결과가 들어 있는 저장소들. 작업을 지울 때 함께 비워야 하는 곳이다. */
+const RUN_KEYED_OBJECT_STORES: readonly AnalysisStoreName[] = ALL_OBJECT_STORES.filter(
+  (storeName) => keyPathFor(storeName) === "runId",
+);
 
 function sortTerminalRecordsNewestFirst(
   records: readonly AnalysisTerminalRecord[],

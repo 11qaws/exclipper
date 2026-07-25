@@ -21,13 +21,24 @@
 | `modelByCandidateId` | `storage/candidatePassBInsightStore.ts` | 후보별 사용 모델 |
 | `contentFingerprint` | `storage/durableAnalysisPayload.ts` | 콘텐츠 지문. **캐시의 조회 키가 된다** |
 | `rankPercentile` | `storage/durableAnalysisPayload.ts` | 내부 계산용. **사용자에게 보이면 안 된다** |
+| `job.runIds` | `storage/analysisResultStore.ts` (`analysisJobs`) | 이력용이 아니라 **삭제용**. 없으면 실행 결과가 고아로 남는다 |
+| `handle` | `storage/sourceHandleStore.ts` | **별도 DB.** JSON 이 아니라 기존 저장소가 거부한다 |
 
 **저장되지 않는 것** (메모리에만 존재 — 새로고침하면 사라짐):
 
 | 값 | 비고 |
 |---|---|
 | 통합 타임라인 4컷 프레임 | 저장 예정 (상태 모델 §7) |
-| 원본 `File` 객체 | 핸들 저장으로 대체 예정 (상태 모델 §6) |
+
+### 데이터베이스가 둘인 이유
+
+| DB | 무엇 | 왜 갈렸나 |
+|---|---|---|
+| `retto-highlight-analysis-results` | 작업 + 실행 결과 | 작업을 지울 때 그 작업의 실행 결과도 **한 트랜잭션**에서 지워야 한다 |
+| `retto-highlight-source-handles` | 파일 핸들만 | 핸들은 JSON 이 아니다. 결과 저장소의 JSON 전용 검증에 구멍을 내지 않는다 |
+
+핸들은 경로 참조라 아주 작으므로 고아가 남아도 `deleteOrphans` 로 쓸면 된다.
+실행 결과는 그렇지 않다 — 남으면 화면에 안 보이는 채로 용량을 계속 차지한다.
 
 `storage/analysisResultStore.ts` 는 **JSON 만 받는다.** `Blob`·`File`·핸들은 거부한다
 (`validateAndClone*`). base64 문자열은 JSON 이므로 통과한다.
@@ -48,6 +59,10 @@
 | 후보 이동 규칙 | `app/reviewNavigation.ts` |
 | 후보 위치 스트립 좌표 | `app/positionStrip.ts` |
 | 분석 실행 상태 기계 | `domain/analysisRun.ts` — **16 상태 전이표** |
+| 영상 단위 작업(재개·캐시) | `domain/analysisJob.ts` — Run 위의 층 |
+| 보존 기간·용량 상한 판단 | `domain/storageRetention.ts` — 순수 함수 |
+| `persist()` · `estimate()` | `storage/storageQuota.ts` |
+| 새로고침 후 원본 되찾기 | `storage/reconnectSource.ts` — 권한·지문 재대조 |
 | 진행 문구 | `app/statusMessages.ts` |
 | 후보 분류 프롬프트 | `analysis/broadcastContextDeepseek.ts` |
 | 파이프라인 글자수 상한 | `analysis/candidatePassBGemini.ts` |

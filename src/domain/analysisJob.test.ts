@@ -40,6 +40,31 @@ describe("analysis job", () => {
     expect(nextStageToRun(job)).toBe(ANALYSIS_STAGES[0]);
   });
 
+  describe("remembering every run it spawned", () => {
+    it("accumulates a run id each time work restarts", () => {
+      const job = drive(newJob(), [
+        { type: "START", runId: "run-1" },
+        { type: "PAUSE" },
+        { type: "RESUME", runId: "run-2" },
+        { type: "SOURCE_LOST", availability: "needsPermission" },
+        { type: "SOURCE_RECONNECTED", runId: "run-3" },
+      ]);
+      expect(job.runIds).toEqual(["run-1", "run-2", "run-3"]);
+    });
+
+    it("keeps the old run ids through an invalidation", () => {
+      // 지우려면 어디에 있는지 알아야 한다. 여기서 잊으면 낡은 실행 결과가
+      // 영원히 남고 용량 집계가 조용히 어긋난다.
+      const invalidated = drive(newJob(), [
+        { type: "START", runId: "run-1" },
+        ...ALL_STAGES_COMMITTED,
+        { type: "ALL_STAGES_DONE", quality: "usable" },
+        { type: "INVALIDATE", reasonCode: "model_manifest_changed" },
+      ]);
+      expect(invalidated.runIds).toEqual(["run-1"]);
+    });
+  });
+
   it("rejects a transition that is not defined", () => {
     // 조용히 무시하면 상태가 어긋난 채 진행되고, 그 어긋남은 한참 뒤에 다른
     // 증상으로 나타난다.

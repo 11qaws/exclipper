@@ -6,12 +6,14 @@ import {
   InMemoryAnalysisResultStore,
   IndexedDbAnalysisResultStore,
   type AnalysisFailureRecord,
+  type AnalysisJobRecord,
   type AnalysisManifestRecord,
   type AnalysisTerminalRecord,
   type FinalAnalysisResultRecord,
   type ProvisionalAnalysisResultRecord,
   type SourceCapabilitySnapshotRecord,
 } from "./analysisResultStore";
+import { createAnalysisJob } from "../domain/analysisJob";
 import type {
   DurableFinalResultPayload,
   DurableHighlightCandidate,
@@ -1064,5 +1066,107 @@ describe("IndexedDbAnalysisResultStore transaction contract", () => {
     await expect(store.getFinalResult("missing-run")).rejects.toMatchObject({
       code: "STORE_CLOSED",
     });
+  });
+});
+
+describe("job records", () => {
+  function makeJobRecord(
+    jobId = "job-1",
+    runIds: readonly string[] = ["run-1"],
+  ): AnalysisJobRecord {
+    return {
+      jobId,
+      lastActivityAt: RECORDED_AT,
+      bytes: 1024,
+      job: {
+        ...createAnalysisJob({
+          jobId,
+          identity: { scheme: "local-file-sampled-sha256-v1", key: `key-${jobId}` },
+        }),
+        runIds,
+      },
+    };
+  }
+
+  it("stores and reads a job back", async () => {
+    const store = new InMemoryAnalysisResultStore();
+    await store.putJob(makeJobRecord());
+    expect((await store.getJob("job-1"))?.job.identity.key).toBe("key-job-1");
+    expect(await store.listJobs()).toHaveLength(1);
+  });
+
+  it("returns null for a job that was never stored", async () => {
+    const store = new InMemoryAnalysisResultStore();
+    expect(await store.getJob("job-1")).toBeNull();
+  });
+
+  it("deletes the run results along with the job", async () => {
+    // 결과만 남으면 어느 화면에도 나타나지 않으므로 사용자가 지울 수 없고,
+    // 용량만 계속 차지한다.
+    const store = new InMemoryAnalysisResultStore();
+    await store.putManifest(makeManifest("run-1"));
+    await store.putProvisionalResult(makeProvisional("run-1"));
+    await store.putJob(makeJobRecord("job-1", ["run-1"]));
+
+    await store.deleteJob("job-1");
+
+    expect(await store.getJob("job-1")).toBeNull();
+    expect(await store.getManifest("run-1")).toBeNull();
+  });
+
+  it("leaves another job's runs alone", async () => {
+    const store = new InMemoryAnalysisResultStore();
+    await store.putManifest(makeManifest("run-1"));
+    await store.putManifest(makeManifest("run-2"));
+    await store.putJob(makeJobRecord("job-1", ["run-1"]));
+    await store.putJob(makeJobRecord("job-2", ["run-2"]));
+
+    await store.deleteJob("job-1");
+
+    expect(await store.getManifest("run-2")).not.toBeNull();
+    expect(await store.getJob("job-2")).not.toBeNull();
+  });
+
+  it("deletes every run a job accumulated across restarts", async () => {
+    // 재개할 때마다 새 Run 이 생긴다. 마지막 것만 지우면 나머지가 남는다.
+    const store = new InMemoryAnalysisResultStore();
+    await store.putManifest(makeManifest("run-1"));
+    await store.putManifest(makeManifest("run-2"));
+    await store.putJob(makeJobRecord("job-1", ["run-1", "run-2"]));
+
+    await store.deleteJob("job-1");
+
+    expect(await store.getManifest("run-1")).toBeNull();
+    expect(await store.getManifest("run-2")).toBeNull();
+  });
+
+  it("treats deleting an absent job as a no-op", async () => {
+    const store = new InMemoryAnalysisResultStore();
+    await expect(store.deleteJob("never-existed")).resolves.toBeUndefined();
+  });
+
+  it("refuses a record whose key disagrees with the job inside it", async () => {
+    // 조회는 되는데 잘못된 작업을 지우게 된다.
+    const store = new InMemoryAnalysisResultStore();
+    const mismatched = { ...makeJobRecord("job-1"), jobId: "job-2" };
+    await expect(store.putJob(mismatched)).rejects.toMatchObject({ code: "INVALID_PAYLOAD" });
+  });
+
+  it("refuses a job that does not say which runs it made", async () => {
+    const store = new InMemoryAnalysisResultStore();
+    const record = makeJobRecord();
+    const broken = {
+      ...record,
+      job: { ...record.job, runIds: undefined as unknown as readonly string[] },
+    };
+    await expect(store.putJob(broken)).rejects.toMatchObject({ code: "INVALID_PAYLOAD" });
+  });
+
+  it("hands back a copy rather than the stored object", async () => {
+    const store = new InMemoryAnalysisResultStore();
+    await store.putJob(makeJobRecord());
+    const first = await store.getJob("job-1");
+    (first as { bytes: number }).bytes = 999;
+    expect((await store.getJob("job-1"))?.bytes).toBe(1024);
   });
 });

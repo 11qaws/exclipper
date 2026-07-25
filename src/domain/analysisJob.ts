@@ -80,6 +80,14 @@ export interface AnalysisJob {
   readonly source: SourceAvailability;
   /** 현재 진행 중인 `AnalysisRun`. 없으면 `null`. */
   readonly activeRunId: string | null;
+  /**
+   * 이 작업이 만든 모든 Run. 재개할 때마다 새 Run 이 생기므로 쌓인다.
+   *
+   * 이력용이 아니라 **삭제용**이다. 실행 결과 레코드는 `runId` 로 저장되므로, 이
+   * 목록이 없으면 작업을 지워도 인사이트·대사·맥락이 남는다 — 용량을 차지하는
+   * 것은 정확히 그쪽이고, 남으면 용량 집계가 조용히 어긋난다.
+   */
+  readonly runIds: readonly string[];
   /** 종료 사유. `AnalysisRun` 의 어휘를 그대로 옮겨 적는다. */
   readonly lastReasonCode: string | null;
 }
@@ -129,6 +137,7 @@ export function createAnalysisJob(input: CreateAnalysisJobInput): AnalysisJob {
     quality: "unknown",
     source: input.source ?? "connected",
     activeRunId: null,
+    runIds: [],
     lastReasonCode: null,
   };
 }
@@ -199,6 +208,7 @@ export function transitionAnalysisJob(
         status: "running",
         source: "connected",
         activeRunId: event.runId,
+        runIds: job.runIds.includes(event.runId) ? job.runIds : [...job.runIds, event.runId],
         lastReasonCode: null,
       });
     }
