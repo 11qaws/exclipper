@@ -28,6 +28,8 @@
   /* 채운 accent 위의 글자색. 라이트는 흰색, 다크는 같은 색조의 짙은 잉크 —
    * 다크에서 accent 를 어둡게 죽이지 않고도 대비를 확보한다. */
   --ex-accent-on: hsl(350 0% 100%);
+  /* 레일 그라데이션 끝 색. solid 는 어두워지고, pale 테마는 흰색 쪽으로 밝아진다. */
+  --ex-rail-end: rgb(174 35 63);
   --ex-accent-ink: hsl(350 72% 41%);
   --ex-accent-bg: hsl(350 60% 94%);
   --ex-accent-line: hsl(350 55% 84%);
@@ -58,6 +60,7 @@
    * coloured ink is desaturated so it reads as text rather than glowing. */
   --ex-accent: hsl(350 80% 74%);
   --ex-accent-on: hsl(350 60% 28%);
+  --ex-rail-end: rgb(190 88 106);
   --ex-accent-ink: hsl(350 52% 73%);
   --ex-accent-bg: hsl(350 42% 21%);
   --ex-accent-line: hsl(350 40% 35%);

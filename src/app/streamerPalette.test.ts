@@ -59,7 +59,26 @@ describe("streamer palette", () => {
       const p = buildAllStreamerPalettes().find((x) => x.id === id)!;
       return Number(/hsl\(\d+ (\d+)%/.exec(p.light.accent)![1]);
     };
-    expect(satOf("torori")).toBeGreaterThanOrEqual(50); // still blue, not grey
+    expect(satOf("torori")).toBeGreaterThanOrEqual(65); // clear sky, not washed out
+  });
+
+  it("keeps every pale theme well above every solid one in lightness", () => {
+    // Tone is what separates a pale identity from a solid one at the same hue,
+    // and tone is only readable if the lightness bands do not overlap.
+    const lightnessOf = (p: { readonly light: { readonly accent: string } }): number =>
+      Number(/hsl\(\d+ \d+% (\d+)%\)/.exec(p.light.accent)![1]);
+    const built = buildAllStreamerPalettes();
+    const paleIds = new Set(
+      STREAMER_PALETTE_SEEDS.filter((s) => s.tone === "pale").map((s) => s.id),
+    );
+    const pales = built.filter((p) => paleIds.has(p.id));
+    const solids = built.filter((p) => !paleIds.has(p.id));
+    expect(pales.length).toBeGreaterThan(0);
+    for (const pale of pales) {
+      for (const solid of solids) {
+        expect(lightnessOf(pale) - lightnessOf(solid)).toBeGreaterThanOrEqual(20);
+      }
+    }
   });
 
   it("keeps button labels legible on the accent in both themes", () => {
@@ -118,9 +137,9 @@ describe("streamer palette", () => {
           hueDist >= 30 ||
           (hueDist >= 10 && chromaGap >= 0.2) ||
           chromaGap >= 0.45 ||
-          // 밝은 얼음빛과 진한 색은 같은 계열이어도 한눈에 갈린다 — 명도대가
-          // 통째로 다르므로 색상 차가 작아도 헷갈리지 않는다.
-          (toneDiffers && hueDist >= 8);
+          // 밝은 얼음빛과 진한 색은 같은 색상이어도 한눈에 갈린다 — 명도대가
+          // 통째로 다르기 때문이다. 그 명도 간격은 아래 테스트가 지킨다.
+          toneDiffers;
         expect(distinguishable, `${a.id} vs ${b.id}`).toBe(true);
       }
     }

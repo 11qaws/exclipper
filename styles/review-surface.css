@@ -17,6 +17,7 @@
   /* accent — driven by the streamer palette via --ex-accent* */
   --rvw-accent: var(--ex-accent);
   --rvw-accent-on: var(--ex-accent-on);
+  --rvw-rail-end: var(--ex-rail-end);
   --rvw-accent-ink: var(--ex-accent-ink);
   --rvw-accent-bg: var(--ex-accent-bg);
   --rvw-accent-line: var(--ex-accent-line);
@@ -116,8 +117,10 @@
 
 /* ── Rail (toolbox; streamer identity on top) ─────────────── */
 .rvw-rail {
-  background: linear-gradient(170deg, var(--rvw-accent),
-    color-mix(in srgb, var(--rvw-accent) 80%, #000));
+  /* The end colour comes from the palette, not from a fixed mix: solid themes
+   * deepen, pale ones lighten toward white. Mixing everything with black was
+   * what made the ice blue grey. */
+  background: linear-gradient(170deg, var(--rvw-accent), var(--rvw-rail-end));
   display: flex;
   flex-direction: column;
   align-items: center;

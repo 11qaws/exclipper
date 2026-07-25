@@ -86,7 +86,7 @@ export const STREAMER_PALETTE_SEEDS: readonly StreamerPaletteSeed[] = [
   { id: "amoretto", name: "아모레또", kind: "streamer", hue: 344, chroma: 0.48 }, // dusty wine-mauve (BAR AMORE)
   { id: "eureka", name: "유레카", kind: "streamer", hue: 152, chroma: 0.95 }, // brand green-teal
   { id: "sena", name: "세나 아르벨", kind: "streamer", hue: 276, chroma: 0.5 }, // muted periwinkle-violet (beret)
-  { id: "torori", name: "토로리 코코", kind: "streamer", hue: 204, chroma: 0.78, tone: "pale" }, // 얼음빛 하늘색 (실측 hsl 204 55% 88%) — 밝은 것이 정체성이라 pale
+  { id: "torori", name: "토로리 코코", kind: "streamer", hue: 211, chroma: 1.04, tone: "pale" }, // 맑은 하늘빛 (공식 스케줄 아트 실측 hsl 212 75% 84%) — 밝고 선명한 것이 정체성이라 pale
   { id: "mangjing", name: "망징이", kind: "streamer", hue: 216, chroma: 1.05 }, // deeper blue
   { id: "violet", name: "클래식 바이올렛", kind: "extra", hue: 249, chroma: 1 }, // preserved original default
   { id: "amber", name: "앰버 · 골드", kind: "extra", hue: 40, chroma: 1.05 }, // preserved gold
@@ -109,6 +109,14 @@ export interface ThemeTokens {
   readonly ink3: string;
   readonly ink4: string;
   /**
+   * 레일 그라데이션의 끝 색.
+   *
+   * 진한 정체성은 예전처럼 검정 쪽으로 어두워진다. 밝은(pale) 정체성은 반대로
+   * **흰색 쪽으로 밝아진다** — 얼음은 어두워지며 탁해지는 게 아니라 빛으로
+   * 옅어진다. 검정을 섞으면 밝은 하늘빛이 회청색이 되어 정체성이 사라진다.
+   */
+  readonly railEnd: string;
+  /**
    * 채운 accent 위에 얹는 글자색.
    *
    * 다크에서 대비를 맞추려고 accent 를 어둡게 죽이면 스트리머 색이 사라진다.
@@ -129,12 +137,14 @@ export interface StreamerPalette {
 /*
  * `pale` identities keep their lightness because that lightness *is* the
  * colour. These sit just below the sampled brand value (토로리's ice blue reads
- * around L88) — far enough down that a dark label has room, high enough that
- * it still reads as ice rather than as a mid blue. Saturation is untouched:
- * pulling chroma out at high lightness is what turns ice into grey.
+ * around L84 in its own schedule art) — high enough to stay sky, low enough
+ * that a dark label still has room. Saturation is untouched and stays high:
+ * the brand blue is 75% saturated *and* 84% light at once. Draining chroma to
+ * make room for lightness is exactly what turns a clear sky blue into grey,
+ * and pulling the hue toward cyan turns it into a different colour entirely.
  */
-const PALE_LIGHT_L = 79;
-const PALE_DARK_L = 85;
+const PALE_LIGHT_L = 84;
+const PALE_DARK_L = 88;
 
 function hsl(h: number, s: number, l: number): string {
   const hue = ((h % 360) + 360) % 360;
@@ -192,6 +202,18 @@ function solveLightness(
     if (contrastWithWhite(h, s, l) >= target) return l;
   }
   return loL;
+}
+
+/** sRGB 선형 보간. CSS `color-mix(in srgb, ...)` 와 같은 결과를 값으로 만든다. */
+function mixSrgb(
+  [h, sat, l]: [number, number, number],
+  toward: [number, number, number],
+  keep: number,
+): string {
+  const a = hslToRgb(h, sat, l);
+  const out = a.map((c, i) => c * keep + (toward[i] ?? 0) * (1 - keep));
+  const to255 = (c: number): number => Math.round(Math.max(0, Math.min(1, c)) * 255);
+  return `rgb(${to255(out[0] ?? 0)} ${to255(out[1] ?? 0)} ${to255(out[2] ?? 0)})`;
 }
 
 function parseHsl(value: string): [number, number, number] | null {
@@ -261,21 +283,46 @@ export function buildStreamerPalette(seed: StreamerPaletteSeed): StreamerPalette
    * downward, because coloured *text* on a light ground has the opposite need.
    */
   const accentL = pale ? PALE_LIGHT_L : solveLightness(h, accentSat, 4.5);
+  const darkSatPreview = Math.min(100, accentSat + 8);
+  const darkAccentLPreview = pale ? PALE_DARK_L : 74;
   // Solved at the same saturation it is emitted with — solving at one chroma
   // and rendering at another silently misses the target.
   const inkL = solveLightness(h, accentSat, 6.5);
 
+  /*
+   * A pale identity is read as much from the room as from the accent: ice looks
+   * like ice when the surfaces around it are cold too. So pale themes carry a
+   * stronger tint in the neutrals — still low enough to read as white paper,
+   * high enough that the whole panel feels chilled rather than merely holding a
+   * blue button.
+   */
+  const tint = pale ? 1.55 : 1;
+
+  /*
+   * The rail is the largest area of pure identity on the screen, so how it
+   * shades decides how the colour is remembered. Solid themes deepen toward
+   * black as before. A pale theme lightens toward white instead: ice reads as
+   * light thinning out, and mixing it with black just makes grey.
+   */
+  const railEndLight = pale
+    ? mixSrgb([h, accentSat, accentL], [1, 1, 1], 0.42)
+    : mixSrgb([h, accentSat, accentL], [0, 0, 0], 0.8);
+  const railEndDark = pale
+    ? mixSrgb([h, darkSatPreview, darkAccentLPreview], [1, 1, 1], 0.5)
+    : mixSrgb([h, darkSatPreview, darkAccentLPreview], [0, 0, 0], 0.8);
+
   const light: ThemeTokens = {
     accent: hsl(h, accentSat, accentL),
+    railEnd: railEndLight,
     accentOn: solveAccentOn(h, accentSat, accentL),
     accentInk: hsl(h, accentSat, inkL),
-    accentBg: hsl(h, Math.min(60, accentSat), 94),
+    accentBg: hsl(h, Math.min(60, accentSat), pale ? 93 : 94),
     accentLine: hsl(h, Math.min(55, accentSat), 84),
     bg: hsl(h, 0, 100),
-    bg2: hsl(h, 22, 97),
-    bg3: hsl(h, 20, 93),
-    line: hsl(h, 18, 90),
-    line2: hsl(h, 20, 80),
+    bg2: hsl(h, 22 * tint, 97),
+    bg3: hsl(h, 20 * tint, 93),
+    line: hsl(h, 18 * tint, 90),
+    line2: hsl(h, 20 * tint, 80),
     ink: hsl(h, 30, 13),
     ink2: hsl(h, 20, 32),
     ink3: hsl(h, 14, 48),
@@ -289,7 +336,6 @@ export function buildStreamerPalette(seed: StreamerPaletteSeed): StreamerPalette
    * it clears the dark surface, since on this ground the danger is text that is
    * too dark rather than too light.
    */
-  const darkSat = Math.min(100, accentSat + 8);
   const darkBg = hsl(h, 30, 14);
 
   /*
@@ -304,7 +350,7 @@ export function buildStreamerPalette(seed: StreamerPaletteSeed): StreamerPalette
    * already-muted identities (아모레또 43, 세나 44) keep their chroma and gain
    * their legibility from lightness instead. One rule, distributed by need.
    */
-  const darkInkSat = Math.min(darkSat, 52);
+  const darkInkSat = Math.min(darkSatPreview, 52);
   let darkInkL = 80;
   for (let l = 55; l <= 96; l += 1) {
     if (contrastBetween(hsl(h, darkInkSat, l), darkBg) >= 7) {
@@ -313,19 +359,22 @@ export function buildStreamerPalette(seed: StreamerPaletteSeed): StreamerPalette
     }
   }
 
-  const darkAccentL = pale ? PALE_DARK_L : 74;
+  const darkSat = darkSatPreview;
+  const darkAccentL = darkAccentLPreview;
+
 
   const dark: ThemeTokens = {
     accent: hsl(h, darkSat, darkAccentL),
+    railEnd: railEndDark,
     accentOn: solveAccentOn(h, darkSat, darkAccentL),
     accentInk: hsl(h, darkInkSat, darkInkL),
     accentBg: hsl(h, 42, 21),
     accentLine: hsl(h, 40, 35),
     bg: darkBg,
-    bg2: hsl(h, 34, 9),
-    bg3: hsl(h, 28, 20),
-    line: hsl(h, 26, 24),
-    line2: hsl(h, 26, 34),
+    bg2: hsl(h, 34 * tint, 9),
+    bg3: hsl(h, 28 * tint, 20),
+    line: hsl(h, 26 * tint, 24),
+    line2: hsl(h, 26 * tint, 34),
     ink: hsl(h, 24, 93),
     ink2: hsl(h, 18, 84),
     ink3: hsl(h, 14, 66),
@@ -352,5 +401,6 @@ export function accentCssVars(theme: ThemeTokens): Record<string, string> {
     "--ex-accent-ink": theme.accentInk,
     "--ex-accent-bg": theme.accentBg,
     "--ex-accent-line": theme.accentLine,
+    "--ex-rail-end": theme.railEnd,
   };
 }
