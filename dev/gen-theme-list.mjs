@@ -4,11 +4,10 @@
  *
  *   npx tsx dev/gen-theme-list.mjs
  *
- * Three arrangements of the same row, rendered side by side in light and dark,
- * so the choice is made by looking rather than by arguing. Every row prints the
- * measured contrast of its own text against its own composited background —
- * a translucent colour over a photo is exactly the case where the eye cannot
- * tell whether the text is still legible.
+ * Two arrangements of the same row, rendered light and dark, plus a focus tuning
+ * strip. Every row prints the measured contrast of its own text against its own
+ * composited background — a translucent colour over a photo is exactly the case
+ * where the eye cannot tell whether the text is still legible.
  */
 import { writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -19,6 +18,7 @@ import {
   compositeOver,
   contrastOfRgb,
 } from "../src/app/streamerPalette.ts";
+import { streamerPortraitCrop } from "../src/app/streamerProfiles.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -49,10 +49,6 @@ const TINT = { light: 0.14, dark: 0.22 };
 
 const palettes = buildAllStreamerPalettes();
 
-function initial(name) {
-  return name.replace(/^기본 · /, "").trim().charAt(0);
-}
-
 /**
  * 글자가 실제로 놓이는 색을 계산한다. 사진 쪽이 아니라 **글자가 있는 쪽**의
  * 배경이다 — 사진 위에는 글자를 두지 않는 것이 이 설계의 전제다.
@@ -70,79 +66,94 @@ function badge(value, floor) {
   return `<i class="${ok ? "ok" : "no"}">${value.toFixed(2)}</i>`;
 }
 
+function bleed(p, extraClass = "") {
+  const file = IMG[p.id];
+  if (!file) return "";
+  const { focus, zoom } = streamerPortraitCrop(p.name);
+  // 초점 하나가 background-position 과 transform-origin 을 둘 다 정한다 —
+  // 어긋나면 당길수록 눈이 밖으로 밀려난다.
+  return `<div class="bleed ${extraClass}" style="background-image:url('../public/streamers/${file}');--focus:${focus};--zoom:${zoom}"></div>`;
+}
+
 /**
  * 안 A — 사진이 오른쪽 끝에서 흘러나오고, 글자 쪽은 평평한 테마색이 덮는다.
- * 참고 이미지가 실제로 하는 일이다. 글자는 절대 사진 위에 놓이지 않는다.
+ * 원형 아이콘은 뺐다: 같은 얼굴을 한 행에 두 번 보여 줄 이유가 없고, 원형이
+ * 글자 앞을 차지하면 이름이 쓸 자리가 줄어든다.
  */
 function rowA(p) {
-  const file = IMG[p.id];
   return `<div class="row a${p.id === "amoretto" ? " on" : ""}">
-  ${file ? `<div class="bleed" style="background-image:url('../public/streamers/${file}')"></div>` : ""}
+  <div class="rail"></div>
+  ${bleed(p)}
   <div class="scrim"></div>
   <div class="txt"><b>${p.name}</b><span>${SUBTITLE[p.id]}</span></div>
-  <div class="chip">${file ? `<img src="../public/streamers/${file}" alt="">` : initial(p.name)}</div>
-</div>`;
-}
-
-/**
- * 안 B — 사진이 행 전체에 아주 옅게 깔리고, 그 위를 반투명 테마색이 덮는다.
- * 사진이 분위기로만 남는 대신, 글자 뒤 밝기가 사진 내용에 따라 흔들린다.
- */
-function rowB(p) {
-  const file = IMG[p.id];
-  return `<div class="row b${p.id === "amoretto" ? " on" : ""}">
-  ${file ? `<div class="wash" style="background-image:url('../public/streamers/${file}')"></div>` : ""}
-  <div class="tint"></div>
-  <div class="chip">${file ? `<img src="../public/streamers/${file}" alt="">` : initial(p.name)}</div>
-  <div class="txt"><b>${p.name}</b><span>${SUBTITLE[p.id]}</span></div>
-</div>`;
-}
-
-/**
- * 안 C — 왼쪽에 또렷한 원형 사진, 행은 평평한 반투명 테마색, 사진은 오른쪽에
- * 크게 흐려져 배경으로 한 번 더. 노출과 배경 두 역할을 분리한다.
- */
-function rowC(p) {
-  const file = IMG[p.id];
-  return `<div class="row c${p.id === "amoretto" ? " on" : ""}">
-  ${file ? `<div class="blur" style="background-image:url('../public/streamers/${file}')"></div>` : ""}
-  <div class="tint"></div>
-  <div class="chip">${file ? `<img src="../public/streamers/${file}" alt="">` : initial(p.name)}</div>
-  <div class="txt"><b>${p.name}</b><span>${SUBTITLE[p.id]}</span></div>
-  <div class="tickwrap"></div>
 </div>`;
 }
 
 const VARIANTS = [
-  { key: "a", title: "안 A · 사진이 오른쪽에서 흘러나옴", note: "참고 이미지 방식. 글자 쪽은 평평한 색", build: rowA },
-  { key: "b", title: "안 B · 사진이 행 전체에 깔림", note: "분위기는 강하지만 글자 뒤 밝기가 사진에 좌우됨", build: rowB },
-  { key: "c", title: "안 C · 또렷한 원형 + 흐린 배경", note: "노출과 배경을 분리", build: rowC },
+  {
+    title: "확정 형태 · 사진이 오른쪽에서 흘러나옴",
+    note: "왼쪽 색 띠 + 평평한 글자 배경 — 대비가 계산으로 보장됨 (최저 5.82)",
+    build: rowA,
+  },
 ];
+
+function themeVars(theme, mode) {
+  return [
+    `--accent:${theme.accent}`,
+    `--ink:${theme.ink}`,
+    `--ink2:${theme.ink2}`,
+    `--bg2:${theme.bg2}`,
+    `--bg3:${theme.bg3}`,
+    `--rail-start:${theme.railStart}`,
+    `--rail-end:${theme.railEnd}`,
+    `--tint:${TINT[mode]}`,
+  ].join(";");
+}
 
 function panel(variant, mode) {
   const rows = palettes
     .map((p) => {
       const theme = p[mode];
-      const vars = [
-        `--accent:${theme.accent}`,
-        `--ink:${theme.ink}`,
-        `--ink2:${theme.ink2}`,
-        `--bg2:${theme.bg2}`,
-        `--bg3:${theme.bg3}`,
-        `--line:${theme.line2}`,
-        `--tint:${TINT[mode]}`,
-      ].join(";");
       const c = textContrast(theme, mode);
-      return `<div class="slot" style="${vars}">
+      return `<div class="slot" style="${themeVars(theme, mode)}">
 ${variant.build(p)}
 <div class="meas">이름 ${badge(c.name, 4.5)} · 설명 ${badge(c.sub, 4.5)}</div>
 </div>`;
     })
     .join("\n");
   const t = palettes[0][mode];
-  return `<section class="panel ${mode}" style="--pbg:${t.bg};--pink:${t.ink};--pline:${t.line2}">
+  return `<section class="panel" style="--pbg:${t.bg};--pink:${t.ink}">
 <header><b>${variant.title}</b><span>${mode === "light" ? "라이트" : "다크"} · ${variant.note}</span></header>
 <div class="list">${rows}</div>
+</section>`;
+}
+
+/**
+ * 초점 조정용. 원본과 행 비율로 자른 결과를 나란히 놓고, 행의 세로 가운데에
+ * 가로선을 그어 눈이 그 근처에 오는지 보이게 한다. 값이 안 맞으면 여기서 먼저
+ * 티가 난다.
+ */
+function focusStrip() {
+  const cards = palettes
+    .filter((p) => IMG[p.id])
+    .map((p) => {
+      const { focus, zoom } = streamerPortraitCrop(p.name);
+      // 확대를 여기서도 그대로 적용해야 한다. 안 하면 이 칸이 행과 다른 그림을
+      // 보여 주면서 맞다고 말하게 된다.
+      return `<div class="fcard" style="${themeVars(p.light, "light")}">
+  <div class="fsrc" style="background-image:url('../public/streamers/${IMG[p.id]}')"></div>
+  <div class="fcrop">
+    <div class="fimg" style="background-image:url('../public/streamers/${IMG[p.id]}');--focus:${focus};--zoom:${zoom}"></div>
+    <div class="feye"></div>
+  </div>
+  <div class="fname">${p.name}</div>
+  <div class="fval">${focus} · ×${zoom}</div>
+</div>`;
+    })
+    .join("\n");
+  return `<section class="fpanel">
+<header><b>초점 조정 — 눈이 남았는가</b><span>왼쪽 원본 · 오른쪽은 행과 같은 비율로 자른 결과 · 빨간 가로선이 행의 세로 가운데</span></header>
+<div class="fgrid">${cards}</div>
 </section>`;
 }
 
@@ -153,8 +164,9 @@ const CSS = `
 *{box-sizing:border-box}
 body{margin:0;padding:22px;background:#12141a;font-family:"Pretendard",sans-serif;color:#e6e9f2}
 h1{font-size:15px;margin:0 0 4px}
-.lead{font-size:12px;color:#98a0b5;margin:0 0 18px;line-height:1.6;max-width:76ch}
-.grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}
+.lead{font-size:12px;color:#98a0b5;margin:0 0 18px;line-height:1.6;max-width:80ch}
+.lead code{font:11px "SFMono-Regular",monospace;background:#1d212b;padding:1px 5px;border-radius:4px}
+.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin-bottom:18px;max-width:920px}
 .panel{background:var(--pbg);border-radius:14px;padding:12px;min-width:0}
 .panel header{display:flex;flex-direction:column;gap:2px;margin-bottom:10px;padding:0 2px}
 .panel header b{font-size:12px;color:var(--pink)}
@@ -166,55 +178,58 @@ h1{font-size:15px;margin:0 0 4px}
 .meas .ok{color:#5fbf87}.meas .no{color:#e0736b}
 
 /* 공통 행 */
-.row{position:relative;height:56px;border-radius:10px;overflow:hidden;display:flex;align-items:center;isolation:isolate;cursor:pointer}
+.row{position:relative;height:74px;border-radius:10px;overflow:hidden;display:flex;align-items:center;isolation:isolate;cursor:pointer}
+/* 왼쪽 색 띠 — 카드 폼의 레일과 같은 그라디언트를 짧게. 사진이 없는 테마에서는
+   이것이 유일한 정체성이라 항상 그린다. */
+.row .rail{position:absolute;inset:0 auto 0 0;width:7px;z-index:3;background:linear-gradient(170deg,var(--rail-start),var(--rail-end))}
 .row .txt{position:relative;z-index:3;display:flex;flex-direction:column;gap:1px;min-width:0}
 .row .txt b{font-size:13px;font-weight:800;color:var(--ink);line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 /* 설명은 ink2 다. ink3 는 평평한 배경 기준으로 잡힌 색이라 틴트를 얹으면
    라이트 전 테마에서 4.5:1 아래로 떨어진다(실측 3.21~4.12). */
 .row .txt span{font-size:10px;font-weight:600;color:var(--ink2);letter-spacing:.02em}
-.row .chip{position:relative;z-index:3;width:34px;height:34px;border-radius:50%;overflow:hidden;flex:none;background:var(--bg3);display:grid;place-items:center;font-weight:800;font-size:14px;color:var(--accent);box-shadow:0 0 0 2px color-mix(in srgb,var(--accent) 30%,transparent)}
-.row .chip img{width:100%;height:100%;object-fit:cover}
+.row .bleed{background-size:cover;background-repeat:no-repeat;
+  background-position:var(--focus,50% 50%);transform:scale(var(--zoom,1));transform-origin:var(--focus,50% 50%)}
 .row.on{box-shadow:inset 0 0 0 2px var(--accent)}
 
-/* 안 A */
-.row.a{padding:0 0 0 14px}
-.row.a .bleed{position:absolute;inset:0 0 0 auto;width:52%;z-index:1;background-size:cover;background-position:center 22%}
+.row.a{padding:0 0 0 19px}
+.row.a .bleed{position:absolute;inset:0 0 0 auto;width:52%;z-index:1}
 .row.a .scrim{position:absolute;inset:0;z-index:2;background:linear-gradient(90deg,
   color-mix(in srgb,var(--accent) calc(var(--tint)*100%),var(--bg2)) 0%,
   color-mix(in srgb,var(--accent) calc(var(--tint)*100%),var(--bg2)) 46%,
   color-mix(in srgb,var(--accent) calc(var(--tint)*70%),transparent) 72%,
   transparent 100%)}
-.row.a .chip{margin-left:auto;margin-right:12px;box-shadow:0 2px 8px rgba(0,0,0,.28)}
 
-/* 안 B */
-.row.b{padding:0 12px;gap:10px}
-.row.b .wash{position:absolute;inset:0;z-index:1;background-size:cover;background-position:center 20%;opacity:.5}
-.row.b .tint{position:absolute;inset:0;z-index:2;background:color-mix(in srgb,var(--accent) calc(var(--tint)*100%),var(--bg2));opacity:.88}
-
-/* 안 C */
-.row.c{padding:0 12px;gap:10px}
-.row.c .blur{position:absolute;inset:0 0 0 auto;width:60%;z-index:1;background-size:cover;background-position:center 20%;filter:blur(9px);opacity:.42;
-  -webkit-mask-image:linear-gradient(90deg,transparent,#000 55%);mask-image:linear-gradient(90deg,transparent,#000 55%)}
-.row.c .tint{position:absolute;inset:0;z-index:2;background:linear-gradient(90deg,
-  color-mix(in srgb,var(--accent) calc(var(--tint)*100%),var(--bg2)) 0%,
-  color-mix(in srgb,var(--accent) calc(var(--tint)*100%),var(--bg2)) 55%,
-  color-mix(in srgb,var(--accent) calc(var(--tint)*80%),transparent) 100%)}
-.row.c .tickwrap{margin-left:auto}
+/* 초점 조정 */
+.fpanel{background:#191c24;border-radius:14px;padding:14px}
+.fpanel header{display:flex;flex-direction:column;gap:2px;margin-bottom:12px}
+.fpanel header b{font-size:12px}
+.fpanel header span{font-size:10px;color:#8b93a8}
+.fgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:14px}
+.fcard{display:grid;grid-template-columns:74px 1fr;grid-template-rows:auto auto;gap:4px 10px;align-items:start}
+.fsrc{grid-row:1/3;width:74px;height:74px;border-radius:8px;background-size:cover;background-position:center;background-color:#0d0f14}
+.fcrop{position:relative;height:74px;border-radius:8px;overflow:hidden;background:#0d0f14}
+.fimg{position:absolute;inset:0;background-size:cover;background-repeat:no-repeat;
+  background-position:var(--focus,50% 50%);transform:scale(var(--zoom,1));transform-origin:var(--focus,50% 50%)}
+.feye{position:absolute;left:0;right:0;top:50%;height:1px;background:rgba(255,80,80,.85);z-index:2}
+.fname{font-size:11px;font-weight:700;align-self:end}
+.fval{font:10px "SFMono-Regular",monospace;color:#8b93a8;grid-column:2}
 `;
 
 const html = `<!doctype html><html lang="ko"><head><meta charset="utf-8">
-<title>테마 사이드 리스팅 · 안 비교</title><style>${CSS}</style></head><body>
-<h1>슬라이드인 테마 목록 — 사이드 리스팅 3안</h1>
-<p class="lead">요소: 이름 표기 · 대표 이미지 노출 · 반투명 테마색 · 반투명 배경 대표 이미지.
-행마다 아래에 <b>실측 대비</b>를 적었다 — 글자가 놓이는 쪽 배경(테마색을 <code>bg2</code> 위에 반투명으로 합성한 색)에 대한 값이며,
-초록은 4.5:1 이상이다. 사진 위에는 글자를 두지 않는 것이 세 안 공통 전제다.
-선택된 상태는 아모레또 행에만 표시했다.</p>
+<title>테마 사이드 리스팅</title><style>${CSS}</style></head><body>
+<h1>슬라이드인 테마 목록 — 사이드 리스팅</h1>
+<p class="lead">왼쪽 색 띠는 <b>카드 폼의 레일과 같은 그라디언트</b>다 — 같은 정체성을 두 화면에서 다른 모양으로 보여 주면 같은 것인지 알아보지 못하므로 폭만 줄였다.
+사진이 없는 테마에서는 이 띠가 유일한 정체성이라 항상 그린다.
+초점과 확대는 그림마다 다르다(<code>src/app/streamerProfiles.ts</code> 의 <code>PORTRAIT_CROP_BY_NAME</code>).
+<b>값을 맞추는 것은 <code>dev/focus-picker.html</code> 에서 한다</b> — 눈을 눌러 지정하고 코드를 복사해 붙인다.
+아래 <b>초점 조정</b> 칸의 빨간 가로선은 행의 세로 가운데이며, 지금 값이 어떤지 확인하는 용도다.</p>
 <div class="grid">
 ${VARIANTS.map((v) => panel(v, "light")).join("\n")}
 ${VARIANTS.map((v) => panel(v, "dark")).join("\n")}
 </div>
+${focusStrip()}
 </body></html>
 `;
 
 writeFileSync(join(here, "theme-list.html"), html, "utf8");
-console.log("dev/theme-list.html 생성됨 · 테마 " + palettes.length + "종 × 3안 × 라이트/다크");
+console.log("dev/theme-list.html 생성됨 · 테마 " + palettes.length + "종 × 라이트/다크 + 초점 조정");

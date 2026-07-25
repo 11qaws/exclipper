@@ -12,6 +12,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
 import { buildAllStreamerPalettes } from "../src/app/streamerPalette.ts";
+import { streamerPortraitCrop } from "../src/app/streamerProfiles.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -51,21 +52,24 @@ function tokens(theme, mode) {
     `--uf-surface:${theme.bg}`,
     `--uf-surface2:${theme.bg2}`,
     `--uf-line:${theme.line2}`,
+    `--uf-row-rail-start:${theme.railStart}`,
+    `--uf-row-rail-end:${theme.railEnd}`,
     `--uf-row-tint:${TINT[mode]}`,
   ].join(";");
 }
 
-function initial(name) {
-  return name.replace(/^기본 · /, "").trim().charAt(0);
-}
-
 function row(p, selected) {
   const file = IMG[p.id];
+  // 초점과 확대는 그림마다 다르다 — 눈이 남아야 누구인지 알아본다.
+  const { focus, zoom } = streamerPortraitCrop(p.name);
+  const bleed = file
+    ? `<span class="uf-row__bleed" style="background-image:url('../public/streamers/${file}');--uf-row-focus:${focus};--uf-row-zoom:${zoom}"></span>`
+    : "";
   return `<button class="uf-row" aria-pressed="${selected ? "true" : "false"}">
-  ${file ? `<span class="uf-row__bleed" style="background-image:url('../public/streamers/${file}')"></span>` : ""}
+  <span class="uf-row__rail"></span>
+  ${bleed}
   <span class="uf-row__scrim"></span>
   <span class="uf-row__text"><b>${p.name}</b><span>${SUBTITLE[p.id]}</span></span>
-  <span class="uf-row__mark">${file ? `<img src="../public/streamers/${file}" alt="">` : initial(p.name)}</span>
 </button>`;
 }
 
