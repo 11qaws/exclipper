@@ -1,747 +1,685 @@
-# Graph Report - workspace  (2026-07-23)
+# Graph Report - .  (2026-07-25)
 
 ## Corpus Check
-- 211 files · ~267,331 words
+- 231 files · ~0 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 2804 nodes · 6120 edges · 152 communities (134 shown, 18 thin omitted)
-- Extraction: 99% EXTRACTED · 1% INFERRED · 0% AMBIGUOUS · INFERRED: 74 edges (avg confidence: 0.61)
+- 2855 nodes · 6690 edges · 146 communities (125 shown, 21 thin omitted)
+- Extraction: 99% EXTRACTED · 1% INFERRED · 0% AMBIGUOUS · INFERRED: 73 edges (avg confidence: 0.61)
 - Token cost: 0 input · 0 output
 
-## Graph Freshness
-- Built from commit: `e50f7cc3`
-- Run `git rev-parse HEAD` and compare to check if the graph is stale.
-- Run `graphify update .` after code changes (no API cost).
-
 ## Community Hubs (Navigation)
-- candidateBoundaryRevision.ts
-- highlightFusion.ts
-- candidateRanking.ts
-- candidateAudioEventRun.ts
-- candidatePassBRun.ts
-- durableAnalysisPayload.ts
-- candidateAudioEvent.ts
-- candidateEvidenceExplanation.ts
-- App.tsx
-- candidateAudioEvent.worker.ts
-- candidateAudioEventWorkerClient.ts
-- rejectedOperation
-- analysisRun.ts
-- localAudioReactionAnalysis.test.ts
-- analysisResultStore.ts
-- candidateAudioEventWorkerProtocol.ts
-- localAudioReactionAnalysisCore.ts
-- localFileFingerprint.ts
-- candidatePassBWorkerClient.ts
-- chatImport.ts
-- AnalysisResultStore
-- compilerOptions
-- 사람 중심 후보 검토
-- candidatePassB.worker.ts
-- candidatePassBWorkerProtocol.ts
-- candidateAudioEventWorkerClient.test.ts
-- decodeAndScore
-- candidatePassB.ts
-- localMediaPreflight.ts
-- localVideoVisualAnalysis.ts
-- candidatePassBGemini.ts
-- candidatePassBPresentation.ts
-- localVideoVisualAnalysisCore.ts
-- AnalysisRun State Machine
-- 로컬 데이터·비밀정보 보안 경계
-- analysisResultStore.test.ts
-- candidatePassBWorkerClient.test.ts
-- highlightSelector.ts
-- compilerOptions
-- evaluate-local-audio-fast-pass.mjs
-- aiProviderConfiguration.ts
-- candidateMerge.ts
-- sourceCheck.ts
-- broadcastTopicalDiscovery.ts
-- loadVideoMetadata
-- broadcastTranscriptWorkerClient.ts
-- runChatAnalysisWorker
-- devDependencies
-- broadcastContextProtocol.ts
-- localVideoVisualAnalysis.test.ts
-- contextAwareCandidateSelection.ts
-- eventFence.ts
-- analysisBudgetPolicy.ts
-- chatAnalysisWorkerClient.ts
-- aiProxy.worker.ts
-- FakeVideoProbe
-- broadcastTranscript.worker.ts
-- broadcastTranscriptWorkerClient.test.ts
-- candidateReviewFeatureAvailability.ts
-- localAudioReactionAnalysis.ts
-- FakeVideoProbe
-- dependencies
-- scripts
-- broadcastContextDeepseekClient.ts
-- clipRenderer.ts
-- candidatePassBRuntime.ts
-- candidatePassBInsightStore.ts
-- ExClipper
-- highlightExport.ts
-- candidateVideoFrames.ts
-- smoke-gemini-proxy.mjs
-- cleanupResources
-- LocalMediaPreflightAdapters
-- package.json
-- Q: Where should grounded VTuber participant identity be added without changing highlight ranking?
-- LocalVideoVisualAnalysisAdapters
-- Q: 세팅하려면 이제 뭐가 필요하지
-- CandidatePassBWorkerFailureReason
-- Q: How do durable analysis records prevent raw chat and nickname leakage through arbitrary nested fields?
-- Q: 현재의 하이라이트 검출은 무슨 기준을 사용하고 있지
-- Q: 스트리머 반응 중심 목표 대비 현재 하이라이트 검출 신호의 적합성, 오탐, 미탐, 다음 구조를 감사
-- Q: 근데 클립이란건 스트리머의 반응을 보는거지 화려한 연출을 보는게 아니야. 이게 맞는 접근인지 알려진 다른 사례들과 함께 확인해
-- Q: 0.3 오디오 반응부터 설명·저장·내보내기까지의 경로
-- Q: Candidate Pass B 구조가 App, Worker, provisional evidence, finalizing 완료 fence를 어떻게 연결하는가?
-- Q: Trace candidate array order consumers and design CandidateRankingProposal lifecycle
-- Q: 0.3.5 후보 재정렬 제안은 canonical 후보, 정밀 근거, 검토·경계·미리보기·export를 어떻게 안전하게 분리해야 하는가?
-- Q: Beginner UX audit for per-candidate event and reaction explanations including evidence lifecycle states.
-- Q: 현재 v0.3.6 미커밋 diff를 초심자 UI/UX, 접근성, 모바일, 과장 표현 관점에서 다시 읽기 전용 감사해 주세요. App.tsx, styles/retto-highlight.css, README와 새 설명 모듈을 보되 수정은 하지 말고 P0/P1/P2만 파일·라인 근거로 보고하세요. 이전 지적이 실제로 해결됐는지도 확인하세요.
-- Q: 현재 v0.3.6 미커밋 diff를 초심자 UI/UX, 접근성, 모바일, 과장 표현 관점에서 다시 읽기 전용 감사해 주세요. App.tsx, styles/retto-highlight.css, README와 새 설명 모듈을 보되 수정은 하지 말고 P0/P1/P2만 파일·라인 근거로 보고하세요. 이전 지적이 실제로 해결됐는지도 확인하세요.
-- Q: 후보별 사건·반응 설명을 어떤 근거 경계로 구현하고 UI에 연결해야 하나?
-- Q: 현재 repo에서 local Whisper CandidatePassB 흐름을 Gemini API 기반 후보 오디오 전사/사건 설명으로 교체하거나 병행하는 최소 안전 수직 슬라이스
-- Q: How does App start Gemini candidate analysis and keep the response fenced from canonical editing state?
-- Q: Should v0.3.6 add a Korean text generator or deterministic evidence explanation?
-- FakeInput
-- broadcastTranscriptQwenClient.ts
-- IndexedDbAnalysisResultStore
-- tsconfig.json
-- highlightSelector.test.ts
-- evaluate-live-caption-context.mjs
-- evaluate-caption-selection.mjs
-- Q: Where is the model routing policy disconnected from runtime, and which paths control provider fallback?
-- broadcastSelectionProtocol.ts
-- vite
-- broadcastContextSamplingPlan.ts
-- eslint.config.js
-- MAX_CANDIDATE_AUDIO_EVENT_CANDIDATES
-- vite-env.d.ts
-- vite.config.ts
-- vitest.config.ts
-- aiProxy.worker.test.ts
-- candidatePassBEvidenceState.ts
-- sampleEvaluationContract.ts
-- audioReactionAnalysis.worker.ts
-- candidatePassBQwenOmni.ts
-- handleBroadcastTranscriptRequest
-- highlightNarrative.ts
-- @emnapi/runtime
-- recoverableAnalysisResults.test.ts
-- appendHiddenElement
-- discoveredLeadRefinement.ts
-- eslint
-- captionCandidateEvidence.ts
-- @types/react
-- candidatePassBModelDownloadProgress.ts
-- runCandidateAudioEventWorker
-- Q: Audit candidate selection, context, music filtering, participant identity, transcript transport, and timeline architecture.
-- LocalMediaPreflightError
-- broadcastContextTimelinePresentation.ts
-- WindowPcmBuilder
-- isRecord
-- CandidatePassBVideoFrame
-- Q: How should ExClipper distinguish semantic chapter and lead states on the restored timeline?
-- broadcastTranscriptChapters.ts
-- broadcastTranscriptQwen.ts
-- evaluate-caption-refinement.mjs
-- broadcastContextSessionStore.ts
-- localMediaPreflight.test.ts
-- semanticLeadCandidate.ts
-- candidatePassBInsightStore.test.ts
-- summarizeCandidatePassBAudioGate
-- evaluate-caption-context.mjs
-- smoke-broadcast-transcript.mjs
-- QWEN_CANDIDATE_MODEL_ID
-- @eslint/js
-- eslint-plugin-react-refresh
-- @types/node
-- @eslint/js
+- Community 0
+- Community 1
+- Community 2
+- Community 3
+- Community 4
+- Community 5
+- Community 6
+- Community 7
+- Community 8
+- Community 9
+- Community 10
+- Community 11
+- Community 12
+- Community 13
+- Community 14
+- Community 15
+- Community 16
+- Community 17
+- Community 18
+- Community 19
+- Community 20
+- Community 21
+- Community 22
+- Community 23
+- Community 24
+- Community 25
+- Community 26
+- Community 27
+- Community 28
+- Community 29
+- Community 30
+- Community 31
+- Community 32
+- Community 33
+- Community 34
+- Community 35
+- Community 36
+- Community 37
+- Community 38
+- Community 39
+- Community 40
+- Community 41
+- Community 42
+- Community 43
+- Community 44
+- Community 45
+- Community 46
+- Community 47
+- Community 48
+- Community 49
+- Community 50
+- Community 51
+- Community 52
+- Community 53
+- Community 54
+- Community 55
+- Community 56
+- Community 57
+- Community 58
+- Community 59
+- Community 60
+- Community 61
+- Community 62
+- Community 63
+- Community 64
+- Community 65
+- Community 66
+- Community 67
+- Community 68
+- Community 69
+- Community 70
+- Community 71
+- Community 72
+- Community 73
+- Community 74
+- Community 75
+- Community 76
+- Community 77
+- Community 78
+- Community 79
+- Community 80
+- Community 81
+- Community 82
+- Community 83
+- Community 84
+- Community 85
+- Community 86
+- Community 87
+- Community 88
+- Community 89
+- Community 90
+- Community 91
+- Community 92
+- Community 93
+- Community 94
+- Community 95
+- Community 96
+- Community 97
+- Community 98
+- Community 99
+- Community 100
+- Community 101
+- Community 102
+- Community 103
+- Community 104
+- Community 105
+- Community 106
+- Community 107
+- Community 108
+- Community 109
+- Community 110
+- Community 111
+- Community 112
+- Community 113
+- Community 114
+- Community 115
+- Community 116
+- Community 117
+- Community 118
+- Community 119
+- Community 120
+- Community 121
+- Community 122
+- Community 123
+- Community 124
+- Community 125
+- Community 126
+- Community 127
+- Community 128
+- Community 129
+- Community 130
+- Community 131
+- Community 132
+- Community 133
+- Community 134
+- Community 135
+- Community 136
+- Community 137
+- Community 140
+- Community 141
+- Community 142
 
 ## God Nodes (most connected - your core abstractions)
-1. `App()` - 138 edges
+1. `App()` - 165 edges
 2. `IndexedDbAnalysisResultStore` - 27 edges
-3. `analyzeLocalVideoVisuals()` - 24 edges
-4. `rejectedOperation()` - 24 edges
-5. `InMemoryAnalysisResultStore` - 23 edges
-6. `invalid()` - 23 edges
-7. `compilerOptions` - 23 edges
-8. `AnalysisResultStore` - 21 edges
-9. `extractBroadcastContextDeepseekResponse()` - 20 edges
-10. `runCandidatePassBWorker()` - 20 edges
+3. `UnifiedHighlightCandidate` - 24 edges
+4. `analyzeLocalVideoVisuals()` - 24 edges
+5. `rejectedOperation()` - 24 edges
+6. `InMemoryAnalysisResultStore` - 23 edges
+7. `invalid()` - 23 edges
+8. `compilerOptions` - 23 edges
+9. `extractBroadcastContextDeepseekResponse()` - 21 edges
+10. `handleBroadcastTranscriptRequest()` - 21 edges
 
 ## Surprising Connections (you probably didn't know these)
-- `불변 StreamSaver CSS 기준과 Retto 오버라이드` --conceptually_related_to--> `개인용 제품 production 출시 기준`  [INFERRED]
-  AGENTS.md → OPERATIONS.md
-- `0.3.0 문서 정합성과 미커밋 기록` --conceptually_related_to--> `개인용 제품 production 출시 기준`  [INFERRED]
-  DEVELOPMENT_LOG.md → OPERATIONS.md
 - `requestContext()` --calls--> `createBroadcastContextRequest()`  [EXTRACTED]
   scripts/evaluate-live-caption-context.mjs → src/analysis/broadcastContextProtocol.ts
-- `main()` --calls--> `selectAudioReactionHighlights()`  [EXTRACTED]
-  scripts/evaluate-local-audio-fast-pass.mjs → src/media/localAudioReactionAnalysisCore.ts
-- `App()` --indirect_call--> `chunks()`  [INFERRED]
-  src/App.tsx → src/analysis/broadcastContextExploration.test.ts
+- `row()` --calls--> `contrastBetween()`  [EXTRACTED]
+  dev/gen-palettes.mjs → src/app/streamerPalette.ts
+- `parseChatImport()` --indirect_call--> `row()`  [INFERRED]
+  src/analysis/chatImport.ts → dev/gen-palettes.mjs
+- `rowsFromJsonContainer()` --indirect_call--> `row()`  [INFERRED]
+  src/analysis/chatImport.ts → dev/gen-palettes.mjs
+- `buildFastPassCandidates()` --calls--> `calculateTemporalEventDensity()`  [EXTRACTED]
+  scripts/evaluate-live-caption-context.mjs → src/analysis/temporalPointProcess.ts
 
 ## Import Cycles
 - None detected.
 
-## Hyperedges (group relationships)
-- **계층형 AI 하이라이트 분석 파이프라인** — product_plan_analysis_orchestrator, product_plan_fast_pass, product_plan_candidate_recall, product_plan_deep_pass, product_plan_multimodal_fusion, product_plan_boundary_refinement, product_plan_candidate_diversity [EXTRACTED 1.00]
+## Communities (146 total, 21 thin omitted)
 
-## Communities (152 total, 18 thin omitted)
-
-### Community 0 - "candidateBoundaryRevision.ts"
-Cohesion: 0.10
-Nodes (53): ANALYSIS_INPUT_KEYS, asPlainRecord(), assertAudioEvidence(), assertAudioGapReason(), assertBoolean(), assertCandidate(), assertChatEvidence(), assertChatInput() (+45 more)
-
-### Community 1 - "highlightFusion.ts"
+### Community 0 - "Community 0"
 Cohesion: 0.06
-Nodes (71): attachVisualContext(), AUDIO_EVENT_KINDS, AudioHighlightCandidate, AudioHighlightCandidateEvidence, AudioReactionEventKind, canonicalSignalKinds(), clamp(), compareDrafts() (+63 more)
+Nodes (73): BroadcastContextDiscoveredLeadCategory, attachVisualContext(), AUDIO_EVENT_KINDS, AudioHighlightCandidate, AudioHighlightCandidateEvidence, AudioReactionEventKind, canonicalSignalKinds(), clamp() (+65 more)
 
-### Community 2 - "candidateRanking.ts"
-Cohesion: 0.05
-Nodes (63): mapWithConcurrency(), BROADCAST_TRANSCRIPT_ACTIVE_MODEL_REVISION, candidateAudioEventKindLabel(), CandidateEvidenceUnknown, AnalysisCoverageSummary, AnalysisGapApprovalEvidence, analysisRunLabel(), AnalysisSelectionSummary (+55 more)
+### Community 1 - "Community 1"
+Cohesion: 0.06
+Nodes (65): UnifiedHighlightCandidate, audienceReactionExplanation(), audioRange(), buildHighlightNarrative(), chatRange(), eventExplanation(), HighlightInterpretationBasis, recommendationExplanation() (+57 more)
 
-### Community 3 - "candidateAudioEventRun.ts"
+### Community 2 - "Community 2"
+Cohesion: 0.07
+Nodes (53): BROADCAST_TRANSCRIPT_ACTIVE_MODEL_REVISION, candidateAudioEventKindLabel(), CandidateEvidenceUnknown, CandidatePassBWorkerError, AnalysisCoverageSummary, AnalysisGapApprovalEvidence, AnalysisSelectionSummary, App() (+45 more)
+
+### Community 3 - "Community 3"
+Cohesion: 0.07
+Nodes (50): here, IMG, BroadcastContextInputError, CandidatePassBParticipantRole, AMORETTO_CHANNEL_CAST_ROSTER_ID, CANDIDATE_PASS_B_CAST_ROSTER_VERSION, CandidatePassBCastReference, candidatePassBCastReferenceForName() (+42 more)
+
+### Community 4 - "Community 4"
 Cohesion: 0.08
-Nodes (47): acknowledgeAfterLoadedModelCleanup(), ANALYZE_REQUEST_KEYS, analyzeCandidate(), AnalyzeRequest, assertPinnedId2Label(), BUNDLED_ORT_WASM_URL, CancelRequest, candidateGap() (+39 more)
+Nodes (49): acknowledgeAfterLoadedModelCleanup(), ANALYZE_REQUEST_KEYS, analyzeCandidate(), AnalyzeRequest, assertPinnedId2Label(), BUNDLED_ORT_WASM_URL, CancelRequest, CandidateFailure (+41 more)
 
-### Community 4 - "candidatePassBRun.ts"
-Cohesion: 0.05
-Nodes (62): CandidateAudioEventEvidenceById, CandidatePassBEvidenceById, evidenceQualityRank(), mergeCandidatePassBEvidence(), fallback, provisional, buildCandidateRankingProposal(), buildDraft() (+54 more)
-
-### Community 5 - "durableAnalysisPayload.ts"
+### Community 5 - "Community 5"
 Cohesion: 0.07
-Nodes (55): accept(), assertCandidateAudioEventRunInvariant(), baseAfterWorkerEvent(), baseOf(), CANDIDATE_AUDIO_EVENT_TERMINAL_STATUSES, CandidateAudioEventCancelTerminationKind, CandidateAudioEventCandidateOutcome, CandidateAudioEventCandidateSnapshot (+47 more)
+Nodes (54): accept(), assertCandidateAudioEventRunInvariant(), baseAfterWorkerEvent(), baseOf(), CANDIDATE_AUDIO_EVENT_TERMINAL_STATUSES, CandidateAudioEventCancelTerminationKind, CandidateAudioEventCandidateOutcome, CandidateAudioEventCandidateSnapshot (+46 more)
 
-### Community 6 - "candidateAudioEvent.ts"
+### Community 6 - "Community 6"
+Cohesion: 0.08
+Nodes (53): accept(), assertCandidatePassBRunInvariant(), baseAfterWorkerEvent(), baseOf(), CANDIDATE_PASS_B_TERMINAL_STATUSES, candidateEventRejection(), CandidatePassBCancelTerminationKind, CandidatePassBCandidateOutcome (+45 more)
+
+### Community 7 - "Community 7"
+Cohesion: 0.10
+Nodes (53): UnifiedHighlightEvidence, ANALYSIS_INPUT_KEYS, asPlainRecord(), assertAudioEvidence(), assertAudioGapReason(), assertBoolean(), assertCandidate(), assertChatEvidence() (+45 more)
+
+### Community 8 - "Community 8"
 Cohesion: 0.07
-Nodes (56): accept(), assertCandidatePassBRunInvariant(), baseAfterWorkerEvent(), baseOf(), CANDIDATE_PASS_B_TERMINAL_STATUSES, candidateEventRejection(), CandidatePassBCancelTerminationKind, CandidatePassBCandidateFailureReasonCode (+48 more)
+Nodes (44): aggregateCandidateAudioEventScores(), aggregationQuality(), aggregationQualityTuple(), assertAndIndexWindowScores(), assertScoreVector(), assertTarget(), assertTargetSet(), baseResult() (+36 more)
 
-### Community 7 - "candidateEvidenceExplanation.ts"
-Cohesion: 0.14
-Nodes (34): chapter(), BROADCAST_CONTEXT_DEEPSEEK_ENDPOINT, BroadcastContextDeepseekParseOutcome, BroadcastContextDeepseekRequestBody, BroadcastContextParseOptions, BroadcastContextQwenMode, BroadcastContextQwenRequestBody, buildBroadcastContextCastRosterBlock() (+26 more)
+### Community 9 - "Community 9"
+Cohesion: 0.10
+Nodes (42): isCandidatePassBContextPacket(), CandidatePassBEventFenceRejectionReason, CandidatePassBWorkerErrorCode, CandidatePassBWorkerFactory, CandidatePassBWorkerLike, fenceEvent(), FenceOutcome, hasBoundedCodePointLength() (+34 more)
 
-### Community 8 - "App.tsx"
+### Community 10 - "Community 10"
 Cohesion: 0.09
-Nodes (51): AI_PROVIDER_ROUTING_POLICY_VERSION, QWEN_CONTEXT_QUALITY_REFINEMENT_MODEL_ID, ActiveBroadcastTranscriptConnection, AiProxyDependencies, attemptBroadcastContextProvider(), attemptBroadcastTranscriptProvider(), BodyTooLargeError, BroadcastContextProviderAttempt (+43 more)
+Nodes (45): CANDIDATE_PASS_B_CONTEXTLESS_GEMINI_MODEL_REVISION, CANDIDATE_PASS_B_CONTEXTLESS_QWEN_MODEL_REVISION, CANDIDATE_PASS_B_CONTEXTLESS_ROUTING_MODEL_REVISION, CANDIDATE_PASS_B_GEMINI_MODEL_ID, CANDIDATE_PASS_B_GEMINI_MODEL_REVISION, CANDIDATE_PASS_B_LEGACY_GEMINI_MODEL_ID, CANDIDATE_PASS_B_LEGACY_GEMINI_MODEL_REVISION, CANDIDATE_PASS_B_LEGACY_ROUTING_MODEL_REVISION (+37 more)
 
-### Community 9 - "candidateAudioEvent.worker.ts"
+### Community 11 - "Community 11"
 Cohesion: 0.07
-Nodes (45): aggregateCandidateAudioEventScores(), aggregationQuality(), aggregationQualityTuple(), assertAndIndexWindowScores(), assertScoreVector(), assertTarget(), assertTargetSet(), baseResult() (+37 more)
+Nodes (45): buildBroadcastContextCastRosterBlock(), buildBroadcastContextDeepseekRequestBody(), buildBroadcastContextQwenRequestBody(), formatDuration(), buildBroadcastTranscriptGeminiRequestBody(), buildBroadcastTranscriptQwenOmniRequestBody(), AI_PROVIDER_ROUTING_POLICY_VERSION, QWEN_CONTEXT_QUALITY_REFINEMENT_MODEL_ID (+37 more)
 
-### Community 10 - "candidateAudioEventWorkerClient.ts"
-Cohesion: 0.11
-Nodes (43): CandidateAudioEventFenceRejectionReason, CandidateAudioEventRunResult, CandidateAudioEventWorkerErrorCode, CandidateAudioEventWorkerFactory, FenceOutcome, hasExactKeys(), hasResponseKeys(), hasValidResultBase() (+35 more)
+### Community 12 - "Community 12"
+Cohesion: 0.10
+Nodes (44): CandidateAudioEventFenceRejectionReason, CandidateAudioEventWorkerErrorCode, CandidateAudioEventWorkerFactory, fenceEvent(), FenceOutcome, hasExactKeys(), hasResponseKeys(), hasValidDetectionTimeline() (+36 more)
 
-### Community 11 - "rejectedOperation"
-Cohesion: 0.13
-Nodes (36): CandidatePassBEventFenceRejectionReason, CandidatePassBWorkerErrorCode, CandidatePassBWorkerFactory, fenceEvent(), FenceOutcome, hasBoundedCodePointLength(), hasExactKeys(), hasResponseKeys() (+28 more)
+### Community 13 - "Community 13"
+Cohesion: 0.08
+Nodes (43): AI_MODEL_ROUTING_POLICY_VERSION, AI_PROVIDER_CONFIGURATION_VERSION, AiProviderConfigurationErrorCode, AiProviderConfigurationFailure, AiProviderDescriptor, AiProviderFallbackMode, AiProviderImplementationStatus, AiProviderReadinessManifest (+35 more)
 
-### Community 12 - "analysisRun.ts"
-Cohesion: 0.17
-Nodes (9): assertIdentifier(), cloneJson(), InMemoryAnalysisResultStore, rejectedOperation(), validateAndCloneAnalysisRecord(), validateAndCloneSourceSnapshot(), validateAndCloneTerminalRecord(), CandidatePassBInsightsRecord (+1 more)
+### Community 14 - "Community 14"
+Cohesion: 0.07
+Nodes (24): isCompatibleCandidatePassBRoutingModelRevision(), AnalysisManifestRecord, AnalysisResultStore, AnalysisTerminalOutcome, AnalysisTerminalRecord, FinalAnalysisResultRecord, CANDIDATE_PASS_B_INSIGHT_SCHEMA_VERSION, CandidatePassBInsightsRecord (+16 more)
 
-### Community 13 - "localAudioReactionAnalysis.test.ts"
+### Community 15 - "Community 15"
 Cohesion: 0.09
 Nodes (42): assertEffectiveRange(), assertEvidenceBindings(), AUDIO_EVENT_KIND_LABELS, audioEventBasisCodes(), audioEventDetections(), audioEventObservation(), audioObservation(), buildCandidateEvidenceExplanation() (+34 more)
 
-### Community 14 - "analysisResultStore.ts"
-Cohesion: 0.08
-Nodes (42): AI_PROVIDER_CONFIGURATION_VERSION, AiProviderConfigurationErrorCode, AiProviderConfigurationFailure, AiProviderDescriptor, AiProviderFallbackMode, AiProviderImplementationStatus, AiProviderReadinessManifest, BroadcastContextConnection (+34 more)
+### Community 16 - "Community 16"
+Cohesion: 0.07
+Nodes (38): BroadcastTranscriptWorkerProgress, AudioAnalysisOutcome, BroadcastTranscriptExplorationCell, BroadcastTranscriptExplorationCellState, CandidateBoundaryFeedback, CandidateGeminiInsight, CandidateGeminiInsightById, CandidatePassBModelById (+30 more)
 
-### Community 15 - "candidateAudioEventWorkerProtocol.ts"
-Cohesion: 0.09
-Nodes (36): assertCandidate(), assertMaxCandidates(), assertSourceDuration(), assertTarget(), buildCandidatePassBEvidence(), CandidatePassBEvidenceBase, CandidatePassBFallbackReason, CandidatePassBInputError (+28 more)
+### Community 17 - "Community 17"
+Cohesion: 0.14
+Nodes (9): assertIdentifier(), cloneJson(), IndexedDbAnalysisResultStore, InMemoryAnalysisResultStore, rejectedOperation(), sortTerminalRecordsNewestFirst(), validateAndCloneAnalysisRecord(), validateAndCloneSourceSnapshot() (+1 more)
 
-### Community 16 - "localAudioReactionAnalysisCore.ts"
-Cohesion: 0.08
-Nodes (23): ANALYSIS_RESULT_OBJECT_STORES, AnalysisFailureRecord, AnalysisResultStoreError, ProvisionalAnalysisResultRecord, AUDIO_CANDIDATE, ControlledOpenRequest, ControlledRequest, ControlledTransaction (+15 more)
-
-### Community 17 - "localFileFingerprint.ts"
-Cohesion: 0.09
-Nodes (19): AnalysisManifestRecord, AnalysisResultStore, AnalysisTerminalOutcome, AnalysisTerminalRecord, FinalAnalysisResultRecord, durableCoverageDisposition(), auditRecoverableAnalysisResults(), immutableIdentityMatches() (+11 more)
-
-### Community 18 - "candidatePassBWorkerClient.ts"
+### Community 18 - "Community 18"
 Cohesion: 0.11
 Nodes (33): AnalyzeRequest, CandidateFailure, candidateGap(), CandidatePcmBuilder, clamp(), clampInteger(), createEventId(), decodeCandidate() (+25 more)
 
-### Community 19 - "chatImport.ts"
-Cohesion: 0.06
-Nodes (28): ActiveTask, CandidateAudioEventWorkerError, CandidateAudioEventWorkerLike, fenceEvent(), FenceState, hasValidDetectionTimeline(), isPreModelSourceGapReason(), matchesTarget() (+20 more)
+### Community 19 - "Community 19"
+Cohesion: 0.08
+Nodes (33): CandidateAudioEventAggregation, ActiveTask, CandidateAudioEventRunResult, CandidateAudioEventWorkerError, FenceState, NormalizedRunInput, RunCandidateAudioEventWorkerOptions, emit() (+25 more)
 
-### Community 20 - "AnalysisResultStore"
-Cohesion: 0.09
-Nodes (33): applyAnalysisEvent(), AnalysisControlState, AnalysisControlStateInput, AnalysisRunStatus, BUSY_RUN_STATUSES, CANCELLABLE_RUN_STATUSES, deriveAnalysisControlState(), accept() (+25 more)
-
-### Community 21 - "compilerOptions"
-Cohesion: 0.13
-Nodes (35): ALL_OBJECT_STORES, AnalysisPayloadByKind, AnalysisRecord, AnalysisRecordKind, AnalysisResultStoreErrorCode, analysisSchemaFamily(), AnalysisStoreName, AnalysisTerminalRecordCatalog (+27 more)
-
-### Community 22 - "사람 중심 후보 검토"
-Cohesion: 0.12
-Nodes (30): aliasAuthor(), AliasValue, AUTHOR_ALIASES, ChatImportDiagnostic, ChatImportDiagnosticCode, ChatImportDiagnosticSeverity, ChatImportFormat, ChatImportResult (+22 more)
-
-### Community 23 - "candidatePassB.worker.ts"
-Cohesion: 0.12
-Nodes (30): adjacentWindows(), amplitudeToDb(), AudioReactionCandidate, AudioReactionCandidateEvidence, AudioReactionEventKind, buildClusters(), clamp(), clampInteger() (+22 more)
-
-### Community 24 - "candidatePassBWorkerProtocol.ts"
+### Community 20 - "Community 20"
 Cohesion: 0.10
-Nodes (27): bytesToHex(), ContentDigestAdapter, createContentFingerprint(), fallbackFingerprint(), lengthDelimited(), abortedError(), bytesToHex(), createLocalFileFingerprint() (+19 more)
+Nodes (37): adjacentWindows(), amplitudeToDb(), AUDIO_REACTION_CANDIDATE_WINDOW_MS, AudioReactionCandidate, AudioReactionCandidateEvidence, AudioReactionEventKind, AudioReactionFeatureWindow, buildClusters() (+29 more)
 
-### Community 25 - "candidateAudioEventWorkerClient.test.ts"
-Cohesion: 0.06
-Nodes (50): boundedText(), buildFastPassCandidates(), captionTextForRange(), chapters, discoverySlices, fastPass, fastRefinementLeadIdSet, juryPlan (+42 more)
+### Community 21 - "Community 21"
+Cohesion: 0.10
+Nodes (29): BASE, buildCandidates(), Case(), fill(), ReviewStage(), ReviewStageProps, formatTime(), PlayerCardOrigin (+21 more)
 
-### Community 26 - "decodeAndScore"
-Cohesion: 0.17
-Nodes (15): boundedInspectionRange(), createCaptionDiscoveredLeadRefinementPlan(), createDiscoveredLeadRefinementChapters(), createDiscoveredLeadRefinementPlan(), DISCOVERED_LEAD_REFINEMENT_VERSION, DiscoveredLeadRefinementPlan, DiscoveredLeadRefinementPlanOptions, DiscoveredLeadRefinementSegment (+7 more)
+### Community 22 - "Community 22"
+Cohesion: 0.08
+Nodes (22): ANALYSIS_RESULT_OBJECT_STORES, AnalysisFailureRecord, AnalysisResultStoreError, ProvisionalAnalysisResultRecord, AUDIO_CANDIDATE, ControlledOpenRequest, ControlledRequest, ControlledTransaction (+14 more)
 
-### Community 27 - "candidatePassB.ts"
+### Community 23 - "Community 23"
+Cohesion: 0.12
+Nodes (36): ALL_OBJECT_STORES, AnalysisPayloadByKind, AnalysisRecord, AnalysisRecordKind, AnalysisResultStoreErrorCode, analysisSchemaFamily(), AnalysisStoreName, AnalysisTerminalRecordCatalog (+28 more)
+
+### Community 24 - "Community 24"
+Cohesion: 0.11
+Nodes (32): card(), row(), aliasAuthor(), AliasValue, AUTHOR_ALIASES, ChatImportDiagnostic, ChatImportDiagnosticCode, ChatImportDiagnosticSeverity (+24 more)
+
+### Community 25 - "Community 25"
+Cohesion: 0.12
+Nodes (29): analyzeCandidateWithRemoteAi(), ProxyWorkerFailure, buildCandidatePassBAudioOnlySafeResponse(), buildCandidatePassBGeminiRequestBody(), buildCandidatePassBProxyRequestBody(), CANDIDATE_PASS_B_PROXY_ENDPOINT, CandidatePassBGeminiParseOutcome, CandidatePassBGeminiRelativeSegment (+21 more)
+
+### Community 26 - "Community 26"
+Cohesion: 0.16
+Nodes (31): BROADCAST_CONTEXT_DEEPSEEK_ENDPOINT, BroadcastContextDeepseekParseOutcome, BroadcastContextDeepseekRequestBody, BroadcastContextParseOptions, BroadcastContextQwenMode, BroadcastContextQwenRequestBody, containsUnexpectedHan(), extractBroadcastContextDeepseekResponse() (+23 more)
+
+### Community 27 - "Community 27"
+Cohesion: 0.10
+Nodes (27): CandidateAudioEventEvidenceById, CandidatePassBEvidenceById, buildCandidateRankingProposal(), buildDraft(), CANDIDATE_RANKING_ALGORITHM_VERSION, CANDIDATE_RANKING_MAX_CANDIDATES, CANDIDATE_RANKING_MAX_SUPPORT_POINTS, CandidateRankingAudioEventCoverage (+19 more)
+
+### Community 28 - "Community 28"
+Cohesion: 0.11
+Nodes (26): bytesToHex(), ContentDigestAdapter, createContentFingerprint(), fallbackFingerprint(), lengthDelimited(), abortedError(), bytesToHex(), createLocalFileFingerprint() (+18 more)
+
+### Community 29 - "Community 29"
 Cohesion: 0.06
 Nodes (30): DOM, DOM.Iterable, ES2022, src, vite/client, WebWorker, compilerOptions, allowJs (+22 more)
 
-### Community 28 - "localMediaPreflight.ts"
-Cohesion: 0.10
-Nodes (32): DetectionDraft, chronologicalDetectionOrder(), mergeCandidateAudioEventEvidence(), mergeDetectedResults(), sameBinding(), sameDetection(), sameDetectionList(), strengthRank() (+24 more)
-
-### Community 29 - "localVideoVisualAnalysis.ts"
-Cohesion: 0.12
-Nodes (33): CANDIDATE_PASS_B_GEMINI_MODEL_ID, CANDIDATE_PASS_B_GEMINI_MODEL_REVISION, CANDIDATE_PASS_B_LEGACY_GEMINI_MODEL_ID, CANDIDATE_PASS_B_LEGACY_GEMINI_MODEL_REVISION, CANDIDATE_PASS_B_LEGACY_ROUTING_MODEL_REVISION, CANDIDATE_PASS_B_OLDER_GEMINI_MODEL_REVISION, CANDIDATE_PASS_B_OLDER_QWEN_MODEL_REVISION, CANDIDATE_PASS_B_OLDER_ROUTING_MODEL_REVISION (+25 more)
-
-### Community 30 - "candidatePassBGemini.ts"
-Cohesion: 0.12
-Nodes (30): AI 우선 하이라이트 흐름, 분석 오케스트레이터, 초심자 중심 단방향 UX, 30~60초 경계 다듬기, 중복 억제·후보 다양성, 후보 회수·탐색 슬롯, 사람 중심 후보 검토, 채팅 로그 가져오기 (+22 more)
-
-### Community 31 - "candidatePassBPresentation.ts"
+### Community 30 - "Community 30"
 Cohesion: 0.08
-Nodes (25): 10. 추가 검토: 동일 높이 후보 미니 카드, 11. 완료 기준, 1.1 후보 검토 영역의 비대칭, 1.2 타임라인의 시각 부호와 데이터가 분리됨, 1.3 분석 중 상태와 최종 편집 상태가 섞임, 1. 현재 화면에서 확인된 문제, 2. 일반적인 타임라인 UI와의 비교, 3. 설계 원칙 (+17 more)
+Nodes (23): ActiveTask, CandidatePassBRunResult, FenceState, RunCandidatePassBWorkerOptions, emit(), FakeWorker, identity, targets (+15 more)
 
-### Community 32 - "localVideoVisualAnalysisCore.ts"
-Cohesion: 0.11
-Nodes (21): CandidatePassBBasisLabel, CandidatePassBCue, CandidatePassBCuePhase, CandidatePassBQualitySummary, MappedTranscriptChunk, basePresentation(), buildCandidatePassBPresentation(), CANDIDATE_PASS_B_CUE_PHASE_LABELS (+13 more)
-
-### Community 33 - "AnalysisRun State Machine"
-Cohesion: 0.10
-Nodes (41): analyzeCandidateWithRemoteAi(), buildCandidatePassBAudioOnlySafeResponse(), buildCandidatePassBGeminiRequestBody(), buildCandidatePassBPrompt(), buildCandidatePassBProxyRequestBody(), CANDIDATE_PASS_B_PROXY_ENDPOINT, CandidatePassBGeminiAnalysis, CandidatePassBGeminiParseOutcome (+33 more)
-
-### Community 34 - "로컬 데이터·비밀정보 보안 경계"
-Cohesion: 0.15
-Nodes (16): AudioFeatureAccumulator, clamp(), clampInteger(), createEventId(), decodeAndScore(), disposeInputOnce(), handleCancel(), isUnsupportedAudioCodecError() (+8 more)
-
-### Community 35 - "analysisResultStore.test.ts"
-Cohesion: 0.23
-Nodes (17): hasExactKeys(), isCandidate(), isCompletedResult(), isFenceEnvelope(), isFiniteNumber(), isNonNegativeInteger(), isProgress(), isRecord() (+9 more)
-
-### Community 36 - "candidatePassBWorkerClient.test.ts"
-Cohesion: 0.12
-Nodes (24): assertValidFile(), AUDIO_EXTENSIONS, CapabilityGlobal, createProbeWaitState(), DEFAULT_ADAPTERS, DocumentGlobal, durationSecondsToMilliseconds(), extensionFromName() (+16 more)
-
-### Community 37 - "highlightSelector.ts"
-Cohesion: 0.12
-Nodes (16): AnalyzeLocalVideoVisualOptions, appendHiddenElement(), createDefaultCanvas(), createDefaultVideoProbe(), DEFAULT_ADAPTERS, DEFAULT_VISUAL_METADATA_TIMEOUT_MS, DEFAULT_VISUAL_SEEK_TIMEOUT_MS, ErrorDetailValue (+8 more)
-
-### Community 38 - "compilerOptions"
+### Community 31 - "Community 31"
 Cohesion: 0.13
-Nodes (24): BROADCAST_TRANSCRIPT_GEMINI_MODEL_ID, BROADCAST_TRANSCRIPT_GEMINI_MODEL_REVISION, BROADCAST_TRANSCRIPT_MIXED_CHECKPOINT_MODEL_REVISION, BROADCAST_TRANSCRIPT_PREVIOUS_ACTIVE_MODEL_REVISION, BROADCAST_TRANSCRIPT_QWEN_MODEL_ID, BROADCAST_TRANSCRIPT_QWEN_MODEL_REVISION, BROADCAST_TRANSCRIPT_QWEN_OMNI_MODEL_ID, BROADCAST_TRANSCRIPT_QWEN_OMNI_MODEL_REVISION (+16 more)
+Nodes (25): ActiveAudioTask, clamp(), clampInteger(), createEventId(), decodeAndScore(), disposeInputOnce(), handleCancel(), isUnsupportedAudioCodecError() (+17 more)
 
-### Community 39 - "evaluate-local-audio-fast-pass.mjs"
-Cohesion: 0.06
-Nodes (68): RankedDraft, UnifiedHighlightCandidate, audienceReactionExplanation(), audioRange(), buildHighlightNarrative(), chatRange(), eventExplanation(), HighlightInterpretationBasis (+60 more)
+### Community 32 - "Community 32"
+Cohesion: 0.13
+Nodes (15): BroadcastContextTranscriptionChunk, BroadcastTranscriptQwenResult, BroadcastTranscriptWorkerClientError, BroadcastTranscriptWorkerRunResult, inputIssue(), isRecord(), isResponse(), runBroadcastTranscriptWorker() (+7 more)
 
-### Community 40 - "aiProviderConfiguration.ts"
+### Community 33 - "Community 33"
+Cohesion: 0.10
+Nodes (19): base, base, CANDIDATE_AUDIO_EVENT_MODEL_DTYPE, CANDIDATE_AUDIO_EVENT_MODEL_ID, CANDIDATE_AUDIO_EVENT_MODEL_REVISION, CANDIDATE_AUDIO_EVENT_RUNTIME_DEVICE, CANDIDATE_AUDIO_EVENT_SAMPLE_RATE_HZ, CANDIDATE_EVIDENCE_EXPLANATION_VERSION (+11 more)
+
+### Community 34 - "Community 34"
 Cohesion: 0.11
-Nodes (14): CANDIDATE_EVIDENCE_EXPLANATION_VERSION, CANDIDATE_EVIDENCE_MAX_QUOTE_CODE_POINTS, CandidateEvidenceExplanationError, CandidateEvidenceExplanationInput, resolveCandidateEvidenceReplayTarget(), audioEventBase(), audioEvidence, candidate() (+6 more)
+Nodes (25): assertValidFile(), AUDIO_EXTENSIONS, BrowserCapabilitySnapshot, BrowserCapabilitySupport, CapabilityGlobal, createProbeWaitState(), DEFAULT_ADAPTERS, DocumentGlobal (+17 more)
 
-### Community 41 - "candidateMerge.ts"
-Cohesion: 0.08
-Nodes (22): CandidatePassBWorkerLike, hasValidSegmentTimeline(), matchesTargetRange(), normalizeCancelAcknowledgementTimeout(), normalizeWorkerTimeout(), runCandidatePassBWorker(), safeCandidateGapMessage(), stageRank() (+14 more)
+### Community 35 - "Community 35"
+Cohesion: 0.13
+Nodes (26): buildCandidatePassBEvidence(), CandidatePassBEvidenceBase, CandidatePassBFallbackReason, CandidatePassBInputErrorCode, CandidatePassBOverlay, CandidatePassBSelectionOptions, CandidatePassBTranscriptChunk, CandidatePassBTranscriptOptions (+18 more)
 
-### Community 42 - "sourceCheck.ts"
+### Community 36 - "Community 36"
+Cohesion: 0.13
+Nodes (25): accept(), ANALYSIS_STAGES, AnalysisCompletionTarget, AnalysisRunBase, AnalysisRunEvent, AnalysisRunRejectionReason, AnalysisRunTransitionOutcome, AnalysisStage (+17 more)
+
+### Community 37 - "Community 37"
+Cohesion: 0.11
+Nodes (16): AudioReactionWorkerRequest, analyzeLocalAudioReactions(), LocalAudioReactionWorkerLike, normalizeCancelAcknowledgementTimeout(), normalizeWorkerTimeout(), completeResult, decodingProgress, emitResponse() (+8 more)
+
+### Community 38 - "Community 38"
+Cohesion: 0.14
+Nodes (21): BroadcastContextCandidateInput, BroadcastContextDiscoveredLead, BroadcastContextDiscoveredLeadReference, boundedText(), BROADCAST_TOPICAL_DISCOVERY_VERSION, BroadcastTopicalDiscoverySlice, BroadcastTopicalLeadJuryPlan, createBroadcastTopicalDiscoverySlices() (+13 more)
+
+### Community 39 - "Community 39"
 Cohesion: 0.13
 Nodes (23): buildVisualSampleTimestamps(), clamp(), clampInteger(), compareTransitions(), createCandidate(), createTransitionSignals(), LocalVideoVisualAnalysisDiagnostics, LocalVideoVisualAnalysisResult (+15 more)
 
-### Community 43 - "broadcastTopicalDiscovery.ts"
+### Community 40 - "Community 40"
+Cohesion: 0.18
+Nodes (23): buildFastPassCandidates(), buildEventEpisodes(), calculateBlockQuotas(), CandidateSelectionEligibility, canJoinEpisode(), clamp(), compareCandidateStrength(), ContextAwareSelectionOptions (+15 more)
+
+### Community 41 - "Community 41"
 Cohesion: 0.14
-Nodes (25): AnalysisJob AnalysisSpec and AnalysisRun Model, AnalysisRun State Machine, AppSession and Single Writer Lease, Atomic Analysis Checkpoint, AI Candidate and User Revision Merge Policy, Chat Import and Local Live Capture Lifecycles, Completed With Gaps Contract, Domain Event Envelope (+17 more)
+Nodes (22): BROADCAST_TRANSCRIPT_GEMINI_MODEL_ID, BROADCAST_TRANSCRIPT_GEMINI_MODEL_REVISION, BROADCAST_TRANSCRIPT_MIXED_CHECKPOINT_MODEL_REVISION, BROADCAST_TRANSCRIPT_PREVIOUS_ACTIVE_MODEL_REVISION, BROADCAST_TRANSCRIPT_QWEN_MODEL_ID, BROADCAST_TRANSCRIPT_QWEN_MODEL_REVISION, BROADCAST_TRANSCRIPT_QWEN_OMNI_MODEL_ID, BROADCAST_TRANSCRIPT_QWEN_OMNI_MODEL_REVISION (+14 more)
 
-### Community 44 - "loadVideoMetadata"
+### Community 42 - "Community 42"
 Cohesion: 0.14
-Nodes (24): 초심자 중심 단방향 UI·UX, 상태·생애주기 우선 설계 계약, 계정·공유·공용 백엔드·클라우드 AI 제외, GitHub Pages 서버 없는 핵심 완주, 불변 StreamSaver CSS 기준과 Retto 오버라이드, 로컬 데이터·비밀정보 보안 경계, 1인용 로컬 우선 AI 편집 어시스턴트, SemVer·개발 로그·승인 후 커밋 (+16 more)
+Nodes (19): AI_BROADCAST_CONTEXT_ROUTING_REVISION, AiAnalysisPlanStep, AiAnalysisRoutingPlan, AiAnalysisStage, createAiAnalysisRoutingPlan(), EXCLIPPER_MODEL_IDS, boundedEventPeaks(), BROADCAST_CONTEXT_SAMPLING_PLAN_VERSION (+11 more)
 
-### Community 45 - "broadcastTranscriptWorkerClient.ts"
-Cohesion: 0.13
-Nodes (20): AI_BROADCAST_CONTEXT_ROUTING_REVISION, AI_MODEL_ROUTING_POLICY_VERSION, AiAnalysisPlanStep, AiAnalysisRoutingPlan, AiAnalysisStage, createAiAnalysisRoutingPlan(), EXCLIPPER_MODEL_IDS, boundedEventPeaks() (+12 more)
-
-### Community 46 - "runChatAnalysisWorker"
+### Community 43 - "Community 43"
 Cohesion: 0.16
-Nodes (20): ChatAnalysisWorkerFactory, hasFiniteNumberFields(), isChatCandidate(), isFenceEnvelope(), isFiniteNumber(), isHighlightSelectionResult(), isNonNegativeInteger(), isRecord() (+12 more)
+Nodes (21): BroadcastContextRequest, buildCandidatePassBPrompt(), CandidatePassBProxyRequestBody, buildCandidatePassBQwenOmniRequestBody(), CandidatePassBQwenOmniDiagnostics, CandidatePassBQwenOmniRequestBody, extractCandidatePassBQwenOmniSseResponse(), inspectCandidatePassBQwenOmniSseResponse() (+13 more)
 
-### Community 47 - "devDependencies"
+### Community 44 - "Community 44"
+Cohesion: 0.17
+Nodes (19): ALLOWED_CATEGORIES, allowedCategory(), buildCandidatePassBContextPackets(), CandidateContextPacketBuildInput, chatReaction(), matchingTopic(), nearestChapterText(), surroundingContext() (+11 more)
+
+### Community 45 - "Community 45"
+Cohesion: 0.10
+Nodes (20): boundedText(), captionTextForRange(), chapters, discoverySlices, fastPass, fastRefinementLeadIdSet, juryPlan, overviewCostUsd (+12 more)
+
+### Community 46 - "Community 46"
 Cohesion: 0.15
 Nodes (16): BROADCAST_CONTEXT_PROXY_ENDPOINT, BroadcastContextAnalysisMode, BroadcastContextDeepseekClientError, createBoundedBroadcastContextInput(), FetchImplementation, parseBroadcastContextProxyResult(), requestBroadcastContextDeepseek(), input (+8 more)
 
-### Community 48 - "broadcastContextProtocol.ts"
-Cohesion: 0.20
-Nodes (13): BroadcastContextTranscriptionChunk, BroadcastTranscriptQwenResult, isBroadcastTranscriptModelId(), BroadcastTranscriptWorkerRunResult, inputIssue(), isRecord(), isResponse(), runBroadcastTranscriptWorker() (+5 more)
-
-### Community 49 - "localVideoVisualAnalysis.test.ts"
+### Community 47 - "Community 47"
 Cohesion: 0.18
 Nodes (19): baselineValues(), BUCKET_SIZE_MS, clamp(), compareScoredBuckets(), createBucket(), createCandidate(), emptyResult(), finiteNonNegativeInteger() (+11 more)
 
-### Community 50 - "contextAwareCandidateSelection.ts"
+### Community 48 - "Community 48"
+Cohesion: 0.26
+Nodes (21): base64DecodedByteLength(), broadcastTranscriptProviderFailureResponse(), candidateProviderFailureResponse(), clientRateLimitKey(), corsHeaders(), fetch(), fetchWithTimeout(), handleBroadcastContextRequest() (+13 more)
+
+### Community 49 - "Community 49"
+Cohesion: 0.23
+Nodes (20): accepted(), applyProposal(), CandidateRankingProjectable, CandidateRankingProposalDisposition, CandidateRankingViewEvent, CandidateRankingViewIgnoreReason, CandidateRankingViewSnapshot, CandidateRankingViewTransition (+12 more)
+
+### Community 50 - "Community 50"
 Cohesion: 0.18
 Nodes (12): amplitudeToDb(), candidatePeakDistribution(), candidateSummary(), captureStdout(), clamp(), decodeFeatures(), main(), percentile() (+4 more)
 
-### Community 51 - "eventFence.ts"
-Cohesion: 0.13
-Nodes (21): requestContext(), assertIdentifier(), assertRange(), assertText(), assertUniqueIdentifiers(), BroadcastContextCandidateCategory, BroadcastContextClipDecision, BroadcastContextCoverage (+13 more)
+### Community 51 - "Community 51"
+Cohesion: 0.18
+Nodes (14): shouldExpandBroadcastContextChunk(), ActiveTask, clamp(), decodeRange(), disposeTask(), isRecord(), isValidAnalyzeRequest(), isValidCancelRequest() (+6 more)
 
-### Community 52 - "analysisBudgetPolicy.ts"
+### Community 52 - "Community 52"
 Cohesion: 0.10
 Nodes (11): FakeAudioSampleSink, FakeBlobSource, FakeInput, FakeInputDisposedError, FakeUnsupportedInputFormatError, identity, mediaHarness, CANDIDATE_PASS_B_DEVICE (+3 more)
 
-### Community 53 - "chatAnalysisWorkerClient.ts"
+### Community 53 - "Community 53"
+Cohesion: 0.20
+Nodes (18): abortIfRequested(), asReadyBundle(), CANDIDATE_VIDEO_FRAME_SAMPLE_RATIOS, CandidateVideoFrameBundleResult, CandidateVideoFrameBundleTarget, CandidateVideoFrameProducerOptions, CandidateVideoFrameSamplerSession, CandidateVideoFrameSamplingOptions (+10 more)
+
+### Community 54 - "Community 54"
+Cohesion: 0.21
+Nodes (18): LocalAudioReactionAnalysisStage, hasExactKeys(), isCandidate(), isCompletedResult(), isFenceEnvelope(), isFiniteNumber(), isNonNegativeInteger(), isProgress() (+10 more)
+
+### Community 55 - "Community 55"
 Cohesion: 0.11
 Nodes (18): ES2023, node, vite.config.ts, vitest.config.ts, compilerOptions, exactOptionalPropertyTypes, lib, module (+10 more)
 
-### Community 54 - "aiProxy.worker.ts"
-Cohesion: 0.16
-Nodes (19): BroadcastContextCandidateInput, BroadcastContextChapterInput, boundedText(), BROADCAST_TOPICAL_DISCOVERY_VERSION, BroadcastTopicalDiscoverySlice, BroadcastTopicalLeadJuryPlan, createBroadcastTopicalDiscoverySlices(), createBroadcastTopicalLeadJuryPlan() (+11 more)
+### Community 56 - "Community 56"
+Cohesion: 0.12
+Nodes (6): CANDIDATE_PASS_B_SAMPLE_RATE_HZ, AiProviderEnvironment, AiProxyEnvironment, createGeminiPayload(), createQwenSsePayload(), silentWav()
 
-### Community 55 - "FakeVideoProbe"
-Cohesion: 0.19
-Nodes (13): BroadcastContextInputError, CandidatePassBParticipantRole, CANDIDATE_PASS_B_CAST_ROSTER_VERSION, CandidatePassBCastReference, candidatePassBCastReferenceForName(), candidatePassBCastReferences(), candidatePassBCastRosterIdForSourceName(), canonicalCandidatePassBCastDisplayName() (+5 more)
-
-### Community 56 - "broadcastTranscript.worker.ts"
-Cohesion: 0.14
-Nodes (9): ChatAnalysisWorkerLike, normalizeWorkerTimeout(), runChatAnalysisWorker(), emptyResult, FakeWorker, identity, startWith(), WorkerEventType (+1 more)
-
-### Community 57 - "broadcastTranscriptWorkerClient.test.ts"
+### Community 57 - "Community 57"
 Cohesion: 0.15
 Nodes (15): CandidateCompareOnlyReason, CandidateField, CandidateFieldMergeOutcome, CandidateMergeContext, CandidateProposal, CandidateProposalMergeOutcome, compareOnly(), globalCompareOnlyReason() (+7 more)
 
-### Community 58 - "candidateReviewFeatureAvailability.ts"
+### Community 58 - "Community 58"
+Cohesion: 0.14
+Nodes (15): AnalyzeLocalVideoVisualOptions, appendHiddenElement(), createDefaultCanvas(), createDefaultVideoProbe(), DEFAULT_ADAPTERS, DEFAULT_VISUAL_METADATA_TIMEOUT_MS, DEFAULT_VISUAL_SEEK_TIMEOUT_MS, ErrorDetailValue (+7 more)
+
+### Community 59 - "Community 59"
+Cohesion: 0.18
+Nodes (10): abortedError(), attemptCleanup(), cleanupResources(), defaultYieldControl(), loadVideoMetadata(), LocalVideoVisualProbe, mediaFailure(), seekVideo() (+2 more)
+
+### Community 60 - "Community 60"
+Cohesion: 0.18
+Nodes (16): DetectionDraft, chronologicalDetectionOrder(), mergeCandidateAudioEventEvidence(), mergeDetectedResults(), sameBinding(), sameDetection(), sameDetectionList(), strengthRank() (+8 more)
+
+### Community 61 - "Community 61"
 Cohesion: 0.17
-Nodes (18): applySourceEvent(), accept(), assertNever(), baseOf(), createSourceCheck(), isSourceCheckTerminal(), reduceSourceCheck(), reject() (+10 more)
+Nodes (15): boundedInspectionRange(), createCaptionDiscoveredLeadRefinementPlan(), createDiscoveredLeadRefinementChapters(), createDiscoveredLeadRefinementPlan(), DISCOVERED_LEAD_REFINEMENT_VERSION, DiscoveredLeadRefinementPlan, DiscoveredLeadRefinementPlanOptions, DiscoveredLeadRefinementSegment (+7 more)
 
-### Community 59 - "localAudioReactionAnalysis.ts"
-Cohesion: 0.12
-Nodes (21): ActiveAudioTask, AUDIO_REACTION_FEATURE_WINDOW_MS, AudioReactionWorkerIdentity, AudioReactionWorkerResponse, AudioReactionWorkerResponsePayload, LocalAudioReactionAnalysisOutcome, LocalAudioReactionAnalysisProgress, LocalAudioReactionAnalysisStage (+13 more)
+### Community 62 - "Community 62"
+Cohesion: 0.20
+Nodes (16): accept(), assertNever(), baseOf(), createSourceCheck(), isSourceCheckTerminal(), reduceSourceCheck(), reject(), SourceCheckBase (+8 more)
 
-### Community 60 - "FakeVideoProbe"
-Cohesion: 0.19
-Nodes (13): shouldExpandBroadcastContextChunk(), ActiveTask, clamp(), decodeRange(), disposeTask(), isRecord(), isValidAnalyzeRequest(), isValidCancelRequest() (+5 more)
+### Community 63 - "Community 63"
+Cohesion: 0.20
+Nodes (15): buildClipBaseName(), buildClipFileName(), ClipOutputKind, ClipRenderError, ClipRenderFailureCode, ClipRenderProgress, ClipRenderRequest, ClipRenderResult (+7 more)
 
-### Community 61 - "dependencies"
+### Community 64 - "Community 64"
 Cohesion: 0.12
 Nodes (17): @emnapi/core, globals, devDependencies, @emnapi/core, globals, tsx, @types/react, @types/react-dom (+9 more)
 
-### Community 62 - "scripts"
-Cohesion: 0.22
-Nodes (8): abortedError(), attemptCleanup(), cleanupResources(), defaultYieldControl(), loadVideoMetadata(), LocalVideoVisualProbe, mediaFailure(), seekVideo()
-
-### Community 63 - "broadcastContextDeepseekClient.ts"
-Cohesion: 0.22
-Nodes (13): buildClipFileName(), ClipOutputKind, ClipRenderError, ClipRenderFailureCode, ClipRenderProgress, ClipRenderRequest, ClipRenderResult, clipTimePart() (+5 more)
-
-### Community 64 - "clipRenderer.ts"
-Cohesion: 0.16
-Nodes (10): captureDefaultLumaFingerprint(), LocalVideoVisualCanvas, createVisualHarness(), FakeCanvas, fingerprint(), samplesFromValues(), VideoEventType, MAX_VISUAL_SAMPLE_COUNT (+2 more)
-
-### Community 65 - "candidatePassBRuntime.ts"
-Cohesion: 0.30
-Nodes (12): balancedJsonObject(), createYouTubeCaptionChapters(), createYouTubeCaptionRefinementTranscripts(), extractKoreanYouTubeCaptionTrack(), extractKoreanYouTubeCaptionTrackFromPlayerResponse(), isRecord(), normalizedCaptionText(), parseYouTubeCaptionJson3() (+4 more)
-
-### Community 66 - "candidatePassBInsightStore.ts"
+### Community 65 - "Community 65"
 Cohesion: 0.19
-Nodes (12): ChatAnalysisWorkerError, createEventFence(), CreateEventFenceInput, EventFenceOutcome, EventFenceRejectionReason, EventFenceState, FenceableEvent, fenceEvent() (+4 more)
+Nodes (13): delay(), FetchImplementation, isRecord(), isRetryableCaptionStatus(), parseYouTubeCaptionProxyResult(), requestYouTubeCaptionTrack(), requestYouTubeCaptionTrackOnce(), payload (+5 more)
 
-### Community 67 - "ExClipper"
+### Community 66 - "Community 66"
+Cohesion: 0.17
+Nodes (15): assertIdentifier(), assertRange(), assertText(), assertUniqueIdentifiers(), BroadcastContextCandidateCategory, BroadcastContextClipDecision, BroadcastContextCoverage, BroadcastContextCoverageGap (+7 more)
+
+### Community 67 - "Community 67"
+Cohesion: 0.17
+Nodes (14): CandidateFinalVerificationInput, CandidateFinalVerificationResult, CONTEXT_PACKET_KEYS, createCandidatePassBVerificationReceipt(), finalizeFullyVerifiedCandidates(), isCandidatePassBVerificationReceipt(), isRecord(), candidate (+6 more)
+
+### Community 68 - "Community 68"
 Cohesion: 0.15
-Nodes (10): candidateMap, candidates, chapters, context, parentLead, ranked, refinement, result (+2 more)
+Nodes (11): captureDefaultLumaFingerprint(), LocalVideoVisualCanvas, createVisualHarness(), FakeCanvas, fingerprint(), samplesFromValues(), VideoEventType, VisualHarness (+3 more)
 
-### Community 68 - "highlightExport.ts"
-Cohesion: 0.17
-Nodes (13): ActiveTask, CandidatePassBRunResult, FenceState, NormalizedRunInput, RunCandidatePassBWorkerOptions, CandidatePassBCandidateGap, CandidatePassBCandidateProgress, CandidatePassBCompletionSummary (+5 more)
-
-### Community 69 - "candidateVideoFrames.ts"
-Cohesion: 0.26
-Nodes (8): assertBroadcastContextSessionRecord(), boundedString(), BROADCAST_CONTEXT_SESSION_SCHEMA_VERSION, BroadcastContextSessionRecord, cloneBroadcastContextSessionRecord(), hasExactKeys(), isRecord(), record
-
-### Community 70 - "smoke-gemini-proxy.mjs"
-Cohesion: 0.17
-Nodes (8): IndexedDbAnalysisResultStore, keyPathFor(), normalizeStoreFailure(), requestError(), sortTerminalRecordsNewestFirst(), storeClosedError(), terminalConflictError(), terminalRecordsAreEquivalent()
-
-### Community 71 - "cleanupResources"
-Cohesion: 0.17
-Nodes (12): scripts, build, check, cloudflare:deploy, cloudflare:dev, dev, evaluate:live-context, lint (+4 more)
-
-### Community 72 - "LocalMediaPreflightAdapters"
-Cohesion: 0.18
-Nodes (10): boundedText(), captions, discoveredLeads, events, lead, parent, refineWindow(), result (+2 more)
-
-### Community 73 - "package.json"
-Cohesion: 0.18
-Nodes (9): assertNonNegativeFinite(), BrowserCapabilitySnapshot, BrowserCapabilitySupport, formatBytes(), formatDuration(), Harness, ProbeEventType, ProbeListener (+1 more)
-
-### Community 75 - "LocalVideoVisualAnalysisAdapters"
-Cohesion: 0.18
-Nodes (7): candidates, captions, chapters, events, fastPass, result, sourceDurationMs
-
-### Community 76 - "Q: 세팅하려면 이제 뭐가 필요하지"
-Cohesion: 0.29
-Nodes (7): ANALYSIS_BUDGET_POLICY_VERSION, AnalysisBudgetEnvelope, createAnalysisBudgetEnvelope(), CandidatePassBCostEstimate, clampInteger(), estimateCandidatePassBCost(), formatEstimatedUsd()
-
-### Community 77 - "CandidatePassBWorkerFailureReason"
+### Community 69 - "Community 69"
 Cohesion: 0.19
 Nodes (13): BroadcastContextResult, BroadcastContextSemanticChapterKind, BroadcastContextSemanticFamily, BroadcastContextTimelineMetric, BroadcastContextTimelinePresentation, BroadcastContextTimelinePresentationInput, BroadcastContextTimelineState, BroadcastContextUiStatus (+5 more)
 
-### Community 78 - "Q: How do durable analysis records prevent raw chat and nickname leakage through arbitrary nested fields?"
-Cohesion: 0.22
-Nodes (5): BroadcastTranscriptWorkerClientError, FakeWorker, BROADCAST_TRANSCRIPT_WORKER_VERSION, BroadcastTranscriptWorkerRequest, BroadcastTranscriptWorkerResponse
+### Community 70 - "Community 70"
+Cohesion: 0.14
+Nodes (10): CandidatePassBCue, CandidatePassBQualitySummary, MappedTranscriptChunk, CANDIDATE_PASS_B_CUE_PHASE_LABELS, CandidatePassBPresentationError, baseNarrative, cue(), expectedFastNarrativeFields (+2 more)
 
-### Community 79 - "Q: 현재의 하이라이트 검출은 무슨 기준을 사용하고 있지"
-Cohesion: 0.29
-Nodes (9): RefinedDiscoveredLeadRange, boundedText(), createSemanticLeadCandidate(), isRecord(), parseSemanticLeadCandidates(), SEMANTIC_CATEGORIES, SEMANTIC_LEAD_CANDIDATE_RECORD_VERSION, SemanticLeadCandidateRecord (+1 more)
-
-### Community 80 - "Q: 스트리머 반응 중심 목표 대비 현재 하이라이트 검출 신호의 적합성, 오탐, 미탐, 다음 구조를 감사"
-Cohesion: 0.15
-Nodes (8): AudioReactionWorkerRequest, analyzeLocalAudioReactions(), LocalAudioReactionWorkerLike, normalizeCancelAcknowledgementTimeout(), normalizeWorkerTimeout(), emitResponse(), FakeWorker, validateInput()
-
-### Community 81 - "Q: 근데 클립이란건 스트리머의 반응을 보는거지 화려한 연출을 보는게 아니야. 이게 맞는 접근인지 알려진 다른 사례들과 함께 확인해"
+### Community 71 - "Community 71"
 Cohesion: 0.20
-Nodes (8): durationMs, endpoint, extraction, file, requestedDurationSeconds, sampleCount, startSeconds, wav
+Nodes (7): RunChatAnalysisWorkerInput, FakeWorker, ChatAnalysisWorkerIdentity, ChatAnalysisWorkerRequest, ChatAnalysisWorkerResponse, NormalizedChatMessage, HighlightSelectionOptions
 
-### Community 82 - "Q: 0.3 오디오 반응부터 설명·저장·내보내기까지의 경로"
-Cohesion: 0.29
-Nodes (8): BROADCAST_TRANSCRIPT_QWEN_SCHEMA_VERSION, BROADCAST_TRANSCRIPT_PROXY_ENDPOINT, BroadcastTranscriptQwenClientError, FetchImplementation, isRecord(), optionalLabel(), parseResult(), requestBroadcastTranscriptQwenChunk()
+### Community 72 - "Community 72"
+Cohesion: 0.16
+Nodes (3): CandidateAudioEventWorkerLike, FakeWorker, CandidateAudioEventWorkerRequest
 
-### Community 83 - "Q: Candidate Pass B 구조가 App, Worker, provisional evidence, finalizing 완료 fence를 어떻게 연결하는가?"
-Cohesion: 0.36
-Nodes (8): abortIfRequested(), CANDIDATE_VIDEO_FRAME_SAMPLE_RATIOS, CandidateVideoFrameSamplingOptions, candidateVideoFrameTimestamps(), dataUrlToBase64(), sampleCandidateVideoFrames(), waitForCurrentVideoFrame(), waitForVideoSeek()
+### Community 73 - "Community 73"
+Cohesion: 0.16
+Nodes (12): CandidateRankingProposal, CandidateRankingProposalView, candidateRankingViewHasSessionWork(), CandidateRankingViewState, createCandidateRankingViewState(), projectCandidateOrder(), projectCandidateOrderIds(), snapshotState() (+4 more)
 
-### Community 84 - "Q: Trace candidate array order consumers and design CandidateRankingProposal lifecycle"
+### Community 74 - "Community 74"
+Cohesion: 0.22
+Nodes (11): ChatAnalysisWorkerError, createEventFence(), CreateEventFenceInput, EventFenceOutcome, EventFenceRejectionReason, EventFenceState, FenceableEvent, fenceEvent() (+3 more)
+
+### Community 75 - "Community 75"
+Cohesion: 0.20
+Nodes (9): ChatAnalysisWorkerLike, normalizeWorkerTimeout(), runChatAnalysisWorker(), emptyResult, identity, startWith(), WorkerEventType, WorkerListener (+1 more)
+
+### Community 76 - "Community 76"
+Cohesion: 0.30
+Nodes (12): balancedJsonObject(), createYouTubeCaptionChapters(), createYouTubeCaptionRefinementTranscripts(), extractKoreanYouTubeCaptionTrack(), extractKoreanYouTubeCaptionTrackFromPlayerResponse(), isRecord(), normalizedCaptionText(), parseYouTubeCaptionJson3() (+4 more)
+
+### Community 77 - "Community 77"
+Cohesion: 0.19
+Nodes (9): analyzeLocalVideoVisuals(), assertValidFile(), clampInteger(), copyFingerprint(), emitProgress(), eraseFingerprints(), LocalVideoVisualAnalysisAdapters, normalizeTimeout() (+1 more)
+
+### Community 78 - "Community 78"
+Cohesion: 0.15
+Nodes (10): candidateMap, candidates, chapters, context, parentLead, ranked, refinement, result (+2 more)
+
+### Community 79 - "Community 79"
+Cohesion: 0.26
+Nodes (9): boundedRepresentativeText(), compactBroadcastContextChapters(), COMPACTED_SUMMARY_LENGTH, compactGroup(), chapter(), BroadcastContextChapterInput, createBroadcastTranscriptChapters(), mergeBroadcastTranscriptChapters() (+1 more)
+
+### Community 80 - "Community 80"
 Cohesion: 0.22
 Nodes (9): BroadcastContextCandidateAnnotation, buildBroadcastContextEligibilityById(), CandidateAiProjectionById, CandidateAiProjectionDisposition, CandidateAiQueueItem, ContextQualifiedFinalSelection, finalizeContextQualifiedCandidates(), isContextExcludedProgramMaterial() (+1 more)
 
-### Community 85 - "Q: 0.3.5 후보 재정렬 제안은 canonical 후보, 정밀 근거, 검토·경계·미리보기·export를 어떻게 안전하게 분리해야 하는가?"
-Cohesion: 0.22
-Nodes (8): CandidateReviewFeatureAvailability, CandidateReviewFeatureAvailabilityErrorCode, CandidateReviewFeatureAvailabilityInputError, deriveCandidateReviewFeatureAvailability(), MULTIPLE_CANDIDATE_FEATURES, MULTIPLE_CANDIDATE_FEATURES_WITHOUT_RANKING, NO_CANDIDATE_FEATURES, SINGLE_CANDIDATE_FEATURES
+### Community 81 - "Community 81"
+Cohesion: 0.26
+Nodes (10): BROADCAST_TRANSCRIPT_QWEN_SCHEMA_VERSION, isBroadcastTranscriptModelId(), BROADCAST_TRANSCRIPT_PROXY_ENDPOINT, BroadcastTranscriptQwenClientError, FetchImplementation, isRecord(), optionalLabel(), parseResult() (+2 more)
 
-### Community 87 - "Q: 현재 v0.3.6 미커밋 diff를 초심자 UI/UX, 접근성, 모바일, 과장 표현 관점에서 다시 읽기 전용 감사해 주세요. App.tsx, styles/retto-highlight.css, README와 새 설명 모듈을 보되 수정은 하지 말고 P0/P1/P2만 파일·라인 근거로 보고하세요. 이전 지적이 실제로 해결됐는지도 확인하세요."
-Cohesion: 0.22
-Nodes (9): @huggingface/transformers, mediabunny, dependencies, @huggingface/transformers, mediabunny, react, react-dom, react (+1 more)
-
-### Community 88 - "Q: 현재 v0.3.6 미커밋 diff를 초심자 UI/UX, 접근성, 모바일, 과장 표현 관점에서 다시 읽기 전용 감사해 주세요. App.tsx, styles/retto-highlight.css, README와 새 설명 모듈을 보되 수정은 하지 말고 P0/P1/P2만 파일·라인 근거로 보고하세요. 이전 지적이 실제로 해결됐는지도 확인하세요."
-Cohesion: 0.22
-Nodes (8): expectedInsightKeys, extraction, insight, insightKeys, offsetSeconds, result, videoFrames, wav
-
-### Community 89 - "Q: 후보별 사건·반응 설명을 어떤 근거 경계로 구현하고 UI에 연결해야 하나?"
-Cohesion: 0.22
-Nodes (8): BROADCAST_SELECTION_SCHEMA_VERSION, BroadcastSelectionCandidateInput, BroadcastSelectionCandidateRelation, BroadcastSelectionChapterInput, BroadcastSelectionCoverageGap, BroadcastSelectionRelationType, BroadcastSelectionRequest, BroadcastSelectionResult
-
-### Community 90 - "Q: 현재 repo에서 local Whisper CandidatePassB 흐름을 Gemini API 기반 후보 오디오 전사/사건 설명으로 교체하거나 병행하는 최소 안전 수직 슬라이스"
+### Community 82 - "Community 82"
 Cohesion: 0.28
-Nodes (6): CandidatePassBRuntimeCapabilitySnapshot, CandidatePassBRuntimeSelectionOptions, LegacyCandidatePassBDevice, NavigatorWithOptionalGpu, selectCandidatePassBRuntimeDevice(), PreferredPreflightRuntimeTier
+Nodes (11): ChatAnalysisWorkerFactory, hasFiniteNumberFields(), isChatCandidate(), isFenceEnvelope(), isFiniteNumber(), isHighlightSelectionResult(), isNonNegativeInteger(), isRecord() (+3 more)
 
-### Community 91 - "Q: How does App start Gemini candidate analysis and keep the response fenced from canonical editing state?"
-Cohesion: 0.25
-Nodes (5): CANDIDATE_PASS_B_SAMPLE_RATE_HZ, AiProviderEnvironment, AiProxyEnvironment, createGeminiPayload(), createQwenSsePayload()
+### Community 83 - "Community 83"
+Cohesion: 0.22
+Nodes (8): SelectableCandidate, approximateErf(), calculateTemporalEventDensity(), clampProbability(), poissonUpperTail(), TemporalEventDensityBin, TemporalEventDensityDiagnostics, TemporalEventDensityResult
 
-### Community 92 - "Q: Should v0.3.6 add a Korean text generator or deterministic evidence explanation?"
-Cohesion: 0.21
-Nodes (12): boundedJoinedText(), captionTextForRange(), chapterTextForRange(), isExplicitMusicOnlyCaption(), FetchImplementation, isRecord(), parseYouTubeCaptionProxyResult(), requestYouTubeCaptionTrack() (+4 more)
+### Community 84 - "Community 84"
+Cohesion: 0.24
+Nodes (7): keyPathFor(), normalizeStoreFailure(), requestError(), storeClosedError(), terminalConflictError(), terminalRecordsAreEquivalent(), validateAndCloneTerminalRecord()
 
-### Community 93 - "FakeInput"
-Cohesion: 0.25
-Nodes (7): CHZZK 채팅, ExClipper, GitHub Pages 배포, 개발 서버에서 실행하기, 설계 문서, 저장과 계정, 지금 구현된 첫 수직 슬라이스
+### Community 85 - "Community 85"
+Cohesion: 0.17
+Nodes (12): scripts, build, check, cloudflare:deploy, cloudflare:dev, dev, evaluate:live-context, lint (+4 more)
 
-### Community 94 - "broadcastTranscriptQwenClient.ts"
+### Community 86 - "Community 86"
+Cohesion: 0.18
+Nodes (10): boundedText(), captions, discoveredLeads, events, lead, parent, refineWindow(), result (+2 more)
+
+### Community 87 - "Community 87"
+Cohesion: 0.24
+Nodes (11): CandidatePassBBasisLabel, CandidatePassBCuePhase, basePresentation(), buildCandidatePassBPresentation(), CandidatePassBCuePhaseLabel, CandidatePassBPresentation, CandidatePassBPresentationCue, CandidatePassBPresentationErrorCode (+3 more)
+
+### Community 88 - "Community 88"
+Cohesion: 0.23
+Nodes (8): CandidateReviewState, DECISION_BY_REVIEW_STATE, decisionForReviewState(), REVIEW_STATE_BY_DECISION, reviewStateForDecision(), nextUnreviewedCandidateId(), ReviewableCandidate, reviewDecisionAdvances()
+
+### Community 90 - "Community 90"
+Cohesion: 0.18
+Nodes (7): candidates, captions, chapters, events, fastPass, result, sourceDurationMs
+
+### Community 91 - "Community 91"
+Cohesion: 0.29
+Nodes (7): ANALYSIS_BUDGET_POLICY_VERSION, AnalysisBudgetEnvelope, createAnalysisBudgetEnvelope(), CandidatePassBCostEstimate, clampInteger(), estimateCandidatePassBCost(), formatEstimatedUsd()
+
+### Community 92 - "Community 92"
 Cohesion: 0.25
 Nodes (8): byteCount(), CandidatePassBModelDownloadAggregate, CandidatePassBModelDownloadTracker, DownloadFileState, isRecord(), nonEmptyBoundedString(), safeSum(), event()
 
-### Community 96 - "tsconfig.json"
-Cohesion: 0.25
-Nodes (3): createDefaultObjectURL(), LocalMediaPreflightAdapters, revokeDefaultObjectURL()
-
-### Community 97 - "highlightSelector.test.ts"
+### Community 93 - "Community 93"
 Cohesion: 0.29
-Nodes (6): engines, node, name, private, type, version
+Nodes (9): AnalysisDurationRangeMs, clampToMonotonic(), estimateAnalysisDurationRangeMs(), estimateRemainingMs(), formatRemainingLabel(), RemainingEstimate, RemainingEstimateBasis, RemainingEstimateInput (+1 more)
 
-### Community 98 - "evaluate-live-caption-context.mjs"
-Cohesion: 0.32
-Nodes (7): AUDIO_REACTION_CANDIDATE_WINDOW_MS, AudioReactionFeatureWindow, NormalizedWindow, ScoredWindow, baseline(), setReaction(), speechWindow()
+### Community 94 - "Community 94"
+Cohesion: 0.22
+Nodes (8): CandidateReviewFeatureAvailability, CandidateReviewFeatureAvailabilityErrorCode, CandidateReviewFeatureAvailabilityInputError, deriveCandidateReviewFeatureAvailability(), MULTIPLE_CANDIDATE_FEATURES, MULTIPLE_CANDIDATE_FEATURES_WITHOUT_RANKING, NO_CANDIDATE_FEATURES, SINGLE_CANDIDATE_FEATURES
 
-### Community 99 - "evaluate-caption-selection.mjs"
-Cohesion: 0.14
-Nodes (12): analyzeLocalVideoVisuals(), assertValidFile(), clampInteger(), copyFingerprint(), emitProgress(), eraseFingerprints(), LocalVideoVisualAnalysisAdapters, normalizeTimeout() (+4 more)
+### Community 95 - "Community 95"
+Cohesion: 0.20
+Nodes (8): durationMs, endpoint, extraction, file, requestedDurationSeconds, sampleCount, startSeconds, wav
 
-### Community 100 - "Q: Where is the model routing policy disconnected from runtime, and which paths control provider fallback?"
-Cohesion: 0.33
-Nodes (5): endSeconds, matches, pattern, payload, startSeconds
-
-### Community 101 - "broadcastSelectionProtocol.ts"
-Cohesion: 0.47
-Nodes (4): ProxyWorkerFailure, CandidatePassBProxyHttpFailure, CandidatePassBWorkerError, CandidatePassBWorkerFailureReason
-
-### Community 102 - "vite"
-Cohesion: 0.33
-Nodes (4): NamedPositiveMoment, SAMPLE_EVALUATION_CONTRACT_VERSION, SampleEvaluationContract, SampleGroundTruthMode
-
-### Community 103 - "broadcastContextSamplingPlan.ts"
-Cohesion: 0.40
-Nodes (4): Context-aware highlight pipeline 재검토 및 구현 요청, ExClipper `0.3.34` 적용 판단, 별도 구조 개선으로 보류, 이번 패치에 수용
-
-### Community 104 - "eslint.config.js"
-Cohesion: 0.40
-Nodes (4): Answer, Outcome, Q: How do durable analysis records prevent raw chat and nickname leakage through arbitrary nested fields?, Source Nodes
-
-### Community 105 - "MAX_CANDIDATE_AUDIO_EVENT_CANDIDATES"
-Cohesion: 0.40
-Nodes (4): Answer, Outcome, Q: 현재의 하이라이트 검출은 무슨 기준을 사용하고 있지, Source Nodes
-
-### Community 106 - "vite-env.d.ts"
-Cohesion: 0.40
-Nodes (4): Answer, Outcome, Q: 스트리머 반응 중심 목표 대비 현재 하이라이트 검출 신호의 적합성, 오탐, 미탐, 다음 구조를 감사, Source Nodes
-
-### Community 107 - "vite.config.ts"
-Cohesion: 0.40
-Nodes (4): Answer, Outcome, Q: 근데 클립이란건 스트리머의 반응을 보는거지 화려한 연출을 보는게 아니야. 이게 맞는 접근인지 알려진 다른 사례들과 함께 확인해, Source Nodes
-
-### Community 108 - "vitest.config.ts"
-Cohesion: 0.40
-Nodes (4): Answer, Outcome, Q: 0.3 오디오 반응부터 설명·저장·내보내기까지의 경로, Source Nodes
-
-### Community 109 - "aiProxy.worker.test.ts"
-Cohesion: 0.40
-Nodes (4): Answer, Outcome, Q: Candidate Pass B 구조가 App, Worker, provisional evidence, finalizing 완료 fence를 어떻게 연결하는가?, Source Nodes
-
-### Community 110 - "candidatePassBEvidenceState.ts"
-Cohesion: 0.40
-Nodes (4): Answer, Outcome, Q: Trace candidate array order consumers and design CandidateRankingProposal lifecycle, Source Nodes
-
-### Community 111 - "sampleEvaluationContract.ts"
-Cohesion: 0.40
-Nodes (4): Answer, Outcome, Q: 0.3.5 후보 재정렬 제안은 canonical 후보, 정밀 근거, 검토·경계·미리보기·export를 어떻게 안전하게 분리해야 하는가?, Source Nodes
-
-### Community 112 - "audioReactionAnalysis.worker.ts"
-Cohesion: 0.40
-Nodes (4): Answer, Outcome, Q: Beginner UX audit for per-candidate event and reaction explanations including evidence lifecycle states., Source Nodes
-
-### Community 113 - "candidatePassBQwenOmni.ts"
-Cohesion: 0.40
-Nodes (4): Answer, Outcome, Q: 현재 v0.3.6 미커밋 diff를 초심자 UI/UX, 접근성, 모바일, 과장 표현 관점에서 다시 읽기 전용 감사해 주세요. App.tsx, styles/retto-highlight.css, README와 새 설명 모듈을 보되 수정은 하지 말고 P0/P1/P2만 파일·라인 근거로 보고하세요. 이전 지적이 실제로 해결됐는지도 확인하세요., Source Nodes
-
-### Community 114 - "handleBroadcastTranscriptRequest"
-Cohesion: 0.40
-Nodes (4): Answer, Outcome, Q: 현재 v0.3.6 미커밋 diff를 초심자 UI/UX, 접근성, 모바일, 과장 표현 관점에서 다시 읽기 전용 감사해 주세요. App.tsx, styles/retto-highlight.css, README와 새 설명 모듈을 보되 수정은 하지 말고 P0/P1/P2만 파일·라인 근거로 보고하세요. 이전 지적이 실제로 해결됐는지도 확인하세요., Source Nodes
-
-### Community 115 - "highlightNarrative.ts"
-Cohesion: 0.40
-Nodes (4): Answer, Outcome, Q: 후보별 사건·반응 설명을 어떤 근거 경계로 구현하고 UI에 연결해야 하나?, Source Nodes
-
-### Community 116 - "@emnapi/runtime"
-Cohesion: 0.40
-Nodes (4): Answer, Outcome, Q: 현재 repo에서 local Whisper CandidatePassB 흐름을 Gemini API 기반 후보 오디오 전사/사건 설명으로 교체하거나 병행하는 최소 안전 수직 슬라이스, Source Nodes
-
-### Community 117 - "recoverableAnalysisResults.test.ts"
-Cohesion: 0.40
-Nodes (4): Answer, Outcome, Q: How does App start Gemini candidate analysis and keep the response fenced from canonical editing state?, Source Nodes
-
-### Community 118 - "appendHiddenElement"
-Cohesion: 0.40
-Nodes (4): Answer, Outcome, Q: 세팅하려면 이제 뭐가 필요하지, Source Nodes
-
-### Community 119 - "discoveredLeadRefinement.ts"
-Cohesion: 0.40
-Nodes (4): Answer, Outcome, Q: Where should grounded VTuber participant identity be added without changing highlight ranking?, Source Nodes
-
-### Community 120 - "eslint"
-Cohesion: 0.40
-Nodes (4): Answer, Outcome, Q: Where is the model routing policy disconnected from runtime, and which paths control provider fallback?, Source Nodes
-
-### Community 121 - "captionCandidateEvidence.ts"
-Cohesion: 0.40
-Nodes (4): Answer, Outcome, Q: Audit candidate selection, context, music filtering, participant identity, transcript transport, and timeline architecture., Source Nodes
-
-### Community 122 - "@types/react"
-Cohesion: 0.40
-Nodes (4): Answer, Outcome, Q: How does ExClipper select topic-balanced caption refinements and prevent routine gameplay from reaching canonical editor cards?, Source Nodes
-
-### Community 123 - "candidatePassBModelDownloadProgress.ts"
-Cohesion: 0.40
-Nodes (4): Answer, Outcome, Q: How should ExClipper distinguish semantic chapter and lead states on the restored timeline?, Source Nodes
-
-### Community 124 - "runCandidateAudioEventWorker"
-Cohesion: 0.70
-Nodes (3): createBroadcastTranscriptChapters(), mergeBroadcastTranscriptChapters(), representativeCodePoints()
-
-### Community 125 - "Q: Audit candidate selection, context, music filtering, participant identity, transcript transport, and timeline architecture."
-Cohesion: 0.50
-Nodes (3): Answer, Outcome, Q: Should v0.3.6 add a Korean text generator or deterministic evidence explanation?
-
-### Community 126 - "LocalMediaPreflightError"
-Cohesion: 0.83
-Nodes (3): addCollectiveSpike(), message(), quietBaseline()
-
-### Community 127 - "broadcastContextTimelinePresentation.ts"
-Cohesion: 0.53
-Nodes (4): boundedRepresentativeText(), compactBroadcastContextChapters(), COMPACTED_SUMMARY_LENGTH, compactGroup()
-
-### Community 134 - "evaluate-caption-refinement.mjs"
+### Community 96 - "Community 96"
 Cohesion: 0.38
 Nodes (8): createDistributedOrder(), createDistributedTimelineRevealOrder(), createDistributedTranscriptExplorationOrder(), prioritizeAdjacentTranscriptChunks(), rangeCenter(), chunks(), TimelineRange, validateTranscriptChunks()
 
-### Community 148 - "QWEN_CANDIDATE_MODEL_ID"
+### Community 97 - "Community 97"
+Cohesion: 0.36
+Nodes (8): BroadcastSummaryCitationCandidate, BroadcastSummaryCitationPart, BroadcastSummaryCitationPresentation, buildBroadcastSummaryCitationPresentation(), normalizeText(), overlapScore(), sentences(), tokens()
+
+### Community 98 - "Community 98"
+Cohesion: 0.33
+Nodes (8): RefinedDiscoveredLeadRange, boundedText(), createSemanticLeadCandidate(), isRecord(), parseSemanticLeadCandidates(), SEMANTIC_CATEGORIES, SEMANTIC_LEAD_CANDIDATE_RECORD_VERSION, serializeSemanticLeadCandidates()
+
+### Community 99 - "Community 99"
+Cohesion: 0.31
+Nodes (7): AnalysisControlState, AnalysisControlStateInput, AnalysisRunStatus, BUSY_RUN_STATUSES, CANCELLABLE_RUN_STATUSES, deriveAnalysisControlState(), AnalysisRunState
+
+### Community 100 - "Community 100"
+Cohesion: 0.33
+Nodes (7): assessClipSubtitleCoverage(), buildClipSrt(), clampCueToRange(), ClipSubtitleAvailability, ClipSubtitleRange, coveredDurationMs(), srtTimestamp()
+
+### Community 101 - "Community 101"
+Cohesion: 0.22
+Nodes (7): assertNonNegativeFinite(), formatBytes(), formatDuration(), Harness, ProbeEventType, ProbeListener, trimTrailingZeroes()
+
+### Community 103 - "Community 103"
+Cohesion: 0.40
+Nodes (8): assertBroadcastContextSessionRecord(), boundedString(), BROADCAST_CONTEXT_SESSION_SCHEMA_VERSION, BroadcastContextSessionRecord, cloneBroadcastContextSessionRecord(), hasExactKeys(), isRecord(), record
+
+### Community 104 - "Community 104"
+Cohesion: 0.22
+Nodes (9): @huggingface/transformers, mediabunny, dependencies, @huggingface/transformers, mediabunny, react, react-dom, react (+1 more)
+
+### Community 105 - "Community 105"
+Cohesion: 0.22
+Nodes (8): expectedInsightKeys, extraction, insight, insightKeys, offsetSeconds, result, videoFrames, wav
+
+### Community 106 - "Community 106"
+Cohesion: 0.22
+Nodes (8): BROADCAST_SELECTION_SCHEMA_VERSION, BroadcastSelectionCandidateInput, BroadcastSelectionCandidateRelation, BroadcastSelectionChapterInput, BroadcastSelectionCoverageGap, BroadcastSelectionRelationType, BroadcastSelectionRequest, BroadcastSelectionResult
+
+### Community 107 - "Community 107"
+Cohesion: 0.28
+Nodes (6): CandidatePassBRuntimeCapabilitySnapshot, CandidatePassBRuntimeSelectionOptions, LegacyCandidatePassBDevice, NavigatorWithOptionalGpu, selectCandidatePassBRuntimeDevice(), PreferredPreflightRuntimeTier
+
+### Community 108 - "Community 108"
 Cohesion: 0.25
 Nodes (4): AppErrorBoundary, AppErrorBoundaryProps, AppErrorBoundaryState, rootElement
 
-### Community 150 - "@eslint/js"
-Cohesion: 0.40
-Nodes (4): Answer, Outcome, Q: Gemini 공용 키를 모든 필요한 모델 경로에 연결하고 교환학생 출연진을 전체 맥락 분석에 사용하는 방법은 무엇인가?, Source Nodes
+### Community 110 - "Community 110"
+Cohesion: 0.36
+Nodes (6): CandidateEvidenceExplanationInput, CandidatePassBEvidence, evidenceQualityRank(), mergeCandidatePassBEvidence(), fallback, provisional
 
-### Community 152 - "eslint-plugin-react-refresh"
+### Community 111 - "Community 111"
+Cohesion: 0.39
+Nodes (6): CandidateFinalVerificationGap, FinalVerificationGapCount, GAP_ORDER, GAP_PRESENTATION, isPipelineGap(), summarizeFinalVerificationGaps()
+
+### Community 112 - "Community 112"
+Cohesion: 0.46
+Nodes (6): CHZZK_VIDEO_CHANNEL_PROXY_ENDPOINT, chzzkVideoNoFromSourceName(), FetchImplementation, isRecord(), parseChzzkVideoChannelResult(), requestChzzkVideoChannel()
+
+### Community 114 - "Community 114"
+Cohesion: 0.25
+Nodes (3): createDefaultObjectURL(), LocalMediaPreflightAdapters, revokeDefaultObjectURL()
+
+### Community 115 - "Community 115"
+Cohesion: 0.29
+Nodes (6): engines, node, name, private, type, version
+
+### Community 116 - "Community 116"
+Cohesion: 0.29
+Nodes (4): CandidatePassBInputError, CandidatePassBSourceCandidate, CandidatePassBTarget, target
+
+### Community 117 - "Community 117"
+Cohesion: 0.43
+Nodes (5): canStartTranscriptRun(), transcriptOperationKey(), TranscriptPhase, transcriptPhaseFor(), TranscriptStartInput
+
+### Community 118 - "Community 118"
+Cohesion: 0.33
+Nodes (5): endSeconds, matches, pattern, payload, startSeconds
+
+### Community 119 - "Community 119"
+Cohesion: 0.40
+Nodes (6): assertCandidate(), assertMaxCandidates(), assertSourceDuration(), assertTarget(), compareCandidateSelection(), selectCandidatePassBTargets()
+
+### Community 120 - "Community 120"
+Cohesion: 0.33
+Nodes (4): NamedPositiveMoment, SAMPLE_EVALUATION_CONTRACT_VERSION, SampleEvaluationContract, SampleGroundTruthMode
+
+### Community 121 - "Community 121"
+Cohesion: 0.40
+Nodes (3): css, here, SIZES
+
+### Community 122 - "Community 122"
 Cohesion: 0.60
 Nodes (3): buildSourceReadyTimelineTicks(), labelStrideForDuration(), SourceReadyTimelineTick
 
+### Community 123 - "Community 123"
+Cohesion: 0.83
+Nodes (3): addCollectiveSpike(), message(), quietBaseline()
+
 ## Knowledge Gaps
-- **682 isolated node(s):** `name`, `private`, `version`, `type`, `node` (+677 more)
+- **625 isolated node(s):** `here`, `IMG`, `here`, `css`, `SIZES` (+620 more)
   These have ≤1 connection - possible missing edges or undocumented components.
-- **18 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
-
-## Work-memory lessons
-
-**Preferred sources** — corroborated by past sessions; start here.
-- `App()` (13× useful, score=12.185141653) _(code changed — re-verify)_
-- `fuseHighlightCandidates()` (4× useful, score=3.704238322)
-- `runCandidatePassBWorker()` (3× useful, score=2.793905191)
-- `selectChatHighlights()` (3× useful, score=2.773828546)
-- `selectVisualHighlightsFromSamples()` (3× useful, score=2.773828546)
-- `buildCandidatePassBEvidence()` (2× useful, score=1.860885463)
-- `reduceCandidatePassBRun()` (2× useful, score=1.860885463)
-- `durableAnalysisPayload.ts` (2× useful, score=1.856057889)
+- **21 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
-- **Why does `runCandidateAudioEventWorker()` connect `chatImport.ts` to `candidateAudioEventWorkerClient.ts`, `candidateRanking.ts`?**
-  _High betweenness centrality (0.019) - this node is a cross-community bridge._
-- **Why does `App()` connect `candidateRanking.ts` to `highlightFusion.ts`, `candidatePassBRun.ts`, `durableAnalysisPayload.ts`, `evaluate-caption-refinement.mjs`, `candidateAudioEvent.ts`, `localAudioReactionAnalysis.test.ts`, `candidateAudioEventWorkerProtocol.ts`, `localFileFingerprint.ts`, `chatImport.ts`, `AnalysisResultStore`, `compilerOptions`, `사람 중심 후보 검토`, `eslint-plugin-react-refresh`, `candidateAudioEventWorkerClient.test.ts`, `decodeAndScore`, `candidatePassBWorkerProtocol.ts`, `localMediaPreflight.ts`, `localVideoVisualAnalysis.ts`, `localVideoVisualAnalysisCore.ts`, `candidatePassBWorkerClient.test.ts`, `evaluate-local-audio-fast-pass.mjs`, `aiProviderConfiguration.ts`, `candidateMerge.ts`, `broadcastTranscriptWorkerClient.ts`, `devDependencies`, `broadcastContextProtocol.ts`, `aiProxy.worker.ts`, `FakeVideoProbe`, `broadcastTranscript.worker.ts`, `candidateReviewFeatureAvailability.ts`, `broadcastContextDeepseekClient.ts`, `clipRenderer.ts`, `candidatePassBRuntime.ts`, `package.json`, `Q: 세팅하려면 이제 뭐가 필요하지`, `CandidatePassBWorkerFailureReason`, `Q: 현재의 하이라이트 검출은 무슨 기준을 사용하고 있지`, `Q: 스트리머 반응 중심 목표 대비 현재 하이라이트 검출 신호의 적합성, 오탐, 미탐, 다음 구조를 감사`, `Q: Candidate Pass B 구조가 App, Worker, provisional evidence, finalizing 완료 fence를 어떻게 연결하는가?`, `Q: Trace candidate array order consumers and design CandidateRankingProposal lifecycle`, `Q: 0.3.5 후보 재정렬 제안은 canonical 후보, 정밀 근거, 검토·경계·미리보기·export를 어떻게 안전하게 분리해야 하는가?`, `Q: Should v0.3.6 add a Korean text generator or deterministic evidence explanation?`, `broadcastTranscriptQwenClient.ts`, `evaluate-caption-selection.mjs`, `runCandidateAudioEventWorker`, `broadcastContextTimelinePresentation.ts`?**
-  _High betweenness centrality (0.016) - this node is a cross-community bridge._
-- **Why does `LocalAudioReactionAnalysisResult` connect `localAudioReactionAnalysis.ts` to `candidateRanking.ts`, `analysisResultStore.test.ts`, `candidatePassB.worker.ts`?**
-  _High betweenness centrality (0.016) - this node is a cross-community bridge._
-- **Are the 7 inferred relationships involving `App()` (e.g. with `chunks()` and `event()`) actually correct?**
-  _`App()` has 7 INFERRED edges - model-reasoned connections that need verification._
-- **What connects `name`, `private`, `version` to the rest of the system?**
-  _682 weakly-connected nodes found - possible documentation gaps or missing edges._
-- **Should `candidateBoundaryRevision.ts` be split into smaller, more focused modules?**
-  _Cohesion score 0.103424178895877 - nodes in this community are weakly interconnected._
-- **Should `highlightFusion.ts` be split into smaller, more focused modules?**
-  _Cohesion score 0.06 - nodes in this community are weakly interconnected._
+- **Why does `IndexedDbAnalysisResultStore` connect `Community 17` to `Community 2`, `Community 14`, `Community 84`, `Community 22`, `Community 23`?**
+  _High betweenness centrality (0.026) - this node is a cross-community bridge._
+- **Why does `LocalAudioReactionAnalysisProgress` connect `Community 31` to `Community 2`, `Community 37`, `Community 54`?**
+  _High betweenness centrality (0.026) - this node is a cross-community bridge._
+- **Why does `App()` connect `Community 2` to `Community 0`, `Community 1`, `Community 3`, `Community 5`, `Community 6`, `Community 9`, `Community 12`, `Community 14`, `Community 15`, `Community 16`, `Community 21`, `Community 23`, `Community 24`, `Community 27`, `Community 28`, `Community 32`, `Community 33`, `Community 34`, `Community 35`, `Community 36`, `Community 37`, `Community 38`, `Community 40`, `Community 42`, `Community 44`, `Community 46`, `Community 49`, `Community 53`, `Community 60`, `Community 61`, `Community 62`, `Community 63`, `Community 65`, `Community 67`, `Community 68`, `Community 69`, `Community 73`, `Community 75`, `Community 76`, `Community 77`, `Community 79`, `Community 80`, `Community 83`, `Community 87`, `Community 88`, `Community 91`, `Community 92`, `Community 93`, `Community 94`, `Community 96`, `Community 97`, `Community 98`, `Community 99`, `Community 100`, `Community 101`, `Community 110`, `Community 111`, `Community 112`, `Community 117`, `Community 119`, `Community 122`, `Community 124`, `Community 126`?**
+  _High betweenness centrality (0.018) - this node is a cross-community bridge._
+- **Are the 8 inferred relationships involving `App()` (e.g. with `chunks()` and `event()`) actually correct?**
+  _`App()` has 8 INFERRED edges - model-reasoned connections that need verification._
+- **What connects `here`, `IMG`, `here` to the rest of the system?**
+  _625 weakly-connected nodes found - possible documentation gaps or missing edges._
+- **Should `Community 0` be split into smaller, more focused modules?**
+  _Cohesion score 0.055246913580246915 - nodes in this community are weakly interconnected._
+- **Should `Community 1` be split into smaller, more focused modules?**
+  _Cohesion score 0.0624048706240487 - nodes in this community are weakly interconnected._
