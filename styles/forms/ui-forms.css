@@ -244,12 +244,14 @@
   --uf-row-tint: 14%;
   /* 왼쪽 색 띠의 폭. 카드 폼의 레일과 같은 그라디언트를 짧게 쓴다. */
   --uf-row-rail: 0.42em;
+  /* uf-row-height: dev/focus-picker 가 고쳐 쓰는 줄이다. 손으로 바꾸지 않는다. */
+  --uf-row-height: 74px;
 
   position: relative;
   display: flex;
   align-items: center;
   width: 100%;
-  min-height: 4.6em;
+  min-height: var(--uf-row-height);
   padding: 0 0 0 1.15em;
   border: 0;
   border-radius: var(--uf-radius);
@@ -306,6 +308,17 @@
   background-position: var(--uf-row-focus, 50% 50%);
   transform: scale(var(--uf-row-zoom, 1));
   transform-origin: var(--uf-row-focus, 50% 50%);
+
+  /*
+   * 그림 자체를 왼쪽에서 페이드시킨다.
+   *
+   * 위를 덮는 막이 그 자리에서 거의 불투명하니 가려질 것 같지만, 확대 배율과
+   * 초점이 그림마다 다르므로 잘린 왼쪽 모서리가 막의 어디쯤에 놓일지가 그림마다
+   * 달라진다. 막만 믿으면 어떤 그림에서는 세로 선이 드러난다. 그림 쪽에서
+   * 없애면 배율과 무관하게 항상 사라진다.
+   */
+  -webkit-mask-image: linear-gradient(90deg, transparent 0%, #000 38%);
+  mask-image: linear-gradient(90deg, transparent 0%, #000 38%);
 }
 
 /**

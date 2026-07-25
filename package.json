@@ -14,6 +14,7 @@
     "lint": "eslint . --max-warnings 0",
     "test": "vitest run",
     "test:watch": "vitest",
+    "dev:focus": "node dev/focus-server.mjs",
     "cloudflare:dev": "wrangler dev",
     "cloudflare:deploy": "wrangler deploy",
     "evaluate:live-context": "tsx scripts/evaluate-live-caption-context.mjs",

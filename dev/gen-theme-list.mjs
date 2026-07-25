@@ -19,6 +19,7 @@ import {
   contrastOfRgb,
 } from "../src/app/streamerPalette.ts";
 import { streamerPortraitCrop } from "../src/app/streamerProfiles.ts";
+import { readRowHeight } from "./formTokens.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -48,6 +49,9 @@ const SUBTITLE = {
 const TINT = { light: 0.14, dark: 0.22 };
 
 const palettes = buildAllStreamerPalettes();
+
+/** 행 높이는 ui-forms.css 가 갖고 있다. 여기서 따로 정하면 둘이 갈라진다. */
+const ROW_HEIGHT = readRowHeight();
 
 /**
  * 글자가 실제로 놓이는 색을 계산한다. 사진 쪽이 아니라 **글자가 있는 쪽**의
@@ -178,7 +182,7 @@ h1{font-size:15px;margin:0 0 4px}
 .meas .ok{color:#5fbf87}.meas .no{color:#e0736b}
 
 /* 공통 행 */
-.row{position:relative;height:74px;border-radius:10px;overflow:hidden;display:flex;align-items:center;isolation:isolate;cursor:pointer}
+.row{position:relative;height:${ROW_HEIGHT}px;border-radius:10px;overflow:hidden;display:flex;align-items:center;isolation:isolate;cursor:pointer}
 /* 왼쪽 색 띠 — 카드 폼의 레일과 같은 그라디언트를 짧게. 사진이 없는 테마에서는
    이것이 유일한 정체성이라 항상 그린다. */
 .row .rail{position:absolute;inset:0 auto 0 0;width:7px;z-index:3;background:linear-gradient(170deg,var(--rail-start),var(--rail-end))}
@@ -187,8 +191,11 @@ h1{font-size:15px;margin:0 0 4px}
 /* 설명은 ink2 다. ink3 는 평평한 배경 기준으로 잡힌 색이라 틴트를 얹으면
    라이트 전 테마에서 4.5:1 아래로 떨어진다(실측 3.21~4.12). */
 .row .txt span{font-size:10px;font-weight:600;color:var(--ink2);letter-spacing:.02em}
+/* 그림 자체를 왼쪽에서 페이드시킨다 — 확대 배율과 초점이 그림마다 다르므로
+   덮는 막만 믿으면 어떤 그림에서는 잘린 세로 모서리가 드러난다. */
 .row .bleed{background-size:cover;background-repeat:no-repeat;
-  background-position:var(--focus,50% 50%);transform:scale(var(--zoom,1));transform-origin:var(--focus,50% 50%)}
+  background-position:var(--focus,50% 50%);transform:scale(var(--zoom,1));transform-origin:var(--focus,50% 50%);
+  -webkit-mask-image:linear-gradient(90deg,transparent 0%,#000 38%);mask-image:linear-gradient(90deg,transparent 0%,#000 38%)}
 .row.on{box-shadow:inset 0 0 0 2px var(--accent)}
 
 .row.a{padding:0 0 0 19px}
@@ -207,7 +214,7 @@ h1{font-size:15px;margin:0 0 4px}
 .fgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:14px}
 .fcard{display:grid;grid-template-columns:74px 1fr;grid-template-rows:auto auto;gap:4px 10px;align-items:start}
 .fsrc{grid-row:1/3;width:74px;height:74px;border-radius:8px;background-size:cover;background-position:center;background-color:#0d0f14}
-.fcrop{position:relative;height:74px;border-radius:8px;overflow:hidden;background:#0d0f14}
+.fcrop{position:relative;height:${ROW_HEIGHT}px;border-radius:8px;overflow:hidden;background:#0d0f14}
 .fimg{position:absolute;inset:0;background-size:cover;background-repeat:no-repeat;
   background-position:var(--focus,50% 50%);transform:scale(var(--zoom,1));transform-origin:var(--focus,50% 50%)}
 .feye{position:absolute;left:0;right:0;top:50%;height:1px;background:rgba(255,80,80,.85);z-index:2}

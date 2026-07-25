@@ -3,6 +3,10 @@
  *
  *   npx tsx dev/gen-focus-picker.mjs
  *
+ * Served by dev/focus-server.mjs (npm run dev:focus), the tool writes straight
+ * back into the source — a value that has to be pasted is a value that gets
+ * pasted wrong. Opened from file:// it still works, minus the writing.
+ *
  * Guessing these values from a thumbnail does not work, and every art update
  * invalidates them again. So the aiming is done by the person who can see the
  * picture: click the eyes, drag the zoom, copy the generated block into
@@ -15,6 +19,7 @@ import { dirname, join } from "node:path";
 
 import { buildAllStreamerPalettes } from "../src/app/streamerPalette.ts";
 import { streamerPortraitCrop } from "../src/app/streamerProfiles.ts";
+import { readRowHeight } from "./formTokens.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -27,6 +32,9 @@ const IMG = {
 };
 
 const palettes = buildAllStreamerPalettes().filter((p) => IMG[p.id]);
+
+/** 행 높이는 ui-forms.css 가 갖고 있다. 여기서 따로 정하면 둘이 갈라진다. */
+const ROW_HEIGHT = readRowHeight();
 
 const SUBJECTS = palettes.map((p) => {
   const { focus, zoom } = streamerPortraitCrop(p.name);
@@ -59,6 +67,22 @@ h1{font-size:16px;margin:0 0 6px}
 .lead b{color:#dfe4f0}
 .lead code{font:11px "SFMono-Regular",monospace;background:#1d212b;padding:1px 5px;border-radius:4px}
 
+/* 위에 붙어 따라오는 조작 줄. 카드를 어디까지 내려도 적용이 손에 닿아 있어야
+   한다 — 값을 고친 뒤 맨 위로 올라가야 저장할 수 있으면 저장을 미루게 된다. */
+.bar{position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:14px;margin-bottom:16px;
+  background:#181b23;border:1px solid #262b36;border-radius:12px;padding:11px 14px}
+.bar label{font-size:11px;color:#9aa2b8;white-space:nowrap}
+.bar input[type=range]{width:200px;accent-color:#6b8cff}
+.bar .hv{font:11px "SFMono-Regular",monospace;color:#c7cdda;min-width:46px}
+.bar .status{margin-left:auto;font-size:11.5px;color:#8b93a8;min-height:1em}
+.bar .status.ok{color:#5fbf87}.bar .status.bad{color:#e0736b}
+.bar .apply{border:0;background:#4a63d8;color:#fff;border-radius:8px;padding:8px 18px;
+  font:700 12px "Pretendard";cursor:pointer}
+.bar .apply:hover{background:#5872e6}
+.bar .apply:disabled{opacity:.55;cursor:default}
+.bar kbd{font:10px "SFMono-Regular",monospace;background:#2a3040;border:1px solid #384054;
+  border-radius:4px;padding:1px 5px;color:#c7cdda}
+
 .cards{display:flex;flex-direction:column;gap:14px}
 .card{display:grid;grid-template-columns:230px 1fr;gap:16px;background:#191c24;border-radius:14px;padding:14px}
 
@@ -76,10 +100,13 @@ h1{font-size:16px;margin:0 0 6px}
 /* 오른쪽 — 실제 행 미리보기 */
 .right{display:flex;flex-direction:column;gap:10px;min-width:0}
 .who{font-size:13px;font-weight:800}
-.prev{position:relative;height:74px;border-radius:10px;overflow:hidden;display:flex;align-items:center;
-  padding:0 0 0 18px;isolation:isolate}
+.prev{position:relative;height:var(--row-h,74px);border-radius:10px;overflow:hidden;display:flex;align-items:center;
+  padding:0 0 0 19px;isolation:isolate;transition:height 120ms ease-out}
 .prev .rail{position:absolute;inset:0 auto 0 0;width:7px;z-index:3}
-.prev .bleed{position:absolute;inset:0 0 0 auto;width:52%;z-index:1;background-size:cover;background-repeat:no-repeat}
+/* 그림 자체를 왼쪽에서 페이드시킨다 — 실제 행과 같은 마스크라야 여기서 본 것이
+   그대로 나온다. */
+.prev .bleed{position:absolute;inset:0 0 0 auto;width:52%;z-index:1;background-size:cover;background-repeat:no-repeat;
+  -webkit-mask-image:linear-gradient(90deg,transparent 0%,#000 38%);mask-image:linear-gradient(90deg,transparent 0%,#000 38%)}
 .prev .scrim{position:absolute;inset:0;z-index:2}
 .prev .txt{position:relative;z-index:3;display:flex;flex-direction:column;gap:2px}
 .prev .txt b{font-size:14px;font-weight:800;line-height:1.2}
@@ -109,6 +136,48 @@ textarea{width:100%;height:220px;background:#0f1116;color:#cfd6e6;border:1px sol
 const SCRIPT = `
 const SUBJECTS = ${JSON.stringify(SUBJECTS)};
 const INITIAL = JSON.parse(JSON.stringify(SUBJECTS));
+let rowHeight = ${ROW_HEIGHT};
+const INITIAL_HEIGHT = rowHeight;
+
+function setRowHeight(px) {
+  rowHeight = px;
+  document.documentElement.style.setProperty("--row-h", px + "px");
+  document.querySelector(".hv").textContent = px + "px";
+  document.querySelector(".bar input[type=range]").value = String(px);
+}
+
+function status(text, kind) {
+  const node = document.querySelector(".status");
+  node.textContent = text;
+  node.className = "status" + (kind ? " " + kind : "");
+}
+
+/**
+ * 소스에 바로 쓴다. 붙여 넣어야 하는 값은 잘못 붙거나 아예 안 붙는다.
+ *
+ * file:// 로 열면 서버가 없으므로 실패한다 — 그때는 아래 코드 상자를 쓰라고
+ * 알려 주는 것이 맞다. 조용히 성공한 척하면 고친 값이 사라진다.
+ */
+async function applyToSource() {
+  const button = document.querySelector(".apply");
+  button.disabled = true;
+  status("반영 중… 하네스도 다시 만든다");
+  try {
+    const response = await fetch("/apply", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ crops: SUBJECTS, rowHeight }),
+    });
+    const result = await response.json();
+    if (!result.ok) throw new Error(result.error);
+    status("반영됨 · streamerProfiles.ts · ui-forms.css · 하네스 3종", "ok");
+  } catch (cause) {
+    status("반영 실패 — npm run dev:focus 로 열었는지 확인. 아래 코드를 복사해도 된다.", "bad");
+    console.error(cause);
+  } finally {
+    button.disabled = false;
+  }
+}
 
 function focusOf(s) { return s.x.toFixed(0) + "% " + s.y.toFixed(0) + "%"; }
 
@@ -174,6 +243,32 @@ for (const s of SUBJECTS) {
   paint(s, root);
 }
 
+setRowHeight(rowHeight);
+
+document.querySelector(".bar input[type=range]").addEventListener("input", (event) => {
+  setRowHeight(Number(event.target.value));
+});
+
+document.querySelector(".apply").addEventListener("click", () => { void applyToSource(); });
+
+document.querySelector(".bar .revert").addEventListener("click", () => {
+  for (const s of SUBJECTS) {
+    const start = INITIAL.find((one) => one.id === s.id);
+    s.x = start.x; s.y = start.y; s.zoom = start.zoom;
+    paint(s, document.getElementById("card-" + s.id));
+  }
+  setRowHeight(INITIAL_HEIGHT);
+  status("불러온 값으로 되돌림 — 아직 반영하지 않았다");
+});
+
+// 저장의 보편적 키. 브라우저의 페이지 저장을 막고 우리 저장으로 바꾼다.
+window.addEventListener("keydown", (event) => {
+  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") {
+    event.preventDefault();
+    void applyToSource();
+  }
+});
+
 document.querySelector(".copy").addEventListener("click", async (event) => {
   const button = event.currentTarget;
   try {
@@ -226,8 +321,17 @@ const html = `<!doctype html><html lang="ko"><head><meta charset="utf-8">
 <h1>초상 초점 맞추기</h1>
 <p class="lead">그림이 바뀔 때마다 다시 맞춰야 하는 값이다. <b>왼쪽 그림에서 눈을 누르면</b> 오른쪽 행이 바로 그 결과로 바뀐다 — 눌러서 끌면 계속 따라온다.
 얼굴이 작게 나오는 그림은 <b>확대</b>를 올린다. 확대는 지정한 초점을 중심으로 커지므로, 눈을 먼저 맞추고 당기는 편이 빠르다.
-다 맞췄으면 아래 <b>복사</b> 를 눌러 <code>src/app/streamerProfiles.ts</code> 의 <code>PORTRAIT_CROP_BY_NAME</code> 을 통째로 바꾼다.
-지금 값이 미리 들어가 있으므로 <b>고칠 것만</b> 건드리면 된다.</p>
+다 맞췄으면 <b>Ctrl+S</b> — 소스에 바로 쓰고 하네스까지 다시 만든다(<code>npm run dev:focus</code> 로 열었을 때).
+지금 값이 미리 들어가 있으므로 <b>고칠 것만</b> 건드리면 된다. 아래 코드 상자는 서버 없이 열었을 때를 위한 것이다.</p>
+
+<div class="bar">
+  <label for="rowh">행 높이</label>
+  <input id="rowh" type="range" min="52" max="120" step="1" value="${ROW_HEIGHT}">
+  <span class="hv"></span>
+  <button class="reset revert" type="button">전부 되돌리기</button>
+  <span class="status"></span>
+  <button class="apply" type="button">반영 <kbd>Ctrl+S</kbd></button>
+</div>
 
 <div class="cards">
 ${SUBJECTS.map(card).join("\n")}
