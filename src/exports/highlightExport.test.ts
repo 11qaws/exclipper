@@ -160,6 +160,10 @@ describe("highlight export", () => {
     expect(file.content).toContain("사건 단서");
     expect(file.content).toContain("혼합 방송 오디오 반응 단서");
     expect(file.content).not.toContain("- 스트리머 반응:");
+    expect(file.content).toContain("근거: 화면 변화 감지(장면 변화 강도 0.72)");
+    // An exported file outlives any caveat, so the internal rank percentile is
+    // never written as a "상위 N%" grade — only what was observed.
+    expect(file.content).not.toMatch(/상위\s*\d/u);
   });
 
   it("labels mixed audio and imported author keys without claiming a streamer or people count", () => {
@@ -198,8 +202,10 @@ describe("highlight export", () => {
 
     expect(markdown.content).toContain("혼합 방송 오디오 신호");
     expect(markdown.content).toContain("서로 다른 작성자 표기 18개");
+    expect(markdown.content).toContain("근거: 짧고 큰 오디오 반응 ·");
     expect(markdown.content).not.toContain("스트리머 오디오 반응");
     expect(markdown.content).not.toContain("참여자 18명");
+    expect(markdown.content).not.toMatch(/상위\s*\d/u);
   });
 
   it("keeps the privacy-safe JSON contract and approved state", () => {

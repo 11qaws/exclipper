@@ -9884,6 +9884,13 @@ function App() {
                             </div>
                           )}
                           <div className="rh-evidence-list" aria-label="선택 근거">
+                          {/*
+                            rankPercentile(오디오·영상)은 내부 우선순위 계산에만 쓰고 칩으로
+                            보여 주지 않는다. 이 순위는 false signal이 많고 자막판·장면 전환·컷
+                            같은 특정 상황에 몰려 발생하는데, "상위 N%"로 찍히면 편집자가 근거
+                            품질 등급으로 읽는다. 정보량이나 진행감을 이유로 되살리지 말 것 —
+                            관찰 사실만 남긴다.
+                          */}
                           {candidate.evidence.audio !== undefined && (
                             <>
                               <span className="rh-evidence" data-signal="audio">
@@ -9898,20 +9905,12 @@ function App() {
                                   평소 음량의 {candidate.evidence.audio.rmsLiftRatio.toFixed(1)}배
                                 </span>
                               )}
-                              <span className="rh-evidence" data-signal="audio">
-                                오디오 내 상위 {Math.max(1, Math.round((1 - candidate.evidence.audio.rankPercentile) * 100))}%
-                              </span>
                             </>
                           )}
                           {candidate.evidence.visual !== undefined && (
-                            <>
-                              <span className="rh-evidence" data-signal="visual">
-                                화면 맥락 변화 {(candidate.evidence.visual.sceneChangeStrength ?? 0).toFixed(2)}
-                              </span>
-                              <span className="rh-evidence" data-signal="visual">
-                                영상 내 상위 {Math.max(1, Math.round((1 - candidate.evidence.visual.rankPercentile) * 100))}%
-                              </span>
-                            </>
+                            <span className="rh-evidence" data-signal="visual">
+                              화면 맥락 변화 {(candidate.evidence.visual.sceneChangeStrength ?? 0).toFixed(2)}
+                            </span>
                           )}
                           {candidate.evidence.chat !== undefined && (
                             <>

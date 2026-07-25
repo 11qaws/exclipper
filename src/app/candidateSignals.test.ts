@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { UnifiedHighlightCandidate } from "../analysis/highlightFusion";
-import { buildCandidateSignalTiles, topPercent } from "./candidateSignals";
+import { buildCandidateSignalTiles } from "./candidateSignals";
 
 function candidate(
   evidence: UnifiedHighlightCandidate["evidence"],
@@ -17,25 +17,6 @@ function candidate(
     evidence,
   };
 }
-
-describe("topPercent", () => {
-  it("reads the strongest percentile as the top 1%, never 0", () => {
-    expect(topPercent(1)).toBe(1);
-    expect(topPercent(0.999)).toBe(1);
-  });
-
-  it("converts a percentile into the complementary top share", () => {
-    expect(topPercent(0.97)).toBe(3);
-    expect(topPercent(0.5)).toBe(50);
-    expect(topPercent(0)).toBe(100);
-  });
-
-  it("clamps values outside [0, 1] and non-finite input", () => {
-    expect(topPercent(1.5)).toBe(1);
-    expect(topPercent(-2)).toBe(100);
-    expect(topPercent(Number.NaN)).toBe(100);
-  });
-});
 
 describe("buildCandidateSignalTiles", () => {
   it("returns nothing when the candidate carries no comparable evidence", () => {
@@ -61,6 +42,7 @@ describe("buildCandidateSignalTiles", () => {
           robustPercentile: 0.9,
           normalizedScore: 0.92,
           eventKind: "short-loudness-burst",
+          rmsLiftRatio: 3.24,
         },
         chat: {
           rankPercentile: 0.9,
@@ -84,7 +66,31 @@ describe("buildCandidateSignalTiles", () => {
 
     expect(tiles.map((tile) => tile.kind)).toEqual(["chat", "audio", "visual"]);
     expect(tiles[0]).toMatchObject({ value: "4.2", unit: "배" });
-    expect(tiles[1]).toMatchObject({ value: "3", unit: "%" });
-    expect(tiles[2]).toMatchObject({ value: "12", unit: "%" });
+    expect(tiles[1]).toMatchObject({ value: "3.2", unit: "배" });
+    expect(tiles[2]).toMatchObject({ value: "0.70", unit: "" });
+    // The rank percentile stays an internal priority input: as a tile it would
+    // read as a quality grade the ranking cannot support.
+    expect(JSON.stringify(tiles)).not.toMatch(/상위/u);
+  });
+
+  it("skips a signal whose only figure would have been its rank", () => {
+    const tiles = buildCandidateSignalTiles(
+      candidate({
+        normalization: "within-signal-rank-and-mad",
+        audio: {
+          rankPercentile: 0.97,
+          robustPercentile: 0.9,
+          normalizedScore: 0.92,
+          eventKind: "short-loudness-burst",
+        },
+        visual: {
+          rankPercentile: 0.88,
+          robustPercentile: 0.8,
+          normalizedScore: 0.9,
+        },
+      }),
+    );
+
+    expect(tiles).toEqual([]);
   });
 });

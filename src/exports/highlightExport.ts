@@ -128,6 +128,14 @@ function signalLabel(candidate: UnifiedHighlightCandidate): string {
   return labels.join(" + ");
 }
 
+/**
+ * The exported evidence line states what was observed, never how it ranked.
+ * `rankPercentile` keeps driving internal prioritisation, but printing it as
+ * "상위 N%" turns a ranking full of false signal — it bunches up on title
+ * cards, scene wipes and camera cuts — into what reads like a quality grade,
+ * and an exported file outlives every caveat we could attach to it. Adding the
+ * rank back to make the export look more substantial would undo that.
+ */
 function evidenceLabel(candidate: UnifiedHighlightCandidate): string {
   const evidence: string[] = [];
   if (candidate.evidence.audio !== undefined) {
@@ -138,14 +146,18 @@ function evidenceLabel(candidate: UnifiedHighlightCandidate): string {
         : audio.eventKind === "sustained-vocal-reaction"
         ? "지속되는 음성형 반응"
         : "짧고 큰 오디오 반응",
-      `오디오 반응 상위 ${topPercent(audio.rankPercentile)}%`,
     );
     if (audio.rmsLiftRatio !== undefined) {
       evidence.push(`평소 음량의 ${audio.rmsLiftRatio.toFixed(1)}배`);
     }
   }
   if (candidate.evidence.visual !== undefined) {
-    evidence.push(`화면 변화 상위 ${topPercent(candidate.evidence.visual.rankPercentile)}%`);
+    const sceneChangeStrength = candidate.evidence.visual.sceneChangeStrength;
+    evidence.push(
+      sceneChangeStrength === undefined
+        ? "화면 변화 감지"
+        : `화면 변화 감지(장면 변화 강도 ${sceneChangeStrength.toFixed(2)})`,
+    );
   }
   if (candidate.evidence.chat !== undefined) {
     evidence.push(
@@ -161,10 +173,6 @@ function evidenceLabel(candidate: UnifiedHighlightCandidate): string {
     );
   }
   return evidence.join(" · ");
-}
-
-function topPercent(rankPercentile: number): number {
-  return Math.max(1, Math.round((1 - rankPercentile) * 100));
 }
 
 function spreadsheetSafeText(value: string): string {
