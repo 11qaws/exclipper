@@ -316,7 +316,11 @@
   color: var(--rvw-ink);
 }
 .rvw-dock button:disabled { opacity: .5; cursor: default; }
-.rvw-dock .use { background: var(--rvw-accent); border-color: var(--rvw-accent); color: var(--rvw-accent-on); }
+/* The primary button is outlined in the ink, not in its own fill. A pale
+ * identity's fill sits at ~2.3:1 against the page, so an edge of the same
+ * colour leaves the control without a boundary; the ink is always solved dark
+ * enough to draw one, and on solid themes it reads as a quiet outline. */
+.rvw-dock .use { background: var(--rvw-accent); border-color: var(--rvw-accent-ink); color: var(--rvw-accent-on); }
 .rvw-trim {
   display: flex;
   align-items: center;
@@ -766,7 +770,7 @@
   gap: 8px;
   color: var(--rvw-ink);
 }
-.rvw-evfoot .use { background: var(--rvw-accent); border-color: var(--rvw-accent); color: var(--rvw-accent-on); }
+.rvw-evfoot .use { background: var(--rvw-accent); border-color: var(--rvw-accent-ink); color: var(--rvw-accent-on); }
 
 /* Slide-in player card (evidence page keeps its context). */
 /*

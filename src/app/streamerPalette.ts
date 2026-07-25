@@ -48,6 +48,15 @@ export interface StreamerPaletteSeed {
    * vivid one (망징이's blue) pushes it above.
    */
   readonly chroma?: number;
+  /**
+   * 정체성의 밝기대.
+   *
+   * `solid`(기본)는 흰 글자를 얹는 진한 색이다. `pale`은 얼음빛 하늘색처럼
+   * **밝은 것이 곧 정체성**인 경우로, 흰 글자를 얹으려고 명도를 끌어내리면
+   * 그 색이 아니게 된다. 그래서 pale 은 밝게 두고 글자를 어둡게 얹는다
+   * (`accentOn` 이 이미 그 일을 한다).
+   */
+  readonly tone?: "solid" | "pale";
 }
 
 /**
@@ -77,7 +86,7 @@ export const STREAMER_PALETTE_SEEDS: readonly StreamerPaletteSeed[] = [
   { id: "amoretto", name: "아모레또", kind: "streamer", hue: 344, chroma: 0.48 }, // dusty wine-mauve (BAR AMORE)
   { id: "eureka", name: "유레카", kind: "streamer", hue: 152, chroma: 0.95 }, // brand green-teal
   { id: "sena", name: "세나 아르벨", kind: "streamer", hue: 276, chroma: 0.5 }, // muted periwinkle-violet (beret)
-  { id: "torori", name: "토로리 코코", kind: "streamer", hue: 202, chroma: 0.8 }, // soft sky blue
+  { id: "torori", name: "토로리 코코", kind: "streamer", hue: 204, chroma: 0.78, tone: "pale" }, // 얼음빛 하늘색 (실측 hsl 204 55% 88%) — 밝은 것이 정체성이라 pale
   { id: "mangjing", name: "망징이", kind: "streamer", hue: 216, chroma: 1.05 }, // deeper blue
   { id: "violet", name: "클래식 바이올렛", kind: "extra", hue: 249, chroma: 1 }, // preserved original default
   { id: "amber", name: "앰버 · 골드", kind: "extra", hue: 40, chroma: 1.05 }, // preserved gold
@@ -116,6 +125,16 @@ export interface StreamerPalette {
   readonly light: ThemeTokens;
   readonly dark: ThemeTokens;
 }
+
+/*
+ * `pale` identities keep their lightness because that lightness *is* the
+ * colour. These sit just below the sampled brand value (토로리's ice blue reads
+ * around L88) — far enough down that a dark label has room, high enough that
+ * it still reads as ice rather than as a mid blue. Saturation is untouched:
+ * pulling chroma out at high lightness is what turns ice into grey.
+ */
+const PALE_LIGHT_L = 79;
+const PALE_DARK_L = 85;
 
 function hsl(h: number, s: number, l: number): string {
   const hue = ((h % 360) + 360) % 360;
@@ -229,12 +248,22 @@ export function buildStreamerPalette(seed: StreamerPaletteSeed): StreamerPalette
   const h = seed.hue;
   const c = seed.chroma ?? 1;
   const accentSat = Math.round(72 * c);
+  const pale = seed.tone === "pale";
 
-  // Fill under white labels: AA (4.5). Coloured text/ink on light grounds: a
-  // safer 6.5 so small text and marks stay crisp. Ink is never lighter than
-  // the fill.
-  const accentL = solveLightness(h, accentSat, 4.5);
-  const inkL = solveLightness(h, accentSat, 6.5, accentL);
+  /*
+   * Fill under white labels: AA (4.5). Coloured text/ink on light grounds: a
+   * safer 6.5 so small text and marks stay crisp.
+   *
+   * A `pale` identity skips that solve entirely. Its colour *is* the lightness
+   * — an icy sky blue at 30% saturation and 85% value — so darkening it until
+   * white text fits turns it into a different, much heavier colour. The fill
+   * stays light and the label goes dark instead; the ink token still solves
+   * downward, because coloured *text* on a light ground has the opposite need.
+   */
+  const accentL = pale ? PALE_LIGHT_L : solveLightness(h, accentSat, 4.5);
+  // Solved at the same saturation it is emitted with — solving at one chroma
+  // and rendering at another silently misses the target.
+  const inkL = solveLightness(h, accentSat, 6.5);
 
   const light: ThemeTokens = {
     accent: hsl(h, accentSat, accentL),
@@ -284,9 +313,11 @@ export function buildStreamerPalette(seed: StreamerPaletteSeed): StreamerPalette
     }
   }
 
+  const darkAccentL = pale ? PALE_DARK_L : 74;
+
   const dark: ThemeTokens = {
-    accent: hsl(h, darkSat, 74),
-    accentOn: solveAccentOn(h, darkSat, 74),
+    accent: hsl(h, darkSat, darkAccentL),
+    accentOn: solveAccentOn(h, darkSat, darkAccentL),
     accentInk: hsl(h, darkInkSat, darkInkL),
     accentBg: hsl(h, 42, 21),
     accentLine: hsl(h, 40, 35),

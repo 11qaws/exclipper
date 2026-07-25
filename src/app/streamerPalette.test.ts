@@ -29,24 +29,37 @@ describe("streamer palette", () => {
     expect(p.light.ink.includes("350")).toBe(true); // neutrals tinted with the hue
   });
 
-  it("keeps every theme equally legible (contrast-solved, not equal-lightness)", () => {
-    // The real invariant is equal *contrast*, not equal L: a white button label
-    // must clear AA (4.5:1) on every accent, and coloured ink must stay crisp
-    // (≥6.5:1) on white, no matter how bright the hue reads.
+  it("keeps coloured text crisp on the light ground", () => {
+    // The ink is what carries the hue as *text*, so it stays solved against the
+    // page regardless of how light the fill is. (The fill itself is no longer
+    // required to suit white text — see the accentOn test: a pale identity
+    // keeps its lightness and takes a dark label instead.)
     for (const p of buildAllStreamerPalettes()) {
-      expect(contrastOnWhite(p.light.accent)).toBeGreaterThanOrEqual(4.5);
       expect(contrastOnWhite(p.light.accentInk)).toBeGreaterThanOrEqual(6.5);
     }
   });
 
-  it("keeps the two blues distinct (torori sky vs mangjing deeper blue)", () => {
+  it("keeps the two blues distinct (torori pale ice vs mangjing deep blue)", () => {
     const torori = STREAMER_PALETTE_SEEDS.find((s) => s.id === "torori")!;
     const mangjing = STREAMER_PALETTE_SEEDS.find((s) => s.id === "mangjing")!;
-    // same family, so held apart by both a hue gap and a chroma gap
-    expect(Math.abs(torori.hue - mangjing.hue)).toBeGreaterThanOrEqual(10);
-    expect(
-      Math.abs((torori.chroma ?? 1) - (mangjing.chroma ?? 1)),
-    ).toBeGreaterThanOrEqual(0.15);
+    // These two sit close on the wheel, so what separates them is tone and
+    // chroma, not hue: one is a washed-out ice blue, the other a saturated
+    // deep blue. That reads as further apart than an 8° hue gap suggests.
+    expect(torori.tone).toBe("pale");
+    expect(mangjing.tone ?? "solid").toBe("solid");
+    // What actually separates them on screen is lightness: one sits up in the
+    // ice band, the other down where white text fits. Both keep real chroma —
+    // draining it is what turned the ice blue grey.
+    const lightnessOf = (id: string): number => {
+      const p = buildAllStreamerPalettes().find((x) => x.id === id)!;
+      return Number(/hsl\(\d+ \d+% (\d+)%\)/.exec(p.light.accent)![1]);
+    };
+    expect(lightnessOf("torori") - lightnessOf("mangjing")).toBeGreaterThanOrEqual(20);
+    const satOf = (id: string): number => {
+      const p = buildAllStreamerPalettes().find((x) => x.id === id)!;
+      return Number(/hsl\(\d+ (\d+)%/.exec(p.light.accent)![1]);
+    };
+    expect(satOf("torori")).toBeGreaterThanOrEqual(50); // still blue, not grey
   });
 
   it("keeps button labels legible on the accent in both themes", () => {
@@ -100,10 +113,14 @@ describe("streamer palette", () => {
         const raw = Math.abs(a.hue - b.hue);
         const hueDist = Math.min(raw, 360 - raw);
         const chromaGap = Math.abs((a.chroma ?? 1) - (b.chroma ?? 1));
+        const toneDiffers = (a.tone ?? "solid") !== (b.tone ?? "solid");
         const distinguishable =
           hueDist >= 30 ||
           (hueDist >= 10 && chromaGap >= 0.2) ||
-          chromaGap >= 0.45;
+          chromaGap >= 0.45 ||
+          // 밝은 얼음빛과 진한 색은 같은 계열이어도 한눈에 갈린다 — 명도대가
+          // 통째로 다르므로 색상 차가 작아도 헷갈리지 않는다.
+          (toneDiffers && hueDist >= 8);
         expect(distinguishable, `${a.id} vs ${b.id}`).toBe(true);
       }
     }
