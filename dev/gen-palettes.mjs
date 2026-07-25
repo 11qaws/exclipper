@@ -35,7 +35,7 @@ body{margin:0;padding:24px;background:#1b1d24;font-family:"Pretendard",sans-seri
 .cap{grid-column:1/-1;color:#9aa2b8;font:11px "SFMono-Regular",monospace;margin-top:14px;display:flex;gap:10px;align-items:baseline}
 .pair{display:contents}
 .cap .kind{font-size:9px;padding:1px 6px;border-radius:999px;background:#2a2e3a;color:#c7cdda;letter-spacing:.04em}
-.mini{width:440px;height:250px;border-radius:14px;overflow:hidden;display:grid;grid-template-columns:44px 1fr;background:var(--rvw-bg2);box-shadow:0 8px 24px rgba(0,0,0,.3)}
+.mini{width:440px;height:290px;border-radius:14px;overflow:hidden;display:grid;grid-template-columns:44px 1fr;background:var(--rvw-bg2);box-shadow:0 8px 24px rgba(0,0,0,.3)}
 .rail{background:linear-gradient(170deg,var(--rvw-accent),color-mix(in srgb,var(--rvw-accent) 70%,#000));display:flex;flex-direction:column;align-items:center;gap:7px;padding:10px 0}
 .rail .who{width:30px;height:30px;border-radius:50%;overflow:hidden;background:var(--rvw-bg);color:var(--rvw-accent-ink);display:grid;place-items:center;font-weight:800;font-size:13px}
 .rail .who img{width:100%;height:100%;object-fit:cover}
@@ -52,6 +52,7 @@ body{margin:0;padding:24px;background:#1b1d24;font-family:"Pretendard",sans-seri
 .ctx{font-size:11px;color:var(--rvw-ink3);background:var(--rvw-bg3);border-radius:7px;padding:5px 8px;margin-top:4px}
 .ctx.now{background:var(--rvw-accent-bg);color:var(--rvw-accent-ink);border:1px solid var(--rvw-accent-line)}
 .ctx .lb{font-size:9px;font-weight:700;opacity:.75;display:block}
+.inktest{margin:8px 0 0;font-size:12px;font-weight:600;line-height:1.5;color:var(--rvw-accent-ink)}
 .acts{display:flex;gap:6px;margin-top:10px}
 .acts button{flex:1;padding:7px;border:1px solid var(--rvw-line2);border-radius:8px;background:var(--rvw-bg);font:600 12px "Pretendard";color:var(--rvw-ink)}
 .acts .use{background:var(--rvw-accent);border-color:var(--rvw-accent);color:var(--rvw-accent-on)}
@@ -77,6 +78,7 @@ function card(p, mode) {
     <p class="body">첫 입에서 큰 웃음과 감탄이 이어집니다.</p>
     <div class="ctx"><span class="lb">이전 연관</span> 기대 · "이게 그 유명한 거야?"</div>
     <div class="ctx now"><span class="lb">이 클립</span> 두바이 초콜릿 첫 시식</div>
+    <p class="inktest">확인한 대사 · 32:24 · The reaction after the first bite — 이 색 글자가 읽히는가</p>
     <div class="acts"><button>빼기</button><button class="use">사용 취소</button></div>
   </div>
 </div>`;

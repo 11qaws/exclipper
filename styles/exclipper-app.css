@@ -53,11 +53,12 @@
   --ex-ink2: #c6c3e8;
   --ex-ink3: #918eba;
   --ex-ink4: #676390;
-  /* Base accent (dark) mirrors the streamerPalette base dark tokens. Dark is
-   * not yet contrast-audited (deferred); overridden per streamer at runtime. */
+  /* Base accent (dark) mirrors the streamerPalette base dark tokens: the fill
+   * stays vivid so the identity shows, the label on it goes dark, and the
+   * coloured ink is desaturated so it reads as text rather than glowing. */
   --ex-accent: hsl(350 80% 74%);
   --ex-accent-on: hsl(350 60% 28%);
-  --ex-accent-ink: hsl(350 80% 80%);
+  --ex-accent-ink: hsl(350 52% 73%);
   --ex-accent-bg: hsl(350 42% 21%);
   --ex-accent-line: hsl(350 40% 35%);
   --ex-ok: #7ee2a8;

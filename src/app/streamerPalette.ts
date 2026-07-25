@@ -262,9 +262,23 @@ export function buildStreamerPalette(seed: StreamerPaletteSeed): StreamerPalette
    */
   const darkSat = Math.min(100, accentSat + 8);
   const darkBg = hsl(h, 30, 14);
+
+  /*
+   * Coloured text on the dark ground has a failure mode that contrast alone
+   * does not catch: a saturated colour at high lightness glows instead of
+   * reading. The eye takes it for a light source and the letterforms go soft —
+   * bright, but not legible, like a neon sign.
+   *
+   * So the ink is capped in saturation and then solved for a higher target
+   * (7:1) than the 4.5 floor used for fills. The cap only bites where the hue
+   * was over-saturated to begin with — 핫핑크 91→52, 망징이 84→52 — while
+   * already-muted identities (아모레또 43, 세나 44) keep their chroma and gain
+   * their legibility from lightness instead. One rule, distributed by need.
+   */
+  const darkInkSat = Math.min(darkSat, 52);
   let darkInkL = 80;
-  for (let l = 60; l <= 92; l += 1) {
-    if (contrastBetween(hsl(h, darkSat, l), darkBg) >= 4.5) {
+  for (let l = 55; l <= 96; l += 1) {
+    if (contrastBetween(hsl(h, darkInkSat, l), darkBg) >= 7) {
       darkInkL = l;
       break;
     }
@@ -273,7 +287,7 @@ export function buildStreamerPalette(seed: StreamerPaletteSeed): StreamerPalette
   const dark: ThemeTokens = {
     accent: hsl(h, darkSat, 74),
     accentOn: solveAccentOn(h, darkSat, 74),
-    accentInk: hsl(h, darkSat, darkInkL),
+    accentInk: hsl(h, darkInkSat, darkInkL),
     accentBg: hsl(h, 42, 21),
     accentLine: hsl(h, 40, 35),
     bg: darkBg,

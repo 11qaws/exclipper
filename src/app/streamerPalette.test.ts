@@ -56,8 +56,19 @@ describe("streamer palette", () => {
     for (const p of buildAllStreamerPalettes()) {
       expect(contrastBetween(p.light.accentOn, p.light.accent)).toBeGreaterThanOrEqual(4.5);
       expect(contrastBetween(p.dark.accentOn, p.dark.accent)).toBeGreaterThanOrEqual(4.5);
-      // coloured text on the dark ground has to clear it too
-      expect(contrastBetween(p.dark.accentInk, p.dark.bg)).toBeGreaterThanOrEqual(4.5);
+    }
+  });
+
+  it("keeps dark coloured text readable rather than glowing", () => {
+    // On a dark ground a saturated colour at high lightness reads as a light
+    // source, not as letters — bright but illegible, like a neon sign. Passing
+    // 4.5:1 is not enough to avoid it, so the ink is held to a saturation
+    // ceiling and a higher contrast target.
+    for (const p of buildAllStreamerPalettes()) {
+      const m = /hsl\(\d+ (\d+)% \d+%\)/.exec(p.dark.accentInk);
+      expect(m).not.toBeNull();
+      expect(Number(m![1])).toBeLessThanOrEqual(52);
+      expect(contrastBetween(p.dark.accentInk, p.dark.bg)).toBeGreaterThanOrEqual(7);
     }
   });
 
