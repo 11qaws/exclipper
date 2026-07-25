@@ -183,6 +183,9 @@ describe("buildHighlightNarrative", () => {
       // The rank percentile is an internal priority input only: it carries too
       // much false signal to be shown to the editor as a "상위 N%" grade.
       expect(JSON.stringify(narrative)).not.toMatch(/상위\s*\d/u);
+      // Nor does the raw scene-change strength appear: without the rank there
+      // is no axis to read it against, so it would only look quantified.
+      expect(JSON.stringify(narrative)).not.toMatch(/강도\s*[\d.]/u);
     },
   );
 
@@ -260,9 +263,14 @@ describe("buildHighlightNarrative", () => {
     expect(narrative.basis).toBe("visual-exploration");
     expect(narrative.basisLabel).toContain("반응 근거 부족");
     expect(narrative.whyRecommended).toContain("낮은 우선순위");
-    // Keeps the raw observation while the internal rank stays out of the copy.
-    expect(narrative.event).toContain("장면 변화 강도 5.00");
-    expect(JSON.stringify(narrative)).not.toMatch(/상위\s*\d/u);
+    // States what was seen and stops there. sceneChangeStrength is 5 here, yet
+    // neither it nor the rank may surface: one is a unitless float with nothing
+    // to compare it to, the other is a priority input read as a quality grade.
+    // The event sentence carries no digits at all, which is the cheapest way to
+    // keep any raw figure from creeping back into it.
+    expect(narrative.event).toContain("화면 변화가 있어요");
+    expect(narrative.event).not.toMatch(/\d/u);
+    expect(JSON.stringify(narrative)).not.toMatch(/상위\s*\d|강도\s*[\d.]/u);
   });
 
   it("does not attribute an audio-only signal to the streamer or invent its cause", () => {

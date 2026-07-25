@@ -65,11 +65,15 @@ function relationBetween(
 }
 
 /**
- * rankPercentile stays in the internal priority maths, but it is deliberately
- * absent from every user-facing sentence: the ranking carries a lot of false
+ * Neither `rankPercentile` nor `sceneChangeStrength` reaches the reader.
+ *
+ * The rank stays in the internal priority maths only: it carries a lot of false
  * signal and bunches up in a few situations (title cards, scene wipes, camera
  * cuts), so a "상위 N%" reading is read as a quality grade the number cannot
- * back up. State the observation, not its rank.
+ * back up. The strength is a unitless float — with the rank gone there is no
+ * axis left to read it against, so "장면 변화 강도 5.00" tells an editor nothing
+ * except that a number exists, and a number next to a claim makes the claim
+ * look measured. State the observation, and nothing else.
  */
 function eventExplanation(candidate: UnifiedHighlightCandidate): string {
   const visual = candidate.evidence.visual;
@@ -86,10 +90,9 @@ function eventExplanation(candidate: UnifiedHighlightCandidate): string {
         : relation === "overlap"
           ? "반응 신호와 겹치는 시간대에"
           : "이 후보 구간에";
-  const strength = visual.sceneChangeStrength;
-  return strength === undefined
-    ? `${timing} 화면 변화가 있어요. 반응의 원인이라고 단정할 수는 없지만 사건 맥락을 찾을 단서예요.`
-    : `${timing} 화면 변화가 있어요(장면 변화 강도 ${strength.toFixed(2)}). 반응의 원인이라고 단정할 수는 없지만 화면상 사건을 찾을 단서예요.`;
+  // The two branches used to differ only by the strength figure, so with the
+  // figure gone they say the same thing: one sentence.
+  return `${timing} 화면 변화가 있어요. 반응의 원인이라고 단정할 수는 없지만 화면상 사건을 찾을 단서예요.`;
 }
 
 function streamerReactionExplanation(candidate: UnifiedHighlightCandidate): string {

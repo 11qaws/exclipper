@@ -129,12 +129,21 @@ function signalLabel(candidate: UnifiedHighlightCandidate): string {
 }
 
 /**
- * The exported evidence line states what was observed, never how it ranked.
+ * The exported evidence line states what was observed, never how it ranked and
+ * never a raw signal figure.
+ *
  * `rankPercentile` keeps driving internal prioritisation, but printing it as
  * "상위 N%" turns a ranking full of false signal — it bunches up on title
- * cards, scene wipes and camera cuts — into what reads like a quality grade,
- * and an exported file outlives every caveat we could attach to it. Adding the
- * rank back to make the export look more substantial would undo that.
+ * cards, scene wipes and camera cuts — into what reads like a quality grade.
+ * `sceneChangeStrength` is left out for the same end reason: it is a unitless
+ * float with no reference point, so "장면 변화 강도 0.72" only makes the line
+ * look quantified. The one ratio that survives, `rmsLiftRatio`, is kept because
+ * it names its own denominator ("평소 음량의 3.2배") and can be read without
+ * any other context.
+ *
+ * An exported file outlives every caveat we could attach to it, so the bar for
+ * printing a number here is higher than on screen. Adding figures back to make
+ * the export look more substantial would undo that.
  */
 function evidenceLabel(candidate: UnifiedHighlightCandidate): string {
   const evidence: string[] = [];
@@ -152,12 +161,7 @@ function evidenceLabel(candidate: UnifiedHighlightCandidate): string {
     }
   }
   if (candidate.evidence.visual !== undefined) {
-    const sceneChangeStrength = candidate.evidence.visual.sceneChangeStrength;
-    evidence.push(
-      sceneChangeStrength === undefined
-        ? "화면 변화 감지"
-        : `화면 변화 감지(장면 변화 강도 ${sceneChangeStrength.toFixed(2)})`,
-    );
+    evidence.push("화면 변화 감지");
   }
   if (candidate.evidence.chat !== undefined) {
     evidence.push(

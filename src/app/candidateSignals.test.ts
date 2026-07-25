@@ -27,7 +27,7 @@ describe("buildCandidateSignalTiles", () => {
     ).toEqual([]);
   });
 
-  it("projects each present signal once, in chat / audio / visual order", () => {
+  it("projects only the baseline-relative signals, in chat / audio order", () => {
     const tiles = buildCandidateSignalTiles(
       candidate({
         normalization: "within-signal-rank-and-mad",
@@ -64,16 +64,17 @@ describe("buildCandidateSignalTiles", () => {
       }),
     );
 
-    expect(tiles.map((tile) => tile.kind)).toEqual(["chat", "audio", "visual"]);
-    expect(tiles[0]).toMatchObject({ value: "4.2", unit: "배" });
-    expect(tiles[1]).toMatchObject({ value: "3.2", unit: "배" });
-    expect(tiles[2]).toMatchObject({ value: "0.70", unit: "" });
-    // The rank percentile stays an internal priority input: as a tile it would
-    // read as a quality grade the ranking cannot support.
-    expect(JSON.stringify(tiles)).not.toMatch(/상위/u);
+    // The visual signal is present with a strength of 0.7 and still gets no
+    // tile. A tile is a bare number, and every figure here has to be readable
+    // on its own: the rank would pose as a quality grade, and the scene-change
+    // strength is unitless with nothing to compare it against.
+    expect(tiles.map((tile) => tile.kind)).toEqual(["chat", "audio"]);
+    expect(tiles[0]).toMatchObject({ value: "4.2", unit: "배", note: "평소 대비" });
+    expect(tiles[1]).toMatchObject({ value: "3.2", unit: "배", note: "평소 음량 대비" });
+    expect(JSON.stringify(tiles)).not.toMatch(/상위|강도|0\.70/u);
   });
 
-  it("skips a signal whose only figure would have been its rank", () => {
+  it("skips a signal that has no figure readable against a baseline", () => {
     const tiles = buildCandidateSignalTiles(
       candidate({
         normalization: "within-signal-rank-and-mad",
@@ -87,6 +88,7 @@ describe("buildCandidateSignalTiles", () => {
           rankPercentile: 0.88,
           robustPercentile: 0.8,
           normalizedScore: 0.9,
+          sceneChangeStrength: 0.7,
         },
       }),
     );

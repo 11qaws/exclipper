@@ -9885,11 +9885,21 @@ function App() {
                           )}
                           <div className="rh-evidence-list" aria-label="선택 근거">
                           {/*
-                            rankPercentile(오디오·영상)은 내부 우선순위 계산에만 쓰고 칩으로
-                            보여 주지 않는다. 이 순위는 false signal이 많고 자막판·장면 전환·컷
-                            같은 특정 상황에 몰려 발생하는데, "상위 N%"로 찍히면 편집자가 근거
-                            품질 등급으로 읽는다. 정보량이나 진행감을 이유로 되살리지 말 것 —
-                            관찰 사실만 남긴다.
+                            근거 칩은 "무엇이 관찰됐는가"만 말한다. 원시 신호 수치는 칩에
+                            넣지 않는다.
+
+                            - rankPercentile(오디오·영상)은 내부 우선순위 계산 전용이다. 이
+                              순위는 false signal이 많고 자막판·장면 전환·컷 같은 특정 상황에
+                              몰려 발생하는데, "상위 N%"로 찍히면 편집자가 근거 품질 등급으로
+                              읽는다.
+                            - sceneChangeStrength도 같은 이유의 연장선이다. 기준 축이 없는
+                              무단위 실수라 "화면 맥락 변화 0.72"를 보고 편집자가 할 수 있는
+                              판단이 없고, 값이 없을 때는 "화면 맥락 변화 0.00"이라는 최악의
+                              문구가 됐다. 강도 없이 관찰 사실만 남기면 두 문제가 함께 없어진다.
+
+                            남긴 수치는 rmsLiftRatio(평소 음량의 N배)와 채팅 집계뿐이다. 둘 다
+                            분모가 문구 안에 적혀 있어 그 자체로 읽힌다. 정보량이나 진행감을
+                            이유로 나머지를 되살리지 말 것.
                           */}
                           {candidate.evidence.audio !== undefined && (
                             <>
@@ -9909,7 +9919,7 @@ function App() {
                           )}
                           {candidate.evidence.visual !== undefined && (
                             <span className="rh-evidence" data-signal="visual">
-                              화면 맥락 변화 {(candidate.evidence.visual.sceneChangeStrength ?? 0).toFixed(2)}
+                              화면 변화 감지
                             </span>
                           )}
                           {candidate.evidence.chat !== undefined && (

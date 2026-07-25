@@ -406,21 +406,21 @@ function chatObservation(candidate: UnifiedHighlightCandidate): string | null {
 }
 
 /**
- * rankPercentile still drives internal prioritisation, but it never reaches the
+ * The visual statement reports that a change was seen, and nothing more.
+ *
+ * `rankPercentile` still drives internal prioritisation but never reaches the
  * reader: the visual ranking produces a lot of false signal and clusters in a
- * few situations, so "상위 N%" would present a rank as evidence quality. The
- * observation stays; the rank does not.
+ * few situations, so "상위 N%" would present a rank as evidence quality.
+ * `sceneChangeStrength` is gone for a related reason — it is a unitless float,
+ * and once the rank is not shown there is no scale to read it against. "변화
+ * 강도는 4.20였어요" cannot be acted on, yet it lends the sentence a precision
+ * the evidence does not have. Both fields stay in the data; neither is printed.
  */
 function visualObservation(candidate: UnifiedHighlightCandidate): string | null {
-  const visual = candidate.evidence.visual;
-  if (visual === undefined) {
+  if (candidate.evidence.visual === undefined) {
     return null;
   }
-  const strengthText =
-    visual.sceneChangeStrength === undefined
-      ? ""
-      : ` 변화 강도는 ${visual.sceneChangeStrength.toFixed(2)}였어요.`;
-  return `후보 구간에서 화면 변화가 감지됐어요.${strengthText} 화면 변화가 반응의 원인인지는 알 수 없어요.`;
+  return "후보 구간에서 화면 변화가 감지됐어요. 화면 변화가 반응의 원인인지는 알 수 없어요.";
 }
 
 function audioEventObservation(
