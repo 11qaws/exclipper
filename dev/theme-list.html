@@ -1,0 +1,642 @@
+<!doctype html><html lang="ko"><head><meta charset="utf-8">
+<title>테마 사이드 리스팅 · 안 비교</title><style>
+@font-face{font-family:"Pretendard";font-weight:400;src:url("../public/fonts/Pretendard-Regular.woff2")}
+@font-face{font-family:"Pretendard";font-weight:600;src:url("../public/fonts/Pretendard-SemiBold.woff2")}
+@font-face{font-family:"Pretendard";font-weight:800;src:url("../public/fonts/Pretendard-ExtraBold.woff2")}
+*{box-sizing:border-box}
+body{margin:0;padding:22px;background:#12141a;font-family:"Pretendard",sans-serif;color:#e6e9f2}
+h1{font-size:15px;margin:0 0 4px}
+.lead{font-size:12px;color:#98a0b5;margin:0 0 18px;line-height:1.6;max-width:76ch}
+.grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}
+.panel{background:var(--pbg);border-radius:14px;padding:12px;min-width:0}
+.panel header{display:flex;flex-direction:column;gap:2px;margin-bottom:10px;padding:0 2px}
+.panel header b{font-size:12px;color:var(--pink)}
+.panel header span{font-size:10px;color:#8b93a8}
+.list{display:flex;flex-direction:column;gap:6px}
+.slot{display:flex;flex-direction:column;gap:2px}
+.meas{font:9px "SFMono-Regular",monospace;color:#7d8598;padding-left:4px}
+.meas i{font-style:normal;font-weight:700}
+.meas .ok{color:#5fbf87}.meas .no{color:#e0736b}
+
+/* 공통 행 */
+.row{position:relative;height:56px;border-radius:10px;overflow:hidden;display:flex;align-items:center;isolation:isolate;cursor:pointer}
+.row .txt{position:relative;z-index:3;display:flex;flex-direction:column;gap:1px;min-width:0}
+.row .txt b{font-size:13px;font-weight:800;color:var(--ink);line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* 설명은 ink2 다. ink3 는 평평한 배경 기준으로 잡힌 색이라 틴트를 얹으면
+   라이트 전 테마에서 4.5:1 아래로 떨어진다(실측 3.21~4.12). */
+.row .txt span{font-size:10px;font-weight:600;color:var(--ink2);letter-spacing:.02em}
+.row .chip{position:relative;z-index:3;width:34px;height:34px;border-radius:50%;overflow:hidden;flex:none;background:var(--bg3);display:grid;place-items:center;font-weight:800;font-size:14px;color:var(--accent);box-shadow:0 0 0 2px color-mix(in srgb,var(--accent) 30%,transparent)}
+.row .chip img{width:100%;height:100%;object-fit:cover}
+.row.on{box-shadow:inset 0 0 0 2px var(--accent)}
+
+/* 안 A */
+.row.a{padding:0 0 0 14px}
+.row.a .bleed{position:absolute;inset:0 0 0 auto;width:52%;z-index:1;background-size:cover;background-position:center 22%}
+.row.a .scrim{position:absolute;inset:0;z-index:2;background:linear-gradient(90deg,
+  color-mix(in srgb,var(--accent) calc(var(--tint)*100%),var(--bg2)) 0%,
+  color-mix(in srgb,var(--accent) calc(var(--tint)*100%),var(--bg2)) 46%,
+  color-mix(in srgb,var(--accent) calc(var(--tint)*70%),transparent) 72%,
+  transparent 100%)}
+.row.a .chip{margin-left:auto;margin-right:12px;box-shadow:0 2px 8px rgba(0,0,0,.28)}
+
+/* 안 B */
+.row.b{padding:0 12px;gap:10px}
+.row.b .wash{position:absolute;inset:0;z-index:1;background-size:cover;background-position:center 20%;opacity:.5}
+.row.b .tint{position:absolute;inset:0;z-index:2;background:color-mix(in srgb,var(--accent) calc(var(--tint)*100%),var(--bg2));opacity:.88}
+
+/* 안 C */
+.row.c{padding:0 12px;gap:10px}
+.row.c .blur{position:absolute;inset:0 0 0 auto;width:60%;z-index:1;background-size:cover;background-position:center 20%;filter:blur(9px);opacity:.42;
+  -webkit-mask-image:linear-gradient(90deg,transparent,#000 55%);mask-image:linear-gradient(90deg,transparent,#000 55%)}
+.row.c .tint{position:absolute;inset:0;z-index:2;background:linear-gradient(90deg,
+  color-mix(in srgb,var(--accent) calc(var(--tint)*100%),var(--bg2)) 0%,
+  color-mix(in srgb,var(--accent) calc(var(--tint)*100%),var(--bg2)) 55%,
+  color-mix(in srgb,var(--accent) calc(var(--tint)*80%),transparent) 100%)}
+.row.c .tickwrap{margin-left:auto}
+</style></head><body>
+<h1>슬라이드인 테마 목록 — 사이드 리스팅 3안</h1>
+<p class="lead">요소: 이름 표기 · 대표 이미지 노출 · 반투명 테마색 · 반투명 배경 대표 이미지.
+행마다 아래에 <b>실측 대비</b>를 적었다 — 글자가 놓이는 쪽 배경(테마색을 <code>bg2</code> 위에 반투명으로 합성한 색)에 대한 값이며,
+초록은 4.5:1 이상이다. 사진 위에는 글자를 두지 않는 것이 세 안 공통 전제다.
+선택된 상태는 아모레또 행에만 표시했다.</p>
+<div class="grid">
+<section class="panel light" style="--pbg:hsl(350 0% 100%);--pink:hsl(350 30% 13%);--pline:hsl(350 20% 80%)">
+<header><b>안 A · 사진이 오른쪽에서 흘러나옴</b><span>라이트 · 참고 이미지 방식. 글자 쪽은 평평한 색</span></header>
+<div class="list"><div class="slot" style="--accent:hsl(350 54% 64%);--ink:hsl(350 30% 13%);--ink2:hsl(350 20% 32%);--bg2:hsl(350 22% 97%);--bg3:hsl(350 20% 93%);--line:hsl(350 20% 80%);--tint:0.14">
+<div class="row a">
+  
+  <div class="scrim"></div>
+  <div class="txt"><b>기본 · 교환학생</b><span>교환학생 · 기본</span></div>
+  <div class="chip">교</div>
+</div>
+<div class="meas">이름 <i class="ok">13.66</i> · 설명 <i class="ok">7.16</i></div>
+</div>
+<div class="slot" style="--accent:hsl(344 42% 63%);--ink:hsl(344 30% 13%);--ink2:hsl(344 20% 32%);--bg2:hsl(344 22% 97%);--bg3:hsl(344 20% 93%);--line:hsl(344 20% 80%);--tint:0.14">
+<div class="row a on">
+  <div class="bleed" style="background-image:url('../public/streamers/amoretto.jpg')"></div>
+  <div class="scrim"></div>
+  <div class="txt"><b>아모레또</b><span>스트리머</span></div>
+  <div class="chip"><img src="../public/streamers/amoretto.jpg" alt=""></div>
+</div>
+<div class="meas">이름 <i class="ok">13.69</i> · 설명 <i class="ok">7.16</i></div>
+</div>
+<div class="slot" style="--accent:hsl(152 53% 56%);--ink:hsl(152 30% 13%);--ink2:hsl(152 20% 32%);--bg2:hsl(152 22% 97%);--bg3:hsl(152 20% 93%);--line:hsl(152 20% 80%);--tint:0.14">
+<div class="row a">
+  <div class="bleed" style="background-image:url('../public/streamers/eureka.png')"></div>
+  <div class="scrim"></div>
+  <div class="txt"><b>유레카</b><span>스트리머</span></div>
+  <div class="chip"><img src="../public/streamers/eureka.png" alt=""></div>
+</div>
+<div class="meas">이름 <i class="ok">12.81</i> · 설명 <i class="ok">5.82</i></div>
+</div>
+<div class="slot" style="--accent:hsl(277 38% 63%);--ink:hsl(277 30% 13%);--ink2:hsl(277 20% 32%);--bg2:hsl(277 22% 97%);--bg3:hsl(277 20% 93%);--line:hsl(277 20% 80%);--tint:0.14">
+<div class="row a">
+  <div class="bleed" style="background-image:url('../public/streamers/sena.png')"></div>
+  <div class="scrim"></div>
+  <div class="txt"><b>세나 아르벨</b><span>스트리머</span></div>
+  <div class="chip"><img src="../public/streamers/sena.png" alt=""></div>
+</div>
+<div class="meas">이름 <i class="ok">13.87</i> · 설명 <i class="ok">7.34</i></div>
+</div>
+<div class="slot" style="--accent:hsl(211 55% 84%);--ink:hsl(211 30% 13%);--ink2:hsl(211 20% 32%);--bg2:hsl(211 34% 97%);--bg3:hsl(211 31% 93%);--line:hsl(211 31% 80%);--tint:0.14">
+<div class="row a">
+  <div class="bleed" style="background-image:url('../public/streamers/torori.png')"></div>
+  <div class="scrim"></div>
+  <div class="txt"><b>토로리 코코</b><span>스트리머</span></div>
+  <div class="chip"><img src="../public/streamers/torori.png" alt=""></div>
+</div>
+<div class="meas">이름 <i class="ok">14.58</i> · 설명 <i class="ok">7.27</i></div>
+</div>
+<div class="slot" style="--accent:hsl(226 49% 64%);--ink:hsl(226 30% 13%);--ink2:hsl(226 20% 32%);--bg2:hsl(226 22% 97%);--bg3:hsl(226 20% 93%);--line:hsl(226 20% 80%);--tint:0.14">
+<div class="row a">
+  <div class="bleed" style="background-image:url('../public/streamers/mangjing.png')"></div>
+  <div class="scrim"></div>
+  <div class="txt"><b>망징이</b><span>스트리머</span></div>
+  <div class="chip"><img src="../public/streamers/mangjing.png" alt=""></div>
+</div>
+<div class="meas">이름 <i class="ok">13.77</i> · 설명 <i class="ok">7.23</i></div>
+</div>
+<div class="slot" style="--accent:hsl(249 54% 66%);--ink:hsl(249 30% 13%);--ink2:hsl(249 20% 32%);--bg2:hsl(249 22% 97%);--bg3:hsl(249 20% 93%);--line:hsl(249 20% 80%);--tint:0.14">
+<div class="row a">
+  
+  <div class="scrim"></div>
+  <div class="txt"><b>클래식 바이올렛</b><span>기본 색상</span></div>
+  <div class="chip">클</div>
+</div>
+<div class="meas">이름 <i class="ok">13.96</i> · 설명 <i class="ok">7.64</i></div>
+</div>
+<div class="slot" style="--accent:hsl(40 56% 56%);--ink:hsl(40 30% 13%);--ink2:hsl(40 20% 32%);--bg2:hsl(40 22% 97%);--bg3:hsl(40 20% 93%);--line:hsl(40 20% 80%);--tint:0.14">
+<div class="row a">
+  
+  <div class="scrim"></div>
+  <div class="txt"><b>앰버 · 골드</b><span>기본 색상</span></div>
+  <div class="chip">앰</div>
+</div>
+<div class="meas">이름 <i class="ok">13.00</i> · 설명 <i class="ok">6.04</i></div>
+</div>
+<div class="slot" style="--accent:hsl(338 58% 64%);--ink:hsl(338 30% 13%);--ink2:hsl(338 20% 32%);--bg2:hsl(338 22% 97%);--bg3:hsl(338 20% 93%);--line:hsl(338 20% 80%);--tint:0.14">
+<div class="row a">
+  
+  <div class="scrim"></div>
+  <div class="txt"><b>핫핑크 · 교환학생</b><span>기본 색상</span></div>
+  <div class="chip">핫</div>
+</div>
+<div class="meas">이름 <i class="ok">13.65</i> · 설명 <i class="ok">7.12</i></div>
+</div>
+<div class="slot" style="--accent:hsl(14 48% 61%);--ink:hsl(14 30% 13%);--ink2:hsl(14 20% 32%);--bg2:hsl(14 22% 97%);--bg3:hsl(14 20% 93%);--line:hsl(14 20% 80%);--tint:0.14">
+<div class="row a">
+  
+  <div class="scrim"></div>
+  <div class="txt"><b>브라운 레드</b><span>기본 색상</span></div>
+  <div class="chip">브</div>
+</div>
+<div class="meas">이름 <i class="ok">13.46</i> · 설명 <i class="ok">6.77</i></div>
+</div></div>
+</section>
+<section class="panel light" style="--pbg:hsl(350 0% 100%);--pink:hsl(350 30% 13%);--pline:hsl(350 20% 80%)">
+<header><b>안 B · 사진이 행 전체에 깔림</b><span>라이트 · 분위기는 강하지만 글자 뒤 밝기가 사진에 좌우됨</span></header>
+<div class="list"><div class="slot" style="--accent:hsl(350 54% 64%);--ink:hsl(350 30% 13%);--ink2:hsl(350 20% 32%);--bg2:hsl(350 22% 97%);--bg3:hsl(350 20% 93%);--line:hsl(350 20% 80%);--tint:0.14">
+<div class="row b">
+  
+  <div class="tint"></div>
+  <div class="chip">교</div>
+  <div class="txt"><b>기본 · 교환학생</b><span>교환학생 · 기본</span></div>
+</div>
+<div class="meas">이름 <i class="ok">13.66</i> · 설명 <i class="ok">7.16</i></div>
+</div>
+<div class="slot" style="--accent:hsl(344 42% 63%);--ink:hsl(344 30% 13%);--ink2:hsl(344 20% 32%);--bg2:hsl(344 22% 97%);--bg3:hsl(344 20% 93%);--line:hsl(344 20% 80%);--tint:0.14">
+<div class="row b on">
+  <div class="wash" style="background-image:url('../public/streamers/amoretto.jpg')"></div>
+  <div class="tint"></div>
+  <div class="chip"><img src="../public/streamers/amoretto.jpg" alt=""></div>
+  <div class="txt"><b>아모레또</b><span>스트리머</span></div>
+</div>
+<div class="meas">이름 <i class="ok">13.69</i> · 설명 <i class="ok">7.16</i></div>
+</div>
+<div class="slot" style="--accent:hsl(152 53% 56%);--ink:hsl(152 30% 13%);--ink2:hsl(152 20% 32%);--bg2:hsl(152 22% 97%);--bg3:hsl(152 20% 93%);--line:hsl(152 20% 80%);--tint:0.14">
+<div class="row b">
+  <div class="wash" style="background-image:url('../public/streamers/eureka.png')"></div>
+  <div class="tint"></div>
+  <div class="chip"><img src="../public/streamers/eureka.png" alt=""></div>
+  <div class="txt"><b>유레카</b><span>스트리머</span></div>
+</div>
+<div class="meas">이름 <i class="ok">12.81</i> · 설명 <i class="ok">5.82</i></div>
+</div>
+<div class="slot" style="--accent:hsl(277 38% 63%);--ink:hsl(277 30% 13%);--ink2:hsl(277 20% 32%);--bg2:hsl(277 22% 97%);--bg3:hsl(277 20% 93%);--line:hsl(277 20% 80%);--tint:0.14">
+<div class="row b">
+  <div class="wash" style="background-image:url('../public/streamers/sena.png')"></div>
+  <div class="tint"></div>
+  <div class="chip"><img src="../public/streamers/sena.png" alt=""></div>
+  <div class="txt"><b>세나 아르벨</b><span>스트리머</span></div>
+</div>
+<div class="meas">이름 <i class="ok">13.87</i> · 설명 <i class="ok">7.34</i></div>
+</div>
+<div class="slot" style="--accent:hsl(211 55% 84%);--ink:hsl(211 30% 13%);--ink2:hsl(211 20% 32%);--bg2:hsl(211 34% 97%);--bg3:hsl(211 31% 93%);--line:hsl(211 31% 80%);--tint:0.14">
+<div class="row b">
+  <div class="wash" style="background-image:url('../public/streamers/torori.png')"></div>
+  <div class="tint"></div>
+  <div class="chip"><img src="../public/streamers/torori.png" alt=""></div>
+  <div class="txt"><b>토로리 코코</b><span>스트리머</span></div>
+</div>
+<div class="meas">이름 <i class="ok">14.58</i> · 설명 <i class="ok">7.27</i></div>
+</div>
+<div class="slot" style="--accent:hsl(226 49% 64%);--ink:hsl(226 30% 13%);--ink2:hsl(226 20% 32%);--bg2:hsl(226 22% 97%);--bg3:hsl(226 20% 93%);--line:hsl(226 20% 80%);--tint:0.14">
+<div class="row b">
+  <div class="wash" style="background-image:url('../public/streamers/mangjing.png')"></div>
+  <div class="tint"></div>
+  <div class="chip"><img src="../public/streamers/mangjing.png" alt=""></div>
+  <div class="txt"><b>망징이</b><span>스트리머</span></div>
+</div>
+<div class="meas">이름 <i class="ok">13.77</i> · 설명 <i class="ok">7.23</i></div>
+</div>
+<div class="slot" style="--accent:hsl(249 54% 66%);--ink:hsl(249 30% 13%);--ink2:hsl(249 20% 32%);--bg2:hsl(249 22% 97%);--bg3:hsl(249 20% 93%);--line:hsl(249 20% 80%);--tint:0.14">
+<div class="row b">
+  
+  <div class="tint"></div>
+  <div class="chip">클</div>
+  <div class="txt"><b>클래식 바이올렛</b><span>기본 색상</span></div>
+</div>
+<div class="meas">이름 <i class="ok">13.96</i> · 설명 <i class="ok">7.64</i></div>
+</div>
+<div class="slot" style="--accent:hsl(40 56% 56%);--ink:hsl(40 30% 13%);--ink2:hsl(40 20% 32%);--bg2:hsl(40 22% 97%);--bg3:hsl(40 20% 93%);--line:hsl(40 20% 80%);--tint:0.14">
+<div class="row b">
+  
+  <div class="tint"></div>
+  <div class="chip">앰</div>
+  <div class="txt"><b>앰버 · 골드</b><span>기본 색상</span></div>
+</div>
+<div class="meas">이름 <i class="ok">13.00</i> · 설명 <i class="ok">6.04</i></div>
+</div>
+<div class="slot" style="--accent:hsl(338 58% 64%);--ink:hsl(338 30% 13%);--ink2:hsl(338 20% 32%);--bg2:hsl(338 22% 97%);--bg3:hsl(338 20% 93%);--line:hsl(338 20% 80%);--tint:0.14">
+<div class="row b">
+  
+  <div class="tint"></div>
+  <div class="chip">핫</div>
+  <div class="txt"><b>핫핑크 · 교환학생</b><span>기본 색상</span></div>
+</div>
+<div class="meas">이름 <i class="ok">13.65</i> · 설명 <i class="ok">7.12</i></div>
+</div>
+<div class="slot" style="--accent:hsl(14 48% 61%);--ink:hsl(14 30% 13%);--ink2:hsl(14 20% 32%);--bg2:hsl(14 22% 97%);--bg3:hsl(14 20% 93%);--line:hsl(14 20% 80%);--tint:0.14">
+<div class="row b">
+  
+  <div class="tint"></div>
+  <div class="chip">브</div>
+  <div class="txt"><b>브라운 레드</b><span>기본 색상</span></div>
+</div>
+<div class="meas">이름 <i class="ok">13.46</i> · 설명 <i class="ok">6.77</i></div>
+</div></div>
+</section>
+<section class="panel light" style="--pbg:hsl(350 0% 100%);--pink:hsl(350 30% 13%);--pline:hsl(350 20% 80%)">
+<header><b>안 C · 또렷한 원형 + 흐린 배경</b><span>라이트 · 노출과 배경을 분리</span></header>
+<div class="list"><div class="slot" style="--accent:hsl(350 54% 64%);--ink:hsl(350 30% 13%);--ink2:hsl(350 20% 32%);--bg2:hsl(350 22% 97%);--bg3:hsl(350 20% 93%);--line:hsl(350 20% 80%);--tint:0.14">
+<div class="row c">
+  
+  <div class="tint"></div>
+  <div class="chip">교</div>
+  <div class="txt"><b>기본 · 교환학생</b><span>교환학생 · 기본</span></div>
+  <div class="tickwrap"></div>
+</div>
+<div class="meas">이름 <i class="ok">13.66</i> · 설명 <i class="ok">7.16</i></div>
+</div>
+<div class="slot" style="--accent:hsl(344 42% 63%);--ink:hsl(344 30% 13%);--ink2:hsl(344 20% 32%);--bg2:hsl(344 22% 97%);--bg3:hsl(344 20% 93%);--line:hsl(344 20% 80%);--tint:0.14">
+<div class="row c on">
+  <div class="blur" style="background-image:url('../public/streamers/amoretto.jpg')"></div>
+  <div class="tint"></div>
+  <div class="chip"><img src="../public/streamers/amoretto.jpg" alt=""></div>
+  <div class="txt"><b>아모레또</b><span>스트리머</span></div>
+  <div class="tickwrap"></div>
+</div>
+<div class="meas">이름 <i class="ok">13.69</i> · 설명 <i class="ok">7.16</i></div>
+</div>
+<div class="slot" style="--accent:hsl(152 53% 56%);--ink:hsl(152 30% 13%);--ink2:hsl(152 20% 32%);--bg2:hsl(152 22% 97%);--bg3:hsl(152 20% 93%);--line:hsl(152 20% 80%);--tint:0.14">
+<div class="row c">
+  <div class="blur" style="background-image:url('../public/streamers/eureka.png')"></div>
+  <div class="tint"></div>
+  <div class="chip"><img src="../public/streamers/eureka.png" alt=""></div>
+  <div class="txt"><b>유레카</b><span>스트리머</span></div>
+  <div class="tickwrap"></div>
+</div>
+<div class="meas">이름 <i class="ok">12.81</i> · 설명 <i class="ok">5.82</i></div>
+</div>
+<div class="slot" style="--accent:hsl(277 38% 63%);--ink:hsl(277 30% 13%);--ink2:hsl(277 20% 32%);--bg2:hsl(277 22% 97%);--bg3:hsl(277 20% 93%);--line:hsl(277 20% 80%);--tint:0.14">
+<div class="row c">
+  <div class="blur" style="background-image:url('../public/streamers/sena.png')"></div>
+  <div class="tint"></div>
+  <div class="chip"><img src="../public/streamers/sena.png" alt=""></div>
+  <div class="txt"><b>세나 아르벨</b><span>스트리머</span></div>
+  <div class="tickwrap"></div>
+</div>
+<div class="meas">이름 <i class="ok">13.87</i> · 설명 <i class="ok">7.34</i></div>
+</div>
+<div class="slot" style="--accent:hsl(211 55% 84%);--ink:hsl(211 30% 13%);--ink2:hsl(211 20% 32%);--bg2:hsl(211 34% 97%);--bg3:hsl(211 31% 93%);--line:hsl(211 31% 80%);--tint:0.14">
+<div class="row c">
+  <div class="blur" style="background-image:url('../public/streamers/torori.png')"></div>
+  <div class="tint"></div>
+  <div class="chip"><img src="../public/streamers/torori.png" alt=""></div>
+  <div class="txt"><b>토로리 코코</b><span>스트리머</span></div>
+  <div class="tickwrap"></div>
+</div>
+<div class="meas">이름 <i class="ok">14.58</i> · 설명 <i class="ok">7.27</i></div>
+</div>
+<div class="slot" style="--accent:hsl(226 49% 64%);--ink:hsl(226 30% 13%);--ink2:hsl(226 20% 32%);--bg2:hsl(226 22% 97%);--bg3:hsl(226 20% 93%);--line:hsl(226 20% 80%);--tint:0.14">
+<div class="row c">
+  <div class="blur" style="background-image:url('../public/streamers/mangjing.png')"></div>
+  <div class="tint"></div>
+  <div class="chip"><img src="../public/streamers/mangjing.png" alt=""></div>
+  <div class="txt"><b>망징이</b><span>스트리머</span></div>
+  <div class="tickwrap"></div>
+</div>
+<div class="meas">이름 <i class="ok">13.77</i> · 설명 <i class="ok">7.23</i></div>
+</div>
+<div class="slot" style="--accent:hsl(249 54% 66%);--ink:hsl(249 30% 13%);--ink2:hsl(249 20% 32%);--bg2:hsl(249 22% 97%);--bg3:hsl(249 20% 93%);--line:hsl(249 20% 80%);--tint:0.14">
+<div class="row c">
+  
+  <div class="tint"></div>
+  <div class="chip">클</div>
+  <div class="txt"><b>클래식 바이올렛</b><span>기본 색상</span></div>
+  <div class="tickwrap"></div>
+</div>
+<div class="meas">이름 <i class="ok">13.96</i> · 설명 <i class="ok">7.64</i></div>
+</div>
+<div class="slot" style="--accent:hsl(40 56% 56%);--ink:hsl(40 30% 13%);--ink2:hsl(40 20% 32%);--bg2:hsl(40 22% 97%);--bg3:hsl(40 20% 93%);--line:hsl(40 20% 80%);--tint:0.14">
+<div class="row c">
+  
+  <div class="tint"></div>
+  <div class="chip">앰</div>
+  <div class="txt"><b>앰버 · 골드</b><span>기본 색상</span></div>
+  <div class="tickwrap"></div>
+</div>
+<div class="meas">이름 <i class="ok">13.00</i> · 설명 <i class="ok">6.04</i></div>
+</div>
+<div class="slot" style="--accent:hsl(338 58% 64%);--ink:hsl(338 30% 13%);--ink2:hsl(338 20% 32%);--bg2:hsl(338 22% 97%);--bg3:hsl(338 20% 93%);--line:hsl(338 20% 80%);--tint:0.14">
+<div class="row c">
+  
+  <div class="tint"></div>
+  <div class="chip">핫</div>
+  <div class="txt"><b>핫핑크 · 교환학생</b><span>기본 색상</span></div>
+  <div class="tickwrap"></div>
+</div>
+<div class="meas">이름 <i class="ok">13.65</i> · 설명 <i class="ok">7.12</i></div>
+</div>
+<div class="slot" style="--accent:hsl(14 48% 61%);--ink:hsl(14 30% 13%);--ink2:hsl(14 20% 32%);--bg2:hsl(14 22% 97%);--bg3:hsl(14 20% 93%);--line:hsl(14 20% 80%);--tint:0.14">
+<div class="row c">
+  
+  <div class="tint"></div>
+  <div class="chip">브</div>
+  <div class="txt"><b>브라운 레드</b><span>기본 색상</span></div>
+  <div class="tickwrap"></div>
+</div>
+<div class="meas">이름 <i class="ok">13.46</i> · 설명 <i class="ok">6.77</i></div>
+</div></div>
+</section>
+<section class="panel dark" style="--pbg:hsl(350 30% 14%);--pink:hsl(350 24% 93%);--pline:hsl(350 26% 34%)">
+<header><b>안 A · 사진이 오른쪽에서 흘러나옴</b><span>다크 · 참고 이미지 방식. 글자 쪽은 평평한 색</span></header>
+<div class="list"><div class="slot" style="--accent:hsl(350 62% 74%);--ink:hsl(350 24% 93%);--ink2:hsl(350 18% 84%);--bg2:hsl(350 34% 9%);--bg3:hsl(350 28% 20%);--line:hsl(350 26% 34%);--tint:0.22">
+<div class="row a">
+  
+  <div class="scrim"></div>
+  <div class="txt"><b>기본 · 교환학생</b><span>교환학생 · 기본</span></div>
+  <div class="chip">교</div>
+</div>
+<div class="meas">이름 <i class="ok">10.32</i> · 설명 <i class="ok">8.17</i></div>
+</div>
+<div class="slot" style="--accent:hsl(344 50% 74%);--ink:hsl(344 24% 93%);--ink2:hsl(344 18% 84%);--bg2:hsl(344 34% 9%);--bg3:hsl(344 28% 20%);--line:hsl(344 26% 34%);--tint:0.22">
+<div class="row a on">
+  <div class="bleed" style="background-image:url('../public/streamers/amoretto.jpg')"></div>
+  <div class="scrim"></div>
+  <div class="txt"><b>아모레또</b><span>스트리머</span></div>
+  <div class="chip"><img src="../public/streamers/amoretto.jpg" alt=""></div>
+</div>
+<div class="meas">이름 <i class="ok">10.20</i> · 설명 <i class="ok">8.08</i></div>
+</div>
+<div class="slot" style="--accent:hsl(152 61% 74%);--ink:hsl(152 24% 93%);--ink2:hsl(152 18% 84%);--bg2:hsl(152 34% 9%);--bg3:hsl(152 28% 20%);--line:hsl(152 26% 34%);--tint:0.22">
+<div class="row a">
+  <div class="bleed" style="background-image:url('../public/streamers/eureka.png')"></div>
+  <div class="scrim"></div>
+  <div class="txt"><b>유레카</b><span>스트리머</span></div>
+  <div class="chip"><img src="../public/streamers/eureka.png" alt=""></div>
+</div>
+<div class="meas">이름 <i class="ok">8.51</i> · 설명 <i class="ok">6.98</i></div>
+</div>
+<div class="slot" style="--accent:hsl(277 46% 74%);--ink:hsl(277 24% 93%);--ink2:hsl(277 18% 84%);--bg2:hsl(277 34% 9%);--bg3:hsl(277 28% 20%);--line:hsl(277 26% 34%);--tint:0.22">
+<div class="row a">
+  <div class="bleed" style="background-image:url('../public/streamers/sena.png')"></div>
+  <div class="scrim"></div>
+  <div class="txt"><b>세나 아르벨</b><span>스트리머</span></div>
+  <div class="chip"><img src="../public/streamers/sena.png" alt=""></div>
+</div>
+<div class="meas">이름 <i class="ok">10.30</i> · 설명 <i class="ok">8.14</i></div>
+</div>
+<div class="slot" style="--accent:hsl(211 63% 88%);--ink:hsl(211 24% 93%);--ink2:hsl(211 18% 84%);--bg2:hsl(211 53% 9%);--bg3:hsl(211 43% 20%);--line:hsl(211 40% 34%);--tint:0.22">
+<div class="row a">
+  <div class="bleed" style="background-image:url('../public/streamers/torori.png')"></div>
+  <div class="scrim"></div>
+  <div class="txt"><b>토로리 코코</b><span>스트리머</span></div>
+  <div class="chip"><img src="../public/streamers/torori.png" alt=""></div>
+</div>
+<div class="meas">이름 <i class="ok">8.59</i> · 설명 <i class="ok">6.89</i></div>
+</div>
+<div class="slot" style="--accent:hsl(226 57% 74%);--ink:hsl(226 24% 93%);--ink2:hsl(226 18% 84%);--bg2:hsl(226 34% 9%);--bg3:hsl(226 28% 20%);--line:hsl(226 26% 34%);--tint:0.22">
+<div class="row a">
+  <div class="bleed" style="background-image:url('../public/streamers/mangjing.png')"></div>
+  <div class="scrim"></div>
+  <div class="txt"><b>망징이</b><span>스트리머</span></div>
+  <div class="chip"><img src="../public/streamers/mangjing.png" alt=""></div>
+</div>
+<div class="meas">이름 <i class="ok">10.34</i> · 설명 <i class="ok">8.20</i></div>
+</div>
+<div class="slot" style="--accent:hsl(249 62% 74%);--ink:hsl(249 24% 93%);--ink2:hsl(249 18% 84%);--bg2:hsl(249 34% 9%);--bg3:hsl(249 28% 20%);--line:hsl(249 26% 34%);--tint:0.22">
+<div class="row a">
+  
+  <div class="scrim"></div>
+  <div class="txt"><b>클래식 바이올렛</b><span>기본 색상</span></div>
+  <div class="chip">클</div>
+</div>
+<div class="meas">이름 <i class="ok">10.94</i> · 설명 <i class="ok">8.59</i></div>
+</div>
+<div class="slot" style="--accent:hsl(40 64% 74%);--ink:hsl(40 24% 93%);--ink2:hsl(40 18% 84%);--bg2:hsl(40 34% 9%);--bg3:hsl(40 28% 20%);--line:hsl(40 26% 34%);--tint:0.22">
+<div class="row a">
+  
+  <div class="scrim"></div>
+  <div class="txt"><b>앰버 · 골드</b><span>기본 색상</span></div>
+  <div class="chip">앰</div>
+</div>
+<div class="meas">이름 <i class="ok">8.71</i> · 설명 <i class="ok">7.11</i></div>
+</div>
+<div class="slot" style="--accent:hsl(338 66% 74%);--ink:hsl(338 24% 93%);--ink2:hsl(338 18% 84%);--bg2:hsl(338 34% 9%);--bg3:hsl(338 28% 20%);--line:hsl(338 26% 34%);--tint:0.22">
+<div class="row a">
+  
+  <div class="scrim"></div>
+  <div class="txt"><b>핫핑크 · 교환학생</b><span>기본 색상</span></div>
+  <div class="chip">핫</div>
+</div>
+<div class="meas">이름 <i class="ok">10.27</i> · 설명 <i class="ok">8.14</i></div>
+</div>
+<div class="slot" style="--accent:hsl(14 56% 74%);--ink:hsl(14 24% 93%);--ink2:hsl(14 18% 84%);--bg2:hsl(14 34% 9%);--bg3:hsl(14 28% 20%);--line:hsl(14 26% 34%);--tint:0.22">
+<div class="row a">
+  
+  <div class="scrim"></div>
+  <div class="txt"><b>브라운 레드</b><span>기본 색상</span></div>
+  <div class="chip">브</div>
+</div>
+<div class="meas">이름 <i class="ok">9.78</i> · 설명 <i class="ok">7.82</i></div>
+</div></div>
+</section>
+<section class="panel dark" style="--pbg:hsl(350 30% 14%);--pink:hsl(350 24% 93%);--pline:hsl(350 26% 34%)">
+<header><b>안 B · 사진이 행 전체에 깔림</b><span>다크 · 분위기는 강하지만 글자 뒤 밝기가 사진에 좌우됨</span></header>
+<div class="list"><div class="slot" style="--accent:hsl(350 62% 74%);--ink:hsl(350 24% 93%);--ink2:hsl(350 18% 84%);--bg2:hsl(350 34% 9%);--bg3:hsl(350 28% 20%);--line:hsl(350 26% 34%);--tint:0.22">
+<div class="row b">
+  
+  <div class="tint"></div>
+  <div class="chip">교</div>
+  <div class="txt"><b>기본 · 교환학생</b><span>교환학생 · 기본</span></div>
+</div>
+<div class="meas">이름 <i class="ok">10.32</i> · 설명 <i class="ok">8.17</i></div>
+</div>
+<div class="slot" style="--accent:hsl(344 50% 74%);--ink:hsl(344 24% 93%);--ink2:hsl(344 18% 84%);--bg2:hsl(344 34% 9%);--bg3:hsl(344 28% 20%);--line:hsl(344 26% 34%);--tint:0.22">
+<div class="row b on">
+  <div class="wash" style="background-image:url('../public/streamers/amoretto.jpg')"></div>
+  <div class="tint"></div>
+  <div class="chip"><img src="../public/streamers/amoretto.jpg" alt=""></div>
+  <div class="txt"><b>아모레또</b><span>스트리머</span></div>
+</div>
+<div class="meas">이름 <i class="ok">10.20</i> · 설명 <i class="ok">8.08</i></div>
+</div>
+<div class="slot" style="--accent:hsl(152 61% 74%);--ink:hsl(152 24% 93%);--ink2:hsl(152 18% 84%);--bg2:hsl(152 34% 9%);--bg3:hsl(152 28% 20%);--line:hsl(152 26% 34%);--tint:0.22">
+<div class="row b">
+  <div class="wash" style="background-image:url('../public/streamers/eureka.png')"></div>
+  <div class="tint"></div>
+  <div class="chip"><img src="../public/streamers/eureka.png" alt=""></div>
+  <div class="txt"><b>유레카</b><span>스트리머</span></div>
+</div>
+<div class="meas">이름 <i class="ok">8.51</i> · 설명 <i class="ok">6.98</i></div>
+</div>
+<div class="slot" style="--accent:hsl(277 46% 74%);--ink:hsl(277 24% 93%);--ink2:hsl(277 18% 84%);--bg2:hsl(277 34% 9%);--bg3:hsl(277 28% 20%);--line:hsl(277 26% 34%);--tint:0.22">
+<div class="row b">
+  <div class="wash" style="background-image:url('../public/streamers/sena.png')"></div>
+  <div class="tint"></div>
+  <div class="chip"><img src="../public/streamers/sena.png" alt=""></div>
+  <div class="txt"><b>세나 아르벨</b><span>스트리머</span></div>
+</div>
+<div class="meas">이름 <i class="ok">10.30</i> · 설명 <i class="ok">8.14</i></div>
+</div>
+<div class="slot" style="--accent:hsl(211 63% 88%);--ink:hsl(211 24% 93%);--ink2:hsl(211 18% 84%);--bg2:hsl(211 53% 9%);--bg3:hsl(211 43% 20%);--line:hsl(211 40% 34%);--tint:0.22">
+<div class="row b">
+  <div class="wash" style="background-image:url('../public/streamers/torori.png')"></div>
+  <div class="tint"></div>
+  <div class="chip"><img src="../public/streamers/torori.png" alt=""></div>
+  <div class="txt"><b>토로리 코코</b><span>스트리머</span></div>
+</div>
+<div class="meas">이름 <i class="ok">8.59</i> · 설명 <i class="ok">6.89</i></div>
+</div>
+<div class="slot" style="--accent:hsl(226 57% 74%);--ink:hsl(226 24% 93%);--ink2:hsl(226 18% 84%);--bg2:hsl(226 34% 9%);--bg3:hsl(226 28% 20%);--line:hsl(226 26% 34%);--tint:0.22">
+<div class="row b">
+  <div class="wash" style="background-image:url('../public/streamers/mangjing.png')"></div>
+  <div class="tint"></div>
+  <div class="chip"><img src="../public/streamers/mangjing.png" alt=""></div>
+  <div class="txt"><b>망징이</b><span>스트리머</span></div>
+</div>
+<div class="meas">이름 <i class="ok">10.34</i> · 설명 <i class="ok">8.20</i></div>
+</div>
+<div class="slot" style="--accent:hsl(249 62% 74%);--ink:hsl(249 24% 93%);--ink2:hsl(249 18% 84%);--bg2:hsl(249 34% 9%);--bg3:hsl(249 28% 20%);--line:hsl(249 26% 34%);--tint:0.22">
+<div class="row b">
+  
+  <div class="tint"></div>
+  <div class="chip">클</div>
+  <div class="txt"><b>클래식 바이올렛</b><span>기본 색상</span></div>
+</div>
+<div class="meas">이름 <i class="ok">10.94</i> · 설명 <i class="ok">8.59</i></div>
+</div>
+<div class="slot" style="--accent:hsl(40 64% 74%);--ink:hsl(40 24% 93%);--ink2:hsl(40 18% 84%);--bg2:hsl(40 34% 9%);--bg3:hsl(40 28% 20%);--line:hsl(40 26% 34%);--tint:0.22">
+<div class="row b">
+  
+  <div class="tint"></div>
+  <div class="chip">앰</div>
+  <div class="txt"><b>앰버 · 골드</b><span>기본 색상</span></div>
+</div>
+<div class="meas">이름 <i class="ok">8.71</i> · 설명 <i class="ok">7.11</i></div>
+</div>
+<div class="slot" style="--accent:hsl(338 66% 74%);--ink:hsl(338 24% 93%);--ink2:hsl(338 18% 84%);--bg2:hsl(338 34% 9%);--bg3:hsl(338 28% 20%);--line:hsl(338 26% 34%);--tint:0.22">
+<div class="row b">
+  
+  <div class="tint"></div>
+  <div class="chip">핫</div>
+  <div class="txt"><b>핫핑크 · 교환학생</b><span>기본 색상</span></div>
+</div>
+<div class="meas">이름 <i class="ok">10.27</i> · 설명 <i class="ok">8.14</i></div>
+</div>
+<div class="slot" style="--accent:hsl(14 56% 74%);--ink:hsl(14 24% 93%);--ink2:hsl(14 18% 84%);--bg2:hsl(14 34% 9%);--bg3:hsl(14 28% 20%);--line:hsl(14 26% 34%);--tint:0.22">
+<div class="row b">
+  
+  <div class="tint"></div>
+  <div class="chip">브</div>
+  <div class="txt"><b>브라운 레드</b><span>기본 색상</span></div>
+</div>
+<div class="meas">이름 <i class="ok">9.78</i> · 설명 <i class="ok">7.82</i></div>
+</div></div>
+</section>
+<section class="panel dark" style="--pbg:hsl(350 30% 14%);--pink:hsl(350 24% 93%);--pline:hsl(350 26% 34%)">
+<header><b>안 C · 또렷한 원형 + 흐린 배경</b><span>다크 · 노출과 배경을 분리</span></header>
+<div class="list"><div class="slot" style="--accent:hsl(350 62% 74%);--ink:hsl(350 24% 93%);--ink2:hsl(350 18% 84%);--bg2:hsl(350 34% 9%);--bg3:hsl(350 28% 20%);--line:hsl(350 26% 34%);--tint:0.22">
+<div class="row c">
+  
+  <div class="tint"></div>
+  <div class="chip">교</div>
+  <div class="txt"><b>기본 · 교환학생</b><span>교환학생 · 기본</span></div>
+  <div class="tickwrap"></div>
+</div>
+<div class="meas">이름 <i class="ok">10.32</i> · 설명 <i class="ok">8.17</i></div>
+</div>
+<div class="slot" style="--accent:hsl(344 50% 74%);--ink:hsl(344 24% 93%);--ink2:hsl(344 18% 84%);--bg2:hsl(344 34% 9%);--bg3:hsl(344 28% 20%);--line:hsl(344 26% 34%);--tint:0.22">
+<div class="row c on">
+  <div class="blur" style="background-image:url('../public/streamers/amoretto.jpg')"></div>
+  <div class="tint"></div>
+  <div class="chip"><img src="../public/streamers/amoretto.jpg" alt=""></div>
+  <div class="txt"><b>아모레또</b><span>스트리머</span></div>
+  <div class="tickwrap"></div>
+</div>
+<div class="meas">이름 <i class="ok">10.20</i> · 설명 <i class="ok">8.08</i></div>
+</div>
+<div class="slot" style="--accent:hsl(152 61% 74%);--ink:hsl(152 24% 93%);--ink2:hsl(152 18% 84%);--bg2:hsl(152 34% 9%);--bg3:hsl(152 28% 20%);--line:hsl(152 26% 34%);--tint:0.22">
+<div class="row c">
+  <div class="blur" style="background-image:url('../public/streamers/eureka.png')"></div>
+  <div class="tint"></div>
+  <div class="chip"><img src="../public/streamers/eureka.png" alt=""></div>
+  <div class="txt"><b>유레카</b><span>스트리머</span></div>
+  <div class="tickwrap"></div>
+</div>
+<div class="meas">이름 <i class="ok">8.51</i> · 설명 <i class="ok">6.98</i></div>
+</div>
+<div class="slot" style="--accent:hsl(277 46% 74%);--ink:hsl(277 24% 93%);--ink2:hsl(277 18% 84%);--bg2:hsl(277 34% 9%);--bg3:hsl(277 28% 20%);--line:hsl(277 26% 34%);--tint:0.22">
+<div class="row c">
+  <div class="blur" style="background-image:url('../public/streamers/sena.png')"></div>
+  <div class="tint"></div>
+  <div class="chip"><img src="../public/streamers/sena.png" alt=""></div>
+  <div class="txt"><b>세나 아르벨</b><span>스트리머</span></div>
+  <div class="tickwrap"></div>
+</div>
+<div class="meas">이름 <i class="ok">10.30</i> · 설명 <i class="ok">8.14</i></div>
+</div>
+<div class="slot" style="--accent:hsl(211 63% 88%);--ink:hsl(211 24% 93%);--ink2:hsl(211 18% 84%);--bg2:hsl(211 53% 9%);--bg3:hsl(211 43% 20%);--line:hsl(211 40% 34%);--tint:0.22">
+<div class="row c">
+  <div class="blur" style="background-image:url('../public/streamers/torori.png')"></div>
+  <div class="tint"></div>
+  <div class="chip"><img src="../public/streamers/torori.png" alt=""></div>
+  <div class="txt"><b>토로리 코코</b><span>스트리머</span></div>
+  <div class="tickwrap"></div>
+</div>
+<div class="meas">이름 <i class="ok">8.59</i> · 설명 <i class="ok">6.89</i></div>
+</div>
+<div class="slot" style="--accent:hsl(226 57% 74%);--ink:hsl(226 24% 93%);--ink2:hsl(226 18% 84%);--bg2:hsl(226 34% 9%);--bg3:hsl(226 28% 20%);--line:hsl(226 26% 34%);--tint:0.22">
+<div class="row c">
+  <div class="blur" style="background-image:url('../public/streamers/mangjing.png')"></div>
+  <div class="tint"></div>
+  <div class="chip"><img src="../public/streamers/mangjing.png" alt=""></div>
+  <div class="txt"><b>망징이</b><span>스트리머</span></div>
+  <div class="tickwrap"></div>
+</div>
+<div class="meas">이름 <i class="ok">10.34</i> · 설명 <i class="ok">8.20</i></div>
+</div>
+<div class="slot" style="--accent:hsl(249 62% 74%);--ink:hsl(249 24% 93%);--ink2:hsl(249 18% 84%);--bg2:hsl(249 34% 9%);--bg3:hsl(249 28% 20%);--line:hsl(249 26% 34%);--tint:0.22">
+<div class="row c">
+  
+  <div class="tint"></div>
+  <div class="chip">클</div>
+  <div class="txt"><b>클래식 바이올렛</b><span>기본 색상</span></div>
+  <div class="tickwrap"></div>
+</div>
+<div class="meas">이름 <i class="ok">10.94</i> · 설명 <i class="ok">8.59</i></div>
+</div>
+<div class="slot" style="--accent:hsl(40 64% 74%);--ink:hsl(40 24% 93%);--ink2:hsl(40 18% 84%);--bg2:hsl(40 34% 9%);--bg3:hsl(40 28% 20%);--line:hsl(40 26% 34%);--tint:0.22">
+<div class="row c">
+  
+  <div class="tint"></div>
+  <div class="chip">앰</div>
+  <div class="txt"><b>앰버 · 골드</b><span>기본 색상</span></div>
+  <div class="tickwrap"></div>
+</div>
+<div class="meas">이름 <i class="ok">8.71</i> · 설명 <i class="ok">7.11</i></div>
+</div>
+<div class="slot" style="--accent:hsl(338 66% 74%);--ink:hsl(338 24% 93%);--ink2:hsl(338 18% 84%);--bg2:hsl(338 34% 9%);--bg3:hsl(338 28% 20%);--line:hsl(338 26% 34%);--tint:0.22">
+<div class="row c">
+  
+  <div class="tint"></div>
+  <div class="chip">핫</div>
+  <div class="txt"><b>핫핑크 · 교환학생</b><span>기본 색상</span></div>
+  <div class="tickwrap"></div>
+</div>
+<div class="meas">이름 <i class="ok">10.27</i> · 설명 <i class="ok">8.14</i></div>
+</div>
+<div class="slot" style="--accent:hsl(14 56% 74%);--ink:hsl(14 24% 93%);--ink2:hsl(14 18% 84%);--bg2:hsl(14 34% 9%);--bg3:hsl(14 28% 20%);--line:hsl(14 26% 34%);--tint:0.22">
+<div class="row c">
+  
+  <div class="tint"></div>
+  <div class="chip">브</div>
+  <div class="txt"><b>브라운 레드</b><span>기본 색상</span></div>
+  <div class="tickwrap"></div>
+</div>
+<div class="meas">이름 <i class="ok">9.78</i> · 설명 <i class="ok">7.82</i></div>
+</div></div>
+</section>
+</div>
+</body></html>

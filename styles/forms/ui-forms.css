@@ -1,0 +1,371 @@
+/**
+ * ui-forms — 재사용 가능한 표시 폼 모음
+ * ============================================================
+ *
+ * 한 화면에서 잘 나온 모양을 그 화면 안에 두면 다음에 같은 것이 필요할 때 다시
+ * 만들게 된다. 여기 있는 것은 **특정 화면에 속하지 않는 모양**이며, 나중에 별도
+ * 저장소로 떼어낼 수 있도록 다음 규칙을 지킨다.
+ *
+ *  1. 접두사 `uf-` 만 쓴다. 앱의 클래스 이름과 절대 겹치지 않는다.
+ *  2. 바깥 토큰에 의존하지 않는다. 모든 색은 `var(--uf-*, 기본값)` 형태라
+ *     아무것도 정의하지 않은 페이지에 붙여도 그대로 보인다.
+ *  3. JS 가 필요 없다. 상태는 클래스나 `[aria-*]` 로만 표현한다.
+ *  4. 크기는 `em` 기준이다. 부모의 `font-size` 만 바꾸면 전체가 따라 커진다.
+ *
+ * 앱에 붙일 때는 호스트가 토큰만 이어 주면 된다:
+ *
+ *   .my-panel { --uf-accent: var(--ex-accent); --uf-ink: var(--ex-ink); }
+ *
+ * 목록과 실물은 `dev/forms.html` (생성물: `npx tsx dev/gen-forms.mjs`).
+ */
+
+/* ── 토큰 기본값 ─────────────────────────────────────────────
+   호스트가 덮어쓰지 않아도 동작하는 값. 어두운 배경을 가정하지 않는다. */
+.uf-scope,
+:where(.uf-notch, .uf-split, .uf-row) {
+  --uf-accent: #6b5bd2;
+  --uf-accent-on: #ffffff;
+  --uf-ink: #1a1d26;
+  --uf-ink2: #4d5464;
+  --uf-surface: #ffffff;
+  --uf-surface2: #f2f3f7;
+  --uf-line: #d8dbe4;
+  --uf-radius: 0.5em;
+}
+
+/* ============================================================
+ * 1. uf-notch — 양쪽 끝이 접힌 텍스트 카드
+ * ============================================================
+ *
+ * 구역 이름표(`MAP`, `ACTIVITIES`)나 시각 표시처럼 **짧은 딱지**에 쓴다. 모서리를
+ * 잘라내면 사각형 하나가 늘어난 것이 아니라 다른 종류의 요소로 읽히므로, 카드
+ * 안에 또 카드를 만들지 않고도 구역을 나눌 수 있다.
+ *
+ * 문단이나 긴 설명에는 쓰지 않는다 — 잘린 모서리가 글줄을 먹는다.
+ *
+ *   <span class="uf-notch">MAP</span>
+ *   <span class="uf-notch uf-notch--ribbon">02:00 PM - 02:30 PM</span>
+ *   <span class="uf-notch uf-notch--outline">ACTIVITIES</span>
+ */
+.uf-notch {
+  /* 잘라낼 길이. 글자 크기를 따라가므로 어느 크기에서도 비율이 같다. */
+  --uf-notch-size: 0.72em;
+
+  display: inline-block;
+  padding: 0.34em 0.85em;
+  background: var(--uf-accent);
+  color: var(--uf-accent-on);
+  font-size: 0.75em;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  line-height: 1.25;
+  white-space: nowrap;
+
+  /* 대각선으로 마주 보는 두 모서리를 자른다. 참고한 딱지의 기본형. */
+  clip-path: polygon(
+    var(--uf-notch-size) 0,
+    100% 0,
+    100% calc(100% - var(--uf-notch-size)),
+    calc(100% - var(--uf-notch-size)) 100%,
+    0 100%,
+    0 var(--uf-notch-size)
+  );
+}
+
+/** 양 끝이 화살 모양으로 접힌 리본. 시각·기간처럼 **흐름 위의 한 점**에 쓴다. */
+.uf-notch--ribbon {
+  padding-inline: 1.15em;
+  clip-path: polygon(
+    var(--uf-notch-size) 0,
+    calc(100% - var(--uf-notch-size)) 0,
+    100% 50%,
+    calc(100% - var(--uf-notch-size)) 100%,
+    var(--uf-notch-size) 100%,
+    0 50%
+  );
+}
+
+/** 왼쪽만 접힌 형태. 왼쪽 정렬된 목록의 머리표처럼 오른쪽이 열려 있어야 할 때. */
+.uf-notch--start {
+  clip-path: polygon(
+    var(--uf-notch-size) 0,
+    100% 0,
+    100% 100%,
+    0 100%,
+    0 var(--uf-notch-size)
+  );
+}
+
+/**
+ * 테두리만 있는 형태.
+ *
+ * `clip-path` 는 `border` 를 같이 잘라 없앤다. 그래서 테두리는 바깥 배경과 1px
+ * 안쪽의 안 배경을 겹쳐 만든다 — 잘린 모서리에도 선이 정확히 따라붙는다.
+ */
+.uf-notch--outline {
+  position: relative;
+  background: var(--uf-line);
+  color: var(--uf-accent);
+}
+
+.uf-notch--outline::before {
+  content: "";
+  position: absolute;
+  inset: 1px;
+  background: var(--uf-surface);
+  clip-path: inherit;
+  z-index: 0;
+}
+
+.uf-notch--outline > * {
+  position: relative;
+  z-index: 1;
+}
+
+/* 안쪽 배경이 글자를 덮지 않도록, 자식 요소가 없을 때도 글자를 위로 올린다. */
+.uf-notch--outline {
+  isolation: isolate;
+}
+
+.uf-notch--quiet {
+  background: var(--uf-surface2);
+  color: var(--uf-ink2);
+}
+
+/* ============================================================
+ * 2. uf-split — 제목 │ 설명
+ * ============================================================
+ *
+ * 제목과 그 제목을 푸는 한 마디를 **한 줄에서 갈라 보여 준다.** 둘을 위아래로
+ * 쌓으면 두 덩어리로 읽히지만, 세로선 하나로 가르면 "이것은 저것의 설명"이라는
+ * 관계가 그대로 보인다. 날짜/요일, 단계/상태, 이름/역할처럼 **뒤가 앞을
+ * 한정하는** 짝에 쓴다.
+ *
+ * 서로 대등한 두 값(가격과 재고 같은)에는 쓰지 않는다 — 종속 관계를 거짓으로
+ * 말하게 된다.
+ *
+ *   <p class="uf-split">
+ *     <b class="uf-split__title">DAY 1</b>
+ *     <span class="uf-split__desc">금요일 · 7월 24일</span>
+ *   </p>
+ */
+.uf-split {
+  display: flex;
+  align-items: baseline;
+  gap: 0.7em;
+  margin: 0;
+  min-width: 0;
+}
+
+.uf-split__title {
+  font-size: 1.05em;
+  font-weight: 800;
+  color: var(--uf-ink);
+  line-height: 1.25;
+  white-space: nowrap;
+  flex: none;
+}
+
+/**
+ * 선은 설명 쪽의 왼쪽 테두리다. 별도 요소로 두면 글이 두 줄이 될 때 선만 짧게
+ * 남지만, 테두리는 내용 높이를 그대로 따라간다.
+ */
+.uf-split__desc {
+  border-left: 1px solid var(--uf-line);
+  padding-left: 0.7em;
+  font-size: 0.85em;
+  font-weight: 600;
+  color: var(--uf-ink2);
+  line-height: 1.45;
+  letter-spacing: 0.02em;
+  min-width: 0;
+  /* baseline 정렬이면 선이 첫 줄에만 걸리므로, 선을 쓰는 쪽은 늘여 준다. */
+  align-self: stretch;
+  display: flex;
+  align-items: center;
+}
+
+/** 강조형 — 선을 테마색으로. 현재 위치를 가리킬 때만 쓴다(한 화면에 하나). */
+.uf-split--accent .uf-split__desc {
+  border-left-color: var(--uf-accent);
+}
+
+/**
+ * 좁을 때 세로로 쌓는다. 선은 위쪽 테두리가 되어 가르는 역할을 유지한다 —
+ * 선을 지우면 두 줄이 그냥 두 문장으로 읽힌다.
+ *
+ * 화면 폭이 아니라 **놓인 자리의 폭**을 본다. 같은 폼이 넓은 본문에도 좁은
+ * 사이드시트에도 들어가므로 뷰포트 기준은 맞지 않는다. 쓰는 쪽에서 부모에
+ * `container-type: inline-size` 를 켜야 동작한다 — 안 켜면 항상 가로형이다.
+ */
+@container (max-width: 22em) {
+  .uf-split {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.35em;
+  }
+
+  .uf-split__desc {
+    border-left: 0;
+    border-top: 1px solid var(--uf-line);
+    padding-left: 0;
+    padding-top: 0.35em;
+  }
+
+  .uf-split--accent .uf-split__desc {
+    border-top-color: var(--uf-accent);
+  }
+}
+
+/* ============================================================
+ * 3. uf-row — 사이드 리스팅 한 줄
+ * ============================================================
+ *
+ * 고르는 대상이 **자기 색과 자기 그림을 가진** 목록에 쓴다. 라벨만 있는 목록은
+ * 이름을 읽어야 무엇인지 알지만, 행이 대상의 색을 입고 대상의 그림을 달면
+ * 목록 자체가 미리보기가 된다.
+ *
+ * 전제 하나: **글자는 사진 위에 놓지 않는다.** 사진 위의 대비는 사진 내용에 따라
+ * 흔들려 계산으로 보장할 수 없다. 사진은 오른쪽에서 흘러나오고, 글자 쪽은
+ * 평평한 색이 덮는다.
+ *
+ *   <button class="uf-row" aria-pressed="true">
+ *     <span class="uf-row__bleed" style="background-image:url(...)"></span>
+ *     <span class="uf-row__scrim"></span>
+ *     <span class="uf-row__text">
+ *       <b>아모레또</b><span>스트리머</span>
+ *     </span>
+ *     <span class="uf-row__mark"><img src="..." alt=""></span>
+ *   </button>
+ */
+.uf-row {
+  /* 반투명 테마색의 진하기. 어두운 배경에서는 더 실어야 색이 보인다. */
+  --uf-row-tint: 14%;
+
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-height: 3.5em;
+  padding: 0 0 0 0.9em;
+  border: 0;
+  border-radius: var(--uf-radius);
+  background: var(--uf-surface2);
+  overflow: hidden;
+  isolation: isolate;
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+}
+
+/** 사진. 오른쪽 절반에서 흘러나온다. */
+.uf-row__bleed {
+  position: absolute;
+  inset: 0 0 0 auto;
+  width: 52%;
+  z-index: 1;
+  background-size: cover;
+  background-position: center 22%;
+}
+
+/**
+ * 글자 쪽을 덮는 막. 왼쪽 절반은 완전히 불투명한 합성색이고, 거기서 오른쪽으로
+ * 가며 사라진다. 글자가 놓이는 곳의 색이 **한 가지로 확정**되므로 대비를 계산할
+ * 수 있다.
+ */
+.uf-row__scrim {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--uf-accent) var(--uf-row-tint), var(--uf-surface2)) 0%,
+    color-mix(in srgb, var(--uf-accent) var(--uf-row-tint), var(--uf-surface2)) 46%,
+    color-mix(in srgb, var(--uf-accent) var(--uf-row-tint), transparent) 72%,
+    transparent 100%
+  );
+}
+
+.uf-row__text {
+  position: relative;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  gap: 0.1em;
+  min-width: 0;
+}
+
+.uf-row__text > b {
+  font-size: 0.95em;
+  font-weight: 800;
+  color: var(--uf-ink);
+  line-height: 1.2;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/**
+ * 설명은 `--uf-ink2` 다. 더 흐린 단계(`ink3` 류)를 쓰면 틴트를 얹은 배경 위에서
+ * 4.5:1 아래로 떨어진다 — 평평한 배경 기준으로 잡힌 색이기 때문이다.
+ */
+.uf-row__text > span {
+  font-size: 0.72em;
+  font-weight: 600;
+  color: var(--uf-ink2);
+  letter-spacing: 0.02em;
+}
+
+/** 또렷한 대표 이미지. 사진이 없으면 이니셜이 들어간다. */
+.uf-row__mark {
+  position: relative;
+  z-index: 3;
+  margin-left: auto;
+  margin-right: 0.8em;
+  width: 2.3em;
+  height: 2.3em;
+  border-radius: 50%;
+  overflow: hidden;
+  flex: none;
+  display: grid;
+  place-items: center;
+  background: var(--uf-surface);
+  color: var(--uf-accent);
+  font-weight: 800;
+  box-shadow: 0 2px 8px rgb(0 0 0 / 0.28);
+}
+
+.uf-row__mark img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/** 선택됨. 테두리를 안쪽에 그려 행 크기가 변하지 않게 한다. */
+.uf-row[aria-pressed="true"],
+.uf-row.is-selected {
+  box-shadow: inset 0 0 0 2px var(--uf-accent);
+}
+
+.uf-row:focus-visible {
+  outline: 2px solid var(--uf-accent);
+  outline-offset: 2px;
+}
+
+.uf-row:hover .uf-row__bleed {
+  transform: scale(1.04);
+}
+
+.uf-row__bleed {
+  transition: transform 160ms ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .uf-row__bleed {
+    transition: none;
+  }
+
+  .uf-row:hover .uf-row__bleed {
+    transform: none;
+  }
+}

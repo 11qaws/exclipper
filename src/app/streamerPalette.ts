@@ -313,6 +313,40 @@ export function contrastOnWhite(hslString: string): number {
   return contrastWithWhite(parsed[0], parsed[1], parsed[2]);
 }
 
+/**
+ * 반투명한 색을 배경 위에 얹었을 때 **실제로 눈에 닿는 색**.
+ *
+ * 반투명 배경 위의 글자 대비는 눈으로 가늠할 수 없다 — 같은 알파라도 배경이
+ * 라이트냐 다크냐에 따라, 색상마다 결과 밝기가 크게 달라진다. 그래서 합성 결과를
+ * 값으로 만들어 `contrastBetween` 에 넣을 수 있게 한다.
+ */
+export function compositeOver(color: string, alpha: number, backdrop: string): string {
+  const top = parseHsl(color);
+  const bottom = parseHsl(backdrop);
+  if (top === null || bottom === null) return backdrop;
+  const clamped = Math.max(0, Math.min(1, alpha));
+  const [br, bg, bb] = hslToRgb(bottom[0], bottom[1], bottom[2]);
+  return mixSrgb(top, [br, bg, bb], clamped);
+}
+
+/** `rgb(r g b)` 문자열의 대비. `compositeOver` 결과를 그대로 받는다. */
+export function contrastOfRgb(rgbString: string, other: string): number {
+  const m = /rgb\((\d+) (\d+) (\d+)\)/.exec(rgbString);
+  const parsedOther = parseHsl(other);
+  if (m === null || parsedOther === null) return 0;
+  const lumA = relativeLuminance([
+    Number(m[1]) / 255,
+    Number(m[2]) / 255,
+    Number(m[3]) / 255,
+  ]);
+  const lumB = relativeLuminance(
+    hslToRgb(parsedOther[0], parsedOther[1], parsedOther[2]),
+  );
+  const hi = Math.max(lumA, lumB);
+  const lo = Math.min(lumA, lumB);
+  return (hi + 0.05) / (lo + 0.05);
+}
+
 /** Contrast ratio between any two `hsl(...)` strings — exported for tests. */
 export function contrastBetween(a: string, b: string): number {
   const left = parseHsl(a);
