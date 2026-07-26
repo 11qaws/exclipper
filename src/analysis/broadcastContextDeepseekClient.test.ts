@@ -99,7 +99,10 @@ describe("requestBroadcastContextDeepseek", () => {
     );
     const body = receivedInit?.body;
     expect(typeof body).toBe("string");
-    expect(JSON.parse(typeof body === "string" ? body : "null")).toEqual(input);
+    expect(JSON.parse(typeof body === "string" ? body : "null")).toEqual({
+      ...input,
+      outputLanguage: "ko",
+    });
   });
 
   it("compacts oversized saved chapter maps at the final request boundary", async () => {
@@ -180,7 +183,11 @@ describe("requestBroadcastContextDeepseek", () => {
     });
 
     expect(response.broadcastSummaryKo).toContain("사과");
-    expect(receivedBody).toEqual({ ...input, analysisMode: "refinement" });
+    expect(receivedBody).toEqual({
+      ...input,
+      outputLanguage: "ko",
+      analysisMode: "refinement",
+    });
   });
 
   it("forwards only a validated closed roster identifier", async () => {
@@ -199,6 +206,7 @@ describe("requestBroadcastContextDeepseek", () => {
     );
     expect(receivedBody).toEqual({
       ...input,
+      outputLanguage: "ko",
       castRosterId: DEFAULT_CANDIDATE_PASS_B_CAST_ROSTER_ID,
     });
   });

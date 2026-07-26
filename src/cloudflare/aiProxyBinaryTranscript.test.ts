@@ -19,6 +19,7 @@ function createEnvironment(): AiProxyEnvironment {
   return {
     GEMINI_API_KEY: "gemini-secret",
     QWEN_API_KEY: "qwen-secret",
+    AI_QUOTA_MODE: "disabled",
     BROADCAST_TRANSCRIPT_PROVIDER: "qwen",
     AI_PROVIDER_FALLBACK_MODE: "bounded",
     RATE_LIMITER: { limit: vi.fn().mockResolvedValue({ success: true }) },
@@ -49,6 +50,33 @@ function binaryRequest(
     },
     body: wav as Uint8Array<ArrayBuffer>,
   });
+}
+
+function fragmentedBinaryRequest(
+  wav: Uint8Array,
+  query: string,
+): Request {
+  const boundaries = [0, 17, 44, Math.floor(wav.byteLength / 2), wav.byteLength];
+  const body = new ReadableStream<Uint8Array>({
+    start(controller) {
+      for (let index = 0; index < boundaries.length - 1; index += 1) {
+        controller.enqueue(
+          wav.slice(boundaries[index], boundaries[index + 1]),
+        );
+      }
+      controller.close();
+    },
+  });
+  return new Request(`${ENDPOINT}${query}`, {
+    method: "POST",
+    headers: {
+      Origin: PRODUCTION_ORIGIN,
+      "Content-Type": "audio/wav",
+      "CF-Connecting-IP": "203.0.113.42",
+    },
+    body,
+    duplex: "half",
+  } as RequestInit & { duplex: "half" });
 }
 
 function qwenSseSuccess(text: string): Response {
@@ -104,6 +132,31 @@ describe("binary transcript ingress", () => {
       sourceEndMs: 690_000,
       textKo: "조용한 구간이다.",
     });
+    expect(capturedBodyText(captured)).toBe(expected);
+  });
+
+  it("assembles fragmented ingress into the same bounded upstream body", async () => {
+    const wav = silentWav(2_000);
+    const expected = JSON.stringify(
+      buildBroadcastTranscriptQwenOmniRequestBody(
+        encodeCandidatePassBBase64(wav),
+      ),
+    );
+    expect(JSON.parse(expected)).toMatchObject({ max_tokens: 1_024 });
+    let captured: RequestInit | undefined;
+    const response = await handleBroadcastTranscriptRequest(
+      fragmentedBinaryRequest(wav, "?startMs=0&durationMs=2000"),
+      createEnvironment(),
+      {
+        fetchImplementation: (_input, init) => {
+          captured = init;
+          return Promise.resolve(qwenSseSuccess("조각난 요청이다."));
+        },
+      },
+    );
+
+    expect(response.status).toBe(200);
+    expect(captured?.body).toBeInstanceOf(Uint8Array);
     expect(capturedBodyText(captured)).toBe(expected);
   });
 
@@ -199,11 +252,49 @@ describe("binary transcript ingress", () => {
     expect(bodies).toHaveLength(2);
     const geminiBody = JSON.parse(bodies[1]!) as {
       contents: readonly { parts: readonly Record<string, unknown>[] }[];
+      generationConfig: { maxOutputTokens: number };
     };
     const inlinePart = geminiBody.contents[0]?.parts.find(
       (part) => "inlineData" in part,
     ) as { inlineData: { data: string } } | undefined;
     expect(inlinePart?.inlineData.data).toBe(expectedB64);
+    expect(geminiBody.generationConfig.maxOutputTokens).toBe(1_024);
+  });
+
+  it("times out when response headers arrive but the SSE body stalls", async () => {
+    const upstreamFetch = vi.fn(
+      (_input: RequestInfo | URL, init?: RequestInit) =>
+        Promise.resolve(
+          new Response(
+            new ReadableStream<Uint8Array>({
+              start(controller) {
+                init?.signal?.addEventListener(
+                  "abort",
+                  () =>
+                    controller.error(
+                      new DOMException("aborted", "AbortError"),
+                    ),
+                  { once: true },
+                );
+              },
+            }),
+            {
+              status: 200,
+              headers: { "Content-Type": "text/event-stream" },
+            },
+          ),
+        ),
+    );
+    const response = await handleBroadcastTranscriptRequest(
+      binaryRequest(silentWav(2_000), "?startMs=0&durationMs=2000"),
+      createEnvironment(),
+      { fetchImplementation: upstreamFetch, upstreamTimeoutMs: 1 },
+    );
+
+    expect(response.status).toBe(504);
+    expect(await response.json()).toMatchObject({
+      error: { code: "UPSTREAM_TIMEOUT" },
+    });
   });
 
   it("keeps accepting the legacy JSON transport", async () => {

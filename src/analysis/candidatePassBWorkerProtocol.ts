@@ -162,6 +162,11 @@ export interface CandidatePassBWorkerIdentity {
   readonly taskId: string;
 }
 
+export interface CandidatePassBQuotaIdentity {
+  readonly participantId: string;
+  readonly runId: string;
+}
+
 export interface CandidatePassBTarget {
   readonly candidateId: string;
   readonly startMs: number;
@@ -186,6 +191,7 @@ export type CandidatePassBWorkerRequest =
   | {
       readonly type: "candidate-pass-b-analyze";
       readonly identity: CandidatePassBWorkerIdentity;
+      readonly quota?: CandidatePassBQuotaIdentity;
       readonly file: File;
       readonly sourceDurationMs: number;
       readonly device: typeof CANDIDATE_PASS_B_DEVICE;

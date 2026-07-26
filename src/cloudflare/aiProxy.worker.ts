@@ -2,9 +2,11 @@ import {
   MAX_CANDIDATE_PASS_B_RESPONSE_BYTES,
   buildCandidatePassBAudioOnlySafeResponse,
   buildCandidatePassBGeminiRequestBody,
+  buildCandidatePassBPrompt,
   extractCandidatePassBGeminiResponse,
 } from "../analysis/candidatePassBGemini";
 import {
+  CANDIDATE_PASS_B_QWEN_MAX_OUTPUT_TOKENS,
   buildCandidatePassBQwenOmniRequestBody,
   extractCandidatePassBQwenOmniSseResponse,
   inspectCandidatePassBQwenOmniSseResponse,
@@ -15,6 +17,7 @@ import {
   CANDIDATE_PASS_B_RESPONSE_MODEL_REVISION_HEADER,
   CANDIDATE_PASS_B_SAMPLE_RATE_HZ,
   MAX_CANDIDATE_PASS_B_TARGET_DURATION_MS,
+  MAX_CANDIDATE_PASS_B_CONTEXT_TEXT_LENGTH,
   MAX_CANDIDATE_PASS_B_VIDEO_FRAME_BASE64_LENGTH,
   MAX_CANDIDATE_PASS_B_VIDEO_FRAMES,
   type CandidatePassBContextPacket,
@@ -46,6 +49,7 @@ import {
   type BroadcastContextRequestInput,
 } from "../analysis/broadcastContextProtocol";
 import {
+  BROADCAST_TRANSCRIPT_QWEN_MAX_OUTPUT_TOKENS,
   MAX_BROADCAST_TRANSCRIPT_QWEN_BASE64_LENGTH,
   MAX_BROADCAST_TRANSCRIPT_QWEN_DURATION_MS,
   MAX_BROADCAST_TRANSCRIPT_QWEN_RESPONSE_BYTES,
@@ -61,6 +65,23 @@ import {
   extractKoreanYouTubeCaptionTrackFromPlayerResponse,
   parseYouTubeCaptionJson3,
 } from "../analysis/youtubeCaptionTrack";
+import {
+  AI_QUOTA_ENDPOINT_PATH,
+  AI_QUOTA_LEASE_HEADER,
+  AI_QUOTA_MAX_PUBLIC_REQUEST_BYTES,
+  AI_QUOTA_OPERATION_HEADER,
+  AI_QUOTA_PARTICIPANT_HEADER,
+  AI_QUOTA_PAYLOAD_DIGEST_HEADER,
+  AI_QUOTA_RUN_HEADER,
+  AI_QUOTA_SCHEMA_VERSION,
+  isAiQuotaPayloadDigest,
+  parseAiQuotaPublicRequest,
+  readAiQuotaLeaseHeaders,
+  type AiQuotaLeaseHeaders,
+  type AiQuotaOperationIdentity,
+  type AiQuotaPool,
+  type AiQuotaPublicResponse,
+} from "../analysis/aiQuotaProtocol";
 
 import {
   AI_PROVIDER_ROUTING_POLICY_VERSION,
@@ -85,6 +106,24 @@ import {
   type CandidateInsightConnection,
   type CandidateInsightProviderId,
 } from "./aiProviderConfiguration";
+import {
+  AiQuotaCoordinatorUnavailableError,
+  aiQuotaMode,
+  checkCoordinatorHealth,
+  completeCoordinatorLease,
+  consumeCoordinatorLease,
+  inspectCoordinatorLease,
+  releaseCoordinatorUploadLease,
+  requestCoordinatorPublicLease,
+  type AiQuotaCoordinatorEnvironment,
+} from "./aiQuotaCoordinatorClient";
+import {
+  AI_QUOTA_CONTEXT_MAX_TOKENS_PER_MINUTE,
+  AI_QUOTA_QWEN_OMNI_MAX_TOKENS_PER_MINUTE,
+  AI_QUOTA_TOKEN_WINDOW_MS,
+} from "./aiQuotaPolicy";
+
+export { AiQuotaCoordinator } from "./aiQuotaCoordinator";
 
 const ENDPOINT_PATH = "/v1/candidate-insights";
 const BROADCAST_CONTEXT_ENDPOINT_PATH = "/v1/broadcast-context";
@@ -101,10 +140,30 @@ const MAX_WAV_BYTES =
     PCM_BYTES_PER_SAMPLE *
     (MAX_CANDIDATE_PASS_B_TARGET_DURATION_MS / 1_000);
 const MAX_AUDIO_BASE64_LENGTH = 4 * Math.ceil(MAX_WAV_BYTES / 3);
-const MAX_REQUEST_BODY_BYTES =
+// JSON.stringify can expand one UTF-16 code unit to a six-byte escape. Keep
+// every individually valid context field representable in the aggregate wire
+// contract instead of rejecting a request only after the paid upload ticket.
+const MAX_UTF8_JSON_BYTES_PER_UTF16_CODE_UNIT = 6;
+const MAX_CANDIDATE_CONTEXT_TEXT_FIELDS = 8;
+const MAX_CANDIDATE_REQUEST_BODY_BYTES =
   MAX_AUDIO_BASE64_LENGTH +
   MAX_CANDIDATE_PASS_B_VIDEO_FRAMES * MAX_CANDIDATE_PASS_B_VIDEO_FRAME_BASE64_LENGTH +
-  8_192;
+  MAX_CANDIDATE_CONTEXT_TEXT_FIELDS *
+    MAX_CANDIDATE_PASS_B_CONTEXT_TEXT_LENGTH *
+    MAX_UTF8_JSON_BYTES_PER_UTF16_CODE_UNIT +
+  64 * 1024;
+// The broadcast contract can carry 144 bounded chapter summaries plus 32
+// bounded candidate transcripts. Eight MiB covers the contract's escaped JSON
+// worst case while staying far below Cloudflare's request-body ceiling.
+const MAX_BROADCAST_CONTEXT_REQUEST_BODY_BYTES = 8 * 1024 * 1024;
+const QWEN_OMNI_AUDIO_TOKENS_PER_SECOND = 7;
+const QWEN_OMNI_MAX_IMAGE_TOKENS_PER_FRAME = 400;
+// Covers the Qwen-specific grounding rules and strict response-shape suffix
+// that are added after the shared candidate prompt.
+const QWEN_CANDIDATE_PROMPT_TOKEN_MARGIN = 8 * 1024;
+const QWEN_TRANSCRIPT_PROMPT_TOKEN_MARGIN = 256;
+const QWEN_CONTEXT_PROMPT_TOKEN_MARGIN = 64 * 1024;
+const QWEN_CONTEXT_MAX_OUTPUT_TOKENS = 8_192;
 const MAX_BROADCAST_TRANSCRIPT_WAV_BYTES =
   WAV_HEADER_BYTES +
   CANDIDATE_PASS_B_SAMPLE_RATE_HZ *
@@ -113,11 +172,17 @@ const MAX_BROADCAST_TRANSCRIPT_WAV_BYTES =
 const MAX_BROADCAST_TRANSCRIPT_REQUEST_BODY_BYTES =
   MAX_BROADCAST_TRANSCRIPT_QWEN_BASE64_LENGTH + 8_192;
 const MAX_UPSTREAM_ERROR_BYTES = 16 * 1024;
+const MAX_UPSTREAM_ERROR_BODY_TIMEOUT_MS = 5_000;
+const REQUEST_BODY_TIMEOUT_MS = 60_000;
 const UPSTREAM_TIMEOUT_MS = 90_000;
+const QUOTA_EXECUTION_WAIT_TIMEOUT_MS = 3 * 60_000;
+const QUOTA_CANCEL_TIMEOUT_MS = 1_000;
 const DEFAULT_UPSTREAM_RETRY_DELAYS_MS = Object.freeze([1_000, 2_000]);
-const RATE_LIMIT_KEY = "candidate-insights";
+const QWEN_OMNI_SHARED_RATE_LIMIT_KEY = "qwen-omni-media";
+const RATE_LIMIT_KEY = QWEN_OMNI_SHARED_RATE_LIMIT_KEY;
 const BROADCAST_CONTEXT_RATE_LIMIT_KEY = "broadcast-context";
-const BROADCAST_TRANSCRIPT_RATE_LIMIT_KEY = "broadcast-transcript";
+const BROADCAST_TRANSCRIPT_RATE_LIMIT_KEY =
+  QWEN_OMNI_SHARED_RATE_LIMIT_KEY;
 const YOUTUBE_CAPTIONS_RATE_LIMIT_KEY = "youtube-captions";
 const CHZZK_VIDEO_CHANNEL_RATE_LIMIT_KEY = "chzzk-video-channel";
 // YouTube embeds this public Android bootstrap key in its clients. It is not a
@@ -140,15 +205,61 @@ const MAX_CHZZK_VIDEO_METADATA_BYTES = 256 * 1024;
 const CHZZK_VIDEO_NO_PATTERN = /^\d{7,12}$/u;
 const CHZZK_CHANNEL_ID_PATTERN = /^[0-9a-f]{32}$/u;
 
+function candidateTokenReservation(
+  candidateRequest: CandidateInsightRequest,
+): number {
+  const sharedPrompt = buildCandidatePassBPrompt(
+    candidateRequest.candidateDurationMs,
+    candidateRequest.videoFrames.length,
+    candidateRequest.castRosterId,
+    candidateRequest.outputLanguage,
+    candidateRequest.context,
+  );
+  const textTokenUpperBound =
+    new TextEncoder().encode(sharedPrompt).byteLength +
+    QWEN_CANDIDATE_PROMPT_TOKEN_MARGIN;
+  return (
+    Math.ceil(
+      (candidateRequest.candidateDurationMs / 1_000) *
+        QWEN_OMNI_AUDIO_TOKENS_PER_SECOND,
+    ) +
+    candidateRequest.videoFrames.length *
+      QWEN_OMNI_MAX_IMAGE_TOKENS_PER_FRAME +
+    textTokenUpperBound +
+    CANDIDATE_PASS_B_QWEN_MAX_OUTPUT_TOKENS
+  );
+}
+
+function transcriptTokenReservation(durationMs: number): number {
+  return (
+    Math.ceil(
+      (durationMs / 1_000) * QWEN_OMNI_AUDIO_TOKENS_PER_SECOND,
+    ) +
+    QWEN_TRANSCRIPT_PROMPT_TOKEN_MARGIN +
+    BROADCAST_TRANSCRIPT_QWEN_MAX_OUTPUT_TOKENS
+  );
+}
+
+function contextTokenReservation(serializedInputBytes: number): number {
+  return (
+    serializedInputBytes +
+    QWEN_CONTEXT_PROMPT_TOKEN_MARGIN +
+    QWEN_CONTEXT_MAX_OUTPUT_TOKENS
+  );
+}
+
 interface RateLimitBinding {
   readonly limit: (
     options: { readonly key: string },
   ) => Promise<{ readonly success: boolean }>;
 }
 
-export interface AiProxyEnvironment extends AiProviderEnvironment {
+export interface AiProxyEnvironment
+  extends AiProviderEnvironment, AiQuotaCoordinatorEnvironment {
   readonly RATE_LIMITER: RateLimitBinding;
   readonly IP_RATE_LIMITER: RateLimitBinding;
+  readonly CONTEXT_RATE_LIMITER?: RateLimitBinding;
+  readonly CONTEXT_IP_RATE_LIMITER?: RateLimitBinding;
 }
 
 interface CandidateInsightRequest {
@@ -167,11 +278,18 @@ type FetchImplementation = (
 
 export interface AiProxyDependencies {
   readonly fetchImplementation?: FetchImplementation;
+  readonly requestBodyTimeoutMs?: number;
   readonly upstreamTimeoutMs?: number;
   readonly upstreamRetryDelaysMs?: readonly number[];
 }
 
 class BodyTooLargeError extends Error {}
+class RequestBodyTimeoutError extends Error {
+  public constructor() {
+    super("The request body did not finish within the ingress deadline.");
+    this.name = "RequestBodyTimeoutError";
+  }
+}
 class UpstreamTimeoutError extends Error {}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -259,6 +377,7 @@ function corsHeaders(origin: string): Headers {
       EXCLIPPER_FALLBACK_REASON_HEADER,
       EXCLIPPER_PRIMARY_FAILURE_HEADER,
       EXCLIPPER_FALLBACK_FAILURE_HEADER,
+      "Retry-After",
     ].join(", "),
   );
   headers.set("Vary", "Origin");
@@ -288,7 +407,17 @@ function jsonResponse(
 function preflightResponse(origin: string, methods = "POST, OPTIONS"): Response {
   const headers = corsHeaders(origin);
   headers.set("Access-Control-Allow-Methods", methods);
-  headers.set("Access-Control-Allow-Headers", "content-type");
+  headers.set(
+    "Access-Control-Allow-Headers",
+    [
+      "content-type",
+      AI_QUOTA_PARTICIPANT_HEADER,
+      AI_QUOTA_RUN_HEADER,
+      AI_QUOTA_OPERATION_HEADER,
+      AI_QUOTA_PAYLOAD_DIGEST_HEADER,
+      AI_QUOTA_LEASE_HEADER,
+    ].join(", "),
+  );
   headers.set("Access-Control-Max-Age", "600");
   headers.set("Cache-Control", "no-store");
   return new Response(null, { status: 204, headers });
@@ -297,6 +426,8 @@ function preflightResponse(origin: string, methods = "POST, OPTIONS"): Response 
 async function readBodyWithLimit(
   body: ReadableStream<Uint8Array> | null,
   maximumBytes: number,
+  timeoutMs?: number,
+  timeoutErrorFactory: () => Error = () => new QuotaOutcomeUnknownError(),
 ): Promise<Uint8Array> {
   if (body === null) {
     return new Uint8Array();
@@ -304,9 +435,48 @@ async function readBodyWithLimit(
   const reader = body.getReader();
   const chunks: Uint8Array[] = [];
   let byteLength = 0;
+  const deadlineMs =
+    timeoutMs === undefined ? null : Date.now() + Math.max(1, timeoutMs);
+  const readNext = (): Promise<ReadableStreamReadResult<Uint8Array>> => {
+    if (deadlineMs === null) return reader.read();
+    const remainingMs = deadlineMs - Date.now();
+    if (remainingMs <= 0) {
+      const error = timeoutErrorFactory();
+      void reader.cancel(error).catch(() => undefined);
+      return Promise.reject(error);
+    }
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      const timeout = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        const error = timeoutErrorFactory();
+        void reader.cancel(error).catch(() => undefined);
+        reject(error);
+      }, remainingMs);
+      void reader.read().then(
+        (result) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timeout);
+          resolve(result);
+        },
+        (error: unknown) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timeout);
+          reject(
+            error instanceof Error
+              ? error
+              : new Error("Upstream response body read failed."),
+          );
+        },
+      );
+    });
+  };
   try {
     while (true) {
-      const { done, value } = await reader.read();
+      const { done, value } = await readNext();
       if (done) {
         break;
       }
@@ -331,6 +501,107 @@ async function readBodyWithLimit(
     offset += chunk.byteLength;
   }
   return combined;
+}
+
+/**
+ * Reads a body whose exact upper bound is implied by an already-validated WAV
+ * duration. Fragmented streams use one fixed buffer instead of retaining all
+ * chunks next to a second full copy.
+ */
+async function readBodyWithExactMaximum(
+  body: ReadableStream<Uint8Array> | null,
+  exactMaximumBytes: number,
+  timeoutMs?: number,
+): Promise<Uint8Array> {
+  if (body === null) return new Uint8Array();
+  const reader = body.getReader();
+  const deadlineMs =
+    timeoutMs === undefined ? null : Date.now() + Math.max(1, timeoutMs);
+  const readNext = (): Promise<ReadableStreamReadResult<Uint8Array>> => {
+    if (deadlineMs === null) return reader.read();
+    const remainingMs = deadlineMs - Date.now();
+    if (remainingMs <= 0) {
+      const error = new RequestBodyTimeoutError();
+      void reader.cancel(error).catch(() => undefined);
+      return Promise.reject(error);
+    }
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      const timeout = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        const error = new RequestBodyTimeoutError();
+        void reader.cancel(error).catch(() => undefined);
+        reject(error);
+      }, remainingMs);
+      void reader.read().then(
+        (result) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timeout);
+          resolve(result);
+        },
+        (error: unknown) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timeout);
+          reject(
+            error instanceof Error
+              ? error
+              : new Error("Request body read failed."),
+          );
+        },
+      );
+    });
+  };
+  try {
+    const firstRead = await readNext();
+    if (firstRead.done) return new Uint8Array();
+    if (!(firstRead.value instanceof Uint8Array)) {
+      throw new TypeError("Unexpected request body chunk.");
+    }
+    const firstChunk = firstRead.value;
+    if (firstChunk.byteLength > exactMaximumBytes) {
+      await reader.cancel();
+      throw new BodyTooLargeError();
+    }
+    if (firstChunk.byteLength === exactMaximumBytes) {
+      while (true) {
+        const next = await readNext();
+        if (next.done) return firstChunk;
+        if (!(next.value instanceof Uint8Array)) {
+          throw new TypeError("Unexpected request body chunk.");
+        }
+        if (next.value.byteLength > 0) {
+          await reader.cancel();
+          throw new BodyTooLargeError();
+        }
+      }
+    }
+
+    const combined = new Uint8Array(exactMaximumBytes);
+    combined.set(firstChunk, 0);
+    let offset = firstChunk.byteLength;
+    while (true) {
+      const next = await readNext();
+      if (next.done) {
+        return offset === exactMaximumBytes
+          ? combined
+          : combined.subarray(0, offset);
+      }
+      if (!(next.value instanceof Uint8Array)) {
+        throw new TypeError("Unexpected request body chunk.");
+      }
+      if (offset + next.value.byteLength > exactMaximumBytes) {
+        await reader.cancel();
+        throw new BodyTooLargeError();
+      }
+      combined.set(next.value, offset);
+      offset += next.value.byteLength;
+    }
+  } finally {
+    reader.releaseLock();
+  }
 }
 
 function parseCandidateRequest(bytes: Uint8Array): CandidateInsightRequest | null {
@@ -429,17 +700,9 @@ function base64DecodedByteLength(value: string): number {
 }
 
 /**
- * Upstream bodies for raw-WAV ingress are assembled as bytes end to end.
- *
- * The JSON ingress path decoded, parsed and re-stringified megabyte payloads,
- * holding roughly 30 MB of transient strings per request against a 128 MB
- * isolate; two concurrent chunks were enough to kill the Worker (measured
- * 2026-07-23). Byte assembly keeps the whole trip near 7 MB per request,
- * which is what makes overlapping chunks safe.
- *
- * The sentinel is valid base64 so the existing builders accept it, and the
- * exact 28-character token cannot occur in the fixed template text, so
- * splitting on it yields exactly the prefix and suffix around the audio.
+ * The runtime performs the byte-to-base64 conversion natively. This removes
+ * the several-million-iteration JavaScript loop that exceeded Worker CPU on a
+ * full transcript chunk while preserving the exact provider JSON contract.
  */
 const TRANSCRIPT_AUDIO_SENTINEL = "ExclipperAudioSentinel000000";
 /**
@@ -497,14 +760,14 @@ function buildBroadcastTranscriptUpstreamBytes(
   const prefix = encoder.encode(parts[0]);
   const suffix = encoder.encode(parts[1]);
   const audio = base64EncodeToBytes(wavBytes);
-  const out = new Uint8Array(
+  const output = new Uint8Array(
     prefix.byteLength + audio.byteLength + suffix.byteLength,
   );
-  out.set(prefix, 0);
-  out.set(audio, prefix.byteLength);
-  out.set(suffix, prefix.byteLength + audio.byteLength);
+  output.set(prefix, 0);
+  output.set(audio, prefix.byteLength);
+  output.set(suffix, prefix.byteLength + audio.byteLength);
   audio.fill(0);
-  return out;
+  return output;
 }
 
 /**
@@ -667,6 +930,12 @@ async function fetchWithTimeout(
       signal: controller.signal,
     });
   } catch (error) {
+    if (
+      error instanceof QuotaOutcomeUnknownError ||
+      error instanceof AiQuotaCoordinatorUnavailableError
+    ) {
+      throw error;
+    }
     if (controller.signal.aborted) {
       throw new UpstreamTimeoutError();
     }
@@ -684,6 +953,335 @@ async function waitForRetry(delayMs: number): Promise<void> {
   await new Promise<void>((resolve) => {
     setTimeout(resolve, delayMs);
   });
+}
+
+class QuotaOutcomeUnknownError extends Error {
+  public constructor() {
+    super("The paid request outcome could not be determined.");
+    this.name = "QuotaOutcomeUnknownError";
+  }
+}
+
+type AiQuotaGuardResult =
+  | { readonly ok: true; readonly lease: AiQuotaLeaseHeaders | null }
+  | { readonly ok: false; readonly response: Response };
+
+function hasAnyAiQuotaHeader(request: Request): boolean {
+  return [
+    AI_QUOTA_PARTICIPANT_HEADER,
+    AI_QUOTA_RUN_HEADER,
+    AI_QUOTA_OPERATION_HEADER,
+    AI_QUOTA_PAYLOAD_DIGEST_HEADER,
+    AI_QUOTA_LEASE_HEADER,
+  ].some((name) => request.headers.has(name));
+}
+
+async function precheckAiQuotaLease(
+  request: Request,
+  environment: AiProxyEnvironment,
+  pool: AiQuotaPool,
+  origin: string,
+): Promise<AiQuotaGuardResult> {
+  const mode = aiQuotaMode(environment);
+  if (mode === "disabled") return { ok: true, lease: null };
+  const lease = readAiQuotaLeaseHeaders(request.headers, pool);
+  if (lease === null) {
+    if (mode === "optional" && !hasAnyAiQuotaHeader(request)) {
+      return { ok: true, lease: null };
+    }
+    return {
+      ok: false,
+      response: jsonResponse(
+        428,
+        "QUOTA_LEASE_REQUIRED",
+        "AI 분석 순서를 먼저 배정받아야 해요.",
+        origin,
+      ),
+    };
+  }
+  try {
+    const inspected = await inspectCoordinatorLease(
+      environment,
+      lease,
+      lease.leaseToken,
+    );
+    if (inspected.ok) return { ok: true, lease };
+    return {
+      ok: false,
+      response: jsonResponse(
+        409,
+        "QUOTA_LEASE_INVALID",
+        "AI 분석 순서가 만료됐거나 이미 사용됐어요.",
+        origin,
+      ),
+    };
+  } catch {
+    return {
+      ok: false,
+      response: jsonResponse(
+        503,
+        "QUOTA_COORDINATOR_UNAVAILABLE",
+        "AI 분석 순서를 확인하지 못했어요.",
+        origin,
+      ),
+    };
+  }
+}
+
+async function sha256PayloadDigest(bytes: Uint8Array): Promise<string> {
+  const digest = new Uint8Array(
+    await crypto.subtle.digest(
+      "SHA-256",
+      bytes as Uint8Array<ArrayBuffer>,
+    ),
+  );
+  let hex = "";
+  for (const byte of digest) hex += byte.toString(16).padStart(2, "0");
+  digest.fill(0);
+  return `sha256:${hex}`;
+}
+
+async function quotaPayloadMatches(
+  lease: AiQuotaLeaseHeaders | null,
+  requestBytes: Uint8Array,
+): Promise<boolean> {
+  if (lease === null) return true;
+  const digest = await sha256PayloadDigest(requestBytes);
+  return isAiQuotaPayloadDigest(digest) && digest === lease.payloadDigest;
+}
+
+async function releaseUnusedQuotaLeaseBestEffort(
+  environment: AiProxyEnvironment,
+  lease: AiQuotaLeaseHeaders | null,
+): Promise<void> {
+  if (lease === null) return;
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  const release = releaseCoordinatorUploadLease(
+    environment,
+    lease,
+    lease.leaseToken,
+  )
+    .then(() => undefined)
+    .catch(() => undefined);
+  const deadline = new Promise<void>((resolve) => {
+    timeout = setTimeout(resolve, QUOTA_CANCEL_TIMEOUT_MS);
+  });
+  await Promise.race([release, deadline]);
+  if (timeout !== undefined) clearTimeout(timeout);
+}
+
+async function rejectUnusedQuotaLease(
+  environment: AiProxyEnvironment,
+  lease: AiQuotaLeaseHeaders | null,
+  response: Response,
+): Promise<Response> {
+  await releaseUnusedQuotaLeaseBestEffort(environment, lease);
+  return response;
+}
+
+function internalAttemptOperationId(
+  baseOperationId: string,
+  attempt: number,
+): string {
+  const suffix = `.provider-${attempt}`;
+  return `${baseOperationId.slice(0, 160 - suffix.length)}${suffix}`;
+}
+
+async function acquireInternalQuotaLease(
+  environment: AiProxyEnvironment,
+  base: AiQuotaLeaseHeaders,
+  attempt: number,
+): Promise<AiQuotaLeaseHeaders> {
+  const identity: AiQuotaOperationIdentity = {
+    participantId: base.participantId,
+    runId: base.runId,
+    operationId: internalAttemptOperationId(base.operationId, attempt),
+    pool: base.pool,
+    payloadDigest: base.payloadDigest,
+  };
+  while (true) {
+    const response = await requestCoordinatorPublicLease(environment, {
+      schemaVersion: AI_QUOTA_SCHEMA_VERSION,
+      action: "lease",
+      ...identity,
+    });
+    if (response.status === "granted") {
+      return { ...identity, leaseToken: response.leaseToken };
+    }
+    if (response.status !== "queued") {
+      throw new AiQuotaCoordinatorUnavailableError();
+    }
+    await waitForRetry(
+      Math.min(5_000, Math.max(75, response.retryAfterMs)),
+    );
+  }
+}
+
+function quotaOutcomeForStatus(
+  status: number,
+): "succeeded" | "rate-limited" | "retryable" | "failed" {
+  if (status === 429) return "rate-limited";
+  if (status === 408 || (status >= 500 && status <= 599)) return "retryable";
+  if (status >= 200 && status <= 399) return "succeeded";
+  return "failed";
+}
+
+function boundedRetryAfterMs(response: Response): number | undefined {
+  const value = response.headers.get("Retry-After");
+  return value !== null && /^\d{1,3}$/u.test(value)
+    ? Math.min(60_000, Number(value) * 1_000)
+    : undefined;
+}
+
+async function wrapQuotaTrackedResponse(
+  response: Response,
+  environment: AiProxyEnvironment,
+  lease: AiQuotaLeaseHeaders,
+): Promise<Response> {
+  const knownOutcome = quotaOutcomeForStatus(response.status);
+  const complete = async (
+    outcome:
+      | "succeeded"
+      | "rate-limited"
+      | "retryable"
+      | "failed"
+      | "outcome-unknown" = knownOutcome,
+  ): Promise<void> => {
+    const retryAfterMs =
+      outcome === "rate-limited" ? boundedRetryAfterMs(response) : undefined;
+    const completed = await completeCoordinatorLease(environment, {
+      action: "complete",
+      participantId: lease.participantId,
+      runId: lease.runId,
+      operationId: lease.operationId,
+      pool: lease.pool,
+      payloadDigest: lease.payloadDigest,
+      leaseToken: lease.leaseToken,
+      outcome,
+      ...(retryAfterMs === undefined ? {} : { retryAfterMs }),
+    });
+    if (!completed.ok) throw new AiQuotaCoordinatorUnavailableError();
+  };
+  if (response.body === null) {
+    await complete();
+    return response;
+  }
+
+  const reader = response.body.getReader();
+  let settled = false;
+  const settle = async (
+    outcome?:
+      | "succeeded"
+      | "rate-limited"
+      | "retryable"
+      | "failed"
+      | "outcome-unknown",
+  ): Promise<void> => {
+    if (settled) return;
+    settled = true;
+    await complete(outcome);
+  };
+  const trackedBody = new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      try {
+        const chunk = await reader.read();
+        if (chunk.done) {
+          await settle();
+          controller.close();
+          return;
+        }
+        controller.enqueue(chunk.value);
+      } catch (error) {
+        try {
+          await settle("outcome-unknown");
+        } finally {
+          controller.error(
+            error instanceof AiQuotaCoordinatorUnavailableError
+              ? error
+              : new QuotaOutcomeUnknownError(),
+          );
+        }
+      }
+    },
+    async cancel(reason) {
+      const outcome =
+        reason instanceof QuotaOutcomeUnknownError ||
+        reason instanceof UpstreamTimeoutError
+          ? "outcome-unknown"
+          : undefined;
+      try {
+        // Claim the terminal state before cancelling the underlying reader.
+        // A pending pull can otherwise observe `{ done: true }` first and
+        // incorrectly settle an incomplete 200 response as succeeded.
+        await settle(outcome);
+      } finally {
+        await reader.cancel(reason);
+      }
+    },
+  });
+  return new Response(trackedBody, {
+    status: response.status,
+    statusText: response.statusText,
+    headers: response.headers,
+  });
+}
+
+function createQuotaMeteredFetch(
+  environment: AiProxyEnvironment,
+  initialLease: AiQuotaLeaseHeaders | null,
+  fetchImplementation: FetchImplementation,
+  tokenReservation: number,
+): FetchImplementation {
+  if (initialLease === null) return fetchImplementation;
+  let attempt = 0;
+  return async (input, init) => {
+    const lease =
+      attempt === 0
+        ? initialLease
+        : await acquireInternalQuotaLease(environment, initialLease, attempt);
+    attempt += 1;
+    const executionDeadlineMs = Date.now() + QUOTA_EXECUTION_WAIT_TIMEOUT_MS;
+    while (true) {
+      const consumed = await consumeCoordinatorLease(
+        environment,
+        lease,
+        lease.leaseToken,
+        tokenReservation,
+      );
+      if (consumed.ok && consumed.status === "consumed") break;
+      if (
+        consumed.ok ||
+        consumed.status !== "not-ready" ||
+        Date.now() >= executionDeadlineMs
+      ) {
+        throw new AiQuotaCoordinatorUnavailableError();
+      }
+      await waitForRetry(
+        Math.min(
+          AI_QUOTA_TOKEN_WINDOW_MS,
+          Math.max(75, consumed.retryAfterMs ?? 250),
+          Math.max(0, executionDeadlineMs - Date.now()),
+        ),
+      );
+    }
+    let response: Response;
+    try {
+      response = await fetchImplementation(input, init);
+    } catch {
+      await completeCoordinatorLease(environment, {
+        action: "complete",
+        participantId: lease.participantId,
+        runId: lease.runId,
+        operationId: lease.operationId,
+        pool: lease.pool,
+        payloadDigest: lease.payloadDigest,
+        leaseToken: lease.leaseToken,
+        outcome: "outcome-unknown",
+      }).catch(() => undefined);
+      throw new QuotaOutcomeUnknownError();
+    }
+    return wrapQuotaTrackedResponse(response, environment, lease);
+  };
 }
 
 async function fetchWithTransientRetries(
@@ -711,6 +1309,8 @@ async function fetchWithTransientRetries(
       );
     } catch (error) {
       if (
+        error instanceof QuotaOutcomeUnknownError ||
+        error instanceof AiQuotaCoordinatorUnavailableError ||
         error instanceof UpstreamTimeoutError ||
         retryIndex >= retryDelaysMs.length
       ) {
@@ -737,10 +1337,16 @@ async function fetchWithTransientRetries(
 
 async function classifyUpstreamRejection(
   response: Response,
+  timeoutMs: number,
 ): Promise<"api-key" | "response-format" | "invalid-argument" | "other"> {
   let bytes: Uint8Array;
   try {
-    bytes = await readBodyWithLimit(response.body, MAX_UPSTREAM_ERROR_BYTES);
+    bytes = await readBodyWithLimit(
+      response.body,
+      MAX_UPSTREAM_ERROR_BYTES,
+      Math.min(timeoutMs, MAX_UPSTREAM_ERROR_BODY_TIMEOUT_MS),
+      () => new Error("Upstream error body read timed out."),
+    );
   } catch {
     return "other";
   }
@@ -772,10 +1378,18 @@ async function classifyUpstreamRejection(
   return status === "INVALID_ARGUMENT" ? "invalid-argument" : "other";
 }
 
-async function readSafeProviderErrorCode(response: Response): Promise<string> {
+async function readSafeProviderErrorCode(
+  response: Response,
+  timeoutMs: number,
+): Promise<string> {
   let bytes: Uint8Array;
   try {
-    bytes = await readBodyWithLimit(response.body, MAX_UPSTREAM_ERROR_BYTES);
+    bytes = await readBodyWithLimit(
+      response.body,
+      MAX_UPSTREAM_ERROR_BYTES,
+      Math.min(timeoutMs, MAX_UPSTREAM_ERROR_BODY_TIMEOUT_MS),
+      () => new Error("Upstream error body read timed out."),
+    );
   } catch {
     return "unreadable";
   }
@@ -810,31 +1424,47 @@ function successResponse(
   return new Response(JSON.stringify(payload), { status: 200, headers });
 }
 
-function healthResponse(
+async function healthResponse(
   request: Request,
-  environment: AiProviderEnvironment,
-): Response {
+  environment: AiProxyEnvironment,
+): Promise<Response> {
+  const quotaMode = aiQuotaMode(environment);
+  let quotaCoordinatorReady = quotaMode === "disabled";
+  if (quotaMode !== "disabled") {
+    try {
+      quotaCoordinatorReady = await checkCoordinatorHealth(environment);
+    } catch {
+      quotaCoordinatorReady = false;
+    }
+  }
   const headers = new Headers({
     "Cache-Control": "no-store",
     "Content-Type": JSON_CONTENT_TYPE,
     "X-Content-Type-Options": "nosniff",
   });
+  const healthy = quotaMode === "disabled" || quotaCoordinatorReady;
   const body = request.method === "HEAD"
     ? null
     : JSON.stringify({
-        ok: true,
+        ok: healthy,
         service: "rettohighlight-gemini",
-        version: 2,
+        version: 3,
         routingPolicyVersion: AI_PROVIDER_ROUTING_POLICY_VERSION,
         contextModelRevision: QWEN_CONTEXT_MODEL_REVISION,
+        quota: {
+          mode: quotaMode,
+          coordinatorReady: quotaCoordinatorReady,
+          maximumActiveParticipants: 5,
+        },
         providers: createAiProviderReadinessManifest(environment),
       });
-  return new Response(body, { status: 200, headers });
+  return new Response(body, { status: healthy ? 200 : 503, headers });
 }
 
 type CandidateProviderFailureKind =
   | "timeout"
   | "unavailable"
+  | "outcome-unknown"
   | "rate-limited"
   | "auth"
   | "model-unavailable"
@@ -935,7 +1565,13 @@ async function attemptCandidateProvider(
   } catch (error) {
     return {
       ok: false,
-      kind: error instanceof UpstreamTimeoutError ? "timeout" : "unavailable",
+      kind:
+        error instanceof QuotaOutcomeUnknownError ||
+        error instanceof AiQuotaCoordinatorUnavailableError
+          ? "outcome-unknown"
+          : error instanceof UpstreamTimeoutError
+            ? "timeout"
+            : "unavailable",
     };
   }
 
@@ -957,7 +1593,10 @@ async function attemptCandidateProvider(
       return { ok: false, kind: "unavailable" };
     }
     if (upstreamResponse.status === 400) {
-      const rejection = await classifyUpstreamRejection(upstreamResponse);
+      const rejection = await classifyUpstreamRejection(
+        upstreamResponse,
+        timeoutMs,
+      );
       if (rejection === "api-key") return { ok: false, kind: "auth" };
       if (rejection === "response-format") {
         return { ok: false, kind: "response-format" };
@@ -986,9 +1625,17 @@ async function attemptCandidateProvider(
     upstreamBytes = await readBodyWithLimit(
       upstreamResponse.body,
       MAX_CANDIDATE_PASS_B_RESPONSE_BYTES,
+      timeoutMs,
     );
-  } catch {
-    return { ok: false, kind: "invalid-response" };
+  } catch (error) {
+    return {
+      ok: false,
+      kind:
+        error instanceof QuotaOutcomeUnknownError ||
+        error instanceof AiQuotaCoordinatorUnavailableError
+          ? "outcome-unknown"
+          : "invalid-response",
+    };
   }
 
   let upstreamPayload: unknown;
@@ -1081,6 +1728,13 @@ function candidateProviderFailureResponse(
         502,
         "UPSTREAM_UNAVAILABLE",
         "AI에 연결하지 못했어요. 잠시 뒤 다시 시도해 주세요.",
+        origin,
+      );
+    case "outcome-unknown":
+      return jsonResponse(
+        502,
+        "UPSTREAM_OUTCOME_UNKNOWN",
+        "AI 요청이 처리됐는지 확인할 수 없어 자동으로 다시 결제하지 않았어요.",
         origin,
       );
     case "rate-limited":
@@ -1243,8 +1897,8 @@ export async function handleCandidateInsightRequest(
   const declaredLength = request.headers.get("Content-Length");
   if (
     declaredLength !== null &&
-    (!/^\d+$/u.test(declaredLength) ||
-      Number(declaredLength) > MAX_REQUEST_BODY_BYTES)
+      (!/^\d+$/u.test(declaredLength) ||
+      Number(declaredLength) > MAX_CANDIDATE_REQUEST_BODY_BYTES)
   ) {
     return jsonResponse(
       413,
@@ -1254,37 +1908,81 @@ export async function handleCandidateInsightRequest(
     );
   }
 
+  const quotaGuard = await precheckAiQuotaLease(
+    request,
+    environment,
+    "candidate",
+    origin,
+  );
+  if (!quotaGuard.ok) return quotaGuard.response;
+
   let requestBytes: Uint8Array;
   try {
     requestBytes = await readBodyWithLimit(
       request.body,
-      MAX_REQUEST_BODY_BYTES,
+      MAX_CANDIDATE_REQUEST_BODY_BYTES,
+      dependencies.requestBodyTimeoutMs ?? REQUEST_BODY_TIMEOUT_MS,
+      () => new RequestBodyTimeoutError(),
     );
   } catch (error) {
     if (error instanceof BodyTooLargeError) {
-      return jsonResponse(
-        413,
-        "PAYLOAD_TOO_LARGE",
-        "후보 오디오 요청이 허용 크기를 넘었어요.",
-        origin,
+      return rejectUnusedQuotaLease(
+        environment,
+        quotaGuard.lease,
+        jsonResponse(
+          413,
+          "PAYLOAD_TOO_LARGE",
+          "후보 오디오 요청이 허용 크기를 넘었어요.",
+          origin,
+        ),
       );
     }
-    return jsonResponse(
-      400,
-      "INVALID_REQUEST",
-      "후보 오디오 요청을 읽지 못했어요.",
-      origin,
+    return rejectUnusedQuotaLease(
+      environment,
+      quotaGuard.lease,
+      jsonResponse(
+        error instanceof RequestBodyTimeoutError ? 408 : 400,
+        error instanceof RequestBodyTimeoutError
+          ? "REQUEST_BODY_TIMEOUT"
+          : "INVALID_REQUEST",
+        error instanceof RequestBodyTimeoutError
+          ? "후보 자료 업로드가 너무 오래 걸려 중단했어요. 다시 시도해 주세요."
+          : "후보 오디오 요청을 읽지 못했어요.",
+        origin,
+      ),
     );
   }
 
-  const candidateRequest = parseCandidateRequest(requestBytes);
+  const payloadMatchesLease = await quotaPayloadMatches(
+    quotaGuard.lease,
+    requestBytes,
+  );
+  const candidateRequest = payloadMatchesLease
+    ? parseCandidateRequest(requestBytes)
+    : null;
   requestBytes.fill(0);
+  if (!payloadMatchesLease) {
+    return rejectUnusedQuotaLease(
+      environment,
+      quotaGuard.lease,
+      jsonResponse(
+        409,
+        "QUOTA_PAYLOAD_MISMATCH",
+        "배정받은 AI 분석 자료와 실제 요청이 일치하지 않아요.",
+        origin,
+      ),
+    );
+  }
   if (candidateRequest === null) {
-    return jsonResponse(
-      400,
-      "INVALID_REQUEST",
-      "후보 오디오 요청 형식을 확인해 주세요.",
-      origin,
+    return rejectUnusedQuotaLease(
+      environment,
+      quotaGuard.lease,
+      jsonResponse(
+        400,
+        "INVALID_REQUEST",
+        "후보 오디오 요청 형식을 확인해 주세요.",
+        origin,
+      ),
     );
   }
 
@@ -1301,14 +1999,31 @@ export async function handleCandidateInsightRequest(
     )
   ) {
     wavHeader?.fill(0);
-    return jsonResponse(
-      400,
-      "INVALID_AUDIO",
-      "16kHz 모노 WAV 후보 오디오를 확인해 주세요.",
-      origin,
+    return rejectUnusedQuotaLease(
+      environment,
+      quotaGuard.lease,
+      jsonResponse(
+        400,
+        "INVALID_AUDIO",
+        "16kHz 모노 WAV 후보 오디오를 확인해 주세요.",
+        origin,
+      ),
     );
   }
   wavHeader.fill(0);
+  const reservedTokens = candidateTokenReservation(candidateRequest);
+  if (reservedTokens > AI_QUOTA_QWEN_OMNI_MAX_TOKENS_PER_MINUTE) {
+    return rejectUnusedQuotaLease(
+      environment,
+      quotaGuard.lease,
+      jsonResponse(
+        413,
+        "TOKEN_BUDGET_TOO_LARGE",
+        "후보 맥락이 한 번의 AI 요청에 담기에는 너무 커요.",
+        origin,
+      ),
+    );
+  }
 
   let clientRateLimit: { readonly success: boolean };
   try {
@@ -1316,20 +2031,28 @@ export async function handleCandidateInsightRequest(
       key: clientRateLimitKey(request),
     });
   } catch {
-    return jsonResponse(
-      503,
-      "RATE_LIMIT_UNAVAILABLE",
-      "요청 보호 장치를 확인하지 못했어요. 잠시 뒤 다시 시도해 주세요.",
-      origin,
+    return rejectUnusedQuotaLease(
+      environment,
+      quotaGuard.lease,
+      jsonResponse(
+        503,
+        "RATE_LIMIT_UNAVAILABLE",
+        "요청 보호 장치를 확인하지 못했어요. 잠시 뒤 다시 시도해 주세요.",
+        origin,
+      ),
     );
   }
   if (!clientRateLimit.success) {
-    return jsonResponse(
-      429,
-      "RATE_LIMITED",
-      "잠시 요청이 많아요. 1분 뒤 다시 시도해 주세요.",
-      origin,
-      { "Retry-After": "60" },
+    return rejectUnusedQuotaLease(
+      environment,
+      quotaGuard.lease,
+      jsonResponse(
+        429,
+        "RATE_LIMITED",
+        "잠시 요청이 많아요. 1분 뒤 다시 시도해 주세요.",
+        origin,
+        { "Retry-After": "60" },
+      ),
     );
   }
 
@@ -1339,24 +2062,37 @@ export async function handleCandidateInsightRequest(
       key: RATE_LIMIT_KEY,
     });
   } catch {
-    return jsonResponse(
-      503,
-      "RATE_LIMIT_UNAVAILABLE",
-      "요청 보호 장치를 확인하지 못했어요. 잠시 뒤 다시 시도해 주세요.",
-      origin,
+    return rejectUnusedQuotaLease(
+      environment,
+      quotaGuard.lease,
+      jsonResponse(
+        503,
+        "RATE_LIMIT_UNAVAILABLE",
+        "요청 보호 장치를 확인하지 못했어요. 잠시 뒤 다시 시도해 주세요.",
+        origin,
+      ),
     );
   }
   if (!globalRateLimit.success) {
-    return jsonResponse(
-      429,
-      "RATE_LIMITED",
-      "잠시 요청이 많아요. 1분 뒤 다시 시도해 주세요.",
-      origin,
-      { "Retry-After": "60" },
+    return rejectUnusedQuotaLease(
+      environment,
+      quotaGuard.lease,
+      jsonResponse(
+        429,
+        "RATE_LIMITED",
+        "잠시 요청이 많아요. 1분 뒤 다시 시도해 주세요.",
+        origin,
+        { "Retry-After": "60" },
+      ),
     );
   }
 
-  const fetchImplementation = dependencies.fetchImplementation ?? fetch;
+  const fetchImplementation = createQuotaMeteredFetch(
+    environment,
+    quotaGuard.lease,
+    dependencies.fetchImplementation ?? fetch,
+    reservedTokens,
+  );
   const timeoutMs = dependencies.upstreamTimeoutMs ?? UPSTREAM_TIMEOUT_MS;
   const retryDelaysMs =
     dependencies.upstreamRetryDelaysMs ?? DEFAULT_UPSTREAM_RETRY_DELAYS_MS;
@@ -1420,6 +2156,7 @@ type ActiveBroadcastTranscriptConnection = Exclude<
 type BroadcastTranscriptProviderFailureKind =
   | "timeout"
   | "network"
+  | "outcome-unknown"
   | "rate-limited"
   | "auth"
   | "model-unavailable"
@@ -1479,73 +2216,71 @@ async function attemptBroadcastTranscriptProvider(
     return { ok: false, kind: "invalid-argument" };
   }
 
-  let upstreamResponse: Response;
+  let result: BroadcastTranscriptQwenResult | null;
+  let receivedResponse = false;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    upstreamResponse = await fetchWithTimeout(
-      fetchImplementation,
-      connection.endpoint,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...(connection.provider === "gemini"
-            ? { "x-goog-api-key": connection.apiKey }
-            : { Authorization: `Bearer ${connection.apiKey}` }),
-        },
-        body: upstreamBody,
-        cache: "no-store",
-        credentials: "omit",
-        referrerPolicy: "no-referrer",
+    const upstreamResponse = await fetchImplementation(connection.endpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(connection.provider === "gemini"
+          ? { "x-goog-api-key": connection.apiKey }
+          : { Authorization: `Bearer ${connection.apiKey}` }),
       },
-      timeoutMs,
-    );
-  } catch (error) {
-    return {
-      ok: false,
-      kind: error instanceof UpstreamTimeoutError ? "timeout" : "network",
-    };
-  }
+      body: upstreamBody,
+      cache: "no-store",
+      credentials: "omit",
+      referrerPolicy: "no-referrer",
+      signal: controller.signal,
+    });
+    receivedResponse = true;
 
-  if (!upstreamResponse.ok) {
-    if (connection.provider === "qwen") {
-      const providerCode = await readSafeProviderErrorCode(upstreamResponse);
-      console.error("broadcast_transcript_upstream_rejected", {
-        status: upstreamResponse.status,
-        providerCode,
-      });
-    } else if (upstreamResponse.status === 400) {
-      const rejection = await classifyUpstreamRejection(upstreamResponse);
-      if (rejection === "api-key") return { ok: false, kind: "auth" };
-      if (rejection === "response-format") {
-        return { ok: false, kind: "response-format" };
+    if (!upstreamResponse.ok) {
+      if (connection.provider === "qwen") {
+        const providerCode = await readSafeProviderErrorCode(
+          upstreamResponse,
+          timeoutMs,
+        );
+        console.error("broadcast_transcript_upstream_rejected", {
+          status: upstreamResponse.status,
+          providerCode,
+        });
+      } else if (upstreamResponse.status === 400) {
+        const rejection = await classifyUpstreamRejection(
+          upstreamResponse,
+          timeoutMs,
+        );
+        if (rejection === "api-key") return { ok: false, kind: "auth" };
+        if (rejection === "response-format") {
+          return { ok: false, kind: "response-format" };
+        }
+        if (rejection === "invalid-argument") {
+          return { ok: false, kind: "invalid-argument" };
+        }
+        return { ok: false, kind: "rejected" };
+      } else {
+        await upstreamResponse.body?.cancel().catch(() => undefined);
       }
-      if (rejection === "invalid-argument") {
-        return { ok: false, kind: "invalid-argument" };
+      if (upstreamResponse.status === 401 || upstreamResponse.status === 403) {
+        return { ok: false, kind: "auth" };
+      }
+      if (upstreamResponse.status === 404) {
+        return { ok: false, kind: "model-unavailable" };
+      }
+      if (upstreamResponse.status === 413) {
+        return { ok: false, kind: "payload-too-large" };
+      }
+      if (upstreamResponse.status === 429) {
+        return { ok: false, kind: "rate-limited" };
+      }
+      if (upstreamResponse.status >= 500 && upstreamResponse.status <= 599) {
+        return { ok: false, kind: "server-error" };
       }
       return { ok: false, kind: "rejected" };
-    } else {
-      await upstreamResponse.body?.cancel().catch(() => undefined);
     }
-    if (upstreamResponse.status === 401 || upstreamResponse.status === 403) {
-      return { ok: false, kind: "auth" };
-    }
-    if (upstreamResponse.status === 404) {
-      return { ok: false, kind: "model-unavailable" };
-    }
-    if (upstreamResponse.status === 413) {
-      return { ok: false, kind: "payload-too-large" };
-    }
-    if (upstreamResponse.status === 429) {
-      return { ok: false, kind: "rate-limited" };
-    }
-    if (upstreamResponse.status >= 500 && upstreamResponse.status <= 599) {
-      return { ok: false, kind: "server-error" };
-    }
-    return { ok: false, kind: "rejected" };
-  }
 
-  let result: BroadcastTranscriptQwenResult | null;
-  try {
     const bytes = await readBodyWithLimit(
       upstreamResponse.body,
       MAX_BROADCAST_TRANSCRIPT_QWEN_RESPONSE_BYTES,
@@ -1555,8 +2290,21 @@ async function attemptBroadcastTranscriptProvider(
     result = connection.provider === "gemini"
       ? extractBroadcastTranscriptGeminiResponse(JSON.parse(text), transcriptRequest)
       : extractBroadcastTranscriptQwenOmniSseResponse(text, transcriptRequest);
-  } catch {
-    return { ok: false, kind: "invalid-response" };
+  } catch (error) {
+    return {
+      ok: false,
+      kind:
+        error instanceof QuotaOutcomeUnknownError ||
+        error instanceof AiQuotaCoordinatorUnavailableError
+          ? "outcome-unknown"
+          : controller.signal.aborted
+            ? "timeout"
+            : receivedResponse
+              ? "invalid-response"
+              : "network",
+    };
+  } finally {
+    clearTimeout(timeout);
   }
   return result === null
     ? { ok: false, kind: "invalid-response" }
@@ -1574,6 +2322,8 @@ function broadcastTranscriptProviderFailureResponse(
     case "network":
     case "server-error":
       return jsonResponse(502, "UPSTREAM_UNAVAILABLE", "방송 대사 분석 응답을 받지 못했어요.", origin, additionalHeaders);
+    case "outcome-unknown":
+      return jsonResponse(502, "UPSTREAM_OUTCOME_UNKNOWN", "방송 대사 요청이 처리됐는지 확인할 수 없어 자동으로 다시 결제하지 않았어요.", origin, additionalHeaders);
     case "rate-limited":
       return jsonResponse(429, "UPSTREAM_RATE_LIMITED", "방송 대사 분석 요청을 처리하지 못했어요.", origin, {
         "Retry-After": "60",
@@ -1688,6 +2438,7 @@ export async function handleBroadcastTranscriptRequest(
     readonly durationMs: number;
   };
   let transcriptAudio: BroadcastTranscriptAudioPayload;
+  let quotaLease: AiQuotaLeaseHeaders | null;
   if (requestMediaType === "audio/wav") {
     const requestUrl = new URL(request.url);
     const startRaw = requestUrl.searchParams.get("startMs");
@@ -1716,11 +2467,17 @@ export async function handleBroadcastTranscriptRequest(
         origin,
       );
     }
+    const expectedWavBytes =
+      WAV_HEADER_BYTES +
+      Math.ceil(
+        (durationMs / 1_000) * CANDIDATE_PASS_B_SAMPLE_RATE_HZ,
+      ) *
+        PCM_BYTES_PER_SAMPLE;
     const declaredLength = request.headers.get("Content-Length");
     if (
       declaredLength !== null &&
       (!/^\d+$/u.test(declaredLength) ||
-        Number(declaredLength) > MAX_BROADCAST_TRANSCRIPT_WAV_BYTES)
+        Number(declaredLength) > expectedWavBytes)
     ) {
       return jsonResponse(
         413,
@@ -1729,18 +2486,58 @@ export async function handleBroadcastTranscriptRequest(
         origin,
       );
     }
+    const quotaGuard = await precheckAiQuotaLease(
+      request,
+      environment,
+      "transcript",
+      origin,
+    );
+    if (!quotaGuard.ok) return quotaGuard.response;
+    quotaLease = quotaGuard.lease;
     let wavBytes: Uint8Array;
     try {
-      wavBytes = await readBodyWithLimit(
+      wavBytes = await readBodyWithExactMaximum(
         request.body,
-        MAX_BROADCAST_TRANSCRIPT_WAV_BYTES,
+        expectedWavBytes,
+        dependencies.requestBodyTimeoutMs ?? REQUEST_BODY_TIMEOUT_MS,
       );
-    } catch {
-      return jsonResponse(
-        413,
-        "PAYLOAD_TOO_LARGE",
-        "방송 오디오 조각의 크기가 허용 범위를 넘었어요.",
-        origin,
+    } catch (error) {
+      return rejectUnusedQuotaLease(
+        environment,
+        quotaLease,
+        error instanceof RequestBodyTimeoutError
+          ? jsonResponse(
+              408,
+              "REQUEST_BODY_TIMEOUT",
+              "방송 오디오 업로드가 너무 오래 걸려 중단했어요. 다시 시도해 주세요.",
+              origin,
+            )
+          : error instanceof BodyTooLargeError
+            ? jsonResponse(
+                413,
+                "PAYLOAD_TOO_LARGE",
+                "방송 오디오 조각의 크기가 허용 범위를 넘었어요.",
+                origin,
+              )
+            : jsonResponse(
+                400,
+                "INVALID_REQUEST",
+                "방송 오디오 조각을 읽지 못했어요.",
+                origin,
+              ),
+      );
+    }
+    if (!(await quotaPayloadMatches(quotaLease, wavBytes))) {
+      wavBytes.fill(0);
+      return rejectUnusedQuotaLease(
+        environment,
+        quotaLease,
+        jsonResponse(
+          409,
+          "QUOTA_PAYLOAD_MISMATCH",
+          "배정받은 방송 대사 자료와 실제 오디오가 일치하지 않아요.",
+          origin,
+        ),
       );
     }
     if (
@@ -1752,11 +2549,15 @@ export async function handleBroadcastTranscriptRequest(
       )
     ) {
       wavBytes.fill(0);
-      return jsonResponse(
-        400,
-        "INVALID_AUDIO",
-        "16kHz 모노 WAV 방송 오디오를 확인해 주세요.",
-        origin,
+      return rejectUnusedQuotaLease(
+        environment,
+        quotaLease,
+        jsonResponse(
+          400,
+          "INVALID_AUDIO",
+          "16kHz 모노 WAV 방송 오디오를 확인해 주세요.",
+          origin,
+        ),
       );
     }
     transcriptTimes = { sourceStartMs, durationMs };
@@ -1775,19 +2576,60 @@ export async function handleBroadcastTranscriptRequest(
         origin,
       );
     }
+    const quotaGuard = await precheckAiQuotaLease(
+      request,
+      environment,
+      "transcript",
+      origin,
+    );
+    if (!quotaGuard.ok) return quotaGuard.response;
+    quotaLease = quotaGuard.lease;
 
     let requestBytes: Uint8Array;
     try {
       requestBytes = await readBodyWithLimit(
         request.body,
         MAX_BROADCAST_TRANSCRIPT_REQUEST_BODY_BYTES,
+        dependencies.requestBodyTimeoutMs ?? REQUEST_BODY_TIMEOUT_MS,
+        () => new RequestBodyTimeoutError(),
       );
-    } catch {
-      return jsonResponse(
-        413,
-        "PAYLOAD_TOO_LARGE",
-        "방송 오디오 조각의 크기가 허용 범위를 넘었어요.",
-        origin,
+    } catch (error) {
+      return rejectUnusedQuotaLease(
+        environment,
+        quotaLease,
+        error instanceof RequestBodyTimeoutError
+          ? jsonResponse(
+              408,
+              "REQUEST_BODY_TIMEOUT",
+              "방송 오디오 업로드가 너무 오래 걸려 중단했어요. 다시 시도해 주세요.",
+              origin,
+            )
+          : error instanceof BodyTooLargeError
+            ? jsonResponse(
+                413,
+                "PAYLOAD_TOO_LARGE",
+                "방송 오디오 조각의 크기가 허용 범위를 넘었어요.",
+                origin,
+              )
+            : jsonResponse(
+                400,
+                "INVALID_REQUEST",
+                "방송 오디오 요청을 읽지 못했어요.",
+                origin,
+              ),
+      );
+    }
+    if (!(await quotaPayloadMatches(quotaLease, requestBytes))) {
+      requestBytes.fill(0);
+      return rejectUnusedQuotaLease(
+        environment,
+        quotaLease,
+        jsonResponse(
+          409,
+          "QUOTA_PAYLOAD_MISMATCH",
+          "배정받은 방송 대사 자료와 실제 요청이 일치하지 않아요.",
+          origin,
+        ),
       );
     }
 
@@ -1798,22 +2640,30 @@ export async function handleBroadcastTranscriptRequest(
       );
     } catch {
       requestBytes.fill(0);
-      return jsonResponse(
-        400,
-        "INVALID_REQUEST",
-        "방송 오디오 요청 형식을 확인해 주세요.",
-        origin,
+      return rejectUnusedQuotaLease(
+        environment,
+        quotaLease,
+        jsonResponse(
+          400,
+          "INVALID_REQUEST",
+          "방송 오디오 요청 형식을 확인해 주세요.",
+          origin,
+        ),
       );
     }
     requestBytes.fill(0);
 
     const transcriptRequest = parseBroadcastTranscriptQwenProxyRequest(inputValue);
     if (transcriptRequest === null) {
-      return jsonResponse(
-        400,
-        "INVALID_REQUEST",
-        "방송 오디오 요청 형식을 확인해 주세요.",
-        origin,
+      return rejectUnusedQuotaLease(
+        environment,
+        quotaLease,
+        jsonResponse(
+          400,
+          "INVALID_REQUEST",
+          "방송 오디오 요청 형식을 확인해 주세요.",
+          origin,
+        ),
       );
     }
     const wavHeader = decodeStrictBase64Prefix(
@@ -1829,11 +2679,15 @@ export async function handleBroadcastTranscriptRequest(
       )
     ) {
       wavHeader?.fill(0);
-      return jsonResponse(
-        400,
-        "INVALID_AUDIO",
-        "16kHz 모노 WAV 방송 오디오를 확인해 주세요.",
-        origin,
+      return rejectUnusedQuotaLease(
+        environment,
+        quotaLease,
+        jsonResponse(
+          400,
+          "INVALID_AUDIO",
+          "16kHz 모노 WAV 방송 오디오를 확인해 주세요.",
+          origin,
+        ),
       );
     }
     wavHeader.fill(0);
@@ -1852,36 +2706,53 @@ export async function handleBroadcastTranscriptRequest(
       key: scopedClientRateLimitKey(request, BROADCAST_TRANSCRIPT_RATE_LIMIT_KEY),
     });
     if (!clientLimit.success) {
-      return jsonResponse(
-        429,
-        "RATE_LIMITED",
-        "요청이 잠시 많아요. 1분 뒤 다시 시도해 주세요.",
-        origin,
-        { "Retry-After": "60" },
+      return rejectUnusedQuotaLease(
+        environment,
+        quotaLease,
+        jsonResponse(
+          429,
+          "RATE_LIMITED",
+          "요청이 잠시 많아요. 1분 뒤 다시 시도해 주세요.",
+          origin,
+          { "Retry-After": "60" },
+        ),
       );
     }
     const globalLimit = await environment.RATE_LIMITER.limit({
       key: BROADCAST_TRANSCRIPT_RATE_LIMIT_KEY,
     });
     if (!globalLimit.success) {
-      return jsonResponse(
-        429,
-        "RATE_LIMITED",
-        "요청이 잠시 많아요. 1분 뒤 다시 시도해 주세요.",
-        origin,
-        { "Retry-After": "60" },
+      return rejectUnusedQuotaLease(
+        environment,
+        quotaLease,
+        jsonResponse(
+          429,
+          "RATE_LIMITED",
+          "요청이 잠시 많아요. 1분 뒤 다시 시도해 주세요.",
+          origin,
+          { "Retry-After": "60" },
+        ),
       );
     }
   } catch {
-    return jsonResponse(
-      503,
-      "RATE_LIMIT_UNAVAILABLE",
-      "요청 보호 장치를 확인하지 못했어요. 잠시 뒤 다시 시도해 주세요.",
-      origin,
+    return rejectUnusedQuotaLease(
+      environment,
+      quotaLease,
+      jsonResponse(
+        503,
+        "RATE_LIMIT_UNAVAILABLE",
+        "요청 보호 장치를 확인하지 못했어요. 잠시 뒤 다시 시도해 주세요.",
+        origin,
+      ),
     );
   }
 
-  const fetchImplementation = dependencies.fetchImplementation ?? fetch;
+  const fetchImplementation = createQuotaMeteredFetch(
+    environment,
+    quotaLease,
+    dependencies.fetchImplementation ?? fetch,
+    transcriptTokenReservation(transcriptTimes.durationMs),
+  );
   const timeoutMs = dependencies.upstreamTimeoutMs ?? UPSTREAM_TIMEOUT_MS;
   const primaryAttempt = await attemptBroadcastTranscriptProvider(
     providerConnection,
@@ -2172,7 +3043,13 @@ async function attemptBroadcastContextProvider(
   } catch (error) {
     return {
       ok: false,
-      kind: error instanceof UpstreamTimeoutError ? "timeout" : "unavailable",
+      kind:
+        error instanceof QuotaOutcomeUnknownError ||
+        error instanceof AiQuotaCoordinatorUnavailableError
+          ? "outcome-unknown"
+          : error instanceof UpstreamTimeoutError
+            ? "timeout"
+            : "unavailable",
     };
   }
   if (!upstreamResponse.ok) {
@@ -2194,7 +3071,10 @@ async function attemptBroadcastContextProvider(
       return { ok: false, kind: "unavailable" };
     }
     if (upstreamStatus === 400) {
-      const rejection = await classifyUpstreamRejection(upstreamResponse);
+      const rejection = await classifyUpstreamRejection(
+        upstreamResponse,
+        timeoutMs,
+      );
       if (rejection === "api-key") return { ok: false, kind: "auth" };
       if (rejection === "response-format") {
         return { ok: false, kind: "response-format" };
@@ -2217,12 +3097,20 @@ async function attemptBroadcastContextProvider(
     const upstreamBytes = await readBodyWithLimit(
       upstreamResponse.body,
       MAX_BROADCAST_CONTEXT_DEEPSEEK_RESPONSE_BYTES,
+      timeoutMs,
     );
     const text = new TextDecoder("utf-8", { fatal: true }).decode(upstreamBytes);
     upstreamBytes.fill(0);
     upstreamPayload = JSON.parse(text);
-  } catch {
-    return { ok: false, kind: "invalid-response" };
+  } catch (error) {
+    return {
+      ok: false,
+      kind:
+        error instanceof QuotaOutcomeUnknownError ||
+        error instanceof AiQuotaCoordinatorUnavailableError
+          ? "outcome-unknown"
+          : "invalid-response",
+    };
   }
 
   const parsed =
@@ -2490,20 +3378,94 @@ export async function handleBroadcastContextRequest(
   }
   const providerConnection = providerResolution.connection;
 
+  const declaredLength = request.headers.get("Content-Length");
+  if (
+    declaredLength !== null &&
+      (!/^\d+$/u.test(declaredLength) ||
+      Number(declaredLength) > MAX_BROADCAST_CONTEXT_REQUEST_BODY_BYTES)
+  ) {
+    return jsonResponse(
+      413,
+      "PAYLOAD_TOO_LARGE",
+      "요청이 허용 크기를 넘었어요.",
+      origin,
+    );
+  }
+  const quotaGuard = await precheckAiQuotaLease(
+    request,
+    environment,
+    "context",
+    origin,
+  );
+  if (!quotaGuard.ok) return quotaGuard.response;
+
   let requestBytes: Uint8Array;
   try {
-    requestBytes = await readBodyWithLimit(request.body, MAX_REQUEST_BODY_BYTES);
-  } catch {
-    return jsonResponse(413, "PAYLOAD_TOO_LARGE", "요청이 허용 크기를 넘었어요.", origin);
+    requestBytes = await readBodyWithLimit(
+      request.body,
+      MAX_BROADCAST_CONTEXT_REQUEST_BODY_BYTES,
+      dependencies.requestBodyTimeoutMs ?? REQUEST_BODY_TIMEOUT_MS,
+      () => new RequestBodyTimeoutError(),
+    );
+  } catch (error) {
+    return rejectUnusedQuotaLease(
+      environment,
+      quotaGuard.lease,
+      error instanceof RequestBodyTimeoutError
+        ? jsonResponse(
+            408,
+            "REQUEST_BODY_TIMEOUT",
+            "전체 맥락 자료 업로드가 너무 오래 걸려 중단했어요. 다시 시도해 주세요.",
+            origin,
+          )
+        : error instanceof BodyTooLargeError
+          ? jsonResponse(
+              413,
+              "PAYLOAD_TOO_LARGE",
+              "요청이 허용 크기를 넘었어요.",
+              origin,
+            )
+          : jsonResponse(
+              400,
+              "INVALID_REQUEST",
+              "전체 맥락 요청을 읽지 못했어요.",
+              origin,
+            ),
+    );
   }
 
+  if (!(await quotaPayloadMatches(quotaGuard.lease, requestBytes))) {
+    requestBytes.fill(0);
+    return rejectUnusedQuotaLease(
+      environment,
+      quotaGuard.lease,
+      jsonResponse(
+        409,
+        "QUOTA_PAYLOAD_MISMATCH",
+        "배정받은 AI 분석 자료와 실제 요청이 일치하지 않아요.",
+        origin,
+      ),
+    );
+  }
+  const contextInputByteLength = requestBytes.byteLength;
   let inputValue: unknown;
   try {
     const requestText = new TextDecoder("utf-8", { fatal: true }).decode(requestBytes);
     inputValue = JSON.parse(requestText);
   } catch {
-    return jsonResponse(400, "INVALID_REQUEST", "요청 형식을 확인해 주세요.", origin);
+    requestBytes.fill(0);
+    return rejectUnusedQuotaLease(
+      environment,
+      quotaGuard.lease,
+      jsonResponse(
+        400,
+        "INVALID_REQUEST",
+        "요청 형식을 확인해 주세요.",
+        origin,
+      ),
+    );
   }
+  requestBytes.fill(0);
 
   const contextMode = isRecord(inputValue) && inputValue.analysisMode === "refinement-fast"
     ? "refinement-fast" as const
@@ -2518,24 +3480,105 @@ export async function handleBroadcastContextRequest(
   try {
     broadcastContextRequest = createBroadcastContextRequest(inputValue as BroadcastContextRequestInput);
   } catch (error) {
-    return jsonResponse(400, "INVALID_REQUEST", error instanceof BroadcastContextInputError ? error.message : "요청 형식을 확인해 주세요.", origin);
+    return rejectUnusedQuotaLease(
+      environment,
+      quotaGuard.lease,
+      jsonResponse(
+        400,
+        "INVALID_REQUEST",
+        error instanceof BroadcastContextInputError
+          ? error.message
+          : "요청 형식을 확인해 주세요.",
+        origin,
+      ),
+    );
+  }
+  const reservedTokens = contextTokenReservation(contextInputByteLength);
+  if (reservedTokens > AI_QUOTA_CONTEXT_MAX_TOKENS_PER_MINUTE) {
+    return rejectUnusedQuotaLease(
+      environment,
+      quotaGuard.lease,
+      jsonResponse(
+        413,
+        "TOKEN_BUDGET_TOO_LARGE",
+        "전체 맥락 요청이 한 번의 AI 요청에 담기에는 너무 커요.",
+        origin,
+      ),
+    );
   }
 
-  const clientRateLimit = await environment.IP_RATE_LIMITER.limit({
-    key: scopedClientRateLimitKey(request, BROADCAST_CONTEXT_RATE_LIMIT_KEY),
-  });
+  let clientRateLimit: { readonly success: boolean };
+  try {
+    clientRateLimit = await (
+      environment.CONTEXT_IP_RATE_LIMITER ?? environment.IP_RATE_LIMITER
+    ).limit({
+      key: scopedClientRateLimitKey(request, BROADCAST_CONTEXT_RATE_LIMIT_KEY),
+    });
+  } catch {
+    return rejectUnusedQuotaLease(
+      environment,
+      quotaGuard.lease,
+      jsonResponse(
+        503,
+        "RATE_LIMIT_UNAVAILABLE",
+        "요청 보호 장치를 확인하지 못했어요. 잠시 뒤 다시 시도해 주세요.",
+        origin,
+      ),
+    );
+  }
   if (!clientRateLimit.success) {
-    return jsonResponse(429, "RATE_LIMITED", "잠시 요청이 많아요. 1분 뒤 다시 시도해 주세요.", origin, { "Retry-After": "60" });
+    return rejectUnusedQuotaLease(
+      environment,
+      quotaGuard.lease,
+      jsonResponse(
+        429,
+        "RATE_LIMITED",
+        "잠시 요청이 많아요. 1분 뒤 다시 시도해 주세요.",
+        origin,
+        { "Retry-After": "60" },
+      ),
+    );
   }
 
-  const globalRateLimit = await environment.RATE_LIMITER.limit({
-    key: BROADCAST_CONTEXT_RATE_LIMIT_KEY,
-  });
+  let globalRateLimit: { readonly success: boolean };
+  try {
+    globalRateLimit = await (
+      environment.CONTEXT_RATE_LIMITER ?? environment.RATE_LIMITER
+    ).limit({
+      key: BROADCAST_CONTEXT_RATE_LIMIT_KEY,
+    });
+  } catch {
+    return rejectUnusedQuotaLease(
+      environment,
+      quotaGuard.lease,
+      jsonResponse(
+        503,
+        "RATE_LIMIT_UNAVAILABLE",
+        "요청 보호 장치를 확인하지 못했어요. 잠시 뒤 다시 시도해 주세요.",
+        origin,
+      ),
+    );
+  }
   if (!globalRateLimit.success) {
-    return jsonResponse(429, "RATE_LIMITED", "잠시 요청이 많아요. 1분 뒤 다시 시도해 주세요.", origin, { "Retry-After": "60" });
+    return rejectUnusedQuotaLease(
+      environment,
+      quotaGuard.lease,
+      jsonResponse(
+        429,
+        "RATE_LIMITED",
+        "잠시 요청이 많아요. 1분 뒤 다시 시도해 주세요.",
+        origin,
+        { "Retry-After": "60" },
+      ),
+    );
   }
 
-  const fetchImplementation = dependencies.fetchImplementation ?? fetch;
+  const fetchImplementation = createQuotaMeteredFetch(
+    environment,
+    quotaGuard.lease,
+    dependencies.fetchImplementation ?? fetch,
+    reservedTokens,
+  );
   const timeoutMs = dependencies.upstreamTimeoutMs ?? UPSTREAM_TIMEOUT_MS;
   const retryDelaysMs = dependencies.upstreamRetryDelaysMs ?? DEFAULT_UPSTREAM_RETRY_DELAYS_MS;
   const usesFastQwenContextModel =
@@ -2606,6 +3649,31 @@ export async function handleBroadcastContextRequest(
     );
   }
   if (!finalAttempt.ok) {
+    if (finalAttempt.kind === "outcome-unknown") {
+      return jsonResponse(
+        502,
+        "UPSTREAM_OUTCOME_UNKNOWN",
+        "AI 요청이 처리됐는지 확인할 수 없어 자동으로 다시 결제하지 않았어요.",
+        origin,
+      );
+    }
+    if (finalAttempt.kind === "rate-limited") {
+      return jsonResponse(
+        429,
+        "UPSTREAM_RATE_LIMITED",
+        "AI 사용 한도에 도달했어요. 잠시 뒤 다시 시도해 주세요.",
+        origin,
+        { "Retry-After": "60" },
+      );
+    }
+    if (finalAttempt.kind === "timeout") {
+      return jsonResponse(
+        504,
+        "UPSTREAM_TIMEOUT",
+        "AI 응답 시간이 길어져 요청을 멈췄어요.",
+        origin,
+      );
+    }
     const deterministicRejection =
       finalAttempt.kind === "rejected" ||
       finalAttempt.kind === "invalid-argument" ||
@@ -2662,11 +3730,146 @@ export async function handleBroadcastContextRequest(
   });
 }
 
+function quotaPublicResponse(
+  payload: AiQuotaPublicResponse,
+  origin: string,
+): Response {
+  const status =
+    payload.status === "capacity-full" || payload.status === "queue-full"
+      ? 429
+      : payload.status === "conflict" || payload.status === "terminal"
+        ? 409
+        : 200;
+  const headers = corsHeaders(origin);
+  headers.set("Content-Type", JSON_CONTENT_TYPE);
+  headers.set("Cache-Control", "no-store");
+  headers.set("X-Content-Type-Options", "nosniff");
+  if (payload.retryAfterMs > 0) {
+    headers.set("Retry-After", String(Math.max(1, Math.ceil(payload.retryAfterMs / 1_000))));
+  }
+  return new Response(JSON.stringify(payload), { status, headers });
+}
+
+export async function handleAiQuotaRequest(
+  request: Request,
+  environment: AiProxyEnvironment,
+  dependencies: Pick<AiProxyDependencies, "requestBodyTimeoutMs"> = {},
+): Promise<Response> {
+  const origin = request.headers.get("Origin");
+  if (!isAllowedOrigin(origin)) {
+    return jsonResponse(
+      403,
+      "ORIGIN_NOT_ALLOWED",
+      "이 페이지에서는 AI 분석 순서를 요청할 수 없어요.",
+      origin,
+    );
+  }
+  if (request.method === "OPTIONS") return preflightResponse(origin);
+  if (request.method !== "POST") {
+    return jsonResponse(
+      405,
+      "METHOD_NOT_ALLOWED",
+      "지원하지 않는 요청 방식이에요.",
+      origin,
+      { Allow: "POST, OPTIONS" },
+    );
+  }
+  if (mediaType(request) !== "application/json") {
+    return jsonResponse(
+      415,
+      "UNSUPPORTED_MEDIA_TYPE",
+      "JSON 형식으로 요청해 주세요.",
+      origin,
+    );
+  }
+  if (
+    aiQuotaMode(environment) === "disabled" ||
+    environment.AI_QUOTA_COORDINATOR === undefined
+  ) {
+    return jsonResponse(
+      503,
+      "QUOTA_COORDINATOR_UNAVAILABLE",
+      "AI 분석 순서 배정 기능이 준비되지 않았어요.",
+      origin,
+    );
+  }
+  let requestBytes: Uint8Array;
+  try {
+    requestBytes = await readBodyWithLimit(
+      request.body,
+      AI_QUOTA_MAX_PUBLIC_REQUEST_BYTES,
+      dependencies.requestBodyTimeoutMs ?? REQUEST_BODY_TIMEOUT_MS,
+      () => new RequestBodyTimeoutError(),
+    );
+  } catch (error) {
+    return error instanceof RequestBodyTimeoutError
+      ? jsonResponse(
+          408,
+          "REQUEST_BODY_TIMEOUT",
+          "AI 분석 순서 요청 업로드가 너무 오래 걸려 중단했어요. 다시 시도해 주세요.",
+          origin,
+        )
+      : error instanceof BodyTooLargeError
+        ? jsonResponse(
+            413,
+            "PAYLOAD_TOO_LARGE",
+            "AI 분석 순서 요청이 허용 크기를 넘었어요.",
+            origin,
+          )
+        : jsonResponse(
+            400,
+            "INVALID_REQUEST",
+            "AI 분석 순서 요청을 읽지 못했어요.",
+            origin,
+          );
+  }
+  let value: unknown;
+  try {
+    value = JSON.parse(
+      new TextDecoder("utf-8", { fatal: true }).decode(requestBytes),
+    );
+  } catch {
+    requestBytes.fill(0);
+    return jsonResponse(
+      400,
+      "INVALID_REQUEST",
+      "AI 분석 순서 요청 형식을 확인해 주세요.",
+      origin,
+    );
+  }
+  requestBytes.fill(0);
+  const quotaRequest = parseAiQuotaPublicRequest(value);
+  if (quotaRequest === null) {
+    return jsonResponse(
+      400,
+      "INVALID_REQUEST",
+      "AI 분석 순서 요청 형식을 확인해 주세요.",
+      origin,
+    );
+  }
+  try {
+    return quotaPublicResponse(
+      await requestCoordinatorPublicLease(environment, quotaRequest),
+      origin,
+    );
+  } catch {
+    return jsonResponse(
+      503,
+      "QUOTA_COORDINATOR_UNAVAILABLE",
+      "AI 분석 순서를 배정하지 못했어요.",
+      origin,
+    );
+  }
+}
+
 function routeRequest(
   request: Request,
   environment: AiProxyEnvironment,
 ): Promise<Response> {
   const url = new URL(request.url);
+  if (url.pathname === AI_QUOTA_ENDPOINT_PATH && url.search === "") {
+    return handleAiQuotaRequest(request, environment);
+  }
   if (url.pathname === BROADCAST_TRANSCRIPT_ENDPOINT_PATH) {
     return handleBroadcastTranscriptRequest(request, environment);
   }

@@ -18,8 +18,15 @@ import {
   MAX_BROADCAST_TRANSCRIPT_QWEN_DURATION_MS,
 } from "./broadcastTranscriptQwen";
 import type { BroadcastContextTranscriptionChunk } from "./broadcastContextSamplingPlan";
-import { requestBroadcastTranscriptChunkBinary } from "./broadcastTranscriptQwenClient";
+import {
+  BroadcastTranscriptQwenClientError,
+  requestBroadcastTranscriptChunkBinary,
+} from "./broadcastTranscriptQwenClient";
 import { AdaptiveConcurrency, requestSpacingMs } from "./adaptiveConcurrency";
+import {
+  isAiQuotaOpaqueId,
+  isAiQuotaParticipantId,
+} from "./aiQuotaProtocol";
 import {
   prioritizeAdjacentTranscriptChunks,
   shouldExpandBroadcastContextChunk,
@@ -48,6 +55,14 @@ let activeTask: ActiveTask | null = null;
 
 function post(response: BroadcastTranscriptWorkerResponse): void {
   self.postMessage(response);
+}
+
+function throwFatalProxyFailure(
+  failure: BroadcastTranscriptQwenClientError | null,
+): void {
+  if (failure !== null) {
+    throw failure;
+  }
 }
 
 function sameIdentity(
@@ -88,6 +103,15 @@ function isValidAnalyzeRequest(
     !Array.isArray(value.chunks) ||
     value.chunks.length === 0 ||
     value.chunks.length > MAX_BROADCAST_TRANSCRIPT_WORKER_CHUNKS
+  ) {
+    return false;
+  }
+  if (
+    value.quota !== undefined &&
+    (!isRecord(value.quota) ||
+      Object.keys(value.quota).length !== 2 ||
+      !isAiQuotaParticipantId(value.quota.participantId) ||
+      !isAiQuotaOpaqueId(value.quota.runId))
   ) {
     return false;
   }
@@ -331,6 +355,7 @@ async function runAnalyze(
      */
     const spacingMs = requestSpacingMs();
     let nextSendAtMs = 0;
+    let fatalProxyFailure: BroadcastTranscriptQwenClientError | null = null;
     const inFlight = new Set<Promise<void>>();
     const chronologicalChunks = [...request.chunks].sort(
       (left, right) =>
@@ -404,7 +429,18 @@ async function runAnalyze(
             wav,
             chunk.sourceStartMs,
             durationMs,
-            { signal: controller.signal },
+            {
+              signal: controller.signal,
+              ...(request.quota === undefined
+                ? {}
+                : {
+                    quota: {
+                      participantId: request.quota.participantId,
+                      runId: request.quota.runId,
+                      operationId: `transcript-${chunkId}`,
+                    },
+                  }),
+            },
           );
           if (task.cancelled) return;
           successfulCount += 1;
@@ -427,9 +463,21 @@ async function runAnalyze(
             ];
           }
           concurrency.onSuccess();
-        } catch {
+        } catch (error) {
           if (task.cancelled) return;
           concurrency.onFailure();
+          if (
+            error instanceof BroadcastTranscriptQwenClientError &&
+            (error.code === "RATE_LIMITED" ||
+              error.code === "OUTCOME_UNKNOWN")
+          ) {
+            fatalProxyFailure = error;
+            for (const activeController of task.fetchControllers) {
+              if (activeController !== controller) activeController.abort();
+            }
+            return;
+          }
+          if (fatalProxyFailure !== null) return;
           gapCount += 1;
           post({
             type: "broadcast-transcript-gap",
@@ -462,11 +510,13 @@ async function runAnalyze(
       if (inFlight.size >= concurrency.limit) {
         await Promise.race(inFlight);
         if (task.cancelled) return;
+        throwFatalProxyFailure(fatalProxyFailure);
       }
     }
 
     await Promise.all(inFlight);
     if (task.cancelled) return;
+    throwFatalProxyFailure(fatalProxyFailure);
     post({
       type: "broadcast-transcript-complete",
       identity: task.identity,

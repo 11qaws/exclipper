@@ -20,6 +20,7 @@ import {
   type CandidatePassBCompletionSummary,
   type CandidatePassBDevice,
   type CandidatePassBModelProgress,
+  type CandidatePassBQuotaIdentity,
   type CandidatePassBTarget,
   type CandidatePassBTranscriptResult,
   type CandidatePassBWorkerFailureReason,
@@ -98,6 +99,7 @@ export type CandidatePassBWorkerFactory = () => CandidatePassBWorkerLike;
 
 export interface RunCandidatePassBWorkerOptions {
   readonly identity: CandidatePassBWorkerIdentity;
+  readonly quota?: CandidatePassBQuotaIdentity;
   readonly sourceDurationMs: number;
   readonly device: CandidatePassBDevice;
   readonly targets: readonly CandidatePassBTarget[];
@@ -1289,6 +1291,7 @@ export function runCandidatePassBWorker(
       worker.postMessage({
         type: "candidate-pass-b-analyze",
         identity: options.identity,
+        ...(options.quota === undefined ? {} : { quota: options.quota }),
         file,
         sourceDurationMs: normalized.sourceDurationMs,
         device: CANDIDATE_PASS_B_DEVICE,

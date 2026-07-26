@@ -18,6 +18,7 @@ function createEnvironment(): AiProxyEnvironment {
   return {
     GEMINI_API_KEY: "gemini-secret",
     QWEN_API_KEY: "qwen-secret",
+    AI_QUOTA_MODE: "disabled",
     BROADCAST_TRANSCRIPT_PROVIDER: "qwen",
     RATE_LIMITER: { limit: vi.fn().mockResolvedValue({ success: true }) },
     IP_RATE_LIMITER: { limit: vi.fn().mockResolvedValue({ success: true }) },

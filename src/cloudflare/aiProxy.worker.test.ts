@@ -21,6 +21,7 @@ const API_KEY = "test-secret-key-that-must-never-be-returned";
 function createEnvironment(): AiProxyEnvironment {
   return {
     GEMINI_API_KEY: API_KEY,
+    AI_QUOTA_MODE: "disabled",
     RATE_LIMITER: {
       limit: vi.fn(() => Promise.resolve({ success: true })),
     },
@@ -285,11 +286,20 @@ describe("aiProxy.worker", () => {
         );
       },
     );
+    const contextGlobalLimiter = vi.fn(() =>
+      Promise.resolve({ success: true }),
+    );
+    const contextIpLimiter = vi.fn(() =>
+      Promise.resolve({ success: true }),
+    );
     const environment: AiProxyEnvironment = {
       ...createEnvironment(),
+      AI_QUOTA_MODE: "disabled",
       BROADCAST_CONTEXT_PROVIDER: "qwen",
       QWEN_API_KEY: "qwen-secret",
       QWEN_REGION: "singapore",
+      CONTEXT_RATE_LIMITER: { limit: contextGlobalLimiter },
+      CONTEXT_IP_RATE_LIMITER: { limit: contextIpLimiter },
     };
     const response = await handleBroadcastContextRequest(
       createRequest(contextInput, {
@@ -305,12 +315,14 @@ describe("aiProxy.worker", () => {
       broadcastSummaryKo: providerResult.summary,
       annotations: [expect.objectContaining({ clipDecision: "select" })],
     });
-    expect(environment.IP_RATE_LIMITER.limit).toHaveBeenCalledWith({
+    expect(contextIpLimiter).toHaveBeenCalledWith({
       key: "broadcast-context:203.0.113.42",
     });
-    expect(environment.RATE_LIMITER.limit).toHaveBeenCalledWith({
+    expect(contextGlobalLimiter).toHaveBeenCalledWith({
       key: "broadcast-context",
     });
+    expect(environment.IP_RATE_LIMITER.limit).not.toHaveBeenCalled();
+    expect(environment.RATE_LIMITER.limit).not.toHaveBeenCalled();
     expect(response.headers.get("X-ExClipper-Usage-Prompt-Tokens")).toBe("1234");
     expect(response.headers.get("X-ExClipper-Usage-Completion-Tokens")).toBe("321");
     expect(response.headers.get("X-ExClipper-Usage-Total-Tokens")).toBe("1555");
@@ -744,6 +756,7 @@ describe("aiProxy.worker", () => {
     );
     const environment: AiProxyEnvironment = {
       ...createEnvironment(),
+      AI_QUOTA_MODE: "disabled",
       BROADCAST_TRANSCRIPT_PROVIDER: "qwen",
       QWEN_API_KEY: "qwen-secret",
     };
@@ -767,10 +780,10 @@ describe("aiProxy.worker", () => {
       billedSeconds: null,
     });
     expect(environment.IP_RATE_LIMITER.limit).toHaveBeenCalledWith({
-      key: "broadcast-transcript:203.0.113.42",
+      key: "qwen-omni-media:203.0.113.42",
     });
     expect(environment.RATE_LIMITER.limit).toHaveBeenCalledWith({
-      key: "broadcast-transcript",
+      key: "qwen-omni-media",
     });
   });
 
@@ -940,7 +953,7 @@ describe("aiProxy.worker", () => {
     expect(payload).toMatchObject({
       ok: true,
       service: "rettohighlight-gemini",
-      version: 2,
+      version: 3,
       routingPolicyVersion: "1.11.0",
       contextModelRevision:
         "qwen3.7-plus-context-editorial-jury-topic-balanced-2026-07-22",
@@ -950,6 +963,11 @@ describe("aiProxy.worker", () => {
           candidateInsightConfigured: false,
           broadcastTranscriptConfigured: false,
         },
+      },
+      quota: {
+        mode: "disabled",
+        coordinatorReady: true,
+        maximumActiveParticipants: 5,
       },
     });
     expect(JSON.stringify(payload)).not.toContain(API_KEY);
@@ -972,9 +990,9 @@ describe("aiProxy.worker", () => {
     expect(response.headers.get("Access-Control-Allow-Methods")).toBe(
       "POST, OPTIONS",
     );
-    expect(response.headers.get("Access-Control-Allow-Headers")).toBe(
-      "content-type",
-    );
+    expect(
+      response.headers.get("Access-Control-Allow-Headers")?.toLowerCase(),
+    ).toContain("content-type");
     expect(response.headers.get("Access-Control-Allow-Credentials")).toBeNull();
     expect(upstreamFetch).not.toHaveBeenCalled();
   });
@@ -1106,7 +1124,7 @@ describe("aiProxy.worker", () => {
           data: candidate.audioBase64,
         });
         expect(body.generationConfig.thinkingConfig.thinkingLevel).toBe("MEDIUM");
-        expect(body.generationConfig.maxOutputTokens).toBe(4_096);
+        expect(body.generationConfig.maxOutputTokens).toBe(2_048);
         return Promise.resolve(
           new Response(JSON.stringify(geminiPayload), {
             status: 200,
@@ -1133,10 +1151,10 @@ describe("aiProxy.worker", () => {
     );
     expect(upstreamFetch).toHaveBeenCalledTimes(1);
     expect(environment.RATE_LIMITER.limit).toHaveBeenCalledWith({
-      key: "candidate-insights",
+      key: "qwen-omni-media",
     });
     expect(environment.IP_RATE_LIMITER.limit).toHaveBeenCalledWith({
-      key: "candidate-insights:203.0.113.42",
+      key: "qwen-omni-media:203.0.113.42",
     });
   });
 

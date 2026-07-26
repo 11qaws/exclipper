@@ -17,10 +17,16 @@ export interface BroadcastTranscriptWorkerIdentity {
   readonly taskId: string;
 }
 
+export interface BroadcastTranscriptQuotaIdentity {
+  readonly participantId: string;
+  readonly runId: string;
+}
+
 export type BroadcastTranscriptWorkerRequest =
   | {
       readonly type: "broadcast-transcript-analyze";
       readonly identity: BroadcastTranscriptWorkerIdentity;
+      readonly quota?: BroadcastTranscriptQuotaIdentity;
       readonly file: File;
       readonly sourceDurationMs: number;
       readonly chunks: readonly BroadcastContextTranscriptionChunk[];

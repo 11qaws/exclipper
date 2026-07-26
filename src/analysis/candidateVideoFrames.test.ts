@@ -2,10 +2,22 @@ import { describe, expect, it } from "vitest";
 
 import {
   CANDIDATE_VIDEO_FRAME_SAMPLE_RATIOS,
+  candidateVideoFrameDimensions,
   candidateVideoFrameTimestamps,
 } from "./candidateVideoFrames";
 
 describe("candidateVideoFrames", () => {
+  it("caps either landscape or portrait frames to 640px on the longest edge", () => {
+    expect(candidateVideoFrameDimensions(1_920, 1_080)).toEqual({
+      width: 640,
+      height: 360,
+    });
+    expect(candidateVideoFrameDimensions(1_080, 1_920)).toEqual({
+      width: 360,
+      height: 640,
+    });
+  });
+
   it("chooses four representative relative timestamps inside a candidate", () => {
     expect(candidateVideoFrameTimestamps(120_000, 180_000)).toEqual(
       CANDIDATE_VIDEO_FRAME_SAMPLE_RATIOS.map((ratio) => Math.round(60_000 * ratio)),

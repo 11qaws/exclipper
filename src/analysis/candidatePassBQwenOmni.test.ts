@@ -14,6 +14,7 @@ describe("candidatePassBQwenOmni", () => {
     expect(body.model).toBe("qwen3.5-omni-flash");
     expect(body.stream).toBe(true);
     expect(body.modalities).toEqual(["text"]);
+    expect(body.max_tokens).toBe(2_048);
     expect(body.messages[0].content).toHaveLength(6);
     const serializedContent = JSON.stringify(body.messages[0].content);
     expect(serializedContent).toContain("input_audio");

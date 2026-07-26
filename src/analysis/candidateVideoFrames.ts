@@ -6,7 +6,7 @@ import {
 } from "./candidatePassBWorkerProtocol";
 
 export const CANDIDATE_VIDEO_FRAME_SAMPLE_RATIOS = [0.1, 0.37, 0.63, 0.9] as const;
-const MAX_FRAME_WIDTH = 640;
+const MAX_FRAME_DIMENSION = 640;
 const JPEG_QUALITY = 0.58;
 const SEEK_TIMEOUT_MS = 8_000;
 
@@ -59,6 +59,25 @@ interface CandidateVideoFrameSamplerSession {
   readonly height: number;
   readonly url: string;
   readonly revokeUrl: (url: string) => void;
+}
+
+export function candidateVideoFrameDimensions(
+  videoWidth: number,
+  videoHeight: number,
+): Readonly<{ width: number; height: number }> {
+  const sourceWidth =
+    Number.isFinite(videoWidth) && videoWidth > 0 ? videoWidth : 16;
+  const sourceHeight =
+    Number.isFinite(videoHeight) && videoHeight > 0 ? videoHeight : 9;
+  const scale = Math.min(
+    1,
+    MAX_FRAME_DIMENSION / sourceWidth,
+    MAX_FRAME_DIMENSION / sourceHeight,
+  );
+  return {
+    width: Math.max(1, Math.round(sourceWidth * scale)),
+    height: Math.max(1, Math.round(sourceHeight * scale)),
+  };
 }
 
 export function candidateVideoFrameTimestamps(
@@ -251,10 +270,9 @@ async function createSamplerSession(
       options.signal?.addEventListener("abort", onAbort, { once: true });
     });
     const canvas = documentImplementation.createElement("canvas");
-    const width = Math.max(1, Math.min(MAX_FRAME_WIDTH, video.videoWidth || MAX_FRAME_WIDTH));
-    const height = Math.max(
-      1,
-      Math.round(width * ((video.videoHeight || 9) / (video.videoWidth || 16))),
+    const { width, height } = candidateVideoFrameDimensions(
+      video.videoWidth,
+      video.videoHeight,
     );
     canvas.width = width;
     canvas.height = height;

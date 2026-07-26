@@ -7,6 +7,7 @@ export const BROADCAST_TRANSCRIPT_GEMINI_MODEL_REVISION =
   "gemini-3.6-flash-audio-transcript-reviewed-2026-07-22" as const;
 export const BROADCAST_TRANSCRIPT_QWEN_OMNI_MODEL_ID =
   "qwen3.5-omni-flash" as const;
+export const BROADCAST_TRANSCRIPT_QWEN_MAX_OUTPUT_TOKENS = 1_024;
 export const BROADCAST_TRANSCRIPT_PREVIOUS_ACTIVE_MODEL_REVISION =
   "qwen3.5-omni-flash-audio-transcript-reviewed-2026-07-22" as const;
 export const BROADCAST_TRANSCRIPT_MIXED_CHECKPOINT_MODEL_REVISION =
@@ -205,7 +206,7 @@ export function buildBroadcastTranscriptGeminiRequestBody(audioBase64: string): 
         },
       },
       thinkingConfig: { thinkingLevel: "MEDIUM" },
-      maxOutputTokens: 4_096,
+      maxOutputTokens: BROADCAST_TRANSCRIPT_QWEN_MAX_OUTPUT_TOKENS,
     },
     store: false,
   };
@@ -243,6 +244,7 @@ export function buildBroadcastTranscriptQwenOmniRequestBody(audioBase64: string)
     stream: true,
     stream_options: { include_usage: true },
     modalities: ["text"],
+    max_tokens: BROADCAST_TRANSCRIPT_QWEN_MAX_OUTPUT_TOKENS,
   };
 }
 

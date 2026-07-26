@@ -7,6 +7,7 @@ import {
 } from "./broadcastTranscriptQwen";
 import {
   MAX_BROADCAST_TRANSCRIPT_WORKER_CHUNKS,
+  type BroadcastTranscriptQuotaIdentity,
   type BroadcastTranscriptWorkerProgress,
   type BroadcastTranscriptWorkerRequest,
   type BroadcastTranscriptWorkerResponse,
@@ -24,6 +25,7 @@ interface WorkerLike {
 export interface RunBroadcastTranscriptWorkerOptions {
   readonly sourceDurationMs: number;
   readonly chunks: readonly BroadcastContextTranscriptionChunk[];
+  readonly quota?: BroadcastTranscriptQuotaIdentity;
   readonly signal?: AbortSignal;
   readonly workerFactory?: () => WorkerLike;
   readonly onProgress?: (progress: BroadcastTranscriptWorkerProgress) => void;
@@ -351,6 +353,7 @@ export function runBroadcastTranscriptWorker(
     worker.postMessage({
       type: "broadcast-transcript-analyze",
       identity,
+      ...(options.quota === undefined ? {} : { quota: options.quota }),
       file,
       sourceDurationMs: options.sourceDurationMs,
       chunks: options.chunks,

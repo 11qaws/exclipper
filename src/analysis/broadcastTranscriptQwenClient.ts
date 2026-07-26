@@ -7,6 +7,10 @@ import {
   isBroadcastTranscriptModelId,
   type BroadcastTranscriptQwenResult,
 } from "./broadcastTranscriptQwen";
+import {
+  fetchWithAiQuota,
+  type AiQuotaClientIdentity,
+} from "./aiQuotaClient";
 
 export const BROADCAST_TRANSCRIPT_PROXY_ENDPOINT =
   "https://rettohighlight-gemini.11qaws.workers.dev/v1/broadcast-transcript" as const;
@@ -17,6 +21,8 @@ export class BroadcastTranscriptQwenClientError extends Error {
       | "INVALID_INPUT"
       | "PROXY_UNAVAILABLE"
       | "PROXY_REJECTED"
+      | "RATE_LIMITED"
+      | "OUTCOME_UNKNOWN"
       | "PROXY_INVALID_RESPONSE",
     message: string,
   ) {
@@ -97,7 +103,33 @@ async function resolveBroadcastTranscriptProxyResponse(
     );
   }
   if (!response.ok) {
-    await response.body?.cancel().catch(() => undefined);
+    let errorCode: unknown;
+    try {
+      const text = await response.text();
+      if (
+        new TextEncoder().encode(text).byteLength <=
+        MAX_BROADCAST_TRANSCRIPT_QWEN_RESPONSE_BYTES
+      ) {
+        const payload = JSON.parse(text) as {
+          readonly error?: { readonly code?: unknown };
+        };
+        errorCode = payload.error?.code;
+      }
+    } catch {
+      errorCode = undefined;
+    }
+    if (errorCode === "RATE_LIMITED" || errorCode === "UPSTREAM_RATE_LIMITED") {
+      throw new BroadcastTranscriptQwenClientError(
+        "RATE_LIMITED",
+        "방송 대사 분석 요청이 잠시 많아요.",
+      );
+    }
+    if (errorCode === "UPSTREAM_OUTCOME_UNKNOWN") {
+      throw new BroadcastTranscriptQwenClientError(
+        "OUTCOME_UNKNOWN",
+        "방송 대사 요청의 처리 여부를 확인할 수 없어 자동 재요청하지 않았어요.",
+      );
+    }
     throw new BroadcastTranscriptQwenClientError(
       "PROXY_REJECTED",
       "방송 대사 분석 요청을 처리하지 못했어요.",
@@ -148,6 +180,7 @@ export async function requestBroadcastTranscriptQwenChunk(
   options: {
     readonly signal?: AbortSignal;
     readonly fetchImplementation?: FetchImplementation;
+    readonly quota?: Omit<AiQuotaClientIdentity, "pool">;
   } = {},
 ): Promise<BroadcastTranscriptQwenResult> {
   if (
@@ -176,10 +209,23 @@ export async function requestBroadcastTranscriptQwenChunk(
     ...(options.signal === undefined ? {} : { signal: options.signal }),
   };
   return resolveBroadcastTranscriptProxyResponse(
-    (options.fetchImplementation ?? fetch)(
-      BROADCAST_TRANSCRIPT_PROXY_ENDPOINT,
-      requestInit,
-    ),
+    options.quota === undefined
+      ? (options.fetchImplementation ?? fetch)(
+          BROADCAST_TRANSCRIPT_PROXY_ENDPOINT,
+          requestInit,
+        )
+      : fetchWithAiQuota(
+          BROADCAST_TRANSCRIPT_PROXY_ENDPOINT,
+          requestInit,
+          {
+            ...options.quota,
+            pool: "transcript",
+            ...(options.signal === undefined ? {} : { signal: options.signal }),
+            ...(options.fetchImplementation === undefined
+              ? {}
+              : { fetchImplementation: options.fetchImplementation }),
+          },
+        ),
     sourceStartMs,
     durationMs,
   );
@@ -204,6 +250,7 @@ export async function requestBroadcastTranscriptChunkBinary(
   options: {
     readonly signal?: AbortSignal;
     readonly fetchImplementation?: FetchImplementation;
+    readonly quota?: Omit<AiQuotaClientIdentity, "pool">;
   } = {},
 ): Promise<BroadcastTranscriptQwenResult> {
   if (
@@ -230,11 +277,19 @@ export async function requestBroadcastTranscriptChunkBinary(
     referrerPolicy: "no-referrer",
     ...(options.signal === undefined ? {} : { signal: options.signal }),
   };
+  const endpoint =
+    `${BROADCAST_TRANSCRIPT_PROXY_ENDPOINT}?startMs=${sourceStartMs}&durationMs=${durationMs}`;
   return resolveBroadcastTranscriptProxyResponse(
-    (options.fetchImplementation ?? fetch)(
-      `${BROADCAST_TRANSCRIPT_PROXY_ENDPOINT}?startMs=${sourceStartMs}&durationMs=${durationMs}`,
-      requestInit,
-    ),
+    options.quota === undefined
+      ? (options.fetchImplementation ?? fetch)(endpoint, requestInit)
+      : fetchWithAiQuota(endpoint, requestInit, {
+          ...options.quota,
+          pool: "transcript",
+          ...(options.signal === undefined ? {} : { signal: options.signal }),
+          ...(options.fetchImplementation === undefined
+            ? {}
+            : { fetchImplementation: options.fetchImplementation }),
+        }),
     sourceStartMs,
     durationMs,
   );

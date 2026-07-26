@@ -32,6 +32,7 @@ export const MAX_CANDIDATE_PASS_B_UNCERTAINTY_LENGTH = 300;
 export const MAX_CANDIDATE_PASS_B_IDENTIFIED_PARTICIPANTS = 6;
 export const MAX_CANDIDATE_PASS_B_PARTICIPANT_NAME_LENGTH = 80;
 export const MAX_CANDIDATE_PASS_B_PARTICIPANT_EVIDENCE_LENGTH = 300;
+export const CANDIDATE_PASS_B_MAX_OUTPUT_TOKENS = 2_048;
 const MAX_BASE64_WAV_LENGTH = 8 * 1024 * 1024;
 
 export interface CandidatePassBGeminiRelativeSegment {
@@ -74,7 +75,7 @@ export interface CandidatePassBGeminiRequestBody {
       };
     };
     readonly thinkingConfig: { readonly thinkingLevel: "MEDIUM" };
-    readonly maxOutputTokens: 4_096;
+    readonly maxOutputTokens: typeof CANDIDATE_PASS_B_MAX_OUTPUT_TOKENS;
   };
   readonly store: false;
 }
@@ -475,7 +476,7 @@ export function buildCandidatePassBGeminiRequestBody(
         text: { mimeType: "APPLICATION_JSON", schema: RESPONSE_SCHEMA },
       },
       thinkingConfig: { thinkingLevel: "MEDIUM" },
-      maxOutputTokens: 4_096,
+      maxOutputTokens: CANDIDATE_PASS_B_MAX_OUTPUT_TOKENS,
     },
     store: false,
   };

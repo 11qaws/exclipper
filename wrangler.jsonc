@@ -5,14 +5,29 @@
   "compatibility_date": "2026-07-20",
   "workers_dev": true,
   "placement": {
-    "region": "gcp:us-east4"
+    "region": "gcp:asia-southeast1"
   },
   "vars": {
     "CANDIDATE_INSIGHT_PROVIDER": "qwen",
     "BROADCAST_CONTEXT_PROVIDER": "qwen",
     "BROADCAST_TRANSCRIPT_PROVIDER": "qwen",
     "AI_PROVIDER_FALLBACK_MODE": "bounded",
+    "AI_QUOTA_MODE": "required",
     "QWEN_REGION": "singapore"
+  },
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "AI_QUOTA_COORDINATOR",
+        "class_name": "AiQuotaCoordinator"
+      }
+    ]
+  },
+  "exports": {
+    "AiQuotaCoordinator": {
+      "type": "durable-object",
+      "storage": "sqlite"
+    }
   },
   "secrets": {
     "required": ["GEMINI_API_KEY", "QWEN_API_KEY"]
@@ -31,6 +46,22 @@
       "namespace_id": "20260721",
       "simple": {
         "limit": 60,
+        "period": 60
+      }
+    },
+    {
+      "name": "CONTEXT_RATE_LIMITER",
+      "namespace_id": "20260722",
+      "simple": {
+        "limit": 300,
+        "period": 60
+      }
+    },
+    {
+      "name": "CONTEXT_IP_RATE_LIMITER",
+      "namespace_id": "20260723",
+      "simple": {
+        "limit": 300,
         "period": 60
       }
     }

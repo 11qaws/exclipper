@@ -56,6 +56,11 @@ import {
 import { isAnalysisLanguage } from "../domain/analysisLanguage";
 import { isCandidatePassBCastRosterId } from "./participantRoster";
 import { isCandidatePassBContextPacket } from "./candidateFinalVerification";
+import { fetchWithAiQuota } from "./aiQuotaClient";
+import {
+  isAiQuotaOpaqueId,
+  isAiQuotaParticipantId,
+} from "./aiQuotaProtocol";
 
 declare const self: DedicatedWorkerGlobalScope;
 
@@ -75,6 +80,9 @@ const PROGRESS_MIN_RATIO_STEP = 0.01;
 
 interface ActiveTask {
   readonly identity: CandidatePassBWorkerIdentity;
+  readonly quota:
+    | { readonly participantId: string; readonly runId: string }
+    | undefined;
   cancelled: boolean;
   input: Input<BlobSource> | null;
   inputWasDisposed: boolean;
@@ -295,14 +303,34 @@ function isValidTarget(
 function isValidAnalyzeRequest(value: unknown): value is AnalyzeRequest {
   if (
     !isRecord(value) ||
-    !hasExactKeys(value, [
-      "type",
-      "identity",
-      "file",
-      "sourceDurationMs",
-      "device",
-      "targets",
-    ])
+    !(
+      hasExactKeys(value, [
+        "type",
+        "identity",
+        "file",
+        "sourceDurationMs",
+        "device",
+        "targets",
+      ]) ||
+      hasExactKeys(value, [
+        "type",
+        "identity",
+        "quota",
+        "file",
+        "sourceDurationMs",
+        "device",
+        "targets",
+      ])
+    )
+  ) {
+    return false;
+  }
+  if (
+    value.quota !== undefined &&
+    (!isRecord(value.quota) ||
+      !hasExactKeys(value.quota, ["participantId", "runId"]) ||
+      !isAiQuotaParticipantId(value.quota.participantId) ||
+      !isAiQuotaOpaqueId(value.quota.runId))
   ) {
     return false;
   }
@@ -665,7 +693,7 @@ async function analyzeCandidateWithRemoteAi(
 
     let response: Response;
     try {
-      response = await fetch(CANDIDATE_PASS_B_PROXY_ENDPOINT, {
+      const requestInit: RequestInit = {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -675,7 +703,21 @@ async function analyzeCandidateWithRemoteAi(
         credentials: "omit",
         cache: "no-store",
         referrerPolicy: "no-referrer",
-      });
+      };
+      response =
+        task.quota === undefined
+          ? await fetch(CANDIDATE_PASS_B_PROXY_ENDPOINT, requestInit)
+          : await fetchWithAiQuota(
+              CANDIDATE_PASS_B_PROXY_ENDPOINT,
+              requestInit,
+              {
+                participantId: task.quota.participantId,
+                runId: task.quota.runId,
+                operationId: `candidate-${target.startMs}-${target.endMs}`,
+                pool: "candidate",
+                signal: fetchAbortController.signal,
+              },
+            );
     } catch {
       if (task.cancelled || fetchAbortController.signal.aborted) {
         return null;
@@ -1159,6 +1201,7 @@ self.addEventListener("message", (event: MessageEvent<unknown>) => {
 
   const task: ActiveTask = {
     identity: request.identity,
+    quota: request.quota,
     cancelled: false,
     input: null,
     inputWasDisposed: false,

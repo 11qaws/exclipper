@@ -11,6 +11,7 @@ export default tseslint.config(
       "coverage",
       "graphify-out",
       "node_modules",
+      ".qa",
       ".wrangler",
       ".wrangler-dry-run",
       // The live design harness mounts shipped components against fixtures.

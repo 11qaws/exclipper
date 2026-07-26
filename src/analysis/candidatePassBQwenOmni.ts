@@ -3,6 +3,7 @@ import {
   MAX_CANDIDATE_PASS_B_IDENTIFIED_PARTICIPANTS,
   MAX_CANDIDATE_PASS_B_PARTICIPANT_EVIDENCE_LENGTH,
   MAX_CANDIDATE_PASS_B_PARTICIPANT_NAME_LENGTH,
+  CANDIDATE_PASS_B_MAX_OUTPUT_TOKENS,
   buildCandidatePassBPrompt,
   extractCandidatePassBGeminiResponse,
 } from "./candidatePassBGemini";
@@ -18,6 +19,8 @@ import type { CandidatePassBCastRosterId } from "./participantRoster";
 import type { AnalysisLanguage } from "../domain/analysisLanguage";
 
 const MAX_BASE64_WAV_LENGTH = 8 * 1024 * 1024;
+export const CANDIDATE_PASS_B_QWEN_MAX_OUTPUT_TOKENS =
+  CANDIDATE_PASS_B_MAX_OUTPUT_TOKENS;
 
 export interface CandidatePassBQwenOmniRequestBody {
   readonly model: typeof CANDIDATE_PASS_B_QWEN_MODEL_ID;
@@ -28,6 +31,7 @@ export interface CandidatePassBQwenOmniRequestBody {
   readonly stream: true;
   readonly stream_options: { readonly include_usage: true };
   readonly modalities: readonly ["text"];
+  readonly max_tokens: typeof CANDIDATE_PASS_B_QWEN_MAX_OUTPUT_TOKENS;
 }
 
 export interface CandidatePassBQwenOmniDiagnostics {
@@ -358,6 +362,7 @@ export function buildCandidatePassBQwenOmniRequestBody(
     stream: true,
     stream_options: { include_usage: true },
     modalities: ["text"],
+    max_tokens: CANDIDATE_PASS_B_QWEN_MAX_OUTPUT_TOKENS,
   };
 }
 

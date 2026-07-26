@@ -8,6 +8,10 @@ import {
   extractBroadcastContextDeepseekResponse,
   MAX_BROADCAST_CONTEXT_DEEPSEEK_RESPONSE_BYTES,
 } from "./broadcastContextDeepseek";
+import {
+  fetchWithAiQuota,
+  type AiQuotaClientIdentity,
+} from "./aiQuotaClient";
 
 export const BROADCAST_CONTEXT_PROXY_ENDPOINT =
   "https://rettohighlight-gemini.11qaws.workers.dev/v1/broadcast-context" as const;
@@ -72,6 +76,7 @@ export async function requestBroadcastContextDeepseek(
     readonly signal?: AbortSignal;
     readonly fetchImplementation?: FetchImplementation;
     readonly analysisMode?: BroadcastContextAnalysisMode;
+    readonly quota?: Omit<AiQuotaClientIdentity, "pool">;
   } = {},
 ): Promise<BroadcastContextResult> {
   let request;
@@ -87,29 +92,46 @@ export async function requestBroadcastContextDeepseek(
   }
 
   let response: Response;
+  const requestBody = JSON.stringify({
+    sourceDurationMs: request.sourceDurationMs,
+    chapters: request.chapters,
+    candidates: request.candidates,
+    outputLanguage: request.outputLanguage,
+    ...(request.castRosterId === null
+      ? {}
+      : { castRosterId: request.castRosterId }),
+    ...(options.analysisMode === undefined || options.analysisMode === "overview"
+      ? {}
+      : { analysisMode: options.analysisMode }),
+  });
+  const requestInit: RequestInit = {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: requestBody,
+    credentials: "omit",
+    cache: "no-store",
+    referrerPolicy: "no-referrer",
+    ...(options.signal === undefined ? {} : { signal: options.signal }),
+  };
   try {
-    response = await (options.fetchImplementation ?? fetch)(
-      BROADCAST_CONTEXT_PROXY_ENDPOINT,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          sourceDurationMs: request.sourceDurationMs,
-          chapters: request.chapters,
-          candidates: request.candidates,
-          ...(request.castRosterId === null
-            ? {}
-            : { castRosterId: request.castRosterId }),
-          ...(options.analysisMode === undefined || options.analysisMode === "overview"
-            ? {}
-            : { analysisMode: options.analysisMode }),
-        }),
-        credentials: "omit",
-        cache: "no-store",
-        referrerPolicy: "no-referrer",
-        ...(options.signal === undefined ? {} : { signal: options.signal }),
-      },
-    );
+    response =
+      options.quota === undefined
+        ? await (options.fetchImplementation ?? fetch)(
+            BROADCAST_CONTEXT_PROXY_ENDPOINT,
+            requestInit,
+          )
+        : await fetchWithAiQuota(
+            BROADCAST_CONTEXT_PROXY_ENDPOINT,
+            requestInit,
+            {
+              ...options.quota,
+              pool: "context",
+              ...(options.signal === undefined ? {} : { signal: options.signal }),
+              ...(options.fetchImplementation === undefined
+                ? {}
+                : { fetchImplementation: options.fetchImplementation }),
+            },
+          );
   } catch {
     throw new BroadcastContextDeepseekClientError(
       "PROXY_UNAVAILABLE",
