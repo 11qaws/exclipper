@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+
+import { MAX_BROADCAST_TRANSCRIPT_WORKER_CHUNKS } from "./broadcastTranscriptWorkerProtocol";
 import {
   BROADCAST_CONTEXT_ASR_BUDGET_USD,
   QWEN_ASR_SAFE_CHUNK_DURATION_MS,
@@ -88,7 +90,9 @@ describe("broadcastContextSamplingPlan", () => {
     const plan = createBroadcastContextSamplingPlan(durationMs, eventPeaks);
     const chunks = createBroadcastContextTranscriptionChunks(plan.samplingWindows);
 
-    expect(chunks.length).toBeLessThanOrEqual(240);
+    // 상한은 프로토콜이 갖고 있다. 숫자를 박아 두면 청크 길이를 바꿀 때마다
+    // 두 곳을 손으로 맞춰야 하고, 한쪽만 고치면 긴 방송이 조용히 거부된다.
+    expect(chunks.length).toBeLessThanOrEqual(MAX_BROADCAST_TRANSCRIPT_WORKER_CHUNKS);
     expect(plan.estimatedAsrCostUsd).toBeLessThanOrEqual(
       BROADCAST_CONTEXT_ASR_BUDGET_USD + 1e-9,
     );

@@ -2,10 +2,16 @@ import type { BroadcastContextTranscriptionChunk } from "./broadcastContextSampl
 import type { BroadcastTranscriptQwenResult } from "./broadcastTranscriptQwen";
 
 export const BROADCAST_TRANSCRIPT_WORKER_VERSION = "1.2.0" as const;
-// A 12-hour plan can contain up to 216 fragmented uniform chunks plus twelve
-// two-minute event windows (two 90-second requests each). Merging only lowers
-// this count, so 240 is a complete, bounded worst-case envelope.
-export const MAX_BROADCAST_TRANSCRIPT_WORKER_CHUNKS = 240;
+/**
+ * 한 실행이 보낼 수 있는 청크 수의 상한.
+ *
+ * 240 은 90초 청크 시절의 값이었다 — 12시간 계획이 216 + 이벤트 창 정도였다.
+ * 릴레이 CPU 때문에 청크를 30초로 줄이면서 같은 계획이 세 배가 되므로 함께
+ * 올린다. 이 값을 안 올리면 긴 방송이 **계획 단계에서 거부된다.**
+ *
+ * 스트리밍 중계로 청크를 90초로 되돌리면 이것도 함께 낮춘다.
+ */
+export const MAX_BROADCAST_TRANSCRIPT_WORKER_CHUNKS = 760;
 
 export interface BroadcastTranscriptWorkerIdentity {
   readonly taskId: string;

@@ -107,3 +107,24 @@ export class AdaptiveConcurrency {
 function clamp(value: number, minimum: number, maximum: number): number {
   return Math.min(Math.max(value, minimum), Math.max(minimum, maximum));
 }
+
+/**
+ * 프록시의 분당 요청 상한. `wrangler.jsonc` 의 `limit` 과 같아야 한다.
+ *
+ * **이 값은 올릴 수 없다** — 무료 플랜의 고정 한도다. 그래서 클라이언트가 스스로
+ * 맞춰야 하고, 넘기면 429 가 돌아온다. 429 는 적응형 동시성이 실패로 읽어 물러
+ * 나므로 결국 멈추지는 않지만, 그 한 번마다 **청크 하나가 gap 으로 버려진다.**
+ * 맞고 물러나는 것보다 처음부터 그 속도로 보내는 편이 낫다.
+ */
+const PROXY_REQUESTS_PER_MINUTE = 60;
+
+/**
+ * 다음 요청까지 기다릴 시간.
+ *
+ * 청크를 30초로 줄이면서 방송 하나가 273 요청이 됐다. 분당 60 이 상한이므로
+ * 바닥은 4.5분이고, 실측 전사가 4.1분이었으니 **이 한도가 이제 실질적인 속도를
+ * 정한다.** 더 잘게 쪼개도 빨라지지 않는다는 뜻이기도 하다.
+ */
+export function requestSpacingMs(): number {
+  return Math.ceil(60_000 / PROXY_REQUESTS_PER_MINUTE);
+}

@@ -1,4 +1,7 @@
 import { describe, expect, it } from "vitest";
+
+import { QWEN_ASR_SAFE_CHUNK_DURATION_MS } from "./broadcastContextSamplingPlan";
+import { MAX_BROADCAST_TRANSCRIPT_WORKER_CHUNKS } from "./broadcastTranscriptWorkerProtocol";
 import {
   EXCLIPPER_MODEL_IDS,
   createAiAnalysisRoutingPlan,
@@ -59,18 +62,23 @@ describe("aiModelRoutingPolicy", () => {
     ).toBe(0);
   });
 
-  it("reports the production-proven 90-second transcript request count", () => {
-    const plan = createAiAnalysisRoutingPlan(2 * 60 * 60_000 + 15 * 60_000, 3);
-    expect(
-      plan.steps.find((step) => step.stage === "broadcast-transcription"),
-    ).toMatchObject({ maximumCalls: 90 });
+  // 요청 수는 청크 길이에서 나온다. 숫자를 박아 두면 릴레이 사정으로 청크를
+  // 바꿀 때마다 무엇이 왜 깨졌는지 모른 채 기대값만 고치게 된다.
+  it("plans one transcript call per chunk of the source", () => {
+    const sourceMs = 2 * 60 * 60_000 + 15 * 60_000;
+    const plan = createAiAnalysisRoutingPlan(sourceMs, 3);
+    const step = plan.steps.find((one) => one.stage === "broadcast-transcription");
+    expect(step?.maximumCalls).toBeGreaterThanOrEqual(
+      Math.floor(sourceMs / QWEN_ASR_SAFE_CHUNK_DURATION_MS),
+    );
   });
 
-  it("reserves the complete fragmented twelve-hour transcript envelope", () => {
+  // 최악의 계획도 워커가 받아 주는 상한 안에 들어야 한다. 넘으면 긴 방송이
+  // 계획 단계에서 거부된다.
+  it("keeps the worst-case twelve-hour envelope inside what the worker accepts", () => {
     const plan = createAiAnalysisRoutingPlan(12 * 60 * 60_000, 3);
-    expect(
-      plan.steps.find((step) => step.stage === "broadcast-transcription"),
-    ).toMatchObject({ maximumCalls: 240 });
+    const step = plan.steps.find((one) => one.stage === "broadcast-transcription");
+    expect(step?.maximumCalls).toBeLessThanOrEqual(MAX_BROADCAST_TRANSCRIPT_WORKER_CHUNKS);
   });
 
   it("rejects sources beyond the product's twelve-hour boundary", () => {

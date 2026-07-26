@@ -19,7 +19,7 @@ import {
 } from "./broadcastTranscriptQwen";
 import type { BroadcastContextTranscriptionChunk } from "./broadcastContextSamplingPlan";
 import { requestBroadcastTranscriptChunkBinary } from "./broadcastTranscriptQwenClient";
-import { AdaptiveConcurrency } from "./adaptiveConcurrency";
+import { AdaptiveConcurrency, requestSpacingMs } from "./adaptiveConcurrency";
 import {
   prioritizeAdjacentTranscriptChunks,
   shouldExpandBroadcastContextChunk,
@@ -322,6 +322,15 @@ async function runAnalyze(
      * 여기서 읽을 수 없다.
      */
     const concurrency = new AdaptiveConcurrency();
+    /*
+     * 프록시의 분당 상한(60)을 넘지 않도록 간격을 둔다.
+     *
+     * 넘기면 429 가 오고, 적응형 동시성이 그것을 실패로 읽어 물러난다 — 멈추지는
+     * 않지만 그때마다 청크 하나가 gap 으로 버려진다. 맞고 물러나는 것보다 처음부터
+     * 그 속도로 보내는 편이 낫다.
+     */
+    const spacingMs = requestSpacingMs();
+    let nextSendAtMs = 0;
     const inFlight = new Set<Promise<void>>();
     const chronologicalChunks = [...request.chunks].sort(
       (left, right) =>
@@ -434,6 +443,14 @@ async function runAnalyze(
           processedCount += 1;
         }
       })();
+      // 다음 요청을 보낼 수 있는 시각까지 기다린다.
+      const waitMs = nextSendAtMs - Date.now();
+      if (waitMs > 0) {
+        await new Promise((resolve) => setTimeout(resolve, waitMs));
+        if (task.cancelled) return;
+      }
+      nextSendAtMs = Date.now() + spacingMs;
+
       inFlight.add(inFlightRequest);
       // The body swallows its own failures, so settling always means done.
       void inFlightRequest.then(() => inFlight.delete(inFlightRequest));
