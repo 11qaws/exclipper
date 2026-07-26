@@ -422,7 +422,7 @@ type AnalysisSelectionSummary = DurableAnalysisSelectionSummary;
 type AnalysisCoverageSummary = DurableAnalysisCoverageSummary;
 type AnalysisGapApprovalEvidence = DurableAnalysisGapApprovalEvidence;
 
-const APP_VERSION = "0.7.1";
+const APP_VERSION = "0.7.2";
 const PERSISTENCE_SCHEMA_VERSION = "0.3.0";
 const SIGNAL_ENGINE_VERSION =
   "streamer-reaction-fast-pass-v5-chat-fallback-music-confirmation";
@@ -3641,6 +3641,10 @@ function App() {
                 },
               };
             }
+            /*
+             * 후보 하나당 한 번. `addSpan` 이 같은 이름을 합산하므로 결과는
+             * 후보 전체의 총합이 된다 — 한 번의 시간이 아니라 총합이 궁금하다.
+             */
             return await runCandidatePassBWorker(sourceFile, {
         identity,
         sourceDurationMs,
@@ -5740,6 +5744,12 @@ function App() {
       const discoverySlices = createParallelBroadcastTopicalDiscoverySlices(
         boundedBroadcastContextChapters,
       );
+      // 맥락 AI 호출 전체. 자막 받기와 나란히 놓고 봐야 `broadcastContext` 37%
+      // 안에서 무엇이 무거운지가 갈린다 — 둘은 고치는 방법이 완전히 다르다.
+      const endContextSpan = stageTimerRef.current?.startSpan(
+        "broadcast-context-ai",
+        Date.now(),
+      );
       const [overviewResult, discoveryResults] = await Promise.all([
         requestBroadcastContextDeepseek(contextInput, {
           signal: controller.signal,
@@ -5761,6 +5771,7 @@ function App() {
           ),
         ),
       ]);
+      endContextSpan?.(Date.now());
       if (controller.signal.aborted || !isMounted.current) return;
       const result: BroadcastContextResult = {
         ...overviewResult,
@@ -6315,9 +6326,14 @@ function App() {
         matchedSaved.modelRevision === YOUTUBE_CAPTION_MODEL_REVISION
       ) {
           try {
+            const endRestoredCaptionSpan = stageTimerRef.current?.startSpan(
+              "youtube-caption-fetch(restore)",
+              Date.now(),
+            );
             const captionTrack = await requestYouTubeCaptionTrack(youtubeVideoId, {
               signal: controller.signal,
             });
+            endRestoredCaptionSpan?.(Date.now());
             if (!controller.signal.aborted && isMounted.current) {
               setYouTubeCaptionTrack(captionTrack);
             }
@@ -6368,9 +6384,17 @@ function App() {
 
       if (youtubeVideoId !== null) {
         try {
+          // 자막 받기와 그 뒤의 맥락 분석을 갈라 잰다. `broadcastContext` 가
+          // 가장 무거운데(실측 37%) 그 안에서 무엇이 무거운지를 몰라, 자막
+          // 조달을 넓혀야 할지 맥락 호출을 줄여야 할지 정할 수 없었다.
+          const endCaptionSpan = stageTimerRef.current?.startSpan(
+            "youtube-caption-fetch",
+            Date.now(),
+          );
           const captionTrack = await requestYouTubeCaptionTrack(youtubeVideoId, {
             signal: controller.signal,
           });
+          endCaptionSpan?.(Date.now());
           if (controller.signal.aborted || !isMounted.current) return;
           setYouTubeCaptionTrack(captionTrack);
           const captionChapters = createYouTubeCaptionChapters(

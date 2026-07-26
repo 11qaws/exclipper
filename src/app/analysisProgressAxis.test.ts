@@ -98,9 +98,10 @@ describe("computeProgressAxis", () => {
       previousRatio: null,
     });
     const normalized = normalizeStageWeights();
-    // preflight 2 + fastPass 45 + seedClustering 3 = 50 (합 100 기준)
-    expect(committed.ratio).toBeCloseTo(0.5, 12);
-    expect(halfway.ratio).toBeCloseTo(0.5 + normalized.commitFastResult / 2, 12);
+    const through =
+      normalized.preflight + normalized.fastPass + normalized.seedClustering;
+    expect(committed.ratio).toBeCloseTo(through, 12);
+    expect(halfway.ratio).toBeCloseTo(through + normalized.commitFastResult / 2, 12);
   });
 
   // 워커가 보내는 비율은 1 을 넘길 수 있다. 그대로 더하면 막대가 다음 스테이지의
@@ -111,8 +112,15 @@ describe("computeProgressAxis", () => {
       currentStageRatio: 5,
       previousRatio: null,
     });
-    // 0.50 에 commitFastResult 몫 0.02 까지만. 다음 스테이지 몫은 못 먹는다.
-    expect(axis.ratio).toBeCloseTo(0.52, 12);
+    // 확정분에 현재 스테이지 몫까지만. 다음 스테이지 몫은 못 먹는다.
+    const normalized = normalizeStageWeights();
+    expect(axis.ratio).toBeCloseTo(
+      normalized.preflight +
+        normalized.fastPass +
+        normalized.seedClustering +
+        normalized.commitFastResult,
+      12,
+    );
   });
 
   it("stays within zero and one for out-of-range input", () => {
@@ -201,8 +209,8 @@ describe("computeProgressAxis", () => {
       currentStageRatio: 0,
       previousRatio: Number.NaN,
     });
-    // preflight 2 + fastPass 45 = 47
-    expect(axis.ratio).toBeCloseTo(0.47, 12);
+    const normalized = normalizeStageWeights();
+    expect(axis.ratio).toBeCloseTo(normalized.preflight + normalized.fastPass, 12);
   });
 });
 

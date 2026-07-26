@@ -30,14 +30,40 @@ export interface StageTimingReport {
   readonly sourceDurationMs: number;
   /** 실측에서 나온 가중치. `STAGE_WEIGHTS` 와 나란히 놓고 비교한다. */
   readonly measuredWeights: Readonly<Partial<Record<AnalysisStage, number>>>;
+  /** 스테이지 안쪽 구간들. 무거운 스테이지의 정체를 가른다. */
+  readonly spans: readonly { readonly label: string; readonly elapsedMs: number }[];
 }
 
 export class StageTimer {
   private readonly startedAtMsByStage = new Map<AnalysisStage, number>();
   private readonly elapsedMsByStage = new Map<AnalysisStage, number>();
+  /**
+   * 스테이지 **안쪽**의 구간들.
+   *
+   * 스테이지 경계만 재면 "어느 구간이 무거운가" 는 알아도 "그 안에서 무엇이
+   * 무거운가" 는 모른다. 실제로 그 차이가 결론을 뒤집었다 — `broadcastContext`
+   * 37% 를 보고 "자막 조달로 없앤다" 고 판단했는데, 그 실행은 **이미 자막을
+   * 쓰고 있었다.** 남은 37% 가 자막 받기인지 그 뒤의 맥락 AI 호출인지에 따라
+   * 고칠 곳이 완전히 다르다.
+   */
+  private readonly spanMsByLabel = new Map<string, number>();
   private lastMarkMs: number | null = null;
 
   public constructor(private readonly sourceDurationMs: number) {}
+
+  /**
+   * 스테이지 안의 한 구간. 같은 이름이 여러 번 오면 **합산**한다 — 후보마다
+   * 도는 호출처럼 반복되는 것은 한 번의 시간이 아니라 총합이 궁금하다.
+   */
+  public addSpan(label: string, elapsedMs: number): void {
+    if (!Number.isFinite(elapsedMs) || elapsedMs < 0) return;
+    this.spanMsByLabel.set(label, (this.spanMsByLabel.get(label) ?? 0) + elapsedMs);
+  }
+
+  /** 구간 하나를 재는 손잡이. 끝날 때 부르면 그 사이 시간이 더해진다. */
+  public startSpan(label: string, nowMs: number): (endMs: number) => void {
+    return (endMs: number) => this.addSpan(label, endMs - nowMs);
+  }
 
   /**
    * 스테이지가 확정된 순간. 이전 표시 이후 흐른 시간이 그 스테이지의 소요다.
@@ -82,11 +108,17 @@ export class StageTimer {
       }
     }
 
+    const spans = [...this.spanMsByLabel.entries()]
+      .map(([label, elapsedMs]) => ({ label, elapsedMs }))
+      // 무거운 것부터. 표를 훑을 때 먼저 봐야 하는 것이 위에 있어야 한다.
+      .sort((a, b) => b.elapsedMs - a.elapsedMs);
+
     return {
       timings,
       totalMs,
       sourceDurationMs: this.sourceDurationMs,
       measuredWeights,
+      spans,
     };
   }
 }
@@ -111,9 +143,19 @@ export function formatStageTimingReport(report: StageTimingReport): string {
         : "-";
     return `  ${timing.stage.padEnd(18)} ${seconds.padStart(8)}s  ${String(share).padStart(3)}%  ${perHour.padStart(6)}분/방송1시간`;
   });
+  const spanRows = report.spans.map((span) => {
+    const seconds = (span.elapsedMs / 1000).toFixed(1);
+    const share =
+      report.totalMs > 0 ? Math.round((span.elapsedMs / report.totalMs) * 100) : 0;
+    return `  ${span.label.padEnd(28)} ${seconds.padStart(8)}s  ${String(share).padStart(3)}%`;
+  });
+
   return [
     `스테이지 실측 · 원본 ${(report.sourceDurationMs / 3_600_000).toFixed(2)}시간 · 합계 ${(report.totalMs / 60_000).toFixed(1)}분`,
     ...rows,
     `  실측 가중치: ${JSON.stringify(report.measuredWeights)}`,
+    // 스테이지 안쪽은 잰 것이 있을 때만 낸다. 빈 제목만 있는 절은 무언가
+    // 빠진 것처럼 보인다.
+    ...(spanRows.length > 0 ? ["", "스테이지 안쪽 구간", ...spanRows] : []),
   ].join("\n");
 }
