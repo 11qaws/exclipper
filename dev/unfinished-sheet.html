@@ -1,0 +1,283 @@
+<!doctype html><html lang="ko"><head><meta charset="utf-8">
+<title>이어서 할 분석 · 시트</title>
+<link rel="stylesheet" href="../styles/forms/ui-forms.css">
+<link rel="stylesheet" href="../styles/unfinished-jobs.css">
+<style>
+@font-face{font-family:"Pretendard";font-weight:400;src:url("../public/fonts/Pretendard-Regular.woff2")}
+@font-face{font-family:"Pretendard";font-weight:600;src:url("../public/fonts/Pretendard-SemiBold.woff2")}
+@font-face{font-family:"Pretendard";font-weight:700;src:url("../public/fonts/Pretendard-SemiBold.woff2")}
+@font-face{font-family:"Pretendard";font-weight:800;src:url("../public/fonts/Pretendard-ExtraBold.woff2")}
+*{box-sizing:border-box}
+body{margin:0;padding:22px;background:#12141a;font-family:"Pretendard",sans-serif;color:#e6e9f2}
+h1{font-size:15px;margin:0 0 4px}
+.lead{font-size:12px;color:#98a0b5;margin:0 0 18px;line-height:1.65;max-width:82ch}
+.lead code{font:11px "SFMono-Regular",monospace;background:#1d212b;padding:1px 5px;border-radius:4px}
+.grid{display:flex;flex-wrap:wrap;gap:16px;align-items:flex-start}
+.bay{margin:0;padding:14px;border-radius:14px;display:flex;flex-direction:column;gap:9px}
+.bay figcaption{font:10px "SFMono-Regular",monospace;color:#8b93a8;background:#191c24;
+  padding:3px 8px;border-radius:5px;align-self:flex-start}
+/* 하네스에서는 화면 구석에 고정하지 않고 나란히 놓는다 — 여러 상태를 한눈에 본다. */
+.static{position:static;animation:none;box-shadow:0 8px 22px rgb(0 0 0 / .18)}
+</style></head><body>
+<h1>이어서 할 분석 — 사이드 시트</h1>
+<p class="lead">문구는 <code>src/app/unfinishedJobSummary.ts</code> 가 만든 것을 그대로 쓰고, 스타일은 <code>styles/unfinished-jobs.css</code> 를 링크한다 — 이 페이지가 앱에 없는 문구나 간격을 보여 줄 수 없다.
+<b>남은 시간은 항상 처음부터 걸리는 시간과 나란히</b> 있다. 그 대비가 이어서 할 유일한 이유이며, 떼어 놓으면 이유도 사라진다.
+후보 개수는 어디에도 없다 — 최종 선별 전이라 못 지킬 약속이 된다.
+삭제는 <code>⋯</code> 안에 있고, 확인창은 무엇을 잃는지 말한다.</p>
+<div class="grid">
+<figure class="bay" style="background:hsl(344 22% 97%)">
+  <figcaption>둘 · 하나는 재연결 필요</figcaption>
+  <aside class="ujs-sheet static" style="--ex-bg:hsl(344 0% 100%);--ex-bg3:hsl(344 20% 93%);--ex-ink:hsl(344 30% 13%);--ex-ink2:hsl(344 20% 32%);--ex-ink3:hsl(344 14% 48%);--ex-line2:hsl(344 20% 80%);--ex-accent:hsl(344 42% 63%);--uf-accent:hsl(344 42% 63%);--uf-accent-on:hsl(344 42% 19%);--ex-warn-ink:hsl(28 62% 32%)">
+    <header class="ujs-head"><h2>이어서 할 분석 2개</h2><button class="ujs-close">✕</button></header>
+    <div class="ujs-list"><div class="ujs-item">
+  <div class="ujs-times"><b>릴레이 방송</b><span>75%</span></div>
+  <div class="ujs-bar" role="progressbar" aria-valuenow="75" aria-valuemin="0" aria-valuemax="100"><i style="width:75%"></i></div>
+  <div class="ujs-times"><b>약 10분 남음 (추정)</b><span>(처음부터 약 40분 남음 (추정))</span></div>
+  <div class="ujs-why">원본 접근 권한이 만료됐습니다</div>
+  <div class="ujs-acts">
+    <button class="ujs-go">연결하고 이어서</button>
+    <button class="ujs-more" aria-expanded="undefined">⋯</button>
+  </div>
+  
+</div>
+<div class="ujs-item">
+  <div class="ujs-times"><b>합격자 발표</b><span>63%</span></div>
+  <div class="ujs-bar" role="progressbar" aria-valuenow="63" aria-valuemin="0" aria-valuemax="100"><i style="width:63%"></i></div>
+  <div class="ujs-times"><b>약 10분 남음 (추정)</b><span>(처음부터 약 27분 남음 (추정))</span></div>
+  
+  <div class="ujs-acts">
+    <button class="ujs-go">이어서 하기</button>
+    <button class="ujs-more" aria-expanded="undefined">⋯</button>
+  </div>
+  
+</div></div>
+  </aside>
+</figure>
+<figure class="bay" style="background:hsl(344 22% 97%)">
+  <figcaption>하나 · 이제 막 시작</figcaption>
+  <aside class="ujs-sheet static" style="--ex-bg:hsl(344 0% 100%);--ex-bg3:hsl(344 20% 93%);--ex-ink:hsl(344 30% 13%);--ex-ink2:hsl(344 20% 32%);--ex-ink3:hsl(344 14% 48%);--ex-line2:hsl(344 20% 80%);--ex-accent:hsl(344 42% 63%);--uf-accent:hsl(344 42% 63%);--uf-accent-on:hsl(344 42% 19%);--ex-warn-ink:hsl(28 62% 32%)">
+    <header class="ujs-head"><h2>이어서 할 분석 1개</h2><button class="ujs-close">✕</button></header>
+    <div class="ujs-list"><div class="ujs-item">
+  <div class="ujs-times"><b>저녁 합방</b><span>13%</span></div>
+  <div class="ujs-bar" role="progressbar" aria-valuenow="13" aria-valuemin="0" aria-valuemax="100"><i style="width:13%"></i></div>
+  <div class="ujs-times"><b>약 35분 남음 (추정)</b><span>(처음부터 약 40분 남음 (추정))</span></div>
+  
+  <div class="ujs-acts">
+    <button class="ujs-go">이어서 하기</button>
+    <button class="ujs-more" aria-expanded="undefined">⋯</button>
+  </div>
+  
+</div></div>
+  </aside>
+</figure>
+<figure class="bay" style="background:hsl(344 22% 97%)">
+  <figcaption>원본을 찾을 수 없음</figcaption>
+  <aside class="ujs-sheet static" style="--ex-bg:hsl(344 0% 100%);--ex-bg3:hsl(344 20% 93%);--ex-ink:hsl(344 30% 13%);--ex-ink2:hsl(344 20% 32%);--ex-ink3:hsl(344 14% 48%);--ex-line2:hsl(344 20% 80%);--ex-accent:hsl(344 42% 63%);--uf-accent:hsl(344 42% 63%);--uf-accent-on:hsl(344 42% 19%);--ex-warn-ink:hsl(28 62% 32%)">
+    <header class="ujs-head"><h2>이어서 할 분석 1개</h2><button class="ujs-close">✕</button></header>
+    <div class="ujs-list"><div class="ujs-item">
+  <div class="ujs-times"><b>옮겨진 파일</b><span>50%</span></div>
+  <div class="ujs-bar" role="progressbar" aria-valuenow="50" aria-valuemin="0" aria-valuemax="100"><i style="width:50%"></i></div>
+  <div class="ujs-times"><b>약 20분 남음 (추정)</b><span>(처음부터 약 40분 남음 (추정))</span></div>
+  <div class="ujs-why">원본을 찾을 수 없습니다</div>
+  <div class="ujs-acts">
+    <button class="ujs-go">연결하고 이어서</button>
+    <button class="ujs-more" aria-expanded="undefined">⋯</button>
+  </div>
+  
+</div></div>
+  </aside>
+</figure>
+<figure class="bay" style="background:hsl(344 22% 97%)">
+  <figcaption>실패 후 · 긴 제목</figcaption>
+  <aside class="ujs-sheet static" style="--ex-bg:hsl(344 0% 100%);--ex-bg3:hsl(344 20% 93%);--ex-ink:hsl(344 30% 13%);--ex-ink2:hsl(344 20% 32%);--ex-ink3:hsl(344 14% 48%);--ex-line2:hsl(344 20% 80%);--ex-accent:hsl(344 42% 63%);--uf-accent:hsl(344 42% 63%);--uf-accent-on:hsl(344 42% 19%);--ex-warn-ink:hsl(28 62% 32%)">
+    <header class="ujs-head"><h2>이어서 할 분석 1개</h2><button class="ujs-close">✕</button></header>
+    <div class="ujs-list"><div class="ujs-item">
+  <div class="ujs-times"><b>교환학생 1기 ORIENT 합동 방송 다시보기 · 3부</b><span>38%</span></div>
+  <div class="ujs-bar" role="progressbar" aria-valuenow="38" aria-valuemin="0" aria-valuemax="100"><i style="width:38%"></i></div>
+  <div class="ujs-times"><b>약 37분 남음 (추정)</b><span>(처음부터 약 60분 남음 (추정))</span></div>
+  
+  <div class="ujs-acts">
+    <button class="ujs-go">다시 시도</button>
+    <button class="ujs-more" aria-expanded="undefined">⋯</button>
+  </div>
+  
+</div></div>
+  </aside>
+</figure>
+<figure class="bay" style="background:hsl(344 22% 97%)">
+  <figcaption>둘 · 하나는 재연결 필요 · ⋯ 열림</figcaption>
+  <aside class="ujs-sheet static" style="--ex-bg:hsl(344 0% 100%);--ex-bg3:hsl(344 20% 93%);--ex-ink:hsl(344 30% 13%);--ex-ink2:hsl(344 20% 32%);--ex-ink3:hsl(344 14% 48%);--ex-line2:hsl(344 20% 80%);--ex-accent:hsl(344 42% 63%);--uf-accent:hsl(344 42% 63%);--uf-accent-on:hsl(344 42% 19%);--ex-warn-ink:hsl(28 62% 32%)">
+    <header class="ujs-head"><h2>이어서 할 분석 2개</h2><button class="ujs-close">✕</button></header>
+    <div class="ujs-list"><div class="ujs-item">
+  <div class="ujs-times"><b>릴레이 방송</b><span>75%</span></div>
+  <div class="ujs-bar" role="progressbar" aria-valuenow="75" aria-valuemin="0" aria-valuemax="100"><i style="width:75%"></i></div>
+  <div class="ujs-times"><b>약 10분 남음 (추정)</b><span>(처음부터 약 40분 남음 (추정))</span></div>
+  <div class="ujs-why">원본 접근 권한이 만료됐습니다</div>
+  <div class="ujs-acts">
+    <button class="ujs-go">연결하고 이어서</button>
+    <button class="ujs-more" aria-expanded="true">⋯</button>
+  </div>
+  <div class="ujs-acts"><button class="ujs-more">이 분석 지우기</button></div>
+</div>
+<div class="ujs-item">
+  <div class="ujs-times"><b>합격자 발표</b><span>63%</span></div>
+  <div class="ujs-bar" role="progressbar" aria-valuenow="63" aria-valuemin="0" aria-valuemax="100"><i style="width:63%"></i></div>
+  <div class="ujs-times"><b>약 10분 남음 (추정)</b><span>(처음부터 약 27분 남음 (추정))</span></div>
+  
+  <div class="ujs-acts">
+    <button class="ujs-go">이어서 하기</button>
+    <button class="ujs-more" aria-expanded="false">⋯</button>
+  </div>
+  
+</div></div>
+  </aside>
+</figure>
+<figure class="bay" style="background:hsl(344 22% 97%)">
+  <figcaption>둘 · 하나는 재연결 필요 · 삭제 확인</figcaption>
+  <aside class="ujs-sheet static" style="--ex-bg:hsl(344 0% 100%);--ex-bg3:hsl(344 20% 93%);--ex-ink:hsl(344 30% 13%);--ex-ink2:hsl(344 20% 32%);--ex-ink3:hsl(344 14% 48%);--ex-line2:hsl(344 20% 80%);--ex-accent:hsl(344 42% 63%);--uf-accent:hsl(344 42% 63%);--uf-accent-on:hsl(344 42% 19%);--ex-warn-ink:hsl(28 62% 32%)">
+    <header class="ujs-head"><h2>이어서 할 분석 2개</h2><button class="ujs-close">✕</button></header>
+    <div class="ujs-list"><div class="ujs-item">
+  <div class="ujs-times"><b>릴레이 방송</b><span>75%</span></div>
+  <div class="ujs-bar" role="progressbar" aria-valuenow="75" aria-valuemin="0" aria-valuemax="100"><i style="width:75%"></i></div>
+  <div class="ujs-times"><b>약 10분 남음 (추정)</b><span>(처음부터 약 40분 남음 (추정))</span></div>
+  <div class="ujs-why">원본 접근 권한이 만료됐습니다</div>
+  <div class="ujs-item" role="group">
+    <div class="ujs-why">이 분석을 지울까요?</div>
+    <div class="ujs-times"><span>지금까지 분석한 75% 가 사라지고, 다시 하려면 처음부터입니다. 후보 정리(유료 분석)도 다시 해야 합니다.</span></div>
+    <div class="ujs-acts"><button class="ujs-more">그만두기</button><button class="ujs-more">지우기</button></div>
+  </div>
+  
+</div>
+<div class="ujs-item">
+  <div class="ujs-times"><b>합격자 발표</b><span>63%</span></div>
+  <div class="ujs-bar" role="progressbar" aria-valuenow="63" aria-valuemin="0" aria-valuemax="100"><i style="width:63%"></i></div>
+  <div class="ujs-times"><b>약 10분 남음 (추정)</b><span>(처음부터 약 27분 남음 (추정))</span></div>
+  
+  <div class="ujs-acts">
+    <button class="ujs-go">이어서 하기</button>
+    <button class="ujs-more" aria-expanded="undefined">⋯</button>
+  </div>
+  
+</div></div>
+  </aside>
+</figure>
+<figure class="bay" style="background:hsl(344 22% 97%)">
+  <figcaption>접은 뒤 남는 칩</figcaption>
+  <button class="ujs-chip static" style="--ex-bg:hsl(344 0% 100%);--ex-ink:hsl(344 30% 13%);--ex-line2:hsl(344 20% 80%);--ex-accent:hsl(344 42% 63%)">이어서 할 분석 <span class="ujs-count">2</span></button>
+</figure>
+</div>
+<div class="grid" style="margin-top:18px">
+<figure class="bay" style="background:hsl(344 34% 9%)">
+  <figcaption>둘 · 하나는 재연결 필요</figcaption>
+  <aside class="ujs-sheet static" style="--ex-bg:hsl(344 30% 14%);--ex-bg3:hsl(344 28% 20%);--ex-ink:hsl(344 24% 93%);--ex-ink2:hsl(344 18% 84%);--ex-ink3:hsl(344 14% 66%);--ex-line2:hsl(344 26% 34%);--ex-accent:hsl(344 50% 74%);--uf-accent:hsl(344 50% 74%);--uf-accent-on:hsl(344 50% 30%);--ex-warn-ink:hsl(34 80% 72%)">
+    <header class="ujs-head"><h2>이어서 할 분석 2개</h2><button class="ujs-close">✕</button></header>
+    <div class="ujs-list"><div class="ujs-item">
+  <div class="ujs-times"><b>릴레이 방송</b><span>75%</span></div>
+  <div class="ujs-bar" role="progressbar" aria-valuenow="75" aria-valuemin="0" aria-valuemax="100"><i style="width:75%"></i></div>
+  <div class="ujs-times"><b>약 10분 남음 (추정)</b><span>(처음부터 약 40분 남음 (추정))</span></div>
+  <div class="ujs-why">원본 접근 권한이 만료됐습니다</div>
+  <div class="ujs-acts">
+    <button class="ujs-go">연결하고 이어서</button>
+    <button class="ujs-more" aria-expanded="undefined">⋯</button>
+  </div>
+  
+</div>
+<div class="ujs-item">
+  <div class="ujs-times"><b>합격자 발표</b><span>63%</span></div>
+  <div class="ujs-bar" role="progressbar" aria-valuenow="63" aria-valuemin="0" aria-valuemax="100"><i style="width:63%"></i></div>
+  <div class="ujs-times"><b>약 10분 남음 (추정)</b><span>(처음부터 약 27분 남음 (추정))</span></div>
+  
+  <div class="ujs-acts">
+    <button class="ujs-go">이어서 하기</button>
+    <button class="ujs-more" aria-expanded="undefined">⋯</button>
+  </div>
+  
+</div></div>
+  </aside>
+</figure>
+<figure class="bay" style="background:hsl(344 34% 9%)">
+  <figcaption>하나 · 이제 막 시작</figcaption>
+  <aside class="ujs-sheet static" style="--ex-bg:hsl(344 30% 14%);--ex-bg3:hsl(344 28% 20%);--ex-ink:hsl(344 24% 93%);--ex-ink2:hsl(344 18% 84%);--ex-ink3:hsl(344 14% 66%);--ex-line2:hsl(344 26% 34%);--ex-accent:hsl(344 50% 74%);--uf-accent:hsl(344 50% 74%);--uf-accent-on:hsl(344 50% 30%);--ex-warn-ink:hsl(34 80% 72%)">
+    <header class="ujs-head"><h2>이어서 할 분석 1개</h2><button class="ujs-close">✕</button></header>
+    <div class="ujs-list"><div class="ujs-item">
+  <div class="ujs-times"><b>저녁 합방</b><span>13%</span></div>
+  <div class="ujs-bar" role="progressbar" aria-valuenow="13" aria-valuemin="0" aria-valuemax="100"><i style="width:13%"></i></div>
+  <div class="ujs-times"><b>약 35분 남음 (추정)</b><span>(처음부터 약 40분 남음 (추정))</span></div>
+  
+  <div class="ujs-acts">
+    <button class="ujs-go">이어서 하기</button>
+    <button class="ujs-more" aria-expanded="undefined">⋯</button>
+  </div>
+  
+</div></div>
+  </aside>
+</figure>
+<figure class="bay" style="background:hsl(344 34% 9%)">
+  <figcaption>원본을 찾을 수 없음</figcaption>
+  <aside class="ujs-sheet static" style="--ex-bg:hsl(344 30% 14%);--ex-bg3:hsl(344 28% 20%);--ex-ink:hsl(344 24% 93%);--ex-ink2:hsl(344 18% 84%);--ex-ink3:hsl(344 14% 66%);--ex-line2:hsl(344 26% 34%);--ex-accent:hsl(344 50% 74%);--uf-accent:hsl(344 50% 74%);--uf-accent-on:hsl(344 50% 30%);--ex-warn-ink:hsl(34 80% 72%)">
+    <header class="ujs-head"><h2>이어서 할 분석 1개</h2><button class="ujs-close">✕</button></header>
+    <div class="ujs-list"><div class="ujs-item">
+  <div class="ujs-times"><b>옮겨진 파일</b><span>50%</span></div>
+  <div class="ujs-bar" role="progressbar" aria-valuenow="50" aria-valuemin="0" aria-valuemax="100"><i style="width:50%"></i></div>
+  <div class="ujs-times"><b>약 20분 남음 (추정)</b><span>(처음부터 약 40분 남음 (추정))</span></div>
+  <div class="ujs-why">원본을 찾을 수 없습니다</div>
+  <div class="ujs-acts">
+    <button class="ujs-go">연결하고 이어서</button>
+    <button class="ujs-more" aria-expanded="undefined">⋯</button>
+  </div>
+  
+</div></div>
+  </aside>
+</figure>
+<figure class="bay" style="background:hsl(344 34% 9%)">
+  <figcaption>실패 후 · 긴 제목</figcaption>
+  <aside class="ujs-sheet static" style="--ex-bg:hsl(344 30% 14%);--ex-bg3:hsl(344 28% 20%);--ex-ink:hsl(344 24% 93%);--ex-ink2:hsl(344 18% 84%);--ex-ink3:hsl(344 14% 66%);--ex-line2:hsl(344 26% 34%);--ex-accent:hsl(344 50% 74%);--uf-accent:hsl(344 50% 74%);--uf-accent-on:hsl(344 50% 30%);--ex-warn-ink:hsl(34 80% 72%)">
+    <header class="ujs-head"><h2>이어서 할 분석 1개</h2><button class="ujs-close">✕</button></header>
+    <div class="ujs-list"><div class="ujs-item">
+  <div class="ujs-times"><b>교환학생 1기 ORIENT 합동 방송 다시보기 · 3부</b><span>38%</span></div>
+  <div class="ujs-bar" role="progressbar" aria-valuenow="38" aria-valuemin="0" aria-valuemax="100"><i style="width:38%"></i></div>
+  <div class="ujs-times"><b>약 37분 남음 (추정)</b><span>(처음부터 약 60분 남음 (추정))</span></div>
+  
+  <div class="ujs-acts">
+    <button class="ujs-go">다시 시도</button>
+    <button class="ujs-more" aria-expanded="undefined">⋯</button>
+  </div>
+  
+</div></div>
+  </aside>
+</figure>
+<figure class="bay" style="background:hsl(344 34% 9%)">
+  <figcaption>둘 · 하나는 재연결 필요 · 삭제 확인</figcaption>
+  <aside class="ujs-sheet static" style="--ex-bg:hsl(344 30% 14%);--ex-bg3:hsl(344 28% 20%);--ex-ink:hsl(344 24% 93%);--ex-ink2:hsl(344 18% 84%);--ex-ink3:hsl(344 14% 66%);--ex-line2:hsl(344 26% 34%);--ex-accent:hsl(344 50% 74%);--uf-accent:hsl(344 50% 74%);--uf-accent-on:hsl(344 50% 30%);--ex-warn-ink:hsl(34 80% 72%)">
+    <header class="ujs-head"><h2>이어서 할 분석 2개</h2><button class="ujs-close">✕</button></header>
+    <div class="ujs-list"><div class="ujs-item">
+  <div class="ujs-times"><b>릴레이 방송</b><span>75%</span></div>
+  <div class="ujs-bar" role="progressbar" aria-valuenow="75" aria-valuemin="0" aria-valuemax="100"><i style="width:75%"></i></div>
+  <div class="ujs-times"><b>약 10분 남음 (추정)</b><span>(처음부터 약 40분 남음 (추정))</span></div>
+  <div class="ujs-why">원본 접근 권한이 만료됐습니다</div>
+  <div class="ujs-item" role="group">
+    <div class="ujs-why">이 분석을 지울까요?</div>
+    <div class="ujs-times"><span>지금까지 분석한 75% 가 사라지고, 다시 하려면 처음부터입니다. 후보 정리(유료 분석)도 다시 해야 합니다.</span></div>
+    <div class="ujs-acts"><button class="ujs-more">그만두기</button><button class="ujs-more">지우기</button></div>
+  </div>
+  
+</div>
+<div class="ujs-item">
+  <div class="ujs-times"><b>합격자 발표</b><span>63%</span></div>
+  <div class="ujs-bar" role="progressbar" aria-valuenow="63" aria-valuemin="0" aria-valuemax="100"><i style="width:63%"></i></div>
+  <div class="ujs-times"><b>약 10분 남음 (추정)</b><span>(처음부터 약 27분 남음 (추정))</span></div>
+  
+  <div class="ujs-acts">
+    <button class="ujs-go">이어서 하기</button>
+    <button class="ujs-more" aria-expanded="undefined">⋯</button>
+  </div>
+  
+</div></div>
+  </aside>
+</figure>
+<figure class="bay" style="background:hsl(344 34% 9%)">
+  <figcaption>접은 뒤 남는 칩</figcaption>
+  <button class="ujs-chip static" style="--ex-bg:hsl(344 30% 14%);--ex-ink:hsl(344 24% 93%);--ex-line2:hsl(344 26% 34%);--ex-accent:hsl(344 50% 74%)">이어서 할 분석 <span class="ujs-count">2</span></button>
+</figure>
+</div>
+</body></html>
