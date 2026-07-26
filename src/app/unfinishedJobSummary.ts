@@ -28,7 +28,7 @@ import {
  * The percentage is safe because it always reaches 100.
  */
 
-export type ResumeActionKind = "reconnect" | "resume" | "retry";
+export type ResumeActionKind = "reconnect" | "resume" | "restart" | "retry";
 
 export interface UnfinishedJobSummary {
   readonly jobId: string;
@@ -49,6 +49,18 @@ export interface UnfinishedJobInput {
   readonly job: AnalysisJob;
   readonly title: string;
   readonly sourceDurationMs: number;
+  /**
+   * 확정된 스테이지를 건너뛰고 이어서 돌 수 있는가.
+   *
+   * **지금은 없다.** 파이프라인이 `fastPass` 하나만 스테이지로 확정하고 나머지
+   * 작업은 스테이지 기계 밖에서 돌기 때문에, 건너뛸 스테이지가 없다.
+   *
+   * 그래서 기본값이 `false` 다. 이어서 할 수 없는데 "이어서 약 6분" 이라고 하면
+   * 사용자는 6분을 기다리다 25분을 쓰게 되고, 그 한 번으로 이 화면의 모든 시간
+   * 표시를 믿지 않게 된다. 목록을 보여 주는 것 자체는 그래도 낫다 — 지금은
+   * 중단된 분석이 아무 흔적 없이 사라진다.
+   */
+  readonly resumeSupported?: boolean;
 }
 
 /** 확정된 스테이지 비율. 실행 중 진행분은 넣지 않는다 — 확정된 것만 셈한다. */
@@ -58,10 +70,22 @@ export function committedPercent(job: AnalysisJob): number {
   return Math.round((done / ANALYSIS_STAGES.length) * 100);
 }
 
-function actionFor(job: AnalysisJob): { kind: ResumeActionKind; label: string } {
-  if (job.source !== "connected") return { kind: "reconnect", label: "연결하고 이어서" };
+function actionFor(
+  job: AnalysisJob,
+  resumeSupported: boolean,
+): { kind: ResumeActionKind; label: string } {
+  // 이어서 돌 수 없으면 그렇게 말한다. 버튼이 "이어서" 라고 하고 처음부터 도는
+  // 것은 한 번으로 이 화면의 모든 시간 표시를 못 믿게 만든다.
+  if (job.source !== "connected") {
+    return {
+      kind: "reconnect",
+      label: resumeSupported ? "연결하고 이어서" : "연결하고 다시 분석",
+    };
+  }
   if (job.status === "failed") return { kind: "retry", label: "다시 시도" };
-  return { kind: "resume", label: "이어서 하기" };
+  return resumeSupported
+    ? { kind: "resume", label: "이어서 하기" }
+    : { kind: "restart", label: "처음부터 다시 분석" };
 }
 
 /**
@@ -82,20 +106,27 @@ function blockedReasonFor(source: SourceAvailability): string | null {
 
 export function summarizeUnfinishedJob(input: UnfinishedJobInput): UnfinishedJobSummary {
   const { job, title, sourceDurationMs } = input;
+  const resumeSupported = input.resumeSupported ?? false;
   const percent = committedPercent(job);
   const full = estimateAnalysisDurationRangeMs(sourceDurationMs);
   // 넉넉한 쪽을 쓴다. 예상보다 빨리 끝나는 것은 기분이 좋지만, 늦어지는 것은
   // 화면이 거짓말한 것이 된다.
   const fullMs = full.highMs;
-  const remainingMs = Math.round(fullMs * (1 - percent / 100));
-  const action = actionFor(job);
+  // 이어서 돌 수 없으면 남는 시간은 전체 시간이다. 확정된 만큼을 빼면 하지 않을
+  // 절약을 약속하게 된다.
+  const remainingMs = resumeSupported ? Math.round(fullMs * (1 - percent / 100)) : fullMs;
+  const action = actionFor(job, resumeSupported);
 
   return {
     jobId: job.jobId,
     title,
     percent,
     remainingLabel: formatRemainingLabel({ basis: "static", remainingMs }),
-    fromScratchLabel: `처음부터 ${formatRemainingLabel({ basis: "static", remainingMs: fullMs })}`,
+    // 이어서 돌 수 없으면 두 값이 같다. 같은 숫자를 괄호로 한 번 더 보여 주는 것은
+    // 대비가 아니라 소음이다.
+    fromScratchLabel: resumeSupported
+      ? `처음부터 ${formatRemainingLabel({ basis: "static", remainingMs: fullMs })}`
+      : "",
     action: action.kind,
     actionLabel: action.label,
     blockedReason: blockedReasonFor(job.source),

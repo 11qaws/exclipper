@@ -39,7 +39,18 @@ function pausedAt(stagesDone: number, jobId = "job-1"): AnalysisJob {
   ]);
 }
 
+/** 이어서 돌 수 있는 경우. 파이프라인이 스테이지를 확정하게 되면 이것이 기본이 된다. */
 function summarize(job: AnalysisJob, title = "릴레이 방송") {
+  return summarizeUnfinishedJob({
+    job,
+    title,
+    sourceDurationMs: SIX_HOURS,
+    resumeSupported: true,
+  });
+}
+
+/** 지금의 기본값 — 건너뛸 스테이지가 없어 처음부터 다시 돈다. */
+function summarizeToday(job: AnalysisJob, title = "릴레이 방송") {
   return summarizeUnfinishedJob({ job, title, sourceDurationMs: SIX_HOURS });
 }
 
@@ -129,7 +140,7 @@ describe("unfinished job summary", () => {
 
   describe("the list", () => {
     function input(job: AnalysisJob, title: string) {
-      return { job, title, sourceDurationMs: SIX_HOURS };
+      return { job, title, sourceDurationMs: SIX_HOURS, resumeSupported: true };
     }
 
     it("drops finished and discarded work", () => {
@@ -173,5 +184,42 @@ describe("unfinished job summary", () => {
     const text = deleteConfirmationText(summarize(pausedAt(6)));
     expect(text.body).toContain("75%");
     expect(text.body).toContain("유료");
+  });
+});
+
+describe("when the pipeline cannot skip what is already done", () => {
+  // 파이프라인이 `fastPass` 하나만 스테이지로 확정하므로 건너뛸 것이 없다.
+  it("says it restarts instead of promising to continue", () => {
+    // "이어서" 라고 하고 처음부터 돌면, 그 한 번으로 이 화면의 모든 시간 표시를
+    // 못 믿게 된다.
+    const summary = summarizeToday(pausedAt(6));
+    expect(summary.action).toBe("restart");
+    expect(summary.actionLabel).toBe("처음부터 다시 분석");
+  });
+
+  it("quotes the whole time, not the time minus what is already done", () => {
+    // 확정된 만큼을 빼면 하지 않을 절약을 약속하게 된다.
+    const early = summarizeToday(pausedAt(1));
+    const late = summarizeToday(pausedAt(7));
+    expect(late.remainingLabel).toBe(early.remainingLabel);
+  });
+
+  it("drops the comparison rather than printing the same number twice", () => {
+    // 같은 숫자를 괄호로 한 번 더 보여 주는 것은 대비가 아니라 소음이다.
+    expect(summarizeToday(pausedAt(4)).fromScratchLabel).toBe("");
+  });
+
+  it("still says reconnect first when the file is unreachable", () => {
+    const blocked = drive(pausedAt(4), [
+      { type: "RESUME", runId: "run-2" },
+      { type: "SOURCE_LOST", availability: "needsPermission" },
+    ]);
+    expect(summarizeToday(blocked).action).toBe("reconnect");
+    expect(summarizeToday(blocked).actionLabel).toBe("연결하고 다시 분석");
+  });
+
+  it("keeps the progress figure, which is true either way", () => {
+    // 어디까지 됐는지는 사실이다. 다시 돈다고 그 사실이 바뀌지는 않는다.
+    expect(summarizeToday(pausedAt(4)).percent).toBe(50);
   });
 });

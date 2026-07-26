@@ -82,7 +82,9 @@ export function UnfinishedJobsSheet({
               */}
               <div className="ujs-times">
                 <b>{one.remainingLabel}</b>
-                <span>({one.fromScratchLabel})</span>
+                {/* 이어서 돌 수 없으면 두 값이 같아 대비가 사라진다. 빈 괄호를
+                    그리면 무언가 빠진 것처럼 보인다. */}
+                {one.fromScratchLabel !== "" && <span>({one.fromScratchLabel})</span>}
               </div>
 
               {one.blockedReason !== null && (
