@@ -19,7 +19,7 @@ import {
 } from "./broadcastTranscriptQwen";
 import type { BroadcastContextTranscriptionChunk } from "./broadcastContextSamplingPlan";
 import { requestBroadcastTranscriptChunkBinary } from "./broadcastTranscriptQwenClient";
-import { MAX_IN_FLIGHT_TRANSCRIPTIONS } from "./broadcastTranscriptConcurrency";
+import { AdaptiveConcurrency } from "./adaptiveConcurrency";
 import {
   prioritizeAdjacentTranscriptChunks,
   shouldExpandBroadcastContextChunk,
@@ -312,6 +312,16 @@ async function runAnalyze(
     let successfulCount = 0;
     let processedCount = 0;
     let gapCount = 0;
+    /*
+     * 동시 요청 수는 이 실행 안에서 **찾아간다.**
+     *
+     * 고정값은 세 번 틀렸다 — 4 는 지금 없는 전송 방식을 기준으로 정해졌고, 12 는
+     * 페이로드를 7MB 로 본 계산에서 나왔는데 실제는 2.75MB 였으며, 그러고도
+     * 릴레이가 죽었다. 즉 진짜 상한은 아직 아무도 모른다. 게다가 그것은 하나의
+     * 숫자도 아니다 — 기기·회선·그 순간의 상류 상태에 달렸고, 그 중 어느 것도
+     * 여기서 읽을 수 없다.
+     */
+    const concurrency = new AdaptiveConcurrency();
     const inFlight = new Set<Promise<void>>();
     const chronologicalChunks = [...request.chunks].sort(
       (left, right) =>
@@ -332,6 +342,7 @@ async function runAnalyze(
           completedCount: processedCount,
           totalCount: request.chunks.length,
           stage: "decoding",
+          concurrency: concurrency.limit,
         },
       });
       let pcm: Float32Array | null;
@@ -365,6 +376,7 @@ async function runAnalyze(
           completedCount: processedCount,
           totalCount: request.chunks.length,
           stage: "transcribing",
+          concurrency: concurrency.limit,
         },
       });
       const durationMs = chunk.sourceEndMs - chunk.sourceStartMs;
@@ -405,8 +417,10 @@ async function runAnalyze(
               ),
             ];
           }
+          concurrency.onSuccess();
         } catch {
           if (task.cancelled) return;
+          concurrency.onFailure();
           gapCount += 1;
           post({
             type: "broadcast-transcript-gap",
@@ -424,7 +438,11 @@ async function runAnalyze(
       // The body swallows its own failures, so settling always means done.
       void inFlightRequest.then(() => inFlight.delete(inFlightRequest));
 
-      if (inFlight.size >= MAX_IN_FLIGHT_TRANSCRIPTIONS) {
+      /*
+       * 한도를 **매번 다시 읽는다.** 실패로 내려간 값이 다음 판단에 곧바로
+       * 반영되지 않으면, 이미 벽에 부딪힌 뒤에도 같은 수를 계속 밀어 넣는다.
+       */
+      if (inFlight.size >= concurrency.limit) {
         await Promise.race(inFlight);
         if (task.cancelled) return;
       }

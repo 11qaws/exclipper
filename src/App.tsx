@@ -90,7 +90,6 @@ import { buildSourceReadyTimelineTicks } from "./analysis/sourceReadyTimelinePre
 import {
   runBroadcastTranscriptWorker,
 } from "./analysis/broadcastTranscriptWorkerClient";
-import { MAX_IN_FLIGHT_TRANSCRIPTIONS } from "./analysis/broadcastTranscriptConcurrency";
 import type { BroadcastTranscriptWorkerProgress } from "./analysis/broadcastTranscriptWorkerProtocol";
 import {
   BROADCAST_TRANSCRIPT_ACTIVE_MODEL_REVISION,
@@ -419,7 +418,7 @@ type AnalysisSelectionSummary = DurableAnalysisSelectionSummary;
 type AnalysisCoverageSummary = DurableAnalysisCoverageSummary;
 type AnalysisGapApprovalEvidence = DurableAnalysisGapApprovalEvidence;
 
-const APP_VERSION = "0.8.0";
+const APP_VERSION = "0.8.1";
 const PERSISTENCE_SCHEMA_VERSION = "0.3.0";
 const SIGNAL_ENGINE_VERSION =
   "streamer-reaction-fast-pass-v5-chat-fallback-music-confirmation";
@@ -1755,11 +1754,13 @@ function App() {
    * scan finished and the stage counter advanced. These three tracks report
    * what is actually running right now instead of a single serial stage.
    *
-   * 화면이 말하는 "동시 N" 은 워커가 실제로 쓰는 값이어야 한다. 손으로 맞추는
-   * 사본이었을 때는 워커를 올려도 화면이 옛 숫자를 말했고, 그 거짓말은 아무
-   * 오류도 내지 않았다.
+   * 화면이 말하는 "동시 N" 은 워커가 **그 순간 실제로 쓰는** 값이다.
+   *
+   * 이제 고정값이 아니라 실행 중에 오르내린다(`AdaptiveConcurrency`). 그래서
+   * 상수를 읽는 것으로는 안 되고 진행 메시지가 실어 오는 값을 쓴다. 아직 진행
+   * 메시지가 없으면 표시하지 않는다 — 시작하기도 전에 숫자를 말할 이유가 없다.
    */
-  const transcriptMaxConcurrencyLabel = MAX_IN_FLIGHT_TRANSCRIPTIONS;
+  const transcriptConcurrency = broadcastTranscriptProgress?.concurrency ?? null;
   const analysisElapsedMs =
     analysisStartedAtMsRef.current === null || progressClockNowMs === null
       ? 0
@@ -1782,8 +1783,8 @@ function App() {
     ? ui("완료", "Complete")
     : broadcastTranscriptProgress !== null
       ? ui(
-          `표본 ${Math.min(broadcastTranscriptProgress.totalCount, broadcastTranscriptProgress.completedCount + 1)}/${broadcastTranscriptProgress.totalCount} · 동시 ${transcriptMaxConcurrencyLabel}`,
-          `Sample ${Math.min(broadcastTranscriptProgress.totalCount, broadcastTranscriptProgress.completedCount + 1)}/${broadcastTranscriptProgress.totalCount} · ${transcriptMaxConcurrencyLabel} at once`,
+          `표본 ${Math.min(broadcastTranscriptProgress.totalCount, broadcastTranscriptProgress.completedCount + 1)}/${broadcastTranscriptProgress.totalCount}${transcriptConcurrency === null ? "" : ` · 동시 ${transcriptConcurrency}`}`,
+          `Sample ${Math.min(broadcastTranscriptProgress.totalCount, broadcastTranscriptProgress.completedCount + 1)}/${broadcastTranscriptProgress.totalCount}${transcriptConcurrency === null ? "" : ` · ${transcriptConcurrency} at once`}`,
         )
       : broadcastTranscriptStatus === "running"
         ? ui("준비 중", "Preparing")

@@ -29,6 +29,14 @@ export interface BroadcastTranscriptWorkerProgress {
   readonly completedCount: number;
   readonly totalCount: number;
   readonly stage: "decoding" | "transcribing";
+  /**
+   * 지금 실제로 쓰고 있는 동시 요청 수.
+   *
+   * 화면이 "동시 N" 으로 보여 주는 값이다. 한때 상수를 화면에 박아 뒀는데, 이제는
+   * 실행 중에 오르내리므로 워커가 알려 주지 않으면 화면이 거짓말한다 — 그리고
+   * 그 거짓말은 아무 오류도 내지 않는다.
+   */
+  readonly concurrency: number;
 }
 
 export type BroadcastTranscriptWorkerResponse =
