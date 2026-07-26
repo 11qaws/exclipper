@@ -211,46 +211,6 @@ function holdMonotonic(
   };
 }
 
-export interface PhaseGroupInput {
-  /** 끝난 묶음의 **마지막 스테이지**. 아직 아무 묶음도 안 끝났으면 null. */
-  readonly completedThroughStage: AnalysisStage | null;
-  /** 지금 도는 묶음의 **마지막 스테이지**. 전부 끝났으면 null. */
-  readonly activeGroupEndStage: AnalysisStage | null;
-  /** 그 묶음 안의 진행 비율(0~1). 셀 수 없으면 null. */
-  readonly activeGroupRatio: number | null;
-  readonly previousRatio: number | null;
-}
-
-/**
- * 여러 스테이지를 한 덩어리로 묶어 진행률을 낸다.
- *
- * 화면이 아는 단위와 상태 기계의 단위가 다르기 때문에 필요하다. `App` 은
- * 페이즈 넷(빠른 탐색·전체 맥락·후보 종합·편집자 선택)으로 진행을 알고 있고,
- * `ANALYSIS_STAGES` 는 여덟이다. 한 페이즈가 스테이지 여럿을 덮는다.
- *
- * 이때 페이즈 시작을 그 묶음의 **마지막** 스테이지가 확정된 것처럼 다루면
- * 시작하자마자 막대가 그 묶음 전체만큼 차오르고, 반대로 **첫** 스테이지로 다루면
- * 페이즈가 끝나도 막대가 덜 찬다. 그래서 묶음의 총 가중치에 그 안의 비율을
- * 곱한다 — 묶음 경계에서만 정확하고 그 사이는 선형이라는 뜻이며, 이것이 화면이
- * 아는 것 이상을 지어내지 않는 유일한 방법이다.
- *
- * **작업 층(`analysisJob`)이 화면에 배선되면 이 함수는 필요 없어진다** —
- * 그때는 `lastCommittedStage` 가 직접 오므로 `computeProgressAxis` 를 쓴다.
- */
-export function computeProgressAxisForGroups(input: PhaseGroupInput): ProgressAxis {
-  const committed = committedFraction(input.completedThroughStage);
-  const end = input.activeGroupEndStage;
-  const groupRatio = finiteUnit(input.activeGroupRatio);
-
-  const groupWeight =
-    end === null ? 0 : Math.max(0, committedFraction(end) - committed);
-  const bounded = clampUnit(
-    end === null || groupRatio === null ? committed : committed + groupWeight * groupRatio,
-  );
-
-  return holdMonotonic(bounded, input.previousRatio, end !== null && groupRatio === null);
-}
-
 export interface SingleRemainingInput {
   readonly sourceDurationMs: number;
   readonly elapsedMs: number;

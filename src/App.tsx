@@ -191,6 +191,7 @@ import {
   createAnalysisRun,
   reduceAnalysisRun,
   type AnalysisRunState,
+  type AnalysisStage,
 } from "./domain/analysisRun";
 import { deriveAnalysisControlState } from "./domain/analysisControlState";
 import { deriveCandidateReviewFeatureAvailability } from "./domain/candidateReviewFeatureAvailability";
@@ -397,7 +398,14 @@ import {
   reviewStateForDecision,
 } from "./app/reviewDecisionVocabulary";
 import { buildReviewCandidates } from "./app/reviewSurfaceModel";
-import { computeProgressAxisForGroups } from "./app/analysisProgressAxis";
+import { computeProgressAxis } from "./app/analysisProgressAxis";
+import {
+  commitAnalysisStage,
+  completeAnalysisJob,
+  failAnalysisJob,
+  pauseAnalysisJob,
+  startAnalysisJob,
+} from "./app/analysisJobBridge";
 import { AnalysisProgressPanel } from "./app/components/AnalysisProgressPanel";
 import { STREAMER_PROFILE_IMAGE_BY_NAME } from "./app/streamerProfiles";
 import { STREAMER_PALETTE_SEEDS } from "./app/streamerPalette";
@@ -1615,6 +1623,71 @@ function App() {
     detailedReviewPhaseComplete || detailedReviewPhaseFailed;
   const contextualCandidatePublicationReady =
     finalSelectionPhaseReady && timelineTopicRevealComplete;
+
+  /*
+   * 남은 세 스테이지는 `runSignalAnalysis` 밖에서 끝난다 — 전체 맥락 탐색, 후보
+   * 정밀 분석, 공개 게이트는 각자 다른 흐름이고 완료를 알리는 것은 플래그뿐이다.
+   * 그래서 그 플래그가 참이 되는 순간을 이펙트로 잡는다.
+   *
+   * 이미 확정한 것은 다시 부르지 않는다. 전이표가 중복을 거부하므로 동작은
+   * 안전하지만, 렌더마다 저장소에 쓰기를 날리게 된다.
+   */
+  const committedStagesRef = useRef<Set<string>>(new Set());
+  const jobInputSignature = analysisRun?.inputSignature ?? null;
+  /**
+   * 진행축이 읽는 값 — 마지막으로 **확정된** 스테이지.
+   *
+   * 저장소에서 다시 읽지 않고 확정하는 그 자리에서 올린다. 저장은 비동기라
+   * 되읽으면 막대가 한 박자 늦고, 그 지연이 스테이지 경계마다 눈에 띈다.
+   */
+  const [committedAnalysisStage, setCommittedAnalysisStage] =
+    useState<AnalysisStage | null>(null);
+
+  useEffect(() => {
+    if (jobInputSignature === null) {
+      return;
+    }
+    const store = getResultStore();
+    const commitOnce = (stage: AnalysisStage, done: boolean): void => {
+      const key = `${jobInputSignature}:${stage}`;
+      if (!done || committedStagesRef.current.has(key)) {
+        return;
+      }
+      committedStagesRef.current.add(key);
+      setCommittedAnalysisStage(stage);
+      void commitAnalysisStage(store, jobInputSignature, stage);
+    };
+
+    // 맥락 탐색은 실패해도 파이프라인이 계속 간다. 그때도 이 단계는 지나간
+    // 것이므로 확정한다 — 안 하면 뒤 스테이지가 순서 위반으로 전부 막힌다.
+    commitOnce("broadcastContext", wholeContextPhaseComplete || wholeContextPhaseFailed);
+    commitOnce("deepPass", finalSelectionPhaseReady);
+    commitOnce("publication", contextualCandidatePublicationReady);
+
+    /*
+     * 작업 완료는 **마지막 스테이지가 확정된 뒤**다. 최종 결과를 저장하는 시점이
+     * 아니다 — 그때는 아직 맥락 탐색과 정밀 분석이 남아 있고, 거기서 완료로
+     * 굳히면 재개할 것이 없는 반쪽 결과가 캐시에 들어간다.
+     *
+     * 후보가 하나도 없으면 완료가 거부된다(`quality_not_usable`). 그래야 빈
+     * 결과가 완료로 굳어 캐시가 영원히 그것을 되돌려주는 일이 없다.
+     */
+    if (contextualCandidatePublicationReady) {
+      const key = `${jobInputSignature}:complete`;
+      if (!committedStagesRef.current.has(key)) {
+        committedStagesRef.current.add(key);
+        void completeAnalysisJob(store, jobInputSignature, candidates.length > 0);
+      }
+    }
+  }, [
+    jobInputSignature,
+    wholeContextPhaseComplete,
+    wholeContextPhaseFailed,
+    finalSelectionPhaseReady,
+    contextualCandidatePublicationReady,
+    candidates.length,
+    getResultStore,
+  ]);
   const liveAnalysisStageNumber =
     !analysisComplete
       ? 1
@@ -1719,50 +1792,27 @@ function App() {
   });
 
   /**
-   * 페이즈 넷을 스테이지 여덟 위에 얹는다 (`ANALYSIS_SCREEN_SPEC_2026-07-26.md` §2.1).
+   * 진행축은 **작업 층이 확정한 스테이지**를 그대로 읽는다.
    *
-   * 화면이 아는 단위(빠른 탐색·전체 맥락·후보 종합)와 상태 기계의 단위가 다르다.
-   * 각 페이즈가 **어느 스테이지에서 끝나는지**만 정하고, 그 안의 비율은 화면이
-   * 실제로 셀 수 있을 때만 넘긴다 — 셀 수 없으면 null 이고, 그때 막대는 확정된
-   * 만큼만 차고 나머지는 줄무늬가 된다. 여기에 그럴듯한 상수를 넣으면 정확히
-   * "멈춘 막대" 가 된다.
+   * 한때 화면의 페이즈 넷을 스테이지 위에 얹어 근사했는데, 그것은 파이프라인이
+   * 스테이지를 확정하지 않던 시절의 임시방편이었다. 이제 일곱 지점이 실제로
+   * 확정을 기록하므로 근사할 이유가 없다 — 확정된 것은 추정이 아니라 사실이다.
    *
-   * 작업 층이 화면에 배선되면 이 매핑은 사라진다 — `lastCommittedStage` 가 직접
-   * 오므로 `computeProgressAxis` 를 바로 쓴다.
+   * 현재 스테이지 안의 진행은 **셀 수 있을 때만** 넘긴다. `fastPass` 는 훑은
+   * 비율을 알지만 맥락 탐색과 정밀 분석은 셀 수 있는 단위가 없어 `null` 이고,
+   * 그때 막대는 확정된 만큼만 차고 나머지는 줄무늬가 된다. 여기에 그럴듯한
+   * 상수를 넣으면 정확히 "멈춘 막대" 가 된다.
    */
-  const progressAxis = computeProgressAxisForGroups(
-    liveAnalysisStageNumber === 1
-      ? {
-          completedThroughStage: null,
-          activeGroupEndStage: "commitFastResult",
-          activeGroupRatio:
-            analysisProgress !== null || audioAnalysisProgress !== null
-              ? fastScanTrackRatio
-              : null,
-          previousRatio: shownProgressRatio,
-        }
-      : liveAnalysisStageNumber === 2
-        ? {
-            completedThroughStage: "commitFastResult",
-            activeGroupEndStage: "broadcastContext",
-            // 전체 맥락 탐색은 셀 수 있는 단위가 없다.
-            activeGroupRatio: null,
-            previousRatio: shownProgressRatio,
-          }
-        : liveAnalysisStageNumber === 3
-          ? {
-              completedThroughStage: "broadcastContext",
-              activeGroupEndStage: "publication",
-              activeGroupRatio: null,
-              previousRatio: shownProgressRatio,
-            }
-          : {
-              completedThroughStage: "publication",
-              activeGroupEndStage: null,
-              activeGroupRatio: null,
-              previousRatio: shownProgressRatio,
-            },
-  );
+  const currentStageCountableRatio =
+    analysisRun?.stage === "fastPass" &&
+    (analysisProgress !== null || audioAnalysisProgress !== null)
+      ? fastScanTrackRatio
+      : null;
+  const progressAxis = computeProgressAxis({
+    lastCommittedStage: committedAnalysisStage,
+    currentStageRatio: currentStageCountableRatio,
+    previousRatio: shownProgressRatio,
+  });
   /*
    * 단조성은 이전에 **보여 준** 값을 되먹여야 성립한다. 렌더 중에 맞추면 오른
    * 값이 한 프레임 그려졌다가 정정되는 깜빡임이 없다 — `progressRemainingShownMs`
@@ -2496,6 +2546,19 @@ function App() {
         return;
       }
 
+      /*
+       * 작업 층에 이 실행을 등록한다.
+       *
+       * 이 호출들은 절대 던지지 않는다(`analysisJobBridge`). 결과를 분석 흐름의
+       * 조건으로 쓰지도 않는다 — 작업 기록은 분석의 부산물이지 조건이 아니라,
+       * 기록이 실패했다고 분석을 멈추면 부산물이 본체를 인질로 잡는다.
+       */
+      committedStagesRef.current.clear();
+      setCommittedAnalysisStage(null);
+      await startAnalysisJob({ store, inputSignature, runId });
+      setCommittedAnalysisStage("preflight");
+      await commitAnalysisStage(store, inputSignature, "preflight");
+
       machine = createAnalysisRun({
         runId,
         analysisSpecId,
@@ -2696,6 +2759,10 @@ function App() {
         },
       );
 
+      // 방송 전체를 훑는 구간이 끝났다. 여기까지가 재개의 첫 절약 지점이다.
+      setCommittedAnalysisStage("fastPass");
+      await commitAnalysisStage(store, inputSignature, "fastPass");
+
       const fastPassEventEpisodes = buildEventEpisodes(rawFusedCandidates);
       const densityResult = calculateTemporalEventDensity(
         fastPassEventEpisodes.map((episode) => episode.peakMs),
@@ -2710,6 +2777,9 @@ function App() {
         [],
         { detailAnalysisBudget: 12, explorationShare: 0.15, qualityLambda: 0.75 },
       );
+
+      setCommittedAnalysisStage("seedClustering");
+      await commitAnalysisStage(store, inputSignature, "seedClustering");
 
       const fusedCandidates = selectionResult.candidates;
       setCandidateTimelineScorePoints(
@@ -2860,6 +2930,11 @@ function App() {
       if (!isMounted.current || operationEpoch !== analysisOperationEpoch.current) {
         return;
       }
+      // 저장이 확정된 뒤에 기록한다. 쓰기 전에 표시하면 실패한 저장이 확정으로
+      // 남아 다음 실행이 없는 결과를 건너뛴다.
+      setCommittedAnalysisStage("commitFastResult");
+      await commitAnalysisStage(store, inputSignature, "commitFastResult");
+
       machine = applyAnalysisEvent(machine, {
         type: "FINAL_RESULT_COMMITTED",
         commitId: finalResultCommitId,
@@ -3106,6 +3181,12 @@ function App() {
         });
         if (failure.accepted) {
           setAnalysisRun(failure.state);
+          /*
+           * 실패와 취소를 다른 상태로 남긴다. 둘 다 "안 끝났다" 지만 다음에 할
+           * 일이 다르다 — 실패는 다시 시도할 것이고, 취소는 사용자가 미룬 것이다.
+           * 같은 상태로 묶으면 시트가 둘에게 같은 버튼을 준다.
+           */
+          void failAnalysisJob(store, inputSignature, "LOCAL_ANALYSIS_FAILED");
           try {
             const failureArtifactId = createOperationId("failure");
             await store.putFailureRecord({
@@ -3187,6 +3268,11 @@ function App() {
     }
     setAnalysisCancelPending(true);
     controller.abort();
+    // 멈춤은 폐기가 아니다. 확정된 스테이지를 남겨 두는 것이 그 차이이며,
+    // 그래서 취소는 작업을 지우지 않고 `paused` 로 보낸다.
+    if (analysisRun !== null) {
+      void pauseAnalysisJob(getResultStore(), analysisRun.inputSignature);
+    }
     // The uniform transcript prefetch spends against the same consent as the
     // run, so cancelling the run stops it too. The fence stays cleared and the
     // gate blocks a restart because the run is no longer live.

@@ -3,7 +3,6 @@ import { describe, expect, it } from "vitest";
 import {
   STAGE_WEIGHTS,
   computeProgressAxis,
-  computeProgressAxisForGroups,
   formatSingleRemaining,
   normalizeStageWeights,
 } from "./analysisProgressAxis";
@@ -328,81 +327,3 @@ describe("formatSingleRemaining", () => {
   });
 });
 
-describe("computeProgressAxisForGroups", () => {
-  // 화면이 아는 단위(페이즈 4)와 상태 기계의 단위(스테이지 8)가 다르다.
-  const start = { completedThroughStage: null, previousRatio: null } as const;
-
-  it("starts a group from where the previous one ended, not from its own end", () => {
-    // 묶음 시작을 마지막 스테이지가 확정된 것처럼 다루면 시작하자마자 그 묶음
-    // 전체만큼 차오른다.
-    const axis = computeProgressAxisForGroups({
-      ...start,
-      activeGroupEndStage: "fastPass",
-      activeGroupRatio: 0,
-    });
-    expect(axis.ratio).toBe(0);
-  });
-
-  it("fills the whole group when that group finishes", () => {
-    // 반대로 첫 스테이지로 다루면 페이즈가 끝나도 막대가 덜 찬다.
-    const axis = computeProgressAxisForGroups({
-      ...start,
-      activeGroupEndStage: "fastPass",
-      activeGroupRatio: 1,
-    });
-    const committed = computeProgressAxisForGroups({
-      completedThroughStage: "fastPass",
-      activeGroupEndStage: null,
-      activeGroupRatio: null,
-      previousRatio: null,
-    });
-    expect(axis.ratio).toBeCloseTo(committed.ratio, 10);
-  });
-
-  it("moves through a group in proportion to that group's own weight", () => {
-    const half = computeProgressAxisForGroups({
-      ...start,
-      activeGroupEndStage: "fastPass",
-      activeGroupRatio: 0.5,
-    });
-    const whole = computeProgressAxisForGroups({
-      ...start,
-      activeGroupEndStage: "fastPass",
-      activeGroupRatio: 1,
-    });
-    expect(half.ratio).toBeCloseTo(whole.ratio / 2, 10);
-  });
-
-  it("reports indeterminate when a running group cannot be counted", () => {
-    const axis = computeProgressAxisForGroups({
-      completedThroughStage: "fastPass",
-      activeGroupEndStage: "deepPass",
-      activeGroupRatio: null,
-      previousRatio: null,
-    });
-    expect(axis.indeterminate).toBe(true);
-    // 셀 수 없어도 확정된 만큼은 그대로 유지한다.
-    expect(axis.ratio).toBeGreaterThan(0);
-  });
-
-  it("is complete and certain when no group is running", () => {
-    const axis = computeProgressAxisForGroups({
-      completedThroughStage: "publication",
-      activeGroupEndStage: null,
-      activeGroupRatio: null,
-      previousRatio: null,
-    });
-    expect(axis.ratio).toBe(1);
-    expect(axis.indeterminate).toBe(false);
-  });
-
-  it("never goes backwards across groups", () => {
-    const axis = computeProgressAxisForGroups({
-      ...start,
-      activeGroupEndStage: "fastPass",
-      activeGroupRatio: 0.2,
-      previousRatio: 0.5,
-    });
-    expect(axis.ratio).toBe(0.5);
-  });
-});
