@@ -32,6 +32,8 @@ export interface StageTimingReport {
   readonly measuredWeights: Readonly<Partial<Record<AnalysisStage, number>>>;
   /** 스테이지 안쪽 구간들. 무거운 스테이지의 정체를 가른다. */
   readonly spans: readonly { readonly label: string; readonly elapsedMs: number }[];
+  /** 시간이 아닌 관측. 같은 표에 있어야 함께 읽힌다. */
+  readonly notes: readonly string[];
 }
 
 export class StageTimer {
@@ -47,6 +49,11 @@ export class StageTimer {
    * 고칠 곳이 완전히 다르다.
    */
   private readonly spanMsByLabel = new Map<string, number>();
+  /**
+   * 시간이 아닌 관측. 동시성이 어디서 멈췄는지처럼, 표에 같이 있어야 판단이
+   * 되지만 초 단위로 잴 수 없는 것들.
+   */
+  private readonly notes: string[] = [];
   private lastMarkMs: number | null = null;
 
   public constructor(private readonly sourceDurationMs: number) {}
@@ -58,6 +65,11 @@ export class StageTimer {
   public addSpan(label: string, elapsedMs: number): void {
     if (!Number.isFinite(elapsedMs) || elapsedMs < 0) return;
     this.spanMsByLabel.set(label, (this.spanMsByLabel.get(label) ?? 0) + elapsedMs);
+  }
+
+  /** 시간이 아닌 관측을 남긴다. 같은 것을 두 번 적지 않는다. */
+  public note(text: string): void {
+    if (text.length > 0 && !this.notes.includes(text)) this.notes.push(text);
   }
 
   /** 구간 하나를 재는 손잡이. 끝날 때 부르면 그 사이 시간이 더해진다. */
@@ -119,6 +131,7 @@ export class StageTimer {
       sourceDurationMs: this.sourceDurationMs,
       measuredWeights,
       spans,
+      notes: [...this.notes],
     };
   }
 }

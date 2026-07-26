@@ -456,6 +456,7 @@ async function runAnalyze(
       requestedCount: request.chunks.length,
       completedCount: successfulCount,
       gapCount,
+      concurrencyOutcome: concurrency.describe(),
     });
   } catch (error) {
     if (task.cancelled || error instanceof InputDisposedError) return;

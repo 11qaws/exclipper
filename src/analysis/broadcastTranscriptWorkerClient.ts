@@ -41,6 +41,8 @@ export interface BroadcastTranscriptWorkerRunResult {
   readonly results: readonly BroadcastTranscriptQwenResult[];
   readonly gapChunkIds: readonly string[];
   readonly requestedCount: number;
+  /** 동시성이 어디서 멈췄나. 실측 표에 남긴다. */
+  readonly concurrencyOutcome: string;
 }
 
 export class BroadcastTranscriptWorkerClientError extends Error {
@@ -331,6 +333,7 @@ export function runBroadcastTranscriptWorker(
               .filter((chunk) => gapChunkIds.has(chunk.chunkId))
               .map((chunk) => chunk.chunkId),
             requestedCount: options.chunks.length,
+            concurrencyOutcome: event.data.concurrencyOutcome,
           });
           return;
         case "broadcast-transcript-cancelled":

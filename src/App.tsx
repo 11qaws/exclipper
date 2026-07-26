@@ -6612,6 +6612,11 @@ function App() {
         "main-transcription",
         Date.now() - mainTranscriptionStartedAtMs,
       );
+      /*
+       * 동시성이 어디서 멈췄는지를 실측 표에 남긴다. 진행 중의 "동시 N" 은 스쳐
+       * 지나가므로 결론을 알 수 없고, 그것을 모르면 다음 값도 또 추측이 된다.
+       */
+      stageTimerRef.current?.note(`전사 ${result.concurrencyOutcome}`);
       if (controller.signal.aborted || !isMounted.current) {
         return;
       }

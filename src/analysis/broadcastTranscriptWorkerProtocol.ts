@@ -63,6 +63,14 @@ export type BroadcastTranscriptWorkerResponse =
       readonly requestedCount: number;
       readonly completedCount: number;
       readonly gapCount: number;
+      /**
+       * 동시성이 **어디서 멈췄나.** 예: `동시 7 (8 에서 실패)`.
+       *
+       * 진행 중에 보이는 "동시 N" 은 스쳐 지나가므로 결론을 알 수 없다. 이 실행이
+       * 실제로 어디까지 올라갔고 무엇에 막혔는지가 **처음으로 관측되는 값**이며,
+       * 그것을 모르면 다음 고정값도 또 추측이 된다.
+       */
+      readonly concurrencyOutcome: string;
     }
   | {
       readonly type: "broadcast-transcript-cancelled";

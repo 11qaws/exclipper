@@ -116,6 +116,7 @@ describe("broadcastTranscriptWorkerClient", () => {
       requestedCount: 2,
       completedCount: 2,
       gapCount: 0,
+      concurrencyOutcome: "동시 4 (상한 미확인)",
     });
     await expect(promise).resolves.toMatchObject({
       requestedCount: 2,
@@ -161,6 +162,7 @@ describe("broadcastTranscriptWorkerClient", () => {
       requestedCount: 1,
       completedCount: 0,
       gapCount: 1,
+      concurrencyOutcome: "동시 1 (2 에서 실패)",
     });
     await expect(promise).resolves.toMatchObject({
       requestedCount: 1,
