@@ -399,6 +399,7 @@ import {
 } from "./app/reviewDecisionVocabulary";
 import { buildReviewCandidates } from "./app/reviewSurfaceModel";
 import { computeProgressAxis } from "./app/analysisProgressAxis";
+import { formatStageTimingReport, StageTimer } from "./app/stageTiming";
 import {
   commitAnalysisStage,
   completeAnalysisJob,
@@ -1633,6 +1634,11 @@ function App() {
    * 안전하지만, 렌더마다 저장소에 쓰기를 날리게 된다.
    */
   const committedStagesRef = useRef<Set<string>>(new Set());
+  /**
+   * 스테이지 실측. `STAGE_WEIGHTS` 는 추정이고, 추정으로 최적화하면 엉뚱한 데를
+   * 판다. 확정 지점이 이미 경계이므로 그 사이 시간을 재는 것으로 충분하다.
+   */
+  const stageTimerRef = useRef<StageTimer | null>(null);
   const jobInputSignature = analysisRun?.inputSignature ?? null;
   /**
    * 진행축이 읽는 값 — 마지막으로 **확정된** 스테이지.
@@ -1654,6 +1660,7 @@ function App() {
         return;
       }
       committedStagesRef.current.add(key);
+      stageTimerRef.current?.mark(stage, Date.now());
       setCommittedAnalysisStage(stage);
       void commitAnalysisStage(store, jobInputSignature, stage);
     };
@@ -1677,6 +1684,10 @@ function App() {
       if (!committedStagesRef.current.has(key)) {
         committedStagesRef.current.add(key);
         void completeAnalysisJob(store, jobInputSignature, candidates.length > 0);
+        const timer = stageTimerRef.current;
+        if (timer !== null) {
+          console.info(formatStageTimingReport(timer.report()));
+        }
       }
     }
   }, [
@@ -2555,7 +2566,10 @@ function App() {
        */
       committedStagesRef.current.clear();
       setCommittedAnalysisStage(null);
+      stageTimerRef.current = new StageTimer(durableInput.source.durationMs);
+      stageTimerRef.current.begin(Date.now());
       await startAnalysisJob({ store, inputSignature, runId });
+      stageTimerRef.current?.mark("preflight", Date.now());
       setCommittedAnalysisStage("preflight");
       await commitAnalysisStage(store, inputSignature, "preflight");
 
@@ -2760,6 +2774,7 @@ function App() {
       );
 
       // 방송 전체를 훑는 구간이 끝났다. 여기까지가 재개의 첫 절약 지점이다.
+      stageTimerRef.current?.mark("fastPass", Date.now());
       setCommittedAnalysisStage("fastPass");
       await commitAnalysisStage(store, inputSignature, "fastPass");
 
@@ -2778,6 +2793,7 @@ function App() {
         { detailAnalysisBudget: 12, explorationShare: 0.15, qualityLambda: 0.75 },
       );
 
+      stageTimerRef.current?.mark("seedClustering", Date.now());
       setCommittedAnalysisStage("seedClustering");
       await commitAnalysisStage(store, inputSignature, "seedClustering");
 
@@ -2932,6 +2948,7 @@ function App() {
       }
       // 저장이 확정된 뒤에 기록한다. 쓰기 전에 표시하면 실패한 저장이 확정으로
       // 남아 다음 실행이 없는 결과를 건너뛴다.
+      stageTimerRef.current?.mark("commitFastResult", Date.now());
       setCommittedAnalysisStage("commitFastResult");
       await commitAnalysisStage(store, inputSignature, "commitFastResult");
 
