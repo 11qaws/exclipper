@@ -442,38 +442,38 @@ function base64DecodedByteLength(value: string): number {
  * splitting on it yields exactly the prefix and suffix around the audio.
  */
 const TRANSCRIPT_AUDIO_SENTINEL = "ExclipperAudioSentinel000000";
-const BASE64_BYTE_ALPHABET = new TextEncoder().encode(
-  "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/",
-);
-const BASE64_PAD_BYTE = 61;
+/**
+ * `String.fromCharCode` 에 한 번에 넘길 바이트 수.
+ *
+ * 인자 개수 상한이 있어 배열 전체를 한 번에 펼칠 수 없다. 32K 는 그 한계에 안전히
+ * 들면서 호출 횟수를 충분히 줄인다 — 2.75MB 가 84 번이 된다.
+ */
+const BASE64_CHUNK_BYTES = 0x8000;
 
+/**
+ * Base64, but through the platform rather than by hand.
+ *
+ * The hand-rolled loop this replaces walked the audio three bytes at a time:
+ * about 916,000 iterations and 3.7 million array writes for a single 90-second
+ * chunk. On a Worker that is the whole CPU budget for one request, and it is
+ * why `/v1/broadcast-transcript` died with "Worker exceeded CPU time limit" —
+ * at any concurrency, including one. Concurrency was never the cause; it only
+ * changed how many requests hit the same wall at once.
+ *
+ * `btoa` is native, and `String.fromCharCode` over 32 KB slices keeps the call
+ * count near a hundred instead of a million. Same output, a fraction of the CPU.
+ *
+ * The alphabet table is gone with the loop: the platform owns the encoding now,
+ * so a second copy of it here could only ever drift.
+ */
 function base64EncodeToBytes(input: Uint8Array): Uint8Array<ArrayBuffer> {
-  const out = new Uint8Array(4 * Math.ceil(input.byteLength / 3));
-  const whole = input.byteLength - (input.byteLength % 3);
-  let o = 0;
-  for (let i = 0; i < whole; i += 3) {
-    const x = (input[i]! << 16) | (input[i + 1]! << 8) | input[i + 2]!;
-    out[o] = BASE64_BYTE_ALPHABET[(x >>> 18) & 63]!;
-    out[o + 1] = BASE64_BYTE_ALPHABET[(x >>> 12) & 63]!;
-    out[o + 2] = BASE64_BYTE_ALPHABET[(x >>> 6) & 63]!;
-    out[o + 3] = BASE64_BYTE_ALPHABET[x & 63]!;
-    o += 4;
+  let binary = "";
+  for (let offset = 0; offset < input.byteLength; offset += BASE64_CHUNK_BYTES) {
+    binary += String.fromCharCode(
+      ...input.subarray(offset, offset + BASE64_CHUNK_BYTES),
+    );
   }
-  const rest = input.byteLength - whole;
-  if (rest === 1) {
-    const x = input[whole]! << 16;
-    out[o] = BASE64_BYTE_ALPHABET[(x >>> 18) & 63]!;
-    out[o + 1] = BASE64_BYTE_ALPHABET[(x >>> 12) & 63]!;
-    out[o + 2] = BASE64_PAD_BYTE;
-    out[o + 3] = BASE64_PAD_BYTE;
-  } else if (rest === 2) {
-    const x = (input[whole]! << 16) | (input[whole + 1]! << 8);
-    out[o] = BASE64_BYTE_ALPHABET[(x >>> 18) & 63]!;
-    out[o + 1] = BASE64_BYTE_ALPHABET[(x >>> 12) & 63]!;
-    out[o + 2] = BASE64_BYTE_ALPHABET[(x >>> 6) & 63]!;
-    out[o + 3] = BASE64_PAD_BYTE;
-  }
-  return out;
+  return new TextEncoder().encode(btoa(binary));
 }
 
 type BroadcastTranscriptAudioPayload =
