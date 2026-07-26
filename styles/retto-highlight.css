@@ -697,13 +697,6 @@
   font-size: .75rem;
 }
 
-.rh-progress-track {
-  height: 6px;
-  overflow: hidden;
-  border-radius: 999px;
-  background: var(--bg3);
-}
-
 .rh-progress-value {
   width: var(--progress, 0%);
   height: 100%;
@@ -5040,116 +5033,10 @@
   z-index: 2;
 }
 
-/*
- * Concurrent progress tracks (0.4.4 · PART F). The fast scan and the
- * uniform-phase transcript prefetch run at the same time since 0.4.2; this
- * panel shows both instead of a single serial stage number, so the cancel
- * button returns to normal flow rather than floating over track rows.
- */
-.rh-progress-tracks-panel {
-  gap: 14px;
-}
-
-.rh-progress-tracks-panel .rh-live-analysis-cancel {
-  position: static;
-  justify-self: start;
-}
-
-.rh-progress-head {
-  position: relative;
-  z-index: 1;
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 12px;
-  flex-wrap: wrap;
-}
-
-.rh-progress-head .rh-eyebrow {
-  margin: 0;
-}
-
-.rh-progress-eta {
-  color: var(--text2);
-  font-size: .8125rem;
-  font-weight: 650;
-  white-space: nowrap;
-}
-
-.rh-progress-tracks {
-  position: relative;
-  z-index: 1;
-  display: grid;
-  gap: 10px;
-}
-
-.rh-progress-track {
-  display: grid;
-  grid-template-columns: 84px minmax(0, 1fr) 148px;
-  align-items: center;
-  gap: 12px;
-}
-
-.rh-progress-track-label {
-  color: var(--text2);
-  font-size: .8125rem;
-  font-weight: 700;
-}
-
-.rh-progress-track-bar {
-  position: relative;
-  height: 7px;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--accent) 10%, var(--bg2));
-  overflow: hidden;
-}
-
-.rh-progress-track-bar > i {
-  position: absolute;
-  inset: 0 auto 0 0;
-  display: block;
-  border-radius: 999px;
-  background: var(--accent);
-  transition: width .4s ease;
-}
-
-.rh-progress-track[data-done="true"] .rh-progress-track-bar > i {
-  background: var(--rh-success);
-}
-
-.rh-progress-track-status {
-  color: var(--text3);
-  font-size: .75rem;
-  font-variant-numeric: tabular-nums;
-  text-align: right;
-  white-space: nowrap;
-}
-
-.rh-progress-keepopen {
-  position: relative;
-  z-index: 1;
-  margin: 0;
-  color: var(--text3);
-  font-size: .75rem;
-  line-height: 1.5;
-}
-
 @media (max-width: 520px) {
-  .rh-progress-track {
-    grid-template-columns: 72px minmax(0, 1fr);
-    grid-template-areas: "label status" "bar bar";
-    row-gap: 4px;
-  }
-
-  .rh-progress-track-label { grid-area: label; }
-  .rh-progress-track-status { grid-area: status; }
-  .rh-progress-track-bar { grid-area: bar; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .rh-progress-track-bar > i {
-    transition: none;
-  }
 }
 
 .rh-workspace-top:has(> section:only-child) {

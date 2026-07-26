@@ -398,6 +398,8 @@ import {
   reviewStateForDecision,
 } from "./app/reviewDecisionVocabulary";
 import { buildReviewCandidates } from "./app/reviewSurfaceModel";
+import { computeProgressAxisForGroups } from "./app/analysisProgressAxis";
+import { AnalysisProgressPanel } from "./app/components/AnalysisProgressPanel";
 import { STREAMER_PROFILE_IMAGE_BY_NAME } from "./app/streamerProfiles";
 import { STREAMER_PALETTE_SEEDS } from "./app/streamerPalette";
 import { paletteIdForCastRosterId } from "./app/streamerPaletteForRoster";
@@ -490,6 +492,8 @@ function App() {
    * analysis never inherits the previous run's floor.
    */
   const [shownRemainingMs, setShownRemainingMs] = useState<number | null>(null);
+  /** 진행축이 뒤로 가지 않게 붙잡을 기준. 보여 준 값이어야 한다. */
+  const [shownProgressRatio, setShownProgressRatio] = useState<number | null>(null);
   const [analysisError, setAnalysisError] = useState<string | null>(null);
   const [candidatePassBRun, setCandidatePassBRun] =
     useState<CandidatePassBRunState | null>(null);
@@ -1881,6 +1885,88 @@ function App() {
     basis: progressRemainingEstimate.basis,
     remainingMs: progressRemainingShownMs,
   });
+
+  /**
+   * 페이즈 넷을 스테이지 여덟 위에 얹는다 (`ANALYSIS_SCREEN_SPEC_2026-07-26.md` §2.1).
+   *
+   * 화면이 아는 단위(빠른 탐색·전체 맥락·후보 종합)와 상태 기계의 단위가 다르다.
+   * 각 페이즈가 **어느 스테이지에서 끝나는지**만 정하고, 그 안의 비율은 화면이
+   * 실제로 셀 수 있을 때만 넘긴다 — 셀 수 없으면 null 이고, 그때 막대는 확정된
+   * 만큼만 차고 나머지는 줄무늬가 된다. 여기에 그럴듯한 상수를 넣으면 정확히
+   * "멈춘 막대" 가 된다.
+   *
+   * 작업 층이 화면에 배선되면 이 매핑은 사라진다 — `lastCommittedStage` 가 직접
+   * 오므로 `computeProgressAxis` 를 바로 쓴다.
+   */
+  const progressAxis = computeProgressAxisForGroups(
+    liveAnalysisStageNumber === 1
+      ? {
+          completedThroughStage: null,
+          activeGroupEndStage: "fastPass",
+          activeGroupRatio:
+            analysisProgress !== null || audioAnalysisProgress !== null
+              ? fastScanTrackRatio
+              : null,
+          previousRatio: shownProgressRatio,
+        }
+      : liveAnalysisStageNumber === 2
+        ? {
+            completedThroughStage: "fastPass",
+            activeGroupEndStage: "deepPass",
+            // 전체 맥락 탐색은 셀 수 있는 단위가 없다.
+            activeGroupRatio: null,
+            previousRatio: shownProgressRatio,
+          }
+        : liveAnalysisStageNumber === 3
+          ? {
+              completedThroughStage: "deepPass",
+              activeGroupEndStage: "ranking",
+              activeGroupRatio: null,
+              previousRatio: shownProgressRatio,
+            }
+          : {
+              completedThroughStage: "ranking",
+              activeGroupEndStage: null,
+              activeGroupRatio: null,
+              previousRatio: shownProgressRatio,
+            },
+  );
+  /*
+   * 단조성은 이전에 **보여 준** 값을 되먹여야 성립한다. 렌더 중에 맞추면 오른
+   * 값이 한 프레임 그려졌다가 정정되는 깜빡임이 없다 — `progressRemainingShownMs`
+   * 와 같은 이유이며, 멱등이라 한 번 더 렌더되고 안정된다.
+   */
+  if (progressAxis.ratio !== shownProgressRatio) {
+    setShownProgressRatio(progressAxis.ratio);
+  }
+
+  const sourceTitleForProgress =
+    sourceFile?.name ?? pendingFileName ?? ui("선택한 방송", "Selected broadcast");
+
+  /** 접어 둔 트랙 3행. 기존 트랙 값을 그대로 쓴다 — 새로 계산하지 않는다. */
+  const progressDetailTracks = [
+    {
+      id: "signal",
+      label: ui("반응 신호", "Reaction signals"),
+      ratio:
+        analysisProgress !== null || audioAnalysisProgress !== null
+          ? fastScanTrackRatio
+          : null,
+      status: fastScanTrackStatus,
+    },
+    {
+      id: "voice",
+      label: ui("대사 인식", "Transcription"),
+      ratio: transcriptTrackDone ? 1 : transcriptTrackRatio,
+      status: transcriptTrackStatus,
+    },
+    {
+      id: "chat",
+      label: ui("채팅", "Chat"),
+      ratio: chatTrackDone ? 1 : null,
+      status: chatTrackStatus,
+    },
+  ];
   const liveAnalysisPhaseSteps = [
     {
       number: 1,
@@ -6981,51 +7067,15 @@ function App() {
               </div>
             )}
             {analysisBusy && (
-              <section
-                className="rh-live-analysis-panel rh-progress-tracks-panel"
-                data-state="active"
-                aria-label="현재 AI 분석 진행 상황"
-                aria-live="polite"
-              >
-                <div className="rh-progress-head">
-                  <p className="rh-eyebrow">{ui("오늘 방송 분석 중", "Analyzing today's broadcast")}</p>
-                  <span className="rh-progress-eta">{progressRemainingLabel}</span>
-                </div>
-                <div className="rh-progress-tracks">
-                  <div className="rh-progress-track" data-done={fastScanTrackRatio >= 1}>
-                    <span className="rh-progress-track-label">{ui("반응 신호", "Reaction signals")}</span>
-                    <div className="rh-progress-track-bar">
-                      <i style={{ width: `${Math.round(Math.min(1, Math.max(0, fastScanTrackRatio)) * 100)}%` }} />
-                    </div>
-                    <span className="rh-progress-track-status">{fastScanTrackStatus}</span>
-                  </div>
-                  <div className="rh-progress-track" data-done={transcriptTrackDone}>
-                    <span className="rh-progress-track-label">{ui("대사 인식", "Transcription")}</span>
-                    <div className="rh-progress-track-bar">
-                      <i style={{ width: `${Math.round(Math.min(1, Math.max(0, transcriptTrackRatio)) * 100)}%` }} />
-                    </div>
-                    <span className="rh-progress-track-status">{transcriptTrackStatus}</span>
-                  </div>
-                  <div className="rh-progress-track" data-done={chatTrackDone}>
-                    <span className="rh-progress-track-label">{ui("채팅", "Chat")}</span>
-                    <div className="rh-progress-track-bar">
-                      <i style={{ width: chatTrackDone ? "100%" : "0%" }} />
-                    </div>
-                    <span className="rh-progress-track-status">{chatTrackStatus}</span>
-                  </div>
-                </div>
-                <p className="rh-progress-keepopen">
-                  {ui(
-                    "이 탭을 열어 두면 계속 진행돼요. 닫으면 처음부터 다시 분석해야 해요.",
-                    "Keep this tab open — closing it restarts the analysis from the beginning.",
-                  )}
-                </p>
-                {analysisCanBeCancelled && (
-                  <button className="btn btn-secondary rh-live-analysis-cancel" type="button" onClick={cancelAnalysis}>
-                    {ui("안전하게 취소", "Cancel safely")}
-                  </button>
-                )}
-              </section>
+              <AnalysisProgressPanel
+                sourceTitle={sourceTitleForProgress}
+                sourceDurationLabel={formatDuration(boundarySourceDurationMs)}
+                axis={progressAxis}
+                remainingLabel={progressRemainingLabel}
+                currentActivity={liveAnalysisStageTitle}
+                tracks={progressDetailTracks}
+                onStop={analysisCanBeCancelled ? cancelAnalysis : () => undefined}
+              />
             )}
           </section>
         )}

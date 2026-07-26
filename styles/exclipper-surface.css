@@ -1238,47 +1238,6 @@
   color: var(--ex-ink);
 }
 
-/* ══ 9c. Other screens, tightened to the same system ═══════════════════ */
-
-.rh-app .rh-progress-tracks-panel {
-  border: 1px solid var(--ex-line);
-  border-radius: var(--rh-radius-lg);
-  background: var(--ex-bg);
-  box-shadow: var(--ex-sh1);
-}
-
-.rh-app .rh-progress-track {
-  grid-template-columns: 88px minmax(0, 1fr) 150px;
-  gap: 14px;
-}
-
-.rh-app .rh-progress-track-label {
-  color: var(--ex-ink2);
-  font-size: .84375rem;
-  font-weight: 700;
-}
-
-.rh-app .rh-progress-track-bar {
-  height: 8px;
-  border-radius: 4px;
-  background: var(--ex-bg3);
-}
-
-.rh-app .rh-progress-track-bar > i {
-  border-radius: 4px;
-  background: var(--ex-accent);
-}
-
-.rh-app .rh-progress-track[data-done="true"] .rh-progress-track-bar > i {
-  background: var(--ex-ok);
-}
-
-.rh-app .rh-progress-track-status {
-  color: var(--ex-ink3);
-  font-size: .78125rem;
-  text-align: right;
-}
-
 .rh-app .rh-early-candidates {
   border-color: var(--ex-accent-line);
   border-radius: var(--rh-radius-md);
