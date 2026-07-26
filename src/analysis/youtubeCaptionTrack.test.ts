@@ -6,6 +6,7 @@ import {
   extractKoreanYouTubeCaptionTrackFromPlayerResponse,
   parseYouTubeCaptionJson3,
   youtubeVideoIdFromSourceName,
+  youtubeVideoIdFromUserInput,
 } from "./youtubeCaptionTrack";
 import { createCaptionDiscoveredLeadRefinementPlan } from "./discoveredLeadRefinement";
 
@@ -116,4 +117,33 @@ describe("youtubeCaptionTrack", () => {
       expect.objectContaining({ textKo: "껍데기잖아요 [비명]" }),
     ]);
   });
+});
+
+describe("youtubeVideoIdFromUserInput", () => {
+  // 사람은 주소창을 복사한다. ID 11자를 손으로 뽑아내게 하면 그 순간 이 기능을
+  // 안 쓰게 된다.
+  it.each([
+    ["https://www.youtube.com/watch?v=KzAW3yow80Q", "KzAW3yow80Q"],
+    ["https://youtu.be/KzAW3yow80Q", "KzAW3yow80Q"],
+    ["https://www.youtube.com/watch?v=KzAW3yow80Q&t=120s", "KzAW3yow80Q"],
+    ["https://www.youtube.com/watch?v=KzAW3yow80Q&list=PLabc", "KzAW3yow80Q"],
+    ["https://www.youtube.com/embed/KzAW3yow80Q", "KzAW3yow80Q"],
+    ["https://www.youtube.com/live/KzAW3yow80Q", "KzAW3yow80Q"],
+    ["https://youtu.be/KzAW3yow80Q?si=xyz", "KzAW3yow80Q"],
+    ["KzAW3yow80Q", "KzAW3yow80Q"],
+    ["  KzAW3yow80Q  ", "KzAW3yow80Q"],
+    // 호스트는 보지 않는다. 꺼낸 값은 유튜브 영상 ID 로만 쓰이므로, 어느 주소에서
+    // 나왔든 자막 조회가 성공하거나 404 로 끝난다. 호스트를 검사하면 유튜브가
+    // 주소 형태를 바꿀 때마다 조용히 못 읽게 된다.
+    ["https://example.com/watch?v=KzAW3yow80Q", "KzAW3yow80Q"],
+  ])("reads %s", (input, expected) => {
+    expect(youtubeVideoIdFromUserInput(input)).toBe(expected);
+  });
+
+  it.each([[""], ["   "], ["https://www.youtube.com/"], ["tooshort"]])(
+    "refuses %s",
+    (input) => {
+      expect(youtubeVideoIdFromUserInput(input)).toBeNull();
+    },
+  );
 });

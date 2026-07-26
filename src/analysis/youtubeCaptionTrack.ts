@@ -35,6 +35,39 @@ export interface YouTubeCaptionTrackResult {
   readonly events: readonly YouTubeCaptionEvent[];
 }
 
+/**
+ * 사용자가 붙여 넣은 것에서 영상 ID 를 꺼낸다.
+ *
+ * 파일명에서 뽑는 경로(`youtubeVideoIdFromSourceName`)는 yt-dlp 기본 이름을
+ * 그대로 둔 파일에서만 통한다. 이름을 조금만 바꾸면 단서가 사라지고, 그러면
+ * 자막이 있는 방송인데도 전사 경로로 떨어진다 — 방송 하나에 수십 분이 걸리는
+ * 경로다.
+ *
+ * 그래서 사람이 직접 지정할 수 있어야 하고, 그때 **ID 11자를 손으로 뽑아내게
+ * 하면 안 된다.** 주소창을 복사해 붙여 넣는 것이 사람이 실제로 하는 행동이다.
+ * 짧은 주소, 임베드 주소, 재생목록이 붙은 주소, ID 자체를 모두 받는다.
+ */
+export function youtubeVideoIdFromUserInput(value: string): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  if (trimmed.length === 0) return null;
+
+  // ID 를 그대로 붙여 넣은 경우.
+  if (YOUTUBE_VIDEO_ID_PATTERN.test(trimmed)) return trimmed;
+
+  // `youtu.be/ID`, `watch?v=ID`, `embed/ID`, `shorts/ID`, `live/ID`.
+  const patterns = [
+    /(?:youtu\.be\/)([A-Za-z0-9_-]{11})/u,
+    /[?&]v=([A-Za-z0-9_-]{11})/u,
+    /\/(?:embed|shorts|live|v)\/([A-Za-z0-9_-]{11})/u,
+  ];
+  for (const pattern of patterns) {
+    const match = pattern.exec(trimmed);
+    if (match?.[1] !== undefined) return match[1];
+  }
+  return null;
+}
+
 export function youtubeVideoIdFromSourceName(sourceName: string): string | null {
   if (typeof sourceName !== "string") return null;
   const match = /\[([A-Za-z0-9_-]{11})\](?:\.[^.]+)?$/u.exec(sourceName.trim());

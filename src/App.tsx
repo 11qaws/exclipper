@@ -104,6 +104,7 @@ import {
   createYouTubeCaptionRefinementTranscripts,
   type YouTubeCaptionTrackResult,
   youtubeVideoIdFromSourceName,
+  youtubeVideoIdFromUserInput,
 } from "./analysis/youtubeCaptionTrack";
 import { requestYouTubeCaptionTrack } from "./analysis/youtubeCaptionClient";
 import {
@@ -418,7 +419,7 @@ type AnalysisSelectionSummary = DurableAnalysisSelectionSummary;
 type AnalysisCoverageSummary = DurableAnalysisCoverageSummary;
 type AnalysisGapApprovalEvidence = DurableAnalysisGapApprovalEvidence;
 
-const APP_VERSION = "0.7.5";
+const APP_VERSION = "0.8.0";
 const PERSISTENCE_SCHEMA_VERSION = "0.3.0";
 const SIGNAL_ENGINE_VERSION =
   "streamer-reaction-fast-pass-v5-chat-fallback-music-confirmation";
@@ -532,6 +533,23 @@ function App() {
    * 상태를 이펙트 deps 에 넣으면 그 이펙트가 상태를 바꾸므로 다시 돈다. ref 는
    * 렌더를 유발하지 않아 그 고리를 만들지 않는다.
    */
+  /**
+   * 사용자가 직접 지정한 다시보기 주소.
+   *
+   * 파일명에서 ID 를 뽑는 경로는 yt-dlp 기본 이름을 그대로 둔 파일에서만 통한다.
+   * 이름을 바꿨거나 다른 방법으로 받았으면 단서가 없고, 그러면 자막이 있는
+   * 방송인데도 **방송 하나에 수십 분 걸리는 전사 경로**로 떨어진다.
+   *
+   * 그래서 사람이 붙여 넣을 수 있게 한다. 이 값은 파일명보다 우선한다 — 사람이
+   * 명시적으로 준 것을 추측보다 아래에 두면 고쳐 줄 방법이 없어진다.
+   */
+  const [manualVodInput, setManualVodInput] = useState("");
+  /*
+   * 이펙트가 읽는 쪽은 ref 다. 상태를 deps 에 넣으면 주소를 한 글자 칠 때마다
+   * 전사가 처음부터 다시 시작한다. 값은 분석을 시작할 때 한 번 읽히면 되고,
+   * 그것이 실제 사용 흐름이기도 하다 — 파일을 고르고, 주소를 붙이고, 시작한다.
+   */
+  const manualVodInputRef = useRef("");
   const youtubeCaptionTrackRef = useRef<YouTubeCaptionTrackResult | null>(null);
   const [youtubeCaptionTrack, setYouTubeCaptionTrack] =
     useState<YouTubeCaptionTrackResult | null>(null);
@@ -6303,7 +6321,9 @@ function App() {
 
     void (async () => {
       const store = getResultStore();
-      const youtubeVideoId = youtubeVideoIdFromSourceName(sourceFile.name);
+      const youtubeVideoId =
+        youtubeVideoIdFromUserInput(manualVodInputRef.current) ??
+        youtubeVideoIdFromSourceName(sourceFile.name);
       const saved = await store.getBroadcastContextSession(runId);
       const matchedSaved =
         saved !== null &&
@@ -7394,6 +7414,41 @@ function App() {
                 />
               </div>
             </div>
+
+            {/*
+              다시보기 주소는 **파일명에서 못 찾았을 때만** 묻는다. 찾았으면 물을
+              것이 없고, 물으면 사용자는 "뭘 더 해야 하나" 를 판단해야 한다.
+
+              위치가 채팅 아래인 이유: 둘 다 "있으면 좋은 것" 이고 없어도 분석은
+              된다. 원본 고르기 위쪽에 두면 필수 입력으로 읽힌다.
+            */}
+            {sourceFile !== null &&
+              youtubeVideoIdFromSourceName(sourceFile.name) === null && (
+                <div className="rh-vod-hint">
+                  <label htmlFor="vod-url">
+                    다시보기 주소 <span>(선택 · 대사 분석이 훨씬 빨라집니다)</span>
+                  </label>
+                  <input
+                    id="vod-url"
+                    type="text"
+                    inputMode="url"
+                    placeholder="https://youtu.be/… 붙여넣기"
+                    value={manualVodInput}
+                    disabled={analysisBusy}
+                    onChange={(event) => {
+                      setManualVodInput(event.target.value);
+                      manualVodInputRef.current = event.target.value;
+                    }}
+                  />
+                  <p aria-live="polite">
+                    {manualVodInput.trim().length === 0
+                      ? "이 방송이 유튜브 다시보기에 있으면 자막을 받아 대사 분석을 건너뜁니다."
+                      : youtubeVideoIdFromUserInput(manualVodInput) === null
+                        ? "주소에서 영상을 찾지 못했습니다. 유튜브 주소를 그대로 붙여넣어 주세요."
+                        : "확인됐습니다. 분석할 때 이 영상의 자막을 씁니다."}
+                  </p>
+                </div>
+              )}
 
             {chatImport !== null && (
               <div className="rh-source-summary" aria-live="polite">
