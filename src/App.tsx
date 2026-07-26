@@ -422,7 +422,7 @@ type AnalysisSelectionSummary = DurableAnalysisSelectionSummary;
 type AnalysisCoverageSummary = DurableAnalysisCoverageSummary;
 type AnalysisGapApprovalEvidence = DurableAnalysisGapApprovalEvidence;
 
-const APP_VERSION = "0.7.2";
+const APP_VERSION = "0.7.3";
 const PERSISTENCE_SCHEMA_VERSION = "0.3.0";
 const SIGNAL_ENGINE_VERSION =
   "streamer-reaction-fast-pass-v5-chat-fallback-music-confirmation";
@@ -530,6 +530,13 @@ function App() {
     useState<readonly BroadcastTranscriptExplorationCell[]>([]);
   const [broadcastTranscriptChapters, setBroadcastTranscriptChapters] =
     useState<readonly BroadcastContextChapterInput[]>([]);
+  /**
+   * 이미 받아 둔 자막을 다시 받지 않기 위한 거울.
+   *
+   * 상태를 이펙트 deps 에 넣으면 그 이펙트가 상태를 바꾸므로 다시 돈다. ref 는
+   * 렌더를 유발하지 않아 그 고리를 만들지 않는다.
+   */
+  const youtubeCaptionTrackRef = useRef<YouTubeCaptionTrackResult | null>(null);
   const [youtubeCaptionTrack, setYouTubeCaptionTrack] =
     useState<YouTubeCaptionTrackResult | null>(null);
   const [broadcastTranscriptError, setBroadcastTranscriptError] =
@@ -804,6 +811,7 @@ function App() {
     setTimelineInspectionTarget(null);
     setBroadcastTranscriptExplorationCells([]);
     setYouTubeCaptionTrack(null);
+    youtubeCaptionTrackRef.current = null;
     setClipDownloadStatusById({});
     setClipDownloadErrorById({});
     setClipDownloadProgressById({});
@@ -2107,6 +2115,7 @@ function App() {
     setBroadcastTranscriptExplorationCells([]);
     setBroadcastTranscriptChapters([]);
     setYouTubeCaptionTrack(null);
+    youtubeCaptionTrackRef.current = null;
     setBroadcastTranscriptError(null);
     setBroadcastContextStatus("idle");
     setBroadcastContextResult(null);
@@ -4981,6 +4990,7 @@ function App() {
     setBroadcastTranscriptProgress(null);
     setBroadcastTranscriptChapters([]);
     setYouTubeCaptionTrack(null);
+    youtubeCaptionTrackRef.current = null;
     setBroadcastTranscriptError(null);
     setBroadcastContextStatus("restoring");
     setBroadcastContextResult(null);
@@ -6325,6 +6335,16 @@ function App() {
         youtubeVideoId !== null &&
         matchedSaved.modelRevision === YOUTUBE_CAPTION_MODEL_REVISION
       ) {
+          /*
+           * 이미 받아 둔 자막이면 다시 받지 않는다.
+           *
+           * 이 이펙트의 deps 에 `broadcastTranscriptStatus` 가 있고 이펙트 자신이
+           * 그 상태를 바꾼다. 그래서 첫 분석이 자막으로 지도를 만들어 저장하면,
+           * 바뀐 상태가 이펙트를 다시 돌리고 이번에는 방금 저장한 지도가
+           * `matchedSaved` 로 잡혀 **같은 자막을 한 번 더 받는다.** 실측에서
+           * `youtube-caption-fetch` 와 `(restore)` 가 한 실행에 둘 다 찍혀 드러났다.
+           */
+          if (youtubeCaptionTrackRef.current === null) {
           try {
             const endRestoredCaptionSpan = stageTimerRef.current?.startSpan(
               "youtube-caption-fetch(restore)",
@@ -6335,10 +6355,12 @@ function App() {
             });
             endRestoredCaptionSpan?.(Date.now());
             if (!controller.signal.aborted && isMounted.current) {
+              youtubeCaptionTrackRef.current = captionTrack;
               setYouTubeCaptionTrack(captionTrack);
             }
           } catch {
             // The persisted complete chapter map remains usable offline.
+          }
           }
         if (!controller.signal.aborted && isMounted.current) {
           setBroadcastTranscriptExplorationCells(
@@ -6396,6 +6418,7 @@ function App() {
           });
           endCaptionSpan?.(Date.now());
           if (controller.signal.aborted || !isMounted.current) return;
+          youtubeCaptionTrackRef.current = captionTrack;
           setYouTubeCaptionTrack(captionTrack);
           const captionChapters = createYouTubeCaptionChapters(
             captionTrack,
@@ -6541,6 +6564,7 @@ function App() {
       }
       await checkpointPersistence.catch(() => undefined);
       setYouTubeCaptionTrack(null);
+    youtubeCaptionTrackRef.current = null;
       const finalGapChunkIds = result.gapChunkIds;
       const completeAudioCoverage =
         broadcastContextSamplingPlan.estimatedAudioCoverageRatio === 1 &&
