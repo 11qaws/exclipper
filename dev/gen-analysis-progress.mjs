@@ -36,7 +36,7 @@ const SCENES = [
   },
   {
     name: "훑는 중 · 62%",
-    lastCommittedStage: "prepareModels",
+    lastCommittedStage: "seedClustering",
     currentStageRatio: 0.55,
     elapsedMs: 9 * 60_000,
     activity: "대사 인식 중 · 표본 34/60",
@@ -60,7 +60,7 @@ const SCENES = [
   },
   {
     name: "다 끝남",
-    lastCommittedStage: "ranking",
+    lastCommittedStage: "publication",
     currentStageRatio: null,
     elapsedMs: 34 * 60_000,
     activity: "정리 완료",

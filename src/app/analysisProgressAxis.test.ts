@@ -69,7 +69,7 @@ describe("computeProgressAxis", () => {
 
   it("reports one once the final stage is committed", () => {
     const axis = computeProgressAxis({
-      lastCommittedStage: "ranking",
+      lastCommittedStage: "publication",
       currentStageRatio: null,
       previousRatio: 0.9,
     });
@@ -80,7 +80,7 @@ describe("computeProgressAxis", () => {
   // 아직 도는 것처럼 보인다.
   it("is never indeterminate after the last stage, even without a stage ratio", () => {
     const axis = computeProgressAxis({
-      lastCommittedStage: "ranking",
+      lastCommittedStage: "publication",
       currentStageRatio: null,
       previousRatio: null,
     });
@@ -89,29 +89,31 @@ describe("computeProgressAxis", () => {
 
   it("adds the current stage's own share on top of the committed stages", () => {
     const committed = computeProgressAxis({
-      lastCommittedStage: "prepareModels",
+      lastCommittedStage: "seedClustering",
       currentStageRatio: 0,
       previousRatio: null,
     });
     const halfway = computeProgressAxis({
-      lastCommittedStage: "prepareModels",
+      lastCommittedStage: "seedClustering",
       currentStageRatio: 0.5,
       previousRatio: null,
     });
     const normalized = normalizeStageWeights();
-    expect(committed.ratio).toBeCloseTo(0.15, 12);
-    expect(halfway.ratio).toBeCloseTo(0.15 + normalized.fastPass / 2, 12);
+    // preflight 2 + fastPass 45 + seedClustering 3 = 50 (합 100 기준)
+    expect(committed.ratio).toBeCloseTo(0.5, 12);
+    expect(halfway.ratio).toBeCloseTo(0.5 + normalized.commitFastResult / 2, 12);
   });
 
   // 워커가 보내는 비율은 1 을 넘길 수 있다. 그대로 더하면 막대가 다음 스테이지의
   // 몫까지 먹고 들어가, 그 스테이지 내내 멈춰 있어야 한다.
   it("never lets one stage spill past its own share", () => {
     const axis = computeProgressAxis({
-      lastCommittedStage: "prepareModels",
+      lastCommittedStage: "seedClustering",
       currentStageRatio: 5,
       previousRatio: null,
     });
-    expect(axis.ratio).toBeCloseTo(0.6, 12);
+    // 0.50 에 commitFastResult 몫 0.02 까지만. 다음 스테이지 몫은 못 먹는다.
+    expect(axis.ratio).toBeCloseTo(0.52, 12);
   });
 
   it("stays within zero and one for out-of-range input", () => {
@@ -128,7 +130,7 @@ describe("computeProgressAxis", () => {
   // 재개 직후의 낮은 값이 그것을 만든다.
   it("holds the previous value when a fresh reading would move the bar backwards", () => {
     const axis = computeProgressAxis({
-      lastCommittedStage: "prepareModels",
+      lastCommittedStage: "seedClustering",
       currentStageRatio: 0,
       previousRatio: 0.6,
     });
@@ -143,13 +145,13 @@ describe("computeProgressAxis", () => {
       { lastCommittedStage: null, currentStageRatio: 0.2 },
       { lastCommittedStage: "preflight", currentStageRatio: 0.9 },
       { lastCommittedStage: "preflight", currentStageRatio: 0.1 },
-      { lastCommittedStage: "prepareModels", currentStageRatio: null },
-      { lastCommittedStage: "prepareModels", currentStageRatio: 0.5 },
-      { lastCommittedStage: "prepareModels", currentStageRatio: 0.05 },
+      { lastCommittedStage: "seedClustering", currentStageRatio: null },
+      { lastCommittedStage: "seedClustering", currentStageRatio: 0.5 },
+      { lastCommittedStage: "seedClustering", currentStageRatio: 0.05 },
       { lastCommittedStage: "fastPass", currentStageRatio: 0 },
       { lastCommittedStage: "deepPass", currentStageRatio: 0.4 },
-      { lastCommittedStage: "boundary", currentStageRatio: null },
-      { lastCommittedStage: "ranking", currentStageRatio: null },
+      { lastCommittedStage: "deepPass", currentStageRatio: null },
+      { lastCommittedStage: "publication", currentStageRatio: null },
     ];
 
     const shown: number[] = [];
@@ -171,12 +173,12 @@ describe("computeProgressAxis", () => {
   // 아니라 indeterminate 로 말한다.
   it("marks an uncountable stage as indeterminate instead of inventing a number", () => {
     const unknown = computeProgressAxis({
-      lastCommittedStage: "prepareModels",
+      lastCommittedStage: "seedClustering",
       currentStageRatio: null,
       previousRatio: null,
     });
     const committedOnly = computeProgressAxis({
-      lastCommittedStage: "prepareModels",
+      lastCommittedStage: "seedClustering",
       currentStageRatio: 0,
       previousRatio: null,
     });
@@ -200,7 +202,8 @@ describe("computeProgressAxis", () => {
       currentStageRatio: 0,
       previousRatio: Number.NaN,
     });
-    expect(axis.ratio).toBeCloseTo(0.6, 12);
+    // preflight 2 + fastPass 45 = 47
+    expect(axis.ratio).toBeCloseTo(0.47, 12);
   });
 });
 
@@ -384,7 +387,7 @@ describe("computeProgressAxisForGroups", () => {
 
   it("is complete and certain when no group is running", () => {
     const axis = computeProgressAxisForGroups({
-      completedThroughStage: "ranking",
+      completedThroughStage: "publication",
       activeGroupEndStage: null,
       activeGroupRatio: null,
       previousRatio: null,

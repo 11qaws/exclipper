@@ -1,12 +1,30 @@
+/**
+ * 파이프라인이 **실제로 하는 일**의 순서.
+ *
+ * 한때 여덟이었고 그 중 셋(`benchmark` · `prepareModels` · `boundary`)은 코드
+ * 어디에서도 일어나지 않았다. 없는 단계를 목록에 두면 진행률이 시작하자마자
+ * 이유 없이 차오르고, 정작 몇 분씩 걸리는 전체 맥락 탐색은 어느 단계에도 속하지
+ * 않아 화면에서 사라진다 — **없는 일에 시간을 배분하고 있는 일은 안 보이는**
+ * 상태가 된다.
+ *
+ * 이름은 코드에 있는 말을 쓴다. `boundary` 는 검토 화면에서 사용자가 하는 구간
+ * 편집을 가리키므로 파이프라인 단계 이름으로 쓰지 않는다.
+ */
 export const ANALYSIS_STAGES = [
+  /** 원본 열기 · 메타데이터 · 지문 계산 */
   "preflight",
-  "benchmark",
-  "prepareModels",
+  /** 방송 **전체**를 오디오·화면·채팅으로 훑는다 */
   "fastPass",
+  /** 피크를 묶고 후보를 선별한다 */
   "seedClustering",
+  /** 잠정·최종 결과를 저장한다 */
+  "commitFastResult",
+  /** 방송 전역 맥락 탐색 (원격 호출 여러 번) */
+  "broadcastContext",
+  /** 후보만 다시 읽는 정밀 분석 (유료) */
   "deepPass",
-  "boundary",
-  "ranking",
+  /** 공개 게이트 · 순위 확정 */
+  "publication",
 ] as const;
 
 export type AnalysisStage = (typeof ANALYSIS_STAGES)[number];
@@ -235,13 +253,12 @@ const CANCEL_ALLOWED_STATUSES = new Set<AnalysisRunState["status"]>([
 ]);
 
 const NEXT_STAGE: Partial<Record<AnalysisStage, AnalysisStage>> = {
-  preflight: "benchmark",
-  benchmark: "prepareModels",
-  prepareModels: "fastPass",
+  preflight: "fastPass",
   fastPass: "seedClustering",
-  seedClustering: "deepPass",
-  deepPass: "boundary",
-  boundary: "ranking",
+  seedClustering: "commitFastResult",
+  commitFastResult: "broadcastContext",
+  broadcastContext: "deepPass",
+  deepPass: "publication",
 };
 
 export function createAnalysisRun(

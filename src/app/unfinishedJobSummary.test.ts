@@ -61,7 +61,11 @@ describe("unfinished job summary", () => {
     });
 
     it("counts only committed stages", () => {
-      expect(committedPercent(pausedAt(ANALYSIS_STAGES.length / 2))).toBe(50);
+      // 스테이지 수가 홀수라 절반이 딱 떨어지지 않는다. 비율 자체를 검사한다.
+      const half = Math.floor(ANALYSIS_STAGES.length / 2);
+      expect(committedPercent(pausedAt(half))).toBe(
+        Math.round((half / ANALYSIS_STAGES.length) * 100),
+      );
     });
 
     it("always reaches a hundred once every stage is committed", () => {
@@ -181,8 +185,9 @@ describe("unfinished job summary", () => {
 
   it("says what deleting costs, not just that it deletes", () => {
     // "정말 삭제할까요?" 로는 이미 지불한 유료 분석을 버린다는 것을 알 수 없다.
-    const text = deleteConfirmationText(summarize(pausedAt(6)));
-    expect(text.body).toContain("75%");
+    const summary = summarize(pausedAt(6));
+    const text = deleteConfirmationText(summary);
+    expect(text.body).toContain(`${summary.percent}%`);
     expect(text.body).toContain("유료");
   });
 });
@@ -220,6 +225,8 @@ describe("when the pipeline cannot skip what is already done", () => {
 
   it("keeps the progress figure, which is true either way", () => {
     // 어디까지 됐는지는 사실이다. 다시 돈다고 그 사실이 바뀌지는 않는다.
-    expect(summarizeToday(pausedAt(4)).percent).toBe(50);
+    expect(summarizeToday(pausedAt(4)).percent).toBe(
+      Math.round((4 / ANALYSIS_STAGES.length) * 100),
+    );
   });
 });

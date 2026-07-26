@@ -78,17 +78,17 @@ describe("analysis job", () => {
       const paused = drive(newJob(), [
         { type: "START", runId: "run-1" },
         { type: "STAGE_COMMITTED", stage: "preflight" },
-        { type: "STAGE_COMMITTED", stage: "benchmark" },
+        { type: "STAGE_COMMITTED", stage: "fastPass" },
         { type: "PAUSE" },
       ]);
       expect(paused.status).toBe("paused");
-      expect(paused.lastCommittedStage).toBe("benchmark");
+      expect(paused.lastCommittedStage).toBe("fastPass");
       expect(paused.activeRunId).toBeNull();
 
       const resumed = drive(paused, [{ type: "RESUME", runId: "run-2" }]);
       // 재개는 되돌리지 않는다 — 확정된 스테이지 다음부터다. 이것이 곧 캐시다.
-      expect(resumed.lastCommittedStage).toBe("benchmark");
-      expect(nextStageToRun(resumed)).toBe("prepareModels");
+      expect(resumed.lastCommittedStage).toBe("fastPass");
+      expect(nextStageToRun(resumed)).toBe("seedClustering");
       expect(resumed.activeRunId).toBe("run-2");
     });
 
@@ -96,7 +96,7 @@ describe("analysis job", () => {
       const job = drive(newJob(), [
         { type: "START", runId: "run-1" },
         { type: "STAGE_COMMITTED", stage: "preflight" },
-        { type: "STAGE_COMMITTED", stage: "benchmark" },
+        { type: "STAGE_COMMITTED", stage: "fastPass" },
       ]);
       expect(remainingStageCount(job)).toBe(ANALYSIS_STAGES.length - 2);
     });

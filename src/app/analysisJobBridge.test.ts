@@ -50,12 +50,12 @@ describe("analysis job bridge", () => {
     const store = newStore();
     await startedRun(store);
     await commitAnalysisStage(store, SIGNATURE, "preflight");
-    await commitAnalysisStage(store, SIGNATURE, "benchmark");
+    await commitAnalysisStage(store, SIGNATURE, "fastPass");
     await pauseAnalysisJob(store, SIGNATURE);
 
     const record = await store.getJob(jobIdFor(SIGNATURE));
     expect(record?.job.status).toBe("paused");
-    expect(record?.job.lastCommittedStage).toBe("benchmark");
+    expect(record?.job.lastCommittedStage).toBe("fastPass");
   });
 
   it("resumes a paused job rather than refusing the transition", async () => {

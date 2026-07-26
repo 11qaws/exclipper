@@ -77,7 +77,7 @@ describe("AnalysisRun reducer", () => {
 
   it("keeps stage independent across pause and confirmed same-session resume", () => {
     let state = makeRunning();
-    state = apply(state, { type: "STAGE_ADVANCED", stage: "benchmark" });
+    state = apply(state, { type: "STAGE_ADVANCED", stage: "fastPass" });
     state = apply(state, { type: "PAUSE_REQUESTED" });
 
     const tooEarly = reduceAnalysisRun(state, {
@@ -96,7 +96,7 @@ describe("AnalysisRun reducer", () => {
       checkpointId: "checkpoint-1",
     });
     expect(state.status).toBe("paused");
-    expect(state.stage).toBe("benchmark");
+    expect(state.stage).toBe("fastPass");
 
     const wrongSession = reduceAnalysisRun(state, {
       type: "RESUME_REQUESTED_SAME_SESSION",
@@ -129,7 +129,7 @@ describe("AnalysisRun reducer", () => {
     });
     expect(state).toMatchObject({
       status: "running",
-      stage: "benchmark",
+      stage: "fastPass",
       workerEpoch: 2,
     });
   });

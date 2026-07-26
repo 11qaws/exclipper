@@ -1734,7 +1734,7 @@ function App() {
     liveAnalysisStageNumber === 1
       ? {
           completedThroughStage: null,
-          activeGroupEndStage: "fastPass",
+          activeGroupEndStage: "commitFastResult",
           activeGroupRatio:
             analysisProgress !== null || audioAnalysisProgress !== null
               ? fastScanTrackRatio
@@ -1743,21 +1743,21 @@ function App() {
         }
       : liveAnalysisStageNumber === 2
         ? {
-            completedThroughStage: "fastPass",
-            activeGroupEndStage: "deepPass",
+            completedThroughStage: "commitFastResult",
+            activeGroupEndStage: "broadcastContext",
             // 전체 맥락 탐색은 셀 수 있는 단위가 없다.
             activeGroupRatio: null,
             previousRatio: shownProgressRatio,
           }
         : liveAnalysisStageNumber === 3
           ? {
-              completedThroughStage: "deepPass",
-              activeGroupEndStage: "ranking",
+              completedThroughStage: "broadcastContext",
+              activeGroupEndStage: "publication",
               activeGroupRatio: null,
               previousRatio: shownProgressRatio,
             }
           : {
-              completedThroughStage: "ranking",
+              completedThroughStage: "publication",
               activeGroupEndStage: null,
               activeGroupRatio: null,
               previousRatio: shownProgressRatio,
