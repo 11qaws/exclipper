@@ -90,6 +90,7 @@ import { buildSourceReadyTimelineTicks } from "./analysis/sourceReadyTimelinePre
 import {
   runBroadcastTranscriptWorker,
 } from "./analysis/broadcastTranscriptWorkerClient";
+import { MAX_IN_FLIGHT_TRANSCRIPTIONS } from "./analysis/broadcastTranscriptConcurrency";
 import type { BroadcastTranscriptWorkerProgress } from "./analysis/broadcastTranscriptWorkerProtocol";
 import {
   BROADCAST_TRANSCRIPT_ACTIVE_MODEL_REVISION,
@@ -422,7 +423,7 @@ type AnalysisSelectionSummary = DurableAnalysisSelectionSummary;
 type AnalysisCoverageSummary = DurableAnalysisCoverageSummary;
 type AnalysisGapApprovalEvidence = DurableAnalysisGapApprovalEvidence;
 
-const APP_VERSION = "0.7.3";
+const APP_VERSION = "0.7.4";
 const PERSISTENCE_SCHEMA_VERSION = "0.3.0";
 const SIGNAL_ENGINE_VERSION =
   "streamer-reaction-fast-pass-v5-chat-fallback-music-confirmation";
@@ -1741,11 +1742,11 @@ function App() {
    * scan finished and the stage counter advanced. These three tracks report
    * what is actually running right now instead of a single serial stage.
    *
-   * Keep this in sync with MAX_IN_FLIGHT_TRANSCRIPTIONS in
-   * broadcastTranscript.worker.ts; it is not imported because that module is
-   * bundled as a worker entry, not a shared library.
+   * 화면이 말하는 "동시 N" 은 워커가 실제로 쓰는 값이어야 한다. 손으로 맞추는
+   * 사본이었을 때는 워커를 올려도 화면이 옛 숫자를 말했고, 그 거짓말은 아무
+   * 오류도 내지 않았다.
    */
-  const transcriptMaxConcurrencyLabel = 4;
+  const transcriptMaxConcurrencyLabel = MAX_IN_FLIGHT_TRANSCRIPTIONS;
   const analysisElapsedMs =
     analysisStartedAtMsRef.current === null || progressClockNowMs === null
       ? 0
@@ -6042,6 +6043,15 @@ function App() {
         }
       }
 
+      /*
+       * 자막이 없을 때만 도는 원격 전사. **이것이 실제 병목이다** — 청크 91개를
+       * 동시 4로 돌면 23파 × 약 100초 = 38분이다.
+       *
+       * 그런데 지금까지의 실측은 이 경로를 한 번도 타지 않았다. 시험한 파일이
+       * 전부 파일명에 `[videoId]` 를 달고 있어 자막으로 끝났기 때문이다. 재지
+       * 않은 구간이 가장 무거웠다.
+       */
+      const transcriptionStartedAtMs = Date.now();
       const refinementTranscripts = youtubeCaptionTrack === null
         ? (
             await runBroadcastTranscriptWorker(sourceFile, {
@@ -6054,6 +6064,14 @@ function App() {
             youtubeCaptionTrack,
             plan,
           );
+      // 자막 경로면 몇 밀리초, 원격 전사면 수십 분이다. 같은 이름으로 재서
+      // 표에 나란히 놓으면 그 격차가 그대로 보인다.
+      stageTimerRef.current?.addSpan(
+        youtubeCaptionTrack === null
+          ? "remote-transcription(no-caption)"
+          : "caption-refinement",
+        Date.now() - transcriptionStartedAtMs,
+      );
       if (controller.signal.aborted || !isMounted.current) return;
       if (refinementTranscripts.length === 0) {
         throw new Error("새 의미 후보의 정확한 대사 위치를 다시 찾지 못했어요.");

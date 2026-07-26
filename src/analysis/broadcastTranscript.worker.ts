@@ -19,6 +19,7 @@ import {
 } from "./broadcastTranscriptQwen";
 import type { BroadcastContextTranscriptionChunk } from "./broadcastContextSamplingPlan";
 import { requestBroadcastTranscriptChunkBinary } from "./broadcastTranscriptQwenClient";
+import { MAX_IN_FLIGHT_TRANSCRIPTIONS } from "./broadcastTranscriptConcurrency";
 import {
   prioritizeAdjacentTranscriptChunks,
   shouldExpandBroadcastContextChunk,
@@ -42,17 +43,6 @@ interface ActiveTask {
   readonly fetchControllers: Set<AbortController>;
 }
 
-/**
- * How many transcription requests may be in flight at once.
- *
- * The ceiling used to be the relay: base64-in-JSON transport cost it about
- * 30 MB of transient strings per request against a 128 MB isolate, and two
- * concurrent chunks were enough to kill it (measured 2026-07-23). The 0.4.0
- * raw-WAV transport keeps the relay near 7 MB per request, so four chunks
- * overlap with headroom and the binding constraint moves to the proxy rate
- * limit.
- */
-const MAX_IN_FLIGHT_TRANSCRIPTIONS = 4;
 
 let activeTask: ActiveTask | null = null;
 
