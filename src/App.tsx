@@ -378,11 +378,6 @@ import {
   transcriptOperationKey,
   transcriptPhaseFor,
 } from "./app/transcriptPhase";
-import {
-  clampToMonotonic,
-  estimateRemainingMs,
-  formatRemainingLabel,
-} from "./app/progressEstimate";
 import { buildCandidateSignalTiles } from "./app/candidateSignals";
 import { candidateStripPositionPercent } from "./app/positionStrip";
 import {
@@ -399,7 +394,7 @@ import {
   reviewStateForDecision,
 } from "./app/reviewDecisionVocabulary";
 import { buildReviewCandidates } from "./app/reviewSurfaceModel";
-import { computeProgressAxis } from "./app/analysisProgressAxis";
+import { computeProgressAxis, formatSingleRemaining } from "./app/analysisProgressAxis";
 import { formatStageTimingReport, StageTimer } from "./app/stageTiming";
 import {
   commitAnalysisStage,
@@ -423,7 +418,7 @@ type AnalysisSelectionSummary = DurableAnalysisSelectionSummary;
 type AnalysisCoverageSummary = DurableAnalysisCoverageSummary;
 type AnalysisGapApprovalEvidence = DurableAnalysisGapApprovalEvidence;
 
-const APP_VERSION = "0.7.4";
+const APP_VERSION = "0.7.5";
 const PERSISTENCE_SCHEMA_VERSION = "0.3.0";
 const SIGNAL_ENGINE_VERSION =
   "streamer-reaction-fast-pass-v5-chat-fallback-music-confirmation";
@@ -1788,28 +1783,6 @@ function App() {
         : chatImportStatus === "failed"
           ? ui("가져오기 실패 · 계속 진행", "Import failed · continuing")
           : ui("선택 사항", "Optional");
-  const progressRemainingEstimate = estimateRemainingMs({
-    sourceDurationMs: boundarySourceDurationMs,
-    elapsedMs: analysisElapsedMs,
-    ratio: analysisProgress !== null || audioAnalysisProgress !== null ? fastScanTrackRatio : null,
-  });
-  /**
-   * The label may only count down. Adjusting during render (rather than in an
-   * effect) keeps a risen projection from being painted for one frame before
-   * being corrected — the upward flicker is exactly what erodes trust here.
-   * clampToMonotonic is idempotent, so this settles after one extra render.
-   */
-  const progressRemainingShownMs = clampToMonotonic(
-    shownRemainingMs,
-    progressRemainingEstimate.remainingMs,
-  );
-  if (progressRemainingShownMs !== shownRemainingMs) {
-    setShownRemainingMs(progressRemainingShownMs);
-  }
-  const progressRemainingLabel = formatRemainingLabel({
-    basis: progressRemainingEstimate.basis,
-    remainingMs: progressRemainingShownMs,
-  });
 
   /**
    * 진행축은 **작업 층이 확정한 스테이지**를 그대로 읽는다.
@@ -1841,6 +1814,32 @@ function App() {
   if (progressAxis.ratio !== shownProgressRatio) {
     setShownProgressRatio(progressAxis.ratio);
   }
+
+  /**
+   * 남은 시간은 **단일 진행축**을 기준으로 낸다.
+   *
+   * 한때 `fastScanTrackRatio` 를 썼는데, 그 값은 방송 전체를 훑는 구간만의
+   * 진행률이라 **분석이 35% 지났을 때 이미 100%** 가 된다. 그래서 화면이
+   * "약 1분 남음" 이라고 말하면서 실제로는 3분 넘게 남아 있었다. 축을 하나로
+   * 합친 이유가 정확히 이것인데 남은 시간은 옛 값을 계속 보고 있었다.
+   *
+   * 셀 수 없는 구간에서는 비율을 넘기지 않는다 — `estimateRemainingMs` 가
+   * 계획 범위로 떨어지고, 지어낸 비율로 외삽하지 않는다.
+   */
+  const progressRemaining = formatSingleRemaining({
+    sourceDurationMs: boundarySourceDurationMs,
+    elapsedMs: analysisElapsedMs,
+    ratio: progressAxis.indeterminate ? null : progressAxis.ratio,
+    previousRemainingMs: shownRemainingMs,
+  });
+  /*
+   * 라벨은 줄어들기만 한다. 렌더 중에 맞추면 오른 값이 한 프레임 그려졌다가
+   * 정정되는 깜빡임이 없다 — 위로 튀는 추정치가 신뢰를 깎는 지점이 바로 그것이다.
+   */
+  if (progressRemaining.remainingMs !== shownRemainingMs) {
+    setShownRemainingMs(progressRemaining.remainingMs);
+  }
+  const progressRemainingLabel = progressRemaining.label;
 
   const sourceTitleForProgress =
     sourceFile?.name ?? pendingFileName ?? ui("선택한 방송", "Selected broadcast");
@@ -6068,8 +6067,8 @@ function App() {
       // 표에 나란히 놓으면 그 격차가 그대로 보인다.
       stageTimerRef.current?.addSpan(
         youtubeCaptionTrack === null
-          ? "remote-transcription(no-caption)"
-          : "caption-refinement",
+          ? "refinement-transcription(no-caption)"
+          : "refinement-from-caption",
         Date.now() - transcriptionStartedAtMs,
       );
       if (controller.signal.aborted || !isMounted.current) return;
@@ -6531,6 +6530,17 @@ function App() {
       };
       const checkpointResults = new Map<string, BroadcastTranscriptQwenResult>();
       let checkpointPersistence: Promise<void> = Promise.resolve();
+      /*
+       * **본 전사.** 화면의 `표본 n/N` 이 이것이고, 자막이 없을 때 방송 전체를
+       * 90초 청크로 잘라 원격 ASR 에 보내는 구간이다.
+       *
+       * 앞서 계측을 붙였던 `runBroadcastTranscriptWorker` 호출은 이것이 아니라
+       * **정련용 재전사**(선별된 리드만 다시 읽는 작은 호출)였다. 이름이 같아
+       * 같은 일로 착각했고, 그래서 "전사 21.7초" 라는 값이 나왔다 — 실제로 몇십 분
+       * 걸리는 쪽은 재지 않은 채였다. 같은 함수를 두 곳에서 부를 때는 어느 쪽을
+       * 재는지 이름이 아니라 **무엇이 그 진행률을 그리는지**로 확인해야 한다.
+       */
+      const mainTranscriptionStartedAtMs = Date.now();
       const result = await runBroadcastTranscriptWorker(sourceFile, {
         sourceDurationMs,
         chunks: explorationChunks,
@@ -6577,6 +6587,10 @@ function App() {
           updateExplorationCell(chunkId, "gap");
         },
       });
+      stageTimerRef.current?.addSpan(
+        "main-transcription",
+        Date.now() - mainTranscriptionStartedAtMs,
+      );
       if (controller.signal.aborted || !isMounted.current) {
         return;
       }
