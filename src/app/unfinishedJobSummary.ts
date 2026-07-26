@@ -129,6 +129,8 @@ export function deleteConfirmationText(summary: UnfinishedJobSummary): {
     body:
       `지금까지 분석한 ${summary.percent}% 가 사라지고, 다시 하려면 처음부터입니다. ` +
       "후보 정리(유료 분석)도 다시 해야 합니다.",
-    confirmLabel: "지우기",
+    // 대상을 붙인다. 두 버튼이 나란히 있으면 모양이 비슷해서, 되돌릴 수 없는
+    // 쪽에만 마찰을 한 번 더 건다.
+    confirmLabel: "분석 지우기",
   };
 }

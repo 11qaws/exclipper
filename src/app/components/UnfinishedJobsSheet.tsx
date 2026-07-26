@@ -162,8 +162,12 @@ function DeleteConfirm({
         <span>{text.body}</span>
       </div>
       <div className="ujs-acts">
+        {/*
+          안전한 쪽은 **남는 상태**를 말한다. "그만두기" 는 이 앱에서 분석을
+          그만둔다는 뜻이라, 분석을 지우는 창에서는 반대편 버튼이 하는 일로 읽힌다.
+        */}
         <button className="ujs-more" type="button" onClick={onCancel}>
-          그만두기
+          그대로 두기
         </button>
         <button className="ujs-more" type="button" onClick={onConfirm}>
           {text.confirmLabel}

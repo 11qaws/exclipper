@@ -825,17 +825,26 @@ export function ReviewSurface({
         {resetConfirmOpen && (
           <div className="rvw-confirm" role="alertdialog" aria-modal="true" aria-labelledby="rvw-confirm-title">
             <div className="rvw-confirm__box">
-              <strong id="rvw-confirm-title">후보 전체를 처음 상태로 되돌릴까요?</strong>
+              <strong id="rvw-confirm-title">이 후보를 처음 상태로 되돌릴까요?</strong>
+              {/*
+                어느 후보인지 이름을 댄다. 키를 눌러 연 창이라 화면에서 눈을 떼고
+                있었을 수 있고, 그때 "이 후보" 만으로는 어느 것인지 확신하지 못한다.
+              */}
               <p>
-                지금까지의 사용·빼기 판단과 구간 조정이 모두 지워지고, AI가 처음 제안한
-                상태로 돌아갑니다. 되돌릴 수 없습니다.
+                <b>{active.title}</b> 의 사용·빼기 판단과 구간 조정이 지워지고, AI가
+                처음 제안한 상태로 돌아갑니다. 되돌릴 수 없습니다.
               </p>
+              {/*
+                안전한 쪽은 **남는 상태**를 말한다. "취소" 는 이 화면에서 이미
+                "사용 취소 · 빼기 취소" 로 판단을 되돌린다는 뜻이라, 판단을 지우는
+                창에서는 반대편 버튼이 하는 일로 읽힌다.
+              */}
               <div className="rvw-confirm__acts">
                 <button type="button" onClick={onResetCancel}>
-                  취소 <Keycap>Esc</Keycap>
+                  그대로 두기 <Keycap>Esc</Keycap>
                 </button>
                 <button type="button" className="danger" onClick={onResetConfirm}>
-                  초기화 <Keycap>↵</Keycap>
+                  이 후보 초기화 <Keycap>↵</Keycap>
                 </button>
               </div>
             </div>

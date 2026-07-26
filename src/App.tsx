@@ -4752,19 +4752,26 @@ function App() {
   };
 
   /**
-   * 후보 전체 리셋 (명세 §11.1).
+   * 보고 있는 후보 하나를 처음 상태로 (명세 §11.1).
    *
-   * 이 화면의 변경 수단은 트림과 판단 둘뿐이므로 리셋은 **둘 다** 되돌려야
-   * 일관된다 — 일부만 지우면 "나머지는 왜 남았지?"가 된다. 새 상태 기계를
-   * 만들지 않고 기존 두 경로(`resetCandidateBoundary`, `updateReview`)를
-   * 후보마다 순서대로 호출한다. 파괴적이라 확인창을 거친 뒤에만 불린다.
+   * 이 화면에서 후보 하나를 바꾸는 수단은 트림과 판단 둘뿐이므로 리셋은 **둘 다**
+   * 되돌려야 일관된다 — 일부만 지우면 "나머지는 왜 남았지?"가 된다. 새 상태
+   * 기계를 만들지 않고 기존 두 경로(`resetCandidateBoundary`, `updateReview`)를
+   * 순서대로 부른다.
+   *
+   * **범위는 지금 보고 있는 후보 하나다.** 한때 전체 후보를 돌았는데, 그러면
+   * 23개 중 20개를 검토한 사람이 방금 만지던 후보만 다시 하려고 키를 눌렀다가
+   * 20개를 잃는다. `Z` 는 판단 1개만 되돌리므로 복구 수단도 없다. 키를 누르는
+   * 사람이 생각하는 대상은 언제나 지금 화면에 있는 후보다.
    */
-  const resetAllCandidateReview = (): void => {
-    for (const candidate of orderedCandidates) {
-      resetCandidateBoundary(candidate);
-      if (candidate.reviewState !== "unreviewed") {
-        updateReview(candidate.id, "unreviewed");
-      }
+  const resetFocusedCandidateReview = (): void => {
+    const candidate = orderedCandidates.find(({ id }) => id === focusedCandidateId);
+    if (candidate === undefined) {
+      return;
+    }
+    resetCandidateBoundary(candidate);
+    if (candidate.reviewState !== "unreviewed") {
+      updateReview(candidate.id, "unreviewed");
     }
     setReviewUndo(null);
   };
@@ -4888,7 +4895,7 @@ function App() {
       openResetConfirm: () => setResetConfirmOpen(true),
       confirmReset: () => {
         setResetConfirmOpen(false);
-        resetAllCandidateReview();
+        resetFocusedCandidateReview();
       },
       cancelReset: () => setResetConfirmOpen(false),
   });
@@ -8262,7 +8269,7 @@ function App() {
                   onResetConfirmOpen={() => setResetConfirmOpen(true)}
                   onResetConfirm={() => {
                     setResetConfirmOpen(false);
-                    resetAllCandidateReview();
+                    resetFocusedCandidateReview();
                   }}
                   onResetCancel={() => setResetConfirmOpen(false)}
                   onItemFocusMover={(move) => {
