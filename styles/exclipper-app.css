@@ -236,12 +236,6 @@ body,
   font-variant-numeric: tabular-nums;
 }
 
-/* ── Progress: one accent, no gradients ─────────────────────── */
-progress.rh-live-analysis-progress,
-progress.rh-analysis-progress {
-  accent-color: var(--ex-accent);
-}
-
 /* ── Notices: tone triads from the single semantic set ──────── */
 .rh-notice {
   border-radius: var(--ex-radius-md);

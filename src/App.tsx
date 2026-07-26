@@ -53,7 +53,6 @@ import {
   estimateCandidatePassBCost,
   formatEstimatedUsd,
 } from "./analysis/candidatePassBCost";
-import { createAnalysisBudgetEnvelope } from "./analysis/analysisBudgetPolicy";
 import { AI_BROADCAST_CONTEXT_ROUTING_REVISION } from "./analysis/aiModelRoutingPolicy";
 import {
   createCaptionDiscoveredLeadRefinementPlan,
@@ -414,7 +413,7 @@ type AnalysisSelectionSummary = DurableAnalysisSelectionSummary;
 type AnalysisCoverageSummary = DurableAnalysisCoverageSummary;
 type AnalysisGapApprovalEvidence = DurableAnalysisGapApprovalEvidence;
 
-const APP_VERSION = "0.6.3";
+const APP_VERSION = "0.6.4";
 const PERSISTENCE_SCHEMA_VERSION = "0.3.0";
 const SIGNAL_ENGINE_VERSION =
   "streamer-reaction-fast-pass-v5-chat-fallback-music-confirmation";
@@ -1500,20 +1499,6 @@ function App() {
         : Math.round(totalDurationMs / detailCandidates.length),
     );
   }, [candidateDetailCandidateIds, candidates]);
-  const analysisBudgetEnvelope = useMemo(() => {
-    if (boundarySourceDurationMs <= 0) {
-      return null;
-    }
-    try {
-      return createAnalysisBudgetEnvelope(
-        boundarySourceDurationMs,
-        candidates.length,
-        0,
-      );
-    } catch {
-      return null;
-    }
-  }, [boundarySourceDurationMs, candidates.length]);
   const broadcastTranscriptProgressRatio =
     broadcastTranscriptStatus === "completed" ||
     broadcastTranscriptStatus === "completedWithGaps"
@@ -1529,59 +1514,6 @@ function App() {
                 broadcastTranscriptProgress.totalCount,
             ),
           );
-  const broadcastTranscriptStatusText = (() => {
-    if (broadcastContextStatus === "restoring") {
-      return "저장된 전체 맥락 결과 확인 중";
-    }
-    if (broadcastContextStatus === "running") {
-      return "Qwen 3.7 Plus 전체 맥락 판단 중";
-    }
-    if (broadcastContextStatus === "completed") {
-      if (broadcastContextResult?.coverage.status === "partial") {
-        return `전체 맥락 완료 · AI 근거 ${Math.round(
-          broadcastContextResult.coverage.coverageRatio * 100,
-        )}%`;
-      }
-      if (broadcastContextResult?.semanticChaptersSupported === false) {
-        return "저장된 전체 맥락 완료 · 구형 주제 자료 미지원";
-      }
-      return `전체 맥락 완료 · 주제 구간 ${broadcastContextResult?.semanticChapters.length ?? 0}개`;
-    }
-    if (broadcastContextStatus === "failed") {
-      return "전체 맥락 판단 실패";
-    }
-    if (broadcastTranscriptStatus === "running") {
-      if (broadcastTranscriptProgress === null) {
-        return "대사 지도 준비 중";
-      }
-      return `대사 표본 ${Math.min(
-        broadcastTranscriptProgress.totalCount,
-        broadcastTranscriptProgress.completedCount + 1,
-      )}/${broadcastTranscriptProgress.totalCount} ${
-        broadcastTranscriptProgress.stage === "decoding" ? "변환 중" : "인식 중"
-      }`;
-    }
-    if (broadcastTranscriptStatus === "completed") {
-      return `대사 지도 ${broadcastTranscriptChapters.length}구간 저장 · 맥락 판단 대기`;
-    }
-    if (broadcastTranscriptStatus === "completedWithGaps") {
-      return `대사 지도 ${broadcastTranscriptChapters.length}구간 저장 · 일부 공백 · 맥락 판단 대기`;
-    }
-    if (broadcastTranscriptStatus === "failed") {
-      return "대사 지도 분석 실패";
-    }
-    if (openedRecoveredResult !== null) {
-      return "이 저장 기록은 전체 맥락 미분석";
-    }
-    if (broadcastContextSamplingPlan === null) {
-      return "계획 준비";
-    }
-    return `대사 표본 ${Math.round(
-      broadcastContextSamplingPlan.estimatedAudioCoverageRatio * 100,
-    )}% · 예상 상한 ${formatEstimatedUsd(
-      analysisBudgetEnvelope?.projectedMaximumUsd ?? 1,
-    )}`;
-  })();
   const approvedCandidates = orderedCandidates.filter(
     ({ reviewState }) => reviewState === "approved",
   );
@@ -1629,10 +1561,6 @@ function App() {
   const reviewCompleted =
     orderedCandidates.length > 0 &&
     orderedCandidates.every(({ reviewState }) => reviewState !== "unreviewed");
-  const wholeContextPhaseActive =
-    broadcastTranscriptStatus === "running" ||
-    broadcastContextStatus === "restoring" ||
-    broadcastContextStatus === "running";
   const wholeContextPhaseFailed =
     broadcastTranscriptStatus === "failed" || broadcastContextStatus === "failed";
   const wholeContextPhaseComplete = broadcastContextStatus === "completed";
@@ -1683,45 +1611,8 @@ function App() {
     candidateDetailSettled &&
     ((wholeContextPhaseComplete && semanticLeadRefinementStatus === "completed") ||
       wholeContextPhaseFailed);
-  const detailedReviewPhaseState = detailedReviewPhaseFailed
-    ? "error"
-    : detailedReviewPhaseActive
-      ? "active"
-      : detailedReviewPhaseComplete
-        ? "complete"
-        : "pending";
-  const detailedReviewPhaseLabel = !wholeContextPhaseComplete && !wholeContextPhaseFailed
-    ? "전체 맥락 완료 후 자동 시작"
-    : semanticLeadRefinementStatus === "running" && candidatePassBBusy
-      ? "의미 후보 위치와 화면·대사 동시 확인 중"
-      : semanticLeadRefinementStatus === "running"
-        ? "새 의미 후보의 정확한 위치 확인 중"
-        : candidatePassBBusy
-          ? candidatePassBDetailAnalysisLabel
-          : semanticLeadRefinementStatus === "failed"
-            ? "의미 후보 위치 확인 실패 · 기존 후보 유지"
-            : candidatePassBRun?.status === "failed"
-              ? "화면·대사 확인 실패 · 기존 후보 유지"
-              : detailedReviewPhaseComplete
-                ? candidateDetailCandidateIds.length === 0
-                  ? "추가 세부 분석 대상 없음 · 후보 유지"
-                  : `세부 검토 완료 · AI 단서 ${Object.keys(candidateGeminiInsightById).length}개`
-                : "세부 검토 준비 중";
   const finalSelectionPhaseReady =
     detailedReviewPhaseComplete || detailedReviewPhaseFailed;
-  const finalSelectionPhaseState =
-    reviewCompleted || (orderedCandidates.length === 0 && finalSelectionPhaseReady)
-      ? "complete"
-      : finalSelectionPhaseReady
-        ? "active"
-        : "pending";
-  const finalSelectionPhaseLabel = reviewCompleted
-    ? `검토 완료 · 사용 ${approvedCount}개`
-    : orderedCandidates.length === 0 && finalSelectionPhaseReady
-      ? "선택할 후보 없음 · 정상"
-      : finalSelectionPhaseReady
-        ? `편집자 확인 대기 ${remainingReviewCount}개 · 사용 ${approvedCount}개`
-        : "세부 검토가 끝나면 편집자가 결정";
   const contextualCandidatePublicationReady =
     finalSelectionPhaseReady && timelineTopicRevealComplete;
   const liveAnalysisStageNumber =
@@ -1744,40 +1635,6 @@ function App() {
         : reviewCompleted
           ? ui("편집자 검토가 끝났어요", "Editor review is complete")
           : ui("최종 후보를 확인할 차례예요", "Final candidates are ready for review");
-  const liveAnalysisStageDetail =
-    liveAnalysisStageNumber === 1
-      ? analysisCommitPending
-        ? ui("찾은 탐색 구간과 확인 기록을 저장하는 중", "Saving discovered ranges and evidence")
-        : audioAnalysisProgress?.stage === "decoding-audio"
-          ? ui(
-              `방송 오디오 ${audioAnalysisProgress.analyzedWindowCount.toLocaleString("ko-KR")}개 구간 확인 중`,
-              `Checked ${audioAnalysisProgress.analyzedWindowCount.toLocaleString("en-US")} audio windows`,
-            )
-          : analysisProgress?.stage === "sampling"
-            ? ui(
-                `영상 맥락 ${analysisProgress.completedSampleCount.toLocaleString("ko-KR")}/${analysisProgress.totalSampleCount.toLocaleString("ko-KR")} 확인 중`,
-                `Checking visual context ${analysisProgress.completedSampleCount.toLocaleString("en-US")}/${analysisProgress.totalSampleCount.toLocaleString("en-US")}`,
-              )
-            : ui("영상과 방송 오디오를 짧은 조각으로 나눠 준비 중", "Preparing short visual and audio windows")
-      : liveAnalysisStageNumber === 2
-      ? analysisLanguage === "ko"
-        ? broadcastTranscriptStatusText
-        : broadcastTranscriptStatus === "running"
-          ? `Mapping transcript context · ${Math.round(broadcastTranscriptProgressRatio * 100)}%`
-          : broadcastContextStatus === "running"
-            ? "Interpreting topics, events, and host behavior"
-            : "Preparing full-context analysis"
-      : liveAnalysisStageNumber === 3
-        ? !timelineTopicRevealComplete
-          ? ui(`주제 ${Math.min(
-              timelineSemanticChapterRevealCount,
-              timelineSemanticChapters.length,
-            )}/${timelineSemanticChapters.length}개를 타임라인에 배치하는 중`, `Placing ${Math.min(
-              timelineSemanticChapterRevealCount,
-              timelineSemanticChapters.length,
-            )}/${timelineSemanticChapters.length} topics on the timeline`)
-          : analysisLanguage === "ko" ? detailedReviewPhaseLabel : "Reviewing candidate visuals, dialogue, and participants"
-        : analysisLanguage === "ko" ? finalSelectionPhaseLabel : `${remainingReviewCount} candidates awaiting review · ${approvedCount} selected`;
   /**
    * A stalled-looking bar was a fabricated number, not a stall: 0.02, 0.76,
    * 0.84, 0.72 and 0.08 were constants standing in for stages with no
@@ -1785,31 +1642,6 @@ function App() {
    * `<progress>` elements below render indeterminate (no `value`) instead of
    * jumping to a number that never moves.
    */
-  const liveAnalysisProgressValue: number | null =
-    liveAnalysisStageNumber === 1
-      ? (analysisProgress !== null || audioAnalysisProgress !== null)
-        ? ((analysisProgress?.ratio ?? 0) + (audioAnalysisProgress?.ratio ?? 0)) /
-          ((analysisProgress === null ? 0 : 1) + (audioAnalysisProgress === null ? 0 : 1))
-        : null
-      : liveAnalysisStageNumber === 2
-      ? broadcastTranscriptStatus === "running"
-        ? 0.05 + broadcastTranscriptProgressRatio * 0.65
-        : null
-      : liveAnalysisStageNumber === 3
-        ? !timelineTopicRevealComplete && timelineSemanticChapters.length > 0
-          ? Math.min(
-              1,
-              timelineSemanticChapterRevealCount /
-                timelineSemanticChapters.length,
-            )
-          : candidatePassBBusy
-            ? candidatePassBProgressRatio
-            : null
-        : orderedCandidates.length === 0
-          ? 1
-          : reviewedCount / orderedCandidates.length;
-  const liveAnalysisProgressBarProps =
-    liveAnalysisProgressValue === null ? {} : { value: liveAnalysisProgressValue };
   /**
    * The fast scan (local CPU) and the uniform transcript prefetch (network,
    * since 0.4.2) run concurrently, but the entry-workspace panel only ever
@@ -1967,39 +1799,6 @@ function App() {
       status: chatTrackStatus,
     },
   ];
-  const liveAnalysisPhaseSteps = [
-    {
-      number: 1,
-      label: ui("빠른 탐색", "Fast scan"),
-      state: liveAnalysisStageNumber === 1 ? "active" : "complete",
-    },
-    {
-      number: 2,
-      label: ui("전체 맥락", "Full context"),
-      state: wholeContextPhaseActive
-        ? "active"
-        : wholeContextPhaseComplete
-          ? "complete"
-          : wholeContextPhaseFailed
-            ? "error"
-            : "pending",
-    },
-    {
-      number: 3,
-      label: ui("후보 종합", "Candidate synthesis"),
-      state:
-        !timelineTopicRevealComplete && finalSelectionPhaseReady
-          ? "active"
-          : detailedReviewPhaseState,
-    },
-    {
-      number: 4,
-      label: ui("편집자 선택", "Editor selection"),
-      state: contextualCandidatePublicationReady
-        ? finalSelectionPhaseState
-        : "pending",
-    },
-  ] as const;
   const analysisFinishedWithoutCandidates =
     analysisComplete && selectionResult !== null && candidates.length === 0;
   const reviewingRecoveredResult =
@@ -7560,60 +7359,6 @@ function App() {
                   </dl>
                 )}
               </div>
-
-              <section
-                className="rh-live-analysis-panel"
-                data-state={
-                  liveAnalysisStageNumber === 4 && reviewCompleted
-                    ? "complete"
-                    : "active"
-                }
-                aria-label="현재 AI 분석 진행 상황"
-                aria-live="polite"
-              >
-                <div className="rh-live-analysis-current">
-                  <span className="rh-live-analysis-number" aria-hidden="true">
-                    {liveAnalysisStageNumber}
-                  </span>
-                  <div>
-                    <p className="rh-eyebrow">
-                      {ui("현재 진행", "Current progress")} · {liveAnalysisStageNumber}/4
-                    </p>
-                    <strong>{liveAnalysisStageTitle}</strong>
-                    <small>{liveAnalysisStageDetail}</small>
-                  </div>
-                  <span className="rh-live-analysis-mode">
-                    {liveAnalysisStageNumber < 4
-                      ? ui("자동 진행", "Automatic")
-                      : reviewCompleted
-                        ? ui("완료", "Complete")
-                        : ui(`${reviewedCount}/${orderedCandidates.length} 검토`, `${reviewedCount}/${orderedCandidates.length} reviewed`)}
-                  </span>
-                </div>
-                <progress
-                  className="rh-live-analysis-progress"
-                  max={1}
-                  {...liveAnalysisProgressBarProps}
-                  aria-label={ui("현재 분석 단계 진행률", "Current analysis stage progress")}
-                />
-                <ol className="rh-live-analysis-rail" aria-label={ui("전체 분석 순서", "Analysis workflow")}>
-                  {liveAnalysisPhaseSteps.map((step) => (
-                    <li key={step.number} data-state={step.state}>
-                      <span aria-hidden="true">{step.number}</span>
-                      <strong>{step.label}</strong>
-                      <small>
-                        {step.state === "complete"
-                          ? ui("완료", "Complete")
-                          : step.state === "active"
-                            ? ui("진행 중", "In progress")
-                            : step.state === "error"
-                              ? ui("확인 필요", "Needs attention")
-                              : ui("다음 단계", "Next")}
-                      </small>
-                    </li>
-                  ))}
-                </ol>
-              </section>
 
               {!contextualCandidatePublicationReady && !analysisComplete && candidates.length > 0 && (
                 <details className="rh-early-candidates">
