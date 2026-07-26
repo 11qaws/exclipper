@@ -1,9 +1,12 @@
 import { spawnSync } from "node:child_process";
+import { createHash, randomBytes } from "node:crypto";
 import { resolve } from "node:path";
 
 const SAMPLE_RATE_HZ = 16_000;
 const BYTES_PER_SAMPLE = 2;
-const MAX_DURATION_SECONDS = 210;
+const MAX_DURATION_SECONDS = 90;
+const PRODUCTION_ORIGIN = "https://11qaws.github.io";
+const QUOTA_SCHEMA_VERSION = "1.0.0";
 const DEFAULT_ENDPOINT =
   "https://rettohighlight-gemini.11qaws.workers.dev/v1/broadcast-transcript";
 
@@ -85,17 +88,74 @@ wav.write("data", 36, "ascii");
 wav.writeUInt32LE(dataLength, 40);
 pcm.copy(wav, 44, 0, dataLength);
 
-const response = await fetch(endpoint, {
+const participantId = `smoke_${randomBytes(24).toString("base64url")}`;
+const runId = `smoke-run-${Date.now()}`;
+const operationId = `transcript-smoke-${Date.now()}`;
+const payloadDigest = `sha256:${createHash("sha256").update(wav).digest("hex")}`;
+const transcriptUrl = new URL(endpoint);
+transcriptUrl.searchParams.set(
+  "startMs",
+  String(Math.round(startSeconds * 1_000)),
+);
+transcriptUrl.searchParams.set("durationMs", String(durationMs));
+const quotaUrl = new URL("/v1/ai-quota", transcriptUrl.origin);
+const quotaIdentity = {
+  participantId,
+  runId,
+  operationId,
+  pool: "transcript",
+  payloadDigest,
+};
+
+let lease;
+while (lease === undefined) {
+  const quotaResponse = await fetch(quotaUrl, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Origin: PRODUCTION_ORIGIN,
+    },
+    body: JSON.stringify({
+      schemaVersion: QUOTA_SCHEMA_VERSION,
+      action: "lease",
+      ...quotaIdentity,
+    }),
+  });
+  const quotaPayload = await quotaResponse.json();
+  if (!quotaResponse.ok) {
+    throw new Error(
+      `Quota smoke failed with HTTP ${quotaResponse.status}: ${quotaPayload?.error?.code ?? "UNKNOWN"}`,
+    );
+  }
+  if (quotaPayload?.status === "granted") {
+    lease = quotaPayload;
+    break;
+  }
+  if (
+    quotaPayload?.status !== "queued" &&
+    quotaPayload?.status !== "capacity-full"
+  ) {
+    throw new Error(`Quota smoke was rejected: ${JSON.stringify(quotaPayload)}`);
+  }
+  const retryAfterMs = Math.min(
+    15_000,
+    Math.max(250, Number(quotaPayload.retryAfterMs) || 2_000),
+  );
+  await new Promise((resolveWait) => setTimeout(resolveWait, retryAfterMs));
+}
+
+const response = await fetch(transcriptUrl, {
   method: "POST",
   headers: {
-    "Content-Type": "application/json",
-    Origin: "https://11qaws.github.io",
+    "Content-Type": "audio/wav",
+    Origin: PRODUCTION_ORIGIN,
+    "X-ExClipper-Quota-Participant": participantId,
+    "X-ExClipper-Quota-Run": runId,
+    "X-ExClipper-Quota-Operation": operationId,
+    "X-ExClipper-Quota-Payload-Digest": payloadDigest,
+    "X-ExClipper-Quota-Lease": lease.leaseToken,
   },
-  body: JSON.stringify({
-    audioBase64: wav.toString("base64"),
-    sourceStartMs: Math.round(startSeconds * 1_000),
-    durationMs,
-  }),
+  body: wav,
 });
 
 const payload = await response.json();

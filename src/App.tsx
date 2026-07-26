@@ -54,6 +54,7 @@ import {
   formatEstimatedUsd,
 } from "./analysis/candidatePassBCost";
 import { AI_BROADCAST_CONTEXT_ROUTING_REVISION } from "./analysis/aiModelRoutingPolicy";
+import { getOrCreateAiQuotaParticipantId } from "./analysis/aiQuotaClient";
 import {
   createCaptionDiscoveredLeadRefinementPlan,
   createDiscoveredLeadRefinementChapters,
@@ -418,7 +419,7 @@ type AnalysisSelectionSummary = DurableAnalysisSelectionSummary;
 type AnalysisCoverageSummary = DurableAnalysisCoverageSummary;
 type AnalysisGapApprovalEvidence = DurableAnalysisGapApprovalEvidence;
 
-const APP_VERSION = "0.8.2";
+const APP_VERSION = "0.8.3";
 const PERSISTENCE_SCHEMA_VERSION = "0.3.0";
 const SIGNAL_ENGINE_VERSION =
   "streamer-reaction-fast-pass-v5-chat-fallback-music-confirmation";
@@ -688,6 +689,9 @@ function App() {
   const candidateRankingRevision = useRef(0);
   const recoveryOperationEpoch = useRef(0);
   const [appSessionId] = useState(() => createOperationId("session"));
+  const [aiQuotaParticipantId] = useState(() =>
+    getOrCreateAiQuotaParticipantId(),
+  );
   const [writerEpoch] = useState(() => Date.now());
   const resultStore = useRef<AnalysisResultStore | null>(null);
   const sourcePreviewUrlRef = useRef<string | null>(null);
@@ -3675,6 +3679,10 @@ function App() {
              */
             return await runCandidatePassBWorker(sourceFile, {
         identity,
+        quota: {
+          participantId: aiQuotaParticipantId,
+          runId: identity.analysisRunId,
+        },
         sourceDurationMs,
         device: runtimeDevice,
         targets: [{
@@ -5782,9 +5790,14 @@ function App() {
       const [overviewResult, discoveryResults] = await Promise.all([
         requestBroadcastContextDeepseek(contextInput, {
           signal: controller.signal,
+          quota: {
+            participantId: aiQuotaParticipantId,
+            runId,
+            operationId: "context-overview",
+          },
         }),
         Promise.allSettled(
-          discoverySlices.map((slice) =>
+          discoverySlices.map((slice, sliceIndex) =>
             requestBroadcastContextDeepseek(
               {
                 sourceDurationMs: boundarySourceDurationMs,
@@ -5795,7 +5808,15 @@ function App() {
                   ? {}
                   : { castRosterId: sourceCastRosterId }),
               },
-              { signal: controller.signal, analysisMode: "discovery" },
+              {
+                signal: controller.signal,
+                analysisMode: "discovery",
+                quota: {
+                  participantId: aiQuotaParticipantId,
+                  runId,
+                  operationId: `context-discovery-${sliceIndex}`,
+                },
+              },
             ),
           ),
         ),
@@ -5836,7 +5857,15 @@ function App() {
                 ? {}
                 : { castRosterId: sourceCastRosterId }),
             },
-            { signal: controller.signal, analysisMode: "selection" },
+            {
+              signal: controller.signal,
+              analysisMode: "selection",
+              quota: {
+                participantId: aiQuotaParticipantId,
+                runId,
+                operationId: "context-selection",
+              },
+            },
           );
           refinementLeadIds = selectBroadcastTopicalRefinementLeadIds(
             result.discoveredLeads,
@@ -5927,6 +5956,7 @@ function App() {
         }
       });
   }, [
+    aiQuotaParticipantId,
     analysisComplete,
     analysisRun?.inputSignature,
     boundarySourceDurationMs,
@@ -6062,8 +6092,9 @@ function App() {
       }
 
       /*
-       * 자막이 없을 때만 도는 원격 전사. **이것이 실제 병목이다** — 청크 91개를
-       * 동시 4로 돌면 23파 × 약 100초 = 38분이다.
+       * 자막이 없을 때만 도는 원격 전사. **이것이 실제 병목이다** — 음식 토크도
+       * 현재 30초 transport에서는 271개 요청이 되고, 배포 전체 1초 gate와
+       * 공급자 응답 시간이 실제 하한을 결정한다.
        *
        * 그런데 지금까지의 실측은 이 경로를 한 번도 타지 않았다. 시험한 파일이
        * 전부 파일명에 `[videoId]` 를 달고 있어 자막으로 끝났기 때문이다. 재지
@@ -6075,6 +6106,10 @@ function App() {
             await runBroadcastTranscriptWorker(sourceFile, {
               sourceDurationMs: boundarySourceDurationMs,
               chunks,
+              quota: {
+                participantId: aiQuotaParticipantId,
+                runId: currentAnalysisRunId,
+              },
               signal: controller.signal,
             })
           ).results
@@ -6103,7 +6138,7 @@ function App() {
       const refinementResults = await mapWithConcurrency(
         plan.selectedLeadIds,
         MAX_TOPICAL_REFINEMENT_CONCURRENCY,
-        async (leadId) => {
+        async (leadId, leadIndex) => {
           const chapters = createDiscoveredLeadRefinementChapters(
             leadId,
             plan,
@@ -6134,6 +6169,11 @@ function App() {
                 analysisMode: fastRefinementLeadIdSet.has(leadId)
                   ? "refinement-fast"
                   : "refinement",
+                quota: {
+                  participantId: aiQuotaParticipantId,
+                  runId: currentAnalysisRunId,
+                  operationId: `context-refinement-${leadIndex}`,
+                },
               },
             );
             return {
@@ -6255,6 +6295,7 @@ function App() {
         }
       });
   }, [
+    aiQuotaParticipantId,
     boundarySourceDurationMs,
     broadcastContextRefinementLeadIds,
     broadcastContextFastRefinementLeadIds,
@@ -6553,7 +6594,8 @@ function App() {
       let checkpointPersistence: Promise<void> = Promise.resolve();
       /*
        * **본 전사.** 화면의 `표본 n/N` 이 이것이고, 자막이 없을 때 방송 전체를
-       * 90초 청크로 잘라 원격 ASR 에 보내는 구간이다.
+       * 현재 30초 청크로 잘라 원격 ASR 에 보내는 구간이다. 90초는 Worker가
+       * 호환성 때문에 수용하는 transport 상한이지 현재 계획기의 길이가 아니다.
        *
        * 앞서 계측을 붙였던 `runBroadcastTranscriptWorker` 호출은 이것이 아니라
        * **정련용 재전사**(선별된 리드만 다시 읽는 작은 호출)였다. 이름이 같아
@@ -6565,6 +6607,10 @@ function App() {
       const result = await runBroadcastTranscriptWorker(sourceFile, {
         sourceDurationMs,
         chunks: explorationChunks,
+        quota: {
+          participantId: aiQuotaParticipantId,
+          runId,
+        },
         signal: controller.signal,
         onProgress: (progress) => {
           if (!controller.signal.aborted && isMounted.current) {
@@ -6677,6 +6723,7 @@ function App() {
         }
       });
   }, [
+    aiQuotaParticipantId,
     analysisComplete,
     analysisRun?.inputSignature,
     analysisRun?.status,

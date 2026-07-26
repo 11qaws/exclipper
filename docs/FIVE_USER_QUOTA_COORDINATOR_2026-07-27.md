@@ -1,6 +1,6 @@
 # ExClipper 최대 5인 AI 처리 설계 — 2026-07-27
 
-상태: **로컬 구현·검증 중 / 미배포**
+상태: **v0.8.3 통합·배포 검증 중**
 
 ## 1. 결론
 
@@ -97,8 +97,10 @@ reservation =
   + 1,024 max output tokens
 ```
 
-90초 청크는 1,910 token을 예약한다. 따라서 전사만 계속할 때 RPM 60보다 TPM이 먼저
-작동하며, 안전한 장기 처리량은 최대 약 52청크/분이다.
+중계가 수용하는 90초 상한 요청은 1,910 token을 예약한다. 현재 계획기가 실제로
+보내는 30초 청크는 1,490 token이며 60개를 시작해도 89,400 token이다. 따라서
+현재 전사-only 경로는 100k TPM보다 1초 start clock과 60 RPM이 먼저 작동한다.
+후보 화면 요청이 같은 gate의 token을 함께 사용하면 TPM 대기가 추가될 수 있다.
 
 ### 후보 화면·오디오
 
@@ -136,7 +138,8 @@ DeepSeek 호환 경로까지 포함한 안전 상한 8,192를 예약한다.
 | 경로 | 앱 wire 상한 | 근거 |
 |---|---:|---|
 | 후보 JSON | 4,257,596 bytes | 60초 WAV Base64 + JPEG 4장 + context 8필드 worst escape + 64KiB |
-| 전사 raw WAV | 2,880,044 bytes | PCM16 mono 16kHz, 정확히 90초 |
+| 전사 raw WAV transport 상한 | 2,880,044 bytes | PCM16 mono 16kHz, 최대 90초 |
+| 현재 계획기의 전사 raw WAV | 960,044 bytes | Worker CPU 완화용 30초 |
 | 전사 legacy JSON | 4,008,192 bytes | Base64 WAV + JSON 여유 |
 | 전체 맥락 JSON | 8MiB | 144 chapter + 32 candidate의 모든 유효 필드 수용 |
 | quota 요청 | 2KiB | ID, digest, action만 허용 |
@@ -152,7 +155,8 @@ quota header는 participant 96자, run/operation 160자, digest 71자, lease 128
 제한되어 전체 128KB header 한도에 비해 매우 작다.
 
 모든 ingress body는 60초 안에 끝나야 한다. 최대 후보 본문 기준 약 0.57Mbps,
-90초 raw WAV 기준 약 0.38Mbps 이상의 실제 업로드 속도가 필요하다. deadline은
+현재 30초 raw WAV 기준 약 0.13Mbps가 필요하다. 중계 transport 상한인 90초
+raw WAV를 직접 보낼 때는 약 0.38Mbps가 필요하다. deadline은
 2분 upload-ticket TTL보다 짧다. timeout은 413이 아니라 408
 `REQUEST_BODY_TIMEOUT`으로 구분하고, 아직 consume되지 않은 같은 lease token의
 upload ticket만 원자적으로 해제한다. 이미 execution-waiting/in-flight가 된
@@ -231,26 +235,38 @@ context의 ExClipper 앱 상한은 Durable Object의 250ms clock(240 starts/min)
 
 ## 8. 처리 시간의 하한
 
-전사 90초 청크가 모두 최대 output을 쓴다고 가정한 token-safe 시작 하한이다.
-같은 Alibaba 계정·모델·리전에 ExClipper 외 소비가 없을 때의 best-case ceiling이다.
+현재 계획기의 30초 청크와 1초 start clock을 적용한 시작 하한이다. 같은 Alibaba
+계정·모델·리전에 ExClipper 외 소비가 없고 후보 요청이 gate를 사용하지 않을 때의
+best-case ceiling이다. 30초 한 요청의 예약은 1,490 token이므로 전사-only
+경로에서는 60 RPM이 100k TPM보다 먼저 작동한다.
 
 | 한 사람의 계획 | 요청 수 | 1명 마지막 시작 | 5명 합산 마지막 시작 |
 |---|---:|---:|---:|
-| 음식 토크 2:15 | 91 | 약 1분 38초 | 약 8분 38초 |
-| 6시간 기본 표본 | 216 | 약 4분 7초 | 약 20분 39초 |
-| 12시간 기본 표본 | 216 | 약 4분 7초 | 약 20분 39초 |
-| 확대 포함 상한 | 240 | 약 4분 31초 | 약 23분 3초 |
+| 음식 토크 2:15:14.817 전체 전사 | 271 | 약 4분 30초 | 약 22분 34초 |
+| 6시간 기본 표본 | 432 | 약 7분 11초 | 약 35분 59초 |
+| 12시간 기본 표본 | 432 | 약 7분 11초 | 약 35분 59초 |
+| 12시간 + 서로 겹치지 않는 사건 피크 12개 예시 | 480 | 약 7분 59초 | 약 39분 59초 |
+| Worker 요청 상한 | 760 | 약 12분 39초 | 약 1시간 3분 19초 |
 
 이는 마지막 요청의 **시작 시각**이다. 실제 완료는 브라우저 decode/WAV 생성,
 업로드, 공급자 응답 지연, 6개 in-flight, 후보 요청이 같은 Omni token window를
 사용하는 정도에 따라 늦어진다. 반대로 실제 output이 1,024보다 짧아도 현재는
 안전 예약을 조기 환급하지 않으므로 이 계산보다 빨라지지 않는다.
 
+위 숫자는 문서용 비례 추정이 아니라 현재
+`createBroadcastContextSamplingPlan`과
+`createBroadcastContextTranscriptionChunks`를 직접 실행한 결과다. 6시간과
+12시간 기본값이 같은 것은 둘 다 200분 ASR 예산을 사용하기 때문이다. 10분 chapter
+cell 안의 분산 표본 경계 때문에 단순히 `200분 ÷ 30초 = 400`으로 끝나지 않고
+432개가 된다. 사건 피크의 위치·겹침에 따라 실제 개수는 달라지며 760은 계획값이
+아니라 비정상 조각화도 거부하지 않기 위한 protocol 방어 상한이다.
+
 ## 9. 아직 남은 실제 병목: Worker Free CPU
 
-현재 raw 전사 경로는 Worker에서 2.88MB WAV를 버퍼링하고 SHA-256을 확인한 뒤
-3.84MB Base64와 공급자 JSON을 만든다. JavaScript 수백만 회 loop는 제거했지만,
-native Base64·대형 문자열·JSON 생성은 여전히 CPU 작업이다.
+현재 계획기의 raw 전사 경로는 Worker에서 약 0.96MB의 30초 WAV를 버퍼링하고
+SHA-256을 확인한 뒤 Base64와 공급자 JSON byte body를 만든다. 호환 transport는
+최대 2.88MB의 90초 WAV도 수용한다. JavaScript 수백만 회 loop는 제거했지만,
+native Base64·byte assembly는 여전히 CPU 작업이다.
 
 Cloudflare Free의 요청당 10ms에서는 안전하다고 확정할 수 없다. 실제 배포에서
 `Worker exceeded CPU time limit`가 관측됐으므로 **현재 raw 경로를 Free-safe라고
@@ -258,8 +274,9 @@ Cloudflare Free의 요청당 10ms에서는 안전하다고 확정할 수 없다.
 
 ### 즉시 운영 가능한 경로
 
-- Workers Paid로 전환한다. 월 최소 $5이며 기본 CPU 30초다.
-- 현재 90초 raw WAV 경로와 본 문서의 gate를 그대로 사용한다.
+- Workers Paid로 전환하면 월 최소 $5이며 기본 CPU 30초다.
+- 현재 배포는 30초 raw WAV 완화 경로와 본 문서의 gate를 사용한다. Paid 전환과
+  90초 복원은 각각 실제 CPU p99와 live transcript 결과를 확인한 뒤 별도 결정한다.
 - 1명 → 2명 → 5명 smoke에서 `wrangler tail` CPU, wall time, 429, 1102를 측정한다.
 - 측정 뒤 `limits.cpu_ms`를 실제 p99에 여유를 둔 값으로 고정한다.
 
@@ -275,7 +292,7 @@ Worker가 오디오를 변환하거나 전체 hash를 계산하지 않게 해야
   → 사용 후 object 삭제, lifecycle로 orphan 정리
 ```
 
-이 구조는 2.88~4MB payload를 AI proxy가 다시 Base64·JSON으로 만들지 않는다.
+이 구조는 0.96~2.88MB WAV를 AI proxy가 다시 Base64·JSON으로 만들지 않는다.
 `qwen3-asr-flash`는 별도 100 RPM ASR 한도를 사용하므로 후보 Omni 60 RPM/100k TPM과도
 분리된다. R2 bucket, media URL 권한, TTL 삭제, 한국어 품질과 timestamp 형식을 실제
 샘플로 검증해야 하므로 이번 로컬 변경에는 억지로 활성화하지 않았다.
@@ -301,8 +318,8 @@ operation은 최대 768개, 정리 목표는 512개다. 최악 ID 회귀 테스�
 이 전이는 `lease-issued`에서만 허용되며 execution-waiting/in-flight에는
 `already-consumed`를 반환한다.
 
-상태 schema는 `1.4.0`이다. 아직 배포하지 않았으므로 이전 운영 state migration은
-필요 없다. 한 번 배포한 뒤에는 `providerGates.tokenReservations`가 없는 옛 코드로
+상태 schema는 `1.4.0`이다. 최초 v0.8.3 배포에서는 이전 coordinator state가 없어
+migration이 필요 없다. 한 번 배포한 뒤에는 `providerGates.tokenReservations`가 없는 옛 코드로
 즉시 롤백할 수 없으므로, 롤백은 먼저 Worker quota mode를 `optional`로 낮추고
 호환 reader를 배포하는 순서로 해야 한다.
 
@@ -333,5 +350,6 @@ operation은 최대 768개, 정리 목표는 512개다. 최악 ID 회귀 테스�
 - restart 뒤 clock·backoff·token window·ticket·terminal 상태 복원
 - state < 1.5MB, request/header/response 상한 회귀
 - full test, strict TypeScript, ESLint warning 0, build, Wrangler dry-run
-- 실제 배포 전 Workers Paid 또는 R2+ASR 중 한 경로를 명시적으로 선택
+- 30초 raw WAV live smoke에서 1102·CPU 초과가 없음을 확인. 실패하면 required
+  전환을 중단하고 Workers Paid 또는 R2+ASR 경로를 선택
 - 승인 전 commit·push·deploy 금지

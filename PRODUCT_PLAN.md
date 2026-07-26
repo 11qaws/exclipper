@@ -1,10 +1,17 @@
 # ExClipper 제품·UX·기술 계획서
 
+## `0.8.3` 최대 5개 독립 편집 세션의 AI 용량 계약
+
+- 제품 데이터는 계속 브라우저별 개인 작업으로 유지한다. 배포 전체가 공유하는 것은 AI 공급자 용량뿐이며 `AiQuotaCoordinator`가 최대 5개 participant를 FIFO round-robin으로 분배한다. 계정·팀·공동 편집·원격 프로젝트 저장은 추가하지 않는다.
+- `transcript`와 `candidate`는 같은 Singapore `qwen3.5-omni-flash`의 60 RPM·100k TPM gate를 공유한다. `context`는 별도 250ms·5M TPM 앱 gate를 사용한다. upload ticket은 본문 검증 전의 임시 허가이고, 유료 호출은 JIT consume 뒤에만 시작한다.
+- 현재 브라우저 전사는 Worker CPU 완화를 위해 30초 청크를 사용하고 실행 안에서 동시성을 적응시킨다. 배포 전체 gate는 시작 간격 1초, shared in-flight 6, participant별 6/3/2 상한으로 최종 속도와 공정성을 결정한다. 90초는 중계가 수용하는 transport 상한이지 현재 계획기의 청크 길이가 아니다.
+- 전체 계약, TTL, 요청 크기, 처리량 하한과 장애 분류는 `docs/FIVE_USER_QUOTA_COORDINATOR_2026-07-27.md`를 따른다.
+
 ## `0.4.0` 전사 전송 계약
 
 - 오디오는 중계를 문자열로 통과하지 않는다. 클라이언트는 WAV 원본 바이트를 보내고, 중계는 헤더 44바이트 검증과 바이트 단위 base64 조립만 수행한다. 업스트림 본문은 기존 JSON 경로와 바이트 단위로 동일해야 하며 이는 회귀 테스트로 고정한다.
 - 구 JSON 전송은 제거하지 않고 병행 수용한다. 배포 순서(Worker 먼저, Pages 다음)와 사용자 캐시의 구버전 번들이 깨지지 않는다.
-- 전사 동시성 4, 리미터 60회/60초. 동시성 상향은 실측(합성 대용량 동시 요청) 뒤에만 조정한다.
+- 이 절의 고정 동시성 4는 과거 계약이다. 현재는 30초 청크의 `AdaptiveConcurrency`와 배포 전체 60회/60초 quota gate를 함께 사용한다.
 
 ## `0.3.47` 중계 요청당 작업량과 정직한 빈 결과
 

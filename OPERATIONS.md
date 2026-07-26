@@ -1,5 +1,14 @@
 # ExClipper 개인용 운영·배포·복구 계획
 
+## 2026-07-27 `0.8.3` 최대 5개 독립 편집 세션
+
+- 프로젝트·원본·후보·편집 판단은 계속 각 브라우저에만 남는다. 한 배포의 AI 공급자 용량만 신뢰된 편집자 세션 최대 5개가 공유하며, `AiQuotaCoordinator`가 participant별 FIFO와 participant 간 round-robin을 적용한다.
+- `transcript`와 `candidate`는 Singapore `qwen3.5-omni-flash`의 1초 start clock, shared in-flight 6, 100k TPM과 429 backoff를 공유한다. `context`는 독립 250ms·5M TPM 앱 gate다.
+- 현재 브라우저 계획기는 30초 청크를 사용하고 한 실행 안에서 `AdaptiveConcurrency`를 조정한다. Worker는 호환성을 위해 최대 90초 raw WAV를 수용하지만 운영 처리량과 Worker 상한 760개는 30초 기준으로 계산한다. 아래 과거 release note의 90초·240개·91청크 수치는 현재 운영값이 아니다.
+- 배포는 무중단 호환 순서로 진행한다: ① Worker `AI_QUOTA_MODE=optional` 배포 ② quota client가 포함된 Pages 배포·공개 버전 확인 ③ Worker `AI_QUOTA_MODE=required` 재배포 ④ health, Origin preflight, quota lease, 30초 raw transcript smoke 확인.
+- Free Worker 10ms CPU 안전성은 확정하지 않는다. 30초·native Base64는 관측된 90초 실패를 완화하지만, live smoke에서 1102/CPU 초과가 재현되면 Workers Paid 또는 R2+ASR transport로 전환한다.
+- 세부 request/header/body/TTL/rollback 계약은 `docs/FIVE_USER_QUOTA_COORDINATOR_2026-07-27.md`가 소유한다.
+
 ## 2026-07-23 release notes
 
 - `0.3.44`: 1단계 빠른 탐색, 2단계 전체 맥락, 3단계 후보 종합은 하나의 현재 진행 패널과 같은 7px 진행 막대를 사용한다. 빠른 탐색은 화면·오디오 worker의 실제 완료율을 합산하고, 전체 맥락은 전사 수집 5~70%·저장 복구 76%·맥락 모델 해석 84%로 단조 진행한 뒤 단계 완료 시 다음 단계로 전환한다. 모델 내부 토큰 진행률을 가짜 백분율로 세분화하지 않는다.

@@ -1,5 +1,37 @@
 # Development Log
 
+## 2026-07-27 `0.8.3` 5인 AI 용량 조정 · 30초 전사 경로 확정
+
+### 기준선과 병합 범위
+
+- Codex 작업본이 로컬 `0.4.8` 기준으로 남아 있었고 실제 `origin/main`은 `0.8.2`까지 66커밋 앞서 있었다. 오래된 UI와 전사 구현을 덮어쓰지 않도록 작업 브랜치를 `codex/pre-v083-max5`에 보존한 뒤, `origin/main`을 fast-forward하고 **5인 용량 조정 기능만** 이식했다.
+- 충돌은 `broadcastTranscript.worker.ts`와 `aiProxy.worker.ts`에서 해결했다. `0.8.2`의 30초 청크·적응형 동시성·요청 간격과 바이트 기반 업스트림 본문 조립은 유지하고, 새 participant/run/operation/lease 계약만 결합했다. 구형 문자열 본문 생성과 구형 UI는 되살리지 않았다.
+
+### 최대 5개 독립 편집 세션의 공정한 공유
+
+- `AiQuotaCoordinator` Durable Object를 추가했다. 제품은 공동 프로젝트나 계정을 만들지 않으며, 각 브라우저 분석은 독립 세션으로 남는다. 다만 한 배포의 제한된 AI 중계 용량은 신뢰된 편집자 최대 5명이 공정하게 나눠 쓴다.
+- Qwen Omni 전사·후보 해석은 같은 전역 게이트를 공유한다: 시작 간격 1초, 전체 pipeline/in-flight 각 6, 분당 100,000 예약 토큰. 후보 해석 역할은 별도로 in-flight 4를 넘지 않는다.
+- 전체 맥락 게이트는 시작 간격 250ms, in-flight 6, 분당 5,000,000 예약 토큰이다.
+- 참가자별 pipeline/in-flight 상한은 활성 인원 1/2/3~5명일 때 각각 6/3/2다. 참가자별 대기열은 12개, 참가자 간 round-robin·참가자 내부 FIFO이며, 큰 요청 하나가 전체를 막지 않도록 예약 토큰을 고려한 head-of-line skip을 적용한다.
+- 여섯 번째 참가자는 Durable Object 상태에 넣지 않고 15초 뒤 재시도하도록 거부한다. `participantId`는 공정성 식별자이지 인증 수단이 아니므로 이 배포는 **신뢰된 소수 사용자 환경**을 전제로 한다.
+- 공유 429 backoff와 lease 만료 회수를 둔다. 업로드 실패 시 `release-upload`는 정확한 lease token과 `lease-issued` 상태가 일치할 때만 허용해, 이미 실행 대기로 넘어간 요청이나 진행 중 요청을 취소하는 TOCTOU 구멍을 막았다.
+
+### 실제 병목과 30초 계산
+
+- 현재 브라우저 전사 청크는 90초가 아니라 **30초**다. 16kHz mono PCM WAV 한 건은 960,044바이트이며, 중계는 최대 90초·2,880,044바이트까지 방어적으로 수용한다.
+- 30초 전사 예약량은 1,490 token이다. 전사만 연속 실행할 때 60RPM이면 89,400 token/min이므로 100,000 TPM보다 **시작 간격/RPM이 먼저 병목**이다. 청크를 더 잘게 쪼개도 빨라지지 않고 요청 오버헤드만 커진다.
+- 현재 sampling 함수를 직접 실행하면 음식 토크 `02:15:14.817`은 271요청/인, 5명 합계 1,355요청이라 마지막 요청 시작 하한이 약 22분34초다. 기본 6시간과 12시간은 모두 432요청/인이라 5명 기준 약 35분59초다. 12시간에 서로 겹치지 않는 사건 피크 12개를 넣은 예시는 480요청/인, 5명 기준 약 39분59초다. 760은 정상 계획값이 아니라 protocol 방어 상한이며 그 상한을 모두 쓰는 경우에만 약 1시간03분19초다.
+- 30초 전환 뒤에도 `createAiAnalysisRoutingPlan`의 사건 보강 여유가 90초 시절 값 `+24`로 남아 실제 480청크 계획을 456으로 과소 표시했다. 사건 12개 × 사건당 2분 ÷ 30초를 코드에서 계산해 `+48`로 고쳤고, 정책의 `maximumCalls`가 실제 12시간 사건 계획보다 작지 않다는 회귀를 추가했다.
+- 30초 WAV 한 스트림의 최소 평균 업로드는 약 0.13Mbps다. 실제 완료 시간은 provider 지연, 후보 영상 해석, 맥락 요청, 재시도 때문에 이 하한보다 길 수 있다.
+
+### 무중단 배포와 검증
+
+- 구 클라이언트를 끊지 않기 위해 Worker를 먼저 `AI_QUOTA_MODE=optional`로 배포했다. 호환 Worker 버전은 `a3496cff-e5e5-41a6-bdf0-18d3c8820163`이며 protocol 3, coordinator ready, 최대 참가자 5를 health 응답으로 확인했다.
+- 프로덕션 Pages origin에서 `/v1/ai-quota`, `/v1/broadcast-transcript`, `/v1/candidate-insights`, `/v1/broadcast-context`의 OPTIONS 204와 CORS를 확인했다.
+- 실제 음식 토크 30초 한국어 WAV를 quota lease → raw `audio/wav` → Qwen3.5 Omni 경로로 보냈고 HTTP 200, 올바른 한국어 전사, 약 6.5초 완료를 확인했다. 이는 단일 실요청 검증이며, Free Worker에서 5명이 동시에 쓰는 p99 부하 시험은 아직 하지 않았다.
+- 릴리스 게이트: strict TypeScript, ESLint warning 0, **106개 테스트 파일 / 1,147개 테스트**, production build, Wrangler dry-run을 통과했다. 빌드는 JS 732.36kB(gzip 213.35kB), CSS 185.95kB(gzip 32.52kB), Worker는 317.95KiB(gzip 60.81KiB)였다.
+- 최종 순서는 `optional Worker → Pages 0.8.3 → required Worker`다. Pages가 quota header를 보내는 버전으로 바뀐 것을 확인한 뒤 Worker를 `required`로 전환한다.
+
 ## 2026-07-24 `0.5.4` PassB가 한 번도 시작되지 않던 버그
 
 ### 증상

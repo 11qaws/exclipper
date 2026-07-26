@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { QWEN_ASR_SAFE_CHUNK_DURATION_MS } from "./broadcastContextSamplingPlan";
+import {
+  QWEN_ASR_SAFE_CHUNK_DURATION_MS,
+  createBroadcastContextSamplingPlan,
+  createBroadcastContextTranscriptionChunks,
+} from "./broadcastContextSamplingPlan";
 import { MAX_BROADCAST_TRANSCRIPT_WORKER_CHUNKS } from "./broadcastTranscriptWorkerProtocol";
 import {
   EXCLIPPER_MODEL_IDS,
@@ -76,8 +80,18 @@ describe("aiModelRoutingPolicy", () => {
   // 최악의 계획도 워커가 받아 주는 상한 안에 들어야 한다. 넘으면 긴 방송이
   // 계획 단계에서 거부된다.
   it("keeps the worst-case twelve-hour envelope inside what the worker accepts", () => {
-    const plan = createAiAnalysisRoutingPlan(12 * 60 * 60_000, 3);
+    const sourceDurationMs = 12 * 60 * 60_000;
+    const eventPeaks = Array.from(
+      { length: 12 },
+      (_, index) => Math.round(((index + 0.5) / 12) * sourceDurationMs),
+    );
+    const actualEventChunks = createBroadcastContextTranscriptionChunks(
+      createBroadcastContextSamplingPlan(sourceDurationMs, eventPeaks)
+        .samplingWindows,
+    ).length;
+    const plan = createAiAnalysisRoutingPlan(sourceDurationMs, 3);
     const step = plan.steps.find((one) => one.stage === "broadcast-transcription");
+    expect(step?.maximumCalls).toBeGreaterThanOrEqual(actualEventChunks);
     expect(step?.maximumCalls).toBeLessThanOrEqual(MAX_BROADCAST_TRANSCRIPT_WORKER_CHUNKS);
   });
 
