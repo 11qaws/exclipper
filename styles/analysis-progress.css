@@ -1,0 +1,265 @@
+/**
+ * 분석 진행 화면 — 단일 진행축 (`ANALYSIS_SCREEN_SPEC_2026-07-26.md`).
+ *
+ * 강한 surface 는 이 패널 하나뿐이다. 안에 또 카드를 만들지 않으며, 트랙 3행은
+ * 펼쳤을 때도 테두리 없는 목록으로 남는다 — 부모가 이미 경계를 가졌기 때문이다.
+ */
+
+.apx {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 20px 22px;
+  border: 1px solid var(--ex-line2, #e2e4ec);
+  border-radius: 14px;
+  background: var(--ex-bg, #fff);
+}
+
+.apx-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+}
+
+.apx-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 800;
+  color: var(--ex-ink, #1a1d26);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.apx-duration {
+  font-size: 12px;
+  color: var(--ex-ink2, #4d5464);
+  flex: none;
+}
+
+/* ── 단일 진행축 ───────────────────────────────────────── */
+
+.apx-bar {
+  height: 8px;
+  border-radius: 999px;
+  background: var(--ex-bg3, #edeff5);
+  overflow: hidden;
+}
+
+.apx-bar > i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--ex-accent, #6b5bd2);
+  /*
+   * 폭 변화를 부드럽게. 진행률은 이벤트마다 툭툭 오르는데, 그대로 그리면
+   * 값이 튀는 것으로 보이고 사용자는 그것을 오류로 읽는다.
+   */
+  transition: width 320ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+/**
+ * 셀 수 없는 구간.
+ *
+ * 채운 폭은 **확정된 만큼**이고 그 위로는 아무것도 더하지 않는다. 그 앞을
+ * 줄무늬가 흐르는 것으로 "여기서부터는 모른다" 를 말한다 — 지어낸 숫자로
+ * 채우면 정확히 "멈춘 막대" 처럼 보인다.
+ */
+.apx[data-indeterminate="true"] .apx-bar {
+  background-image: repeating-linear-gradient(
+    115deg,
+    color-mix(in srgb, var(--ex-accent, #6b5bd2) 22%, transparent) 0 10px,
+    transparent 10px 20px
+  );
+  background-size: 28px 100%;
+  animation: apx-drift 900ms linear infinite;
+}
+
+@keyframes apx-drift {
+  to {
+    background-position: 28px 0;
+  }
+}
+
+.apx-remaining {
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+  margin: -4px 0 0;
+}
+
+.apx-remaining b {
+  font-size: 16px;
+  font-weight: 800;
+  color: var(--ex-ink, #1a1d26);
+}
+
+.apx-percent {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--ex-ink2, #4d5464);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 진행축의 설명이지 또 하나의 지표가 아니다. 막대를 그리지 않는다. */
+.apx-activity {
+  margin: -8px 0 0;
+  font-size: 13px;
+  color: var(--ex-ink2, #4d5464);
+}
+
+/* ── 접어 둔 트랙 3행 ──────────────────────────────────── */
+
+.apx-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  border-top: 1px solid var(--ex-line2, #eceef4);
+  padding-top: 12px;
+}
+
+.apx-disclose {
+  align-self: flex-start;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border: 0;
+  background: transparent;
+  padding: 2px 0;
+  font: 700 12px/1 inherit;
+  color: var(--ex-ink2, #4d5464);
+  cursor: pointer;
+}
+
+.apx-disclose:hover {
+  color: var(--ex-ink, #1a1d26);
+}
+
+.apx-caret {
+  display: inline-block;
+  transition: transform 200ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+.apx-disclose[aria-expanded="true"] .apx-caret {
+  transform: rotate(180deg);
+}
+
+.apx-tracks {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  animation: apx-unfold 200ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+@keyframes apx-unfold {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}
+
+.apx-track {
+  display: grid;
+  grid-template-columns: 76px 1fr auto;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+  color: var(--ex-ink2, #4d5464);
+}
+
+.apx-track-label {
+  color: var(--ex-ink2, #4d5464);
+}
+
+.apx-track-bar {
+  height: 4px;
+  border-radius: 999px;
+  background: var(--ex-bg3, #edeff5);
+  overflow: hidden;
+}
+
+.apx-track-bar > i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: color-mix(in srgb, var(--ex-accent, #6b5bd2) 55%, transparent);
+  transition: width 320ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+/* 이 트랙도 셀 수 없으면 0% 로 그리지 않고 모른다고 말한다. */
+.apx-track-bar[data-unknown="true"] {
+  background-image: repeating-linear-gradient(
+    115deg,
+    color-mix(in srgb, var(--ex-accent, #6b5bd2) 20%, transparent) 0 7px,
+    transparent 7px 14px
+  );
+}
+
+.apx-track[data-done="true"] .apx-track-bar > i {
+  background: var(--ex-accent, #6b5bd2);
+}
+
+.apx-track-status {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* ── 멈추기 ────────────────────────────────────────────── */
+
+.apx-foot {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border-top: 1px solid var(--ex-line2, #eceef4);
+  padding-top: 12px;
+}
+
+.apx-keep {
+  font-size: 12px;
+  color: var(--ex-ink2, #4d5464);
+}
+
+.apx-stop {
+  margin-left: auto;
+  border: 1px solid var(--ex-line2, #d8dbe4);
+  background: var(--ex-bg, #fff);
+  color: var(--ex-ink, #1a1d26);
+  border-radius: 9px;
+  padding: 8px 15px;
+  font: 700 12.5px/1 inherit;
+  cursor: pointer;
+}
+
+.apx-stop:hover {
+  background: var(--ex-bg3, #f2f3f8);
+}
+
+.apx-stop:focus-visible,
+.apx-disclose:focus-visible {
+  outline: 2px solid var(--ex-accent, #6b5bd2);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .apx-bar > i,
+  .apx-track-bar > i,
+  .apx-caret {
+    transition: none;
+  }
+
+  .apx-tracks {
+    animation: none;
+  }
+
+  /*
+   * 줄무늬는 남기되 흐르지 않게 한다. 없애면 "모른다" 를 말할 수단이 사라지고,
+   * 확정된 만큼만 찬 막대가 그냥 멈춘 것으로 보인다.
+   */
+  .apx[data-indeterminate="true"] .apx-bar {
+    animation: none;
+  }
+}

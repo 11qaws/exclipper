@@ -56,6 +56,7 @@
 | 단축키 도움말 오버레이 | `app/components/ShortcutHelpOverlay.tsx` |
 | 되돌리기 토스트 | `app/components/ReviewUndoToast.tsx` |
 | 남은 시간 추정 | `app/progressEstimate.ts` — 패딩·단조 감소 포함 |
+| 분석 진행 막대 비율 | `app/analysisProgressAxis.ts` — 스테이지 시간 가중·단조 증가·남은 시간 하나 |
 | 후보 이동 규칙 | `app/reviewNavigation.ts` |
 | 후보 위치 스트립 좌표 | `app/positionStrip.ts` |
 | 분석 실행 상태 기계 | `domain/analysisRun.ts` — **16 상태 전이표** |

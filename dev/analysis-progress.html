@@ -1,0 +1,268 @@
+<!doctype html><html lang="ko"><head><meta charset="utf-8">
+<title>분석 진행 · 단일 축</title>
+<link rel="stylesheet" href="../styles/analysis-progress.css">
+<style>
+@font-face{font-family:"Pretendard";font-weight:400;src:url("../public/fonts/Pretendard-Regular.woff2")}
+@font-face{font-family:"Pretendard";font-weight:600;src:url("../public/fonts/Pretendard-SemiBold.woff2")}
+@font-face{font-family:"Pretendard";font-weight:700;src:url("../public/fonts/Pretendard-SemiBold.woff2")}
+@font-face{font-family:"Pretendard";font-weight:800;src:url("../public/fonts/Pretendard-ExtraBold.woff2")}
+*{box-sizing:border-box}
+body{margin:0;padding:22px;background:#12141a;font-family:"Pretendard",sans-serif;color:#e6e9f2}
+h1{font-size:15px;margin:0 0 4px}
+.lead{font-size:12px;color:#98a0b5;margin:0 0 18px;line-height:1.65;max-width:84ch}
+.lead code{font:11px "SFMono-Regular",monospace;background:#1d212b;padding:1px 5px;border-radius:4px}
+.grid{display:flex;flex-wrap:wrap;gap:16px;align-items:flex-start}
+.bay{margin:0;padding:14px;border-radius:14px;display:flex;flex-direction:column;gap:9px;width:520px}
+.bay figcaption{font:10px "SFMono-Regular",monospace;color:#8b93a8;background:#191c24;
+  padding:3px 8px;border-radius:5px;align-self:flex-start}
+.meas{font:10px "SFMono-Regular",monospace;color:#7d8598}
+</style></head><body>
+<h1>분석 진행 화면 — 단일 진행축</h1>
+<p class="lead">막대 하나로 접은 이유: 막대 셋이 서로 다른 속도로 움직이면 <b>어느 것이 끝나야 끝인지</b> 알 수 없고, 셋이 다 차도 후보 정리가 남아 또 기다린다.
+이 화면이 답해야 하는 질문은 하나다 — <b>언제 검토를 시작할 수 있나</b>.
+트랙 3행은 지우지 않고 <code>자세히</code> 뒤에 닫아 뒀다. 단일 축은 "언제 끝나나", 3행은 "어디서 막혔나" 에 답한다.
+<b>셀 수 없는 구간은 지어낸 숫자 대신 줄무늬</b>다 — 상수 진행률은 정확히 "멈춘 막대" 처럼 보인다.
+아래 숫자는 <code>analysisProgressAxis</code> 가 실제로 낸 값이다.</p>
+<div class="grid">
+<figure class="bay" style="background:hsl(344 22% 97%)">
+  <figcaption>막 시작 · 셀 수 없음</figcaption>
+  <section class="apx" style="--ex-bg:hsl(344 0% 100%);--ex-bg3:hsl(344 20% 93%);--ex-ink:hsl(344 30% 13%);--ex-ink2:hsl(344 20% 32%);--ex-line2:hsl(344 20% 80%);--ex-accent:hsl(344 42% 63%)" data-indeterminate="true">
+    <header class="apx-head">
+      <h2 class="apx-title">릴레이 방송</h2>
+      <span class="apx-duration">6시간 12분</span>
+    </header>
+    <div class="apx-bar" role="progressbar"><i style="width:0%"></i></div>
+    <p class="apx-remaining"><b>약 40분 남음 (추정)</b></p>
+    <p class="apx-activity">준비 중 · 원본을 읽는 중</p>
+    <div class="apx-detail">
+      <button class="apx-disclose" aria-expanded="false"><span class="apx-caret">▾</span>자세히</button>
+      
+    </div>
+    <footer class="apx-foot">
+      <span class="apx-keep">여기까지 분석한 내용은 남습니다</span>
+      <button class="apx-stop">안전하게 멈추기</button>
+    </footer>
+  </section>
+  <div class="meas">ratio 0.0000 · indeterminate true · basis static</div>
+</figure>
+<figure class="bay" style="background:hsl(344 22% 97%)">
+  <figcaption>훑는 중 · 62%</figcaption>
+  <section class="apx" style="--ex-bg:hsl(344 0% 100%);--ex-bg3:hsl(344 20% 93%);--ex-ink:hsl(344 30% 13%);--ex-ink2:hsl(344 20% 32%);--ex-line2:hsl(344 20% 80%);--ex-accent:hsl(344 42% 63%)" data-indeterminate="false">
+    <header class="apx-head">
+      <h2 class="apx-title">릴레이 방송</h2>
+      <span class="apx-duration">6시간 12분</span>
+    </header>
+    <div class="apx-bar" role="progressbar"><i style="width:40%"></i></div>
+    <p class="apx-remaining"><b>약 16분 남음</b><span class="apx-percent">40%</span></p>
+    <p class="apx-activity">대사 인식 중 · 표본 34/60</p>
+    <div class="apx-detail">
+      <button class="apx-disclose" aria-expanded="false"><span class="apx-caret">▾</span>자세히</button>
+      
+    </div>
+    <footer class="apx-foot">
+      <span class="apx-keep">여기까지 분석한 내용은 남습니다</span>
+      <button class="apx-stop">안전하게 멈추기</button>
+    </footer>
+  </section>
+  <div class="meas">ratio 0.3975 · indeterminate false · basis measured</div>
+</figure>
+<figure class="bay" style="background:hsl(344 22% 97%)">
+  <figcaption>정밀 분석 중 · 셀 수 없음</figcaption>
+  <section class="apx" style="--ex-bg:hsl(344 0% 100%);--ex-bg3:hsl(344 20% 93%);--ex-ink:hsl(344 30% 13%);--ex-ink2:hsl(344 20% 32%);--ex-line2:hsl(344 20% 80%);--ex-accent:hsl(344 42% 63%)" data-indeterminate="true">
+    <header class="apx-head">
+      <h2 class="apx-title">릴레이 방송</h2>
+      <span class="apx-duration">6시간 12분</span>
+    </header>
+    <div class="apx-bar" role="progressbar"><i style="width:63%"></i></div>
+    <p class="apx-remaining"><b>약 19분 남음 (추정)</b></p>
+    <p class="apx-activity">후보 정리 중</p>
+    <div class="apx-detail">
+      <button class="apx-disclose" aria-expanded="false"><span class="apx-caret">▾</span>자세히</button>
+      
+    </div>
+    <footer class="apx-foot">
+      <span class="apx-keep">여기까지 분석한 내용은 남습니다</span>
+      <button class="apx-stop">안전하게 멈추기</button>
+    </footer>
+  </section>
+  <div class="meas">ratio 0.6300 · indeterminate true · basis static</div>
+</figure>
+<figure class="bay" style="background:hsl(344 22% 97%)">
+  <figcaption>다 끝남</figcaption>
+  <section class="apx" style="--ex-bg:hsl(344 0% 100%);--ex-bg3:hsl(344 20% 93%);--ex-ink:hsl(344 30% 13%);--ex-ink2:hsl(344 20% 32%);--ex-line2:hsl(344 20% 80%);--ex-accent:hsl(344 42% 63%)" data-indeterminate="false">
+    <header class="apx-head">
+      <h2 class="apx-title">릴레이 방송</h2>
+      <span class="apx-duration">6시간 12분</span>
+    </header>
+    <div class="apx-bar" role="progressbar"><i style="width:100%"></i></div>
+    <p class="apx-remaining"><b>약 1분 남음</b><span class="apx-percent">100%</span></p>
+    <p class="apx-activity">정리 완료</p>
+    <div class="apx-detail">
+      <button class="apx-disclose" aria-expanded="false"><span class="apx-caret">▾</span>자세히</button>
+      
+    </div>
+    <footer class="apx-foot">
+      <span class="apx-keep">여기까지 분석한 내용은 남습니다</span>
+      <button class="apx-stop">안전하게 멈추기</button>
+    </footer>
+  </section>
+  <div class="meas">ratio 1.0000 · indeterminate false · basis measured</div>
+</figure>
+<figure class="bay" style="background:hsl(344 22% 97%)">
+  <figcaption>훑는 중 · 62% · 자세히 펼침</figcaption>
+  <section class="apx" style="--ex-bg:hsl(344 0% 100%);--ex-bg3:hsl(344 20% 93%);--ex-ink:hsl(344 30% 13%);--ex-ink2:hsl(344 20% 32%);--ex-line2:hsl(344 20% 80%);--ex-accent:hsl(344 42% 63%)" data-indeterminate="false">
+    <header class="apx-head">
+      <h2 class="apx-title">릴레이 방송</h2>
+      <span class="apx-duration">6시간 12분</span>
+    </header>
+    <div class="apx-bar" role="progressbar"><i style="width:40%"></i></div>
+    <p class="apx-remaining"><b>약 16분 남음</b><span class="apx-percent">40%</span></p>
+    <p class="apx-activity">대사 인식 중 · 표본 34/60</p>
+    <div class="apx-detail">
+      <button class="apx-disclose" aria-expanded="true"><span class="apx-caret">▾</span>자세히</button>
+      <ul class="apx-tracks"><li class="apx-track" data-done="false">
+      <span class="apx-track-label">반응 신호</span>
+      <span class="apx-track-bar" data-unknown="false"><i style="width:68%"></i></span>
+      <span class="apx-track-status">4:12 / 6:12</span>
+    </li>
+<li class="apx-track" data-done="false">
+      <span class="apx-track-label">대사 인식</span>
+      <span class="apx-track-bar" data-unknown="false"><i style="width:56%"></i></span>
+      <span class="apx-track-status">표본 34/60</span>
+    </li>
+<li class="apx-track" data-done="true">
+      <span class="apx-track-label">채팅</span>
+      <span class="apx-track-bar" data-unknown="false"><i style="width:100%"></i></span>
+      <span class="apx-track-status">8,241줄</span>
+    </li></ul>
+    </div>
+    <footer class="apx-foot">
+      <span class="apx-keep">여기까지 분석한 내용은 남습니다</span>
+      <button class="apx-stop">안전하게 멈추기</button>
+    </footer>
+  </section>
+  <div class="meas">ratio 0.3975 · indeterminate false · basis measured</div>
+</figure>
+</div>
+<div class="grid" style="margin-top:18px">
+<figure class="bay" style="background:hsl(344 34% 9%)">
+  <figcaption>막 시작 · 셀 수 없음</figcaption>
+  <section class="apx" style="--ex-bg:hsl(344 30% 14%);--ex-bg3:hsl(344 28% 20%);--ex-ink:hsl(344 24% 93%);--ex-ink2:hsl(344 18% 84%);--ex-line2:hsl(344 26% 34%);--ex-accent:hsl(344 50% 74%)" data-indeterminate="true">
+    <header class="apx-head">
+      <h2 class="apx-title">릴레이 방송</h2>
+      <span class="apx-duration">6시간 12분</span>
+    </header>
+    <div class="apx-bar" role="progressbar"><i style="width:0%"></i></div>
+    <p class="apx-remaining"><b>약 40분 남음 (추정)</b></p>
+    <p class="apx-activity">준비 중 · 원본을 읽는 중</p>
+    <div class="apx-detail">
+      <button class="apx-disclose" aria-expanded="false"><span class="apx-caret">▾</span>자세히</button>
+      
+    </div>
+    <footer class="apx-foot">
+      <span class="apx-keep">여기까지 분석한 내용은 남습니다</span>
+      <button class="apx-stop">안전하게 멈추기</button>
+    </footer>
+  </section>
+  <div class="meas">ratio 0.0000 · indeterminate true · basis static</div>
+</figure>
+<figure class="bay" style="background:hsl(344 34% 9%)">
+  <figcaption>훑는 중 · 62%</figcaption>
+  <section class="apx" style="--ex-bg:hsl(344 30% 14%);--ex-bg3:hsl(344 28% 20%);--ex-ink:hsl(344 24% 93%);--ex-ink2:hsl(344 18% 84%);--ex-line2:hsl(344 26% 34%);--ex-accent:hsl(344 50% 74%)" data-indeterminate="false">
+    <header class="apx-head">
+      <h2 class="apx-title">릴레이 방송</h2>
+      <span class="apx-duration">6시간 12분</span>
+    </header>
+    <div class="apx-bar" role="progressbar"><i style="width:40%"></i></div>
+    <p class="apx-remaining"><b>약 16분 남음</b><span class="apx-percent">40%</span></p>
+    <p class="apx-activity">대사 인식 중 · 표본 34/60</p>
+    <div class="apx-detail">
+      <button class="apx-disclose" aria-expanded="false"><span class="apx-caret">▾</span>자세히</button>
+      
+    </div>
+    <footer class="apx-foot">
+      <span class="apx-keep">여기까지 분석한 내용은 남습니다</span>
+      <button class="apx-stop">안전하게 멈추기</button>
+    </footer>
+  </section>
+  <div class="meas">ratio 0.3975 · indeterminate false · basis measured</div>
+</figure>
+<figure class="bay" style="background:hsl(344 34% 9%)">
+  <figcaption>정밀 분석 중 · 셀 수 없음</figcaption>
+  <section class="apx" style="--ex-bg:hsl(344 30% 14%);--ex-bg3:hsl(344 28% 20%);--ex-ink:hsl(344 24% 93%);--ex-ink2:hsl(344 18% 84%);--ex-line2:hsl(344 26% 34%);--ex-accent:hsl(344 50% 74%)" data-indeterminate="true">
+    <header class="apx-head">
+      <h2 class="apx-title">릴레이 방송</h2>
+      <span class="apx-duration">6시간 12분</span>
+    </header>
+    <div class="apx-bar" role="progressbar"><i style="width:63%"></i></div>
+    <p class="apx-remaining"><b>약 19분 남음 (추정)</b></p>
+    <p class="apx-activity">후보 정리 중</p>
+    <div class="apx-detail">
+      <button class="apx-disclose" aria-expanded="false"><span class="apx-caret">▾</span>자세히</button>
+      
+    </div>
+    <footer class="apx-foot">
+      <span class="apx-keep">여기까지 분석한 내용은 남습니다</span>
+      <button class="apx-stop">안전하게 멈추기</button>
+    </footer>
+  </section>
+  <div class="meas">ratio 0.6300 · indeterminate true · basis static</div>
+</figure>
+<figure class="bay" style="background:hsl(344 34% 9%)">
+  <figcaption>다 끝남</figcaption>
+  <section class="apx" style="--ex-bg:hsl(344 30% 14%);--ex-bg3:hsl(344 28% 20%);--ex-ink:hsl(344 24% 93%);--ex-ink2:hsl(344 18% 84%);--ex-line2:hsl(344 26% 34%);--ex-accent:hsl(344 50% 74%)" data-indeterminate="false">
+    <header class="apx-head">
+      <h2 class="apx-title">릴레이 방송</h2>
+      <span class="apx-duration">6시간 12분</span>
+    </header>
+    <div class="apx-bar" role="progressbar"><i style="width:100%"></i></div>
+    <p class="apx-remaining"><b>약 1분 남음</b><span class="apx-percent">100%</span></p>
+    <p class="apx-activity">정리 완료</p>
+    <div class="apx-detail">
+      <button class="apx-disclose" aria-expanded="false"><span class="apx-caret">▾</span>자세히</button>
+      
+    </div>
+    <footer class="apx-foot">
+      <span class="apx-keep">여기까지 분석한 내용은 남습니다</span>
+      <button class="apx-stop">안전하게 멈추기</button>
+    </footer>
+  </section>
+  <div class="meas">ratio 1.0000 · indeterminate false · basis measured</div>
+</figure>
+<figure class="bay" style="background:hsl(344 34% 9%)">
+  <figcaption>훑는 중 · 62% · 자세히 펼침</figcaption>
+  <section class="apx" style="--ex-bg:hsl(344 30% 14%);--ex-bg3:hsl(344 28% 20%);--ex-ink:hsl(344 24% 93%);--ex-ink2:hsl(344 18% 84%);--ex-line2:hsl(344 26% 34%);--ex-accent:hsl(344 50% 74%)" data-indeterminate="false">
+    <header class="apx-head">
+      <h2 class="apx-title">릴레이 방송</h2>
+      <span class="apx-duration">6시간 12분</span>
+    </header>
+    <div class="apx-bar" role="progressbar"><i style="width:40%"></i></div>
+    <p class="apx-remaining"><b>약 16분 남음</b><span class="apx-percent">40%</span></p>
+    <p class="apx-activity">대사 인식 중 · 표본 34/60</p>
+    <div class="apx-detail">
+      <button class="apx-disclose" aria-expanded="true"><span class="apx-caret">▾</span>자세히</button>
+      <ul class="apx-tracks"><li class="apx-track" data-done="false">
+      <span class="apx-track-label">반응 신호</span>
+      <span class="apx-track-bar" data-unknown="false"><i style="width:68%"></i></span>
+      <span class="apx-track-status">4:12 / 6:12</span>
+    </li>
+<li class="apx-track" data-done="false">
+      <span class="apx-track-label">대사 인식</span>
+      <span class="apx-track-bar" data-unknown="false"><i style="width:56%"></i></span>
+      <span class="apx-track-status">표본 34/60</span>
+    </li>
+<li class="apx-track" data-done="true">
+      <span class="apx-track-label">채팅</span>
+      <span class="apx-track-bar" data-unknown="false"><i style="width:100%"></i></span>
+      <span class="apx-track-status">8,241줄</span>
+    </li></ul>
+    </div>
+    <footer class="apx-foot">
+      <span class="apx-keep">여기까지 분석한 내용은 남습니다</span>
+      <button class="apx-stop">안전하게 멈추기</button>
+    </footer>
+  </section>
+  <div class="meas">ratio 0.3975 · indeterminate false · basis measured</div>
+</figure>
+</div>
+</body></html>

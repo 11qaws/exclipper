@@ -12,6 +12,7 @@ import "../styles/review-surface.css";
 // 공용 폼이 먼저 와야 화면별 스타일이 그 위를 덮을 수 있다.
 import "../styles/forms/ui-forms.css";
 import "../styles/unfinished-jobs.css";
+import "../styles/analysis-progress.css";
 
 const rootElement = document.getElementById("root");
 
