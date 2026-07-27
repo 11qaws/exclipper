@@ -7,6 +7,9 @@ import {
 } from "./broadcastTranscriptQwen";
 import {
   MAX_BROADCAST_TRANSCRIPT_WORKER_CHUNKS,
+  isBroadcastTranscriptChunkId,
+  type BroadcastTranscriptChunkGap,
+  type BroadcastTranscriptChunkGapReason,
   type BroadcastTranscriptQuotaIdentity,
   type BroadcastTranscriptWorkerProgress,
   type BroadcastTranscriptWorkerRequest,
@@ -35,12 +38,19 @@ export interface RunBroadcastTranscriptWorkerOptions {
   ) => void;
   readonly onChunkGap?: (
     chunkId: string,
-    reason: "decode-failed" | "no-audio" | "transcription-failed",
+    reason: BroadcastTranscriptChunkGapReason,
   ) => void;
 }
 
+export interface BroadcastTranscriptWorkerFragment {
+  readonly chunkId: string;
+  readonly result: BroadcastTranscriptQwenResult;
+}
+
 export interface BroadcastTranscriptWorkerRunResult {
+  readonly fragments: readonly BroadcastTranscriptWorkerFragment[];
   readonly results: readonly BroadcastTranscriptQwenResult[];
+  readonly gaps: readonly BroadcastTranscriptChunkGap[];
   readonly gapChunkIds: readonly string[];
   readonly requestedCount: number;
   /** 동시성이 어디서 멈췄나. 실측 표에 남긴다. */
@@ -120,7 +130,9 @@ function inputIssue(
   const ids = new Set<string>();
   for (const [index, chunk] of chunks.entries()) {
     const ordinal = index + 1;
-    if (chunk.chunkId.length === 0) return `${ordinal}번째 대사 구간 ID가 비어 있어요.`;
+    if (!isBroadcastTranscriptChunkId(chunk.chunkId)) {
+      return `${ordinal}번째 대사 구간 ID 형식을 확인할 수 없어요.`;
+    }
     if (ids.has(chunk.chunkId)) return `${ordinal}번째 대사 구간 ID가 앞 구간과 겹쳐요.`;
     if (
       !Number.isSafeInteger(chunk.sourceStartMs) ||
@@ -209,7 +221,7 @@ export function runBroadcastTranscriptWorker(
   return new Promise((resolve, reject) => {
     let settled = false;
     const resultsByChunkId = new Map<string, BroadcastTranscriptQwenResult>();
-    const gapChunkIds = new Set<string>();
+    const gapReasonByChunkId = new Map<string, BroadcastTranscriptChunkGapReason>();
 
     const cleanup = (): void => {
       worker.removeEventListener("message", onMessage);
@@ -284,7 +296,7 @@ export function runBroadcastTranscriptWorker(
           if (
             chunk === undefined ||
             resultsByChunkId.has(event.data.chunkId) ||
-            gapChunkIds.has(event.data.chunkId) ||
+            gapReasonByChunkId.has(event.data.chunkId) ||
             !validResult(event.data.result, chunk)
           ) {
             malformed();
@@ -302,42 +314,59 @@ export function runBroadcastTranscriptWorker(
           if (
             !chunkById.has(event.data.chunkId) ||
             resultsByChunkId.has(event.data.chunkId) ||
-            gapChunkIds.has(event.data.chunkId)
+            gapReasonByChunkId.has(event.data.chunkId) ||
+            ![
+              "decode-failed",
+              "no-audio",
+              "transcription-failed",
+              "rate-limited",
+              "outcome-unknown",
+            ].includes(event.data.reason)
           ) {
             malformed();
             return;
           }
-          gapChunkIds.add(event.data.chunkId);
+          gapReasonByChunkId.set(event.data.chunkId, event.data.reason);
           try {
             options.onChunkGap?.(event.data.chunkId, event.data.reason);
           } catch {
             malformed();
           }
           return;
-        case "broadcast-transcript-complete":
+        case "broadcast-transcript-complete": {
           if (
             event.data.requestedCount !== options.chunks.length ||
             event.data.completedCount !== resultsByChunkId.size ||
-            event.data.gapCount !== gapChunkIds.size ||
-            resultsByChunkId.size + gapChunkIds.size !== options.chunks.length
+            event.data.gapCount !== gapReasonByChunkId.size ||
+            resultsByChunkId.size + gapReasonByChunkId.size !== options.chunks.length
           ) {
             malformed();
             return;
           }
           settled = true;
           cleanup();
+          const fragments = chronologicalChunks.flatMap((chunk) => {
+            const result = resultsByChunkId.get(chunk.chunkId);
+            return result === undefined
+              ? []
+              : [{ chunkId: chunk.chunkId, result }];
+          });
+          const gaps = chronologicalChunks.flatMap((chunk) => {
+            const reason = gapReasonByChunkId.get(chunk.chunkId);
+            return reason === undefined
+              ? []
+              : [{ chunkId: chunk.chunkId, reason }];
+          });
           resolve({
-            results: chronologicalChunks.flatMap((chunk) => {
-              const result = resultsByChunkId.get(chunk.chunkId);
-              return result === undefined ? [] : [result];
-            }),
-            gapChunkIds: chronologicalChunks
-              .filter((chunk) => gapChunkIds.has(chunk.chunkId))
-              .map((chunk) => chunk.chunkId),
+            fragments,
+            results: fragments.map(({ result }) => result),
+            gaps,
+            gapChunkIds: gaps.map(({ chunkId }) => chunkId),
             requestedCount: options.chunks.length,
             concurrencyOutcome: event.data.concurrencyOutcome,
           });
           return;
+        }
         case "broadcast-transcript-cancelled":
           onAbort();
           return;

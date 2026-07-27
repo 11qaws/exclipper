@@ -1,4 +1,7 @@
-import type { AnalysisJobStatus } from "./analysisJob";
+import {
+  COMPLETED_JOB_STATUSES,
+  type AnalysisJobStatus,
+} from "./analysisJob";
 
 /**
  * Which stored analyses may be deleted to stay inside our own budget.
@@ -70,7 +73,7 @@ export interface RetentionPlan {
 /** 자동 삭제 대상이 될 수 있는 상태. 나머지는 나이와 무관하게 보호된다. */
 function isEvictable(status: AnalysisJobStatus): boolean {
   // `failed` 는 제외한다 — RETRY 로 이어갈 수 있는 미완료 작업이다.
-  return status === "completed";
+  return COMPLETED_JOB_STATUSES.has(status);
 }
 
 function sumBytes(jobs: readonly StoredJobFootprint[]): number {

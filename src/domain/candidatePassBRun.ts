@@ -463,7 +463,9 @@ function findCandidateOutcome(
 }
 
 function candidateEventRejection(
-  state: CandidatePassBRunState & { readonly status: "transcribing" },
+  state: CandidatePassBRunState & {
+    readonly status: "loadingModel" | "transcribing";
+  },
   event: Extract<
     CandidatePassBWorkerEvent,
     {
@@ -505,7 +507,9 @@ function candidateEventRejection(
 }
 
 function settleCandidate(
-  state: CandidatePassBRunState & { readonly status: "transcribing" },
+  state: CandidatePassBRunState & {
+    readonly status: "loadingModel" | "transcribing";
+  },
   event: Extract<
     CandidatePassBWorkerEvent,
     {
@@ -558,6 +562,13 @@ function settleCandidate(
     (outcome) => outcome.status === "pending",
   );
   const base = baseAfterWorkerEvent(state, event.eventId, candidateOutcomes);
+
+  if (state.status === "loadingModel" && nextCandidate !== undefined) {
+    return accept({
+      ...base,
+      status: "loadingModel",
+    });
+  }
 
   if (nextCandidate !== undefined) {
     return accept({
@@ -912,7 +923,9 @@ export function reduceCandidatePassBRun(
     if (state.status !== "loadingModel") {
       return reject(state, "undefined_transition");
     }
-    const firstCandidate = state.candidateOutcomes[0];
+    const firstCandidate = state.candidateOutcomes.find(
+      (candidate) => candidate.status === "pending",
+    );
     if (firstCandidate === undefined) {
       return reject(state, "undefined_transition");
     }
@@ -928,7 +941,10 @@ export function reduceCandidatePassBRun(
     event.type === "CANDIDATE_NO_CLEAR_SPEECH" ||
     event.type === "CANDIDATE_FAILED"
   ) {
-    if (state.status !== "transcribing") {
+    if (
+      state.status !== "transcribing" &&
+      !(state.status === "loadingModel" && event.type === "CANDIDATE_FAILED")
+    ) {
       return reject(state, "undefined_transition");
     }
     return settleCandidate(state, event);

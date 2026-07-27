@@ -96,6 +96,20 @@ export interface CandidatePassBInsightsRecord {
   readonly recordedAt: string;
 }
 
+/**
+ * Minimal durable-store surface required to commit a Candidate Pass B snapshot.
+ *
+ * Keep this structural instead of importing AnalysisResultStore: the concrete
+ * store already imports this record module, so importing it back here would
+ * create a circular dependency.
+ */
+export interface CandidatePassBInsightStorePort {
+  putCandidatePassBInsights(record: CandidatePassBInsightsRecord): Promise<void>;
+  getCandidatePassBInsights(
+    runId: string,
+  ): Promise<CandidatePassBInsightsRecord | null>;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -313,4 +327,74 @@ export function cloneCandidatePassBInsightsRecord(
 ): CandidatePassBInsightsRecord {
   assertCandidatePassBInsightsRecord(record);
   return JSON.parse(JSON.stringify(record)) as CandidatePassBInsightsRecord;
+}
+
+function jsonStructuresExactlyMatch(left: unknown, right: unknown): boolean {
+  if (left === right) {
+    return true;
+  }
+  if (Array.isArray(left) || Array.isArray(right)) {
+    return (
+      Array.isArray(left) &&
+      Array.isArray(right) &&
+      left.length === right.length &&
+      left.every((item, index) =>
+        jsonStructuresExactlyMatch(item, right[index]),
+      )
+    );
+  }
+  if (!isRecord(left) || !isRecord(right)) {
+    return false;
+  }
+  const leftKeys = Object.keys(left).sort();
+  const rightKeys = Object.keys(right).sort();
+  return (
+    leftKeys.length === rightKeys.length &&
+    leftKeys.every(
+      (key, index) =>
+        key === rightKeys[index] &&
+        jsonStructuresExactlyMatch(left[key], right[key]),
+    )
+  );
+}
+
+/**
+ * Commits one complete snapshot and proves that the durable store can return
+ * the exact same metadata and artifact maps before callers publish success.
+ *
+ * The write error is intentionally propagated unchanged. A successful write
+ * followed by a missing, invalid, stale or partially persisted readback is a
+ * failed commit and therefore rejects as well.
+ */
+export async function persistCandidatePassBInsightsWithReadback(
+  store: CandidatePassBInsightStorePort,
+  record: CandidatePassBInsightsRecord,
+): Promise<CandidatePassBInsightsRecord> {
+  const expected = cloneCandidatePassBInsightsRecord(record);
+  await store.putCandidatePassBInsights(
+    cloneCandidatePassBInsightsRecord(expected),
+  );
+
+  const readback = await store.getCandidatePassBInsights(expected.runId);
+  if (readback === null) {
+    throw new Error(
+      "Candidate Pass B insight commit could not be verified: readback is missing.",
+    );
+  }
+
+  let verifiedReadback: CandidatePassBInsightsRecord;
+  try {
+    verifiedReadback = cloneCandidatePassBInsightsRecord(readback);
+  } catch (error) {
+    throw new Error(
+      "Candidate Pass B insight commit could not be verified: readback is invalid.",
+      { cause: error },
+    );
+  }
+  if (!jsonStructuresExactlyMatch(expected, verifiedReadback)) {
+    throw new Error(
+      "Candidate Pass B insight commit could not be verified: readback does not exactly match the written snapshot.",
+    );
+  }
+  return verifiedReadback;
 }

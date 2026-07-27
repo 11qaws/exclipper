@@ -51,6 +51,7 @@ describe("broadcastContextPersistence", () => {
       resultPayload: storedResult,
       refinementLeadIds: ["lead-1"],
       fastRefinementLeadIds: [],
+      contextCandidateIds: [],
     });
   });
 
@@ -65,7 +66,42 @@ describe("broadcastContextPersistence", () => {
     ).toMatchObject({
       refinementLeadIds: ["lead-1", "lead-2"],
       fastRefinementLeadIds: ["lead-1"],
+      contextCandidateIds: [],
     });
+  });
+
+  it("restores the exact legacy 12-candidate cohort from stored annotations", () => {
+    const annotations = Array.from({ length: 12 }, (_, index) => ({
+      candidateId: `candidate-${index + 1}`,
+    }));
+    const envelope = unpackPersistedBroadcastContext({
+      schemaVersion: "1.1.0",
+      result: { ...storedResult, annotations },
+      refinementLeadIds: [],
+      fastRefinementLeadIds: [],
+    });
+
+    expect(envelope.contextCandidateIds).toEqual(
+      annotations.map(({ candidateId }) => candidateId),
+    );
+  });
+
+  it("prefers an explicitly stored context cohort over inferred annotations", () => {
+    const envelope = unpackPersistedBroadcastContext({
+      schemaVersion: "1.2.0",
+      result: {
+        ...storedResult,
+        annotations: [{ candidateId: "legacy-candidate" }],
+      },
+      refinementLeadIds: [],
+      fastRefinementLeadIds: [],
+      contextCandidateIds: ["candidate-a", "candidate-b"],
+    });
+
+    expect(envelope.contextCandidateIds).toEqual([
+      "candidate-a",
+      "candidate-b",
+    ]);
   });
 
   it("preserves explicit legacy unsupported flags after strict parsing", () => {

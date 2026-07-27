@@ -1042,17 +1042,17 @@ describe("aiProxy.worker", () => {
     expect(upstreamFetch).not.toHaveBeenCalled();
   });
 
-  it("reports health without disclosing configuration or calling Gemini", async () => {
+  it("reports candidate transport unavailable without disclosing configuration", async () => {
     const upstreamFetch = vi.fn();
     const response = await handleCandidateInsightRequest(
       new Request("https://rettohighlight-gemini.example/healthz"),
       { ...createEnvironment(), GEMINI_API_KEY: "" },
       { fetchImplementation: upstreamFetch },
     );
-    expect(response.status).toBe(200);
+    expect(response.status).toBe(503);
     const payload: unknown = await response.json();
     expect(payload).toMatchObject({
-      ok: true,
+      ok: false,
       service: "rettohighlight-gemini",
       version: 5,
       routingPolicyVersion: "1.11.0",
@@ -1069,6 +1069,13 @@ describe("aiProxy.worker", () => {
           "application/json",
           "application/vnd.exclipper.transcript-base64",
         ],
+      },
+      candidateTransport: {
+        version: 1,
+        mode: "paid-direct",
+        configured: false,
+        stagedSchemaVersion: "1.0.0",
+        requiredFrameCount: 4,
       },
       providers: {
         schemaVersion: "1.2.0",

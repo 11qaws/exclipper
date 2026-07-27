@@ -24,6 +24,7 @@ const record: BroadcastContextSessionRecord = {
     },
   ],
   gapChunkIds: [],
+  fragmentGaps: [],
   modelRevision: "qwen3-asr-flash-api-reviewed-2026-07-22",
   contextInputSignature: null,
   contextResultJson: null,
@@ -39,6 +40,23 @@ describe("broadcastContextSessionStore", () => {
     expect(cloned).toEqual(record);
     expect(cloned).not.toBe(record);
     expect(cloned.chapters).not.toBe(record.chapters);
+    expect(cloned.fragmentGaps).not.toBe(record.fragmentGaps);
+  });
+
+  it("migrates a legacy 1.2 checkpoint without discarding paid chapters", () => {
+    const legacy: Record<string, unknown> = {
+      ...record,
+      schemaVersion: "1.2.0",
+    };
+    Reflect.deleteProperty(legacy, "fragmentGaps");
+    expect(
+      cloneBroadcastContextSessionRecord(legacy),
+    ).toMatchObject({
+      schemaVersion: BROADCAST_CONTEXT_SESSION_SCHEMA_VERSION,
+      chapters: record.chapters,
+      gapChunkIds: [],
+      fragmentGaps: [],
+    });
   });
 
   it("pairs refined semantic candidates with the exact refinement input", () => {
@@ -82,6 +100,22 @@ describe("broadcastContextSessionStore", () => {
         completeAudioCoverage: false,
         chapters: [],
         gapChunkIds: ["chunk-001", "chunk-002"],
+        fragmentGaps: [
+          {
+            chunkId: "chunk-001",
+            sourceStartMs: 0,
+            sourceEndMs: 30_000,
+            reason: "in-flight",
+            attemptCount: 3,
+          },
+          {
+            chunkId: "chunk-002",
+            sourceStartMs: 30_000,
+            sourceEndMs: 60_000,
+            reason: "outcome-unknown",
+            attemptCount: 1,
+          },
+        ],
       }),
     ).not.toThrow();
     expect(() =>

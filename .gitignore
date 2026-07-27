@@ -25,6 +25,13 @@ pnpm-debug.log*
 # Tool caches
 .vite/
 .cache/
+.qa/
+
+# Local one-off repair helpers are not release source.
+/add_handler.py
+/fix*.cjs
+/fix*.py
+/refactor1.py
 
 # Operating-system files
 .DS_Store

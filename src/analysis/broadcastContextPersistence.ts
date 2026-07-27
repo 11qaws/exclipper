@@ -3,15 +3,47 @@ import type {
   BroadcastContextRequestInput,
   BroadcastContextResult,
 } from "./broadcastContextProtocol";
+import { MAX_BROADCAST_CONTEXT_CANDIDATES } from "./broadcastContextProtocol";
 
 export interface PersistedBroadcastContextEnvelope {
   readonly resultPayload: unknown;
   readonly refinementLeadIds: readonly string[] | null;
   readonly fastRefinementLeadIds: readonly string[] | null;
+  readonly contextCandidateIds: readonly string[] | null;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function boundedUniqueCandidateIds(value: unknown): readonly string[] | null {
+  const candidateIds = Array.isArray(value)
+    ? value as unknown[]
+    : null;
+  if (
+    candidateIds === null ||
+    candidateIds.length > MAX_BROADCAST_CONTEXT_CANDIDATES ||
+    !candidateIds.every(
+      (candidateId) =>
+        typeof candidateId === "string" &&
+        candidateId.length > 0 &&
+        candidateId.length <= 256,
+    ) ||
+    new Set(candidateIds).size !== candidateIds.length
+  ) {
+    return null;
+  }
+  return candidateIds.map((candidateId) => candidateId as string);
+}
+
+function legacyCandidateIds(resultPayload: unknown): readonly string[] | null {
+  if (!isRecord(resultPayload) || !Array.isArray(resultPayload.annotations)) {
+    return null;
+  }
+  const candidateIds = resultPayload.annotations.map((annotation) =>
+    isRecord(annotation) ? annotation.candidateId : null,
+  );
+  return boundedUniqueCandidateIds(candidateIds);
 }
 
 export function unpackPersistedBroadcastContext(
@@ -35,18 +67,26 @@ export function unpackPersistedBroadcastContext(
         resultPayload: payload,
         refinementLeadIds: null,
         fastRefinementLeadIds: null,
+        contextCandidateIds: null,
       };
     }
+    const explicitContextCandidateIds =
+      "contextCandidateIds" in payload
+        ? boundedUniqueCandidateIds(payload.contextCandidateIds)
+        : null;
     return {
       resultPayload: payload.result,
       refinementLeadIds: payload.refinementLeadIds,
       fastRefinementLeadIds,
+      contextCandidateIds:
+        explicitContextCandidateIds ?? legacyCandidateIds(payload.result),
     };
   }
   return {
     resultPayload: payload,
     refinementLeadIds: null,
     fastRefinementLeadIds: null,
+    contextCandidateIds: legacyCandidateIds(payload),
   };
 }
 

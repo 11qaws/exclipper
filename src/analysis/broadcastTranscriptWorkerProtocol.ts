@@ -1,7 +1,7 @@
 import type { BroadcastContextTranscriptionChunk } from "./broadcastContextSamplingPlan";
 import type { BroadcastTranscriptQwenResult } from "./broadcastTranscriptQwen";
 
-export const BROADCAST_TRANSCRIPT_WORKER_VERSION = "1.4.0" as const;
+export const BROADCAST_TRANSCRIPT_WORKER_VERSION = "1.6.0" as const;
 /**
  * 한 실행이 보낼 수 있는 청크 수의 상한.
  *
@@ -10,16 +10,56 @@ export const BROADCAST_TRANSCRIPT_WORKER_VERSION = "1.4.0" as const;
  * 낮춰 과거 partial checkpoint를 거부할 이유는 없다.
  */
 export const MAX_BROADCAST_TRANSCRIPT_WORKER_CHUNKS = 760;
+export const MAX_BROADCAST_TRANSCRIPT_CHUNK_ID_LENGTH = 96;
+
+export function isBroadcastTranscriptChunkId(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    value.length > 0 &&
+    value.length <= MAX_BROADCAST_TRANSCRIPT_CHUNK_ID_LENGTH &&
+    /^[A-Za-z0-9._:-]+$/u.test(value)
+  );
+}
 
 export interface BroadcastTranscriptWorkerIdentity {
   readonly taskId: string;
 }
 
+export type BroadcastTranscriptQuotaOperationNamespace =
+  | "uniform"
+  | "event-boost"
+  | "refinement";
+
 export interface BroadcastTranscriptQuotaIdentity {
   readonly participantId: string;
   readonly runId: string;
-  /** Increments only after the editor explicitly retries a partial/failed run. */
+  /**
+   * Prevents the same source-fenced chunk from reusing a terminal quota
+   * operation when it moves from uniform discovery to event boost or later
+   * semantic refinement.
+   */
+  readonly operationNamespace: BroadcastTranscriptQuotaOperationNamespace;
+  /** Disjoint generation for the editor attempt and its fragment-repair wave. */
   readonly attemptOrdinal?: number;
+}
+
+/**
+ * Why one requested transcript fragment did not produce a transcript.
+ *
+ * `no-audio` is resolved negative evidence. The other values represent work
+ * that is either safe to retry or must remain explicitly blocked until its
+ * billing outcome is known.
+ */
+export type BroadcastTranscriptChunkGapReason =
+  | "decode-failed"
+  | "no-audio"
+  | "transcription-failed"
+  | "rate-limited"
+  | "outcome-unknown";
+
+export interface BroadcastTranscriptChunkGap {
+  readonly chunkId: string;
+  readonly reason: BroadcastTranscriptChunkGapReason;
 }
 
 export type BroadcastTranscriptWorkerRequest =
@@ -67,7 +107,7 @@ export type BroadcastTranscriptWorkerResponse =
       readonly type: "broadcast-transcript-gap";
       readonly identity: BroadcastTranscriptWorkerIdentity;
       readonly chunkId: string;
-      readonly reason: "decode-failed" | "no-audio" | "transcription-failed";
+      readonly reason: BroadcastTranscriptChunkGapReason;
     }
   | {
       readonly type: "broadcast-transcript-complete";

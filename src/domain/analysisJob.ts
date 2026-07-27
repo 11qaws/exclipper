@@ -26,11 +26,17 @@ export type AnalysisJobStatus =
   | "paused"
   | "blocked"
   | "completed"
+  | "completedEmpty"
   | "failed"
   | "abandoned";
 
-export const TERMINAL_JOB_STATUSES: ReadonlySet<AnalysisJobStatus> = new Set([
+export const COMPLETED_JOB_STATUSES: ReadonlySet<AnalysisJobStatus> = new Set([
   "completed",
+  "completedEmpty",
+]);
+
+export const TERMINAL_JOB_STATUSES: ReadonlySet<AnalysisJobStatus> = new Set([
+  ...COMPLETED_JOB_STATUSES,
   "failed",
   "abandoned",
 ]);
@@ -242,14 +248,17 @@ export function transitionAnalysisJob(
     case "ALL_STAGES_DONE": {
       if (job.status !== "running") return reject(job, "undefined_transition");
       if (nextStageToRun(job) !== null) return reject(job, "stage_order_violation");
-      // 품질 검사를 통과해야 완료다. `done` 과 "쓸 만하다"를 한 값에 섞으면
-      // 캐시가 붙는 순간 쓸모없는 결과가 영구히 재사용된다.
-      if (event.quality !== "usable") {
+      /*
+       * A fully verified broadcast may legitimately produce no clips. Keep it
+       * terminal but distinguish it from a positive result so the UI never
+       * calls a valid negative result "unfinished".
+       */
+      if (event.quality !== "usable" && event.quality !== "empty") {
         return reject(job, "quality_not_usable");
       }
       return accept({
         ...job,
-        status: "completed",
+        status: event.quality === "usable" ? "completed" : "completedEmpty",
         quality: event.quality,
         activeRunId: null,
       });
@@ -269,7 +278,9 @@ export function transitionAnalysisJob(
     case "INVALIDATE": {
       // 엔진·모델이 바뀌었거나 품질이 미달이면 완료를 되돌린다. 새 작업을 만들지
       // 않고 같은 작업을 `queued` 로 보내야 이력과 식별이 유지된다.
-      if (job.status !== "completed") return reject(job, "undefined_transition");
+      if (!COMPLETED_JOB_STATUSES.has(job.status)) {
+        return reject(job, "undefined_transition");
+      }
       if (event.reasonCode.length === 0) return reject(job, "missing_reason_code");
       return accept({
         ...job,
@@ -282,7 +293,9 @@ export function transitionAnalysisJob(
     }
 
     case "ABANDON": {
-      if (job.status === "completed") return reject(job, "undefined_transition");
+      if (COMPLETED_JOB_STATUSES.has(job.status)) {
+        return reject(job, "undefined_transition");
+      }
       return accept({ ...job, status: "abandoned", activeRunId: null });
     }
 
@@ -303,6 +316,6 @@ export function isEligibleForAutomaticCleanup(
   ageMs: number,
   retentionMs: number,
 ): boolean {
-  if (job.status !== "completed") return false;
+  if (!COMPLETED_JOB_STATUSES.has(job.status)) return false;
   return ageMs >= retentionMs;
 }

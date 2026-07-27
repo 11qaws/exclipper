@@ -1,11 +1,32 @@
 import { describe, expect, it } from "vitest";
 import { calculateCoverage } from "./broadcastContextProtocol";
 import {
+  createBroadcastNoAudioChapters,
   createBroadcastTranscriptChapters,
   mergeBroadcastTranscriptChapters,
 } from "./broadcastTranscriptChapters";
 
 describe("broadcastTranscriptChapters", () => {
+  it("persists confirmed no-audio ranges as resolved negative evidence", () => {
+    const [chapter] = createBroadcastNoAudioChapters(
+      [
+        {
+          chunkId: "silent-range",
+          sourceStartMs: 30_000,
+          sourceEndMs: 60_000,
+          kind: "uniform",
+        },
+      ],
+      120_000,
+    );
+    expect(chapter).toMatchObject({
+      startMs: 30_000,
+      endMs: 60_000,
+      evidenceMode: "sampled-audio-video",
+    });
+    expect(chapter?.summaryKo).toContain("발화나 소리");
+  });
+
   it("preserves ASR source fences and reports true full coverage", () => {
     const chapters = createBroadcastTranscriptChapters(
       [

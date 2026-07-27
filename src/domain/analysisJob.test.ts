@@ -166,18 +166,28 @@ describe("analysis job", () => {
       if (!outcome.accepted) expect(outcome.reason).toBe("stage_order_violation");
     });
 
-    it("refuses to complete when the output is not usable", () => {
-      // `done` 과 "쓸 만하다"를 한 값에 섞으면 캐시가 붙는 순간 쓸모없는 결과가
-      // 영구히 재사용된다.
+    it("keeps suspect or unknown output unfinished", () => {
       const done = drive(newJob(), [
         { type: "START", runId: "run-1" },
         ...ALL_STAGES_COMMITTED,
       ]);
-      for (const quality of ["empty", "suspect", "unknown"] as const) {
+      for (const quality of ["suspect", "unknown"] as const) {
         const outcome = transitionAnalysisJob(done, { type: "ALL_STAGES_DONE", quality });
         expect(outcome.accepted, quality).toBe(false);
         if (!outcome.accepted) expect(outcome.reason).toBe("quality_not_usable");
       }
+    });
+
+    it("records a fully verified zero-candidate broadcast as a distinct completion", () => {
+      const completed = drive(newJob(), [
+        { type: "START", runId: "run-1" },
+        ...ALL_STAGES_COMMITTED,
+        { type: "ALL_STAGES_DONE", quality: "empty" },
+      ]);
+
+      expect(completed.status).toBe("completedEmpty");
+      expect(completed.quality).toBe("empty");
+      expect(nextStageToRun(completed)).toBeNull();
     });
 
     it("completes when every stage is committed and the output is usable", () => {
@@ -229,6 +239,20 @@ describe("analysis job", () => {
       expect(invalidated.lastReasonCode).toBe("model_manifest_changed");
     });
 
+    it("can re-analyse a completed empty broadcast", () => {
+      const completed = drive(newJob(), [
+        { type: "START", runId: "run-1" },
+        ...ALL_STAGES_COMMITTED,
+        { type: "ALL_STAGES_DONE", quality: "empty" },
+      ]);
+      const invalidated = drive(completed, [
+        { type: "INVALIDATE", reasonCode: "reanalysis_requested" },
+      ]);
+
+      expect(invalidated.status).toBe("queued");
+      expect(invalidated.quality).toBe("unknown");
+    });
+
     it("lets a failed job be retried", () => {
       const failed = drive(newJob(), [
         { type: "START", runId: "run-1" },
@@ -251,6 +275,16 @@ describe("analysis job", () => {
       ]);
       expect(isEligibleForAutomaticCleanup(completed, RETENTION + 1, RETENTION)).toBe(true);
       expect(isEligibleForAutomaticCleanup(completed, RETENTION - 1, RETENTION)).toBe(false);
+    });
+
+    it("collects a completed empty job by the same retention policy", () => {
+      const completed = drive(newJob(), [
+        { type: "START", runId: "run-1" },
+        ...ALL_STAGES_COMMITTED,
+        { type: "ALL_STAGES_DONE", quality: "empty" },
+      ]);
+
+      expect(isEligibleForAutomaticCleanup(completed, RETENTION + 1, RETENTION)).toBe(true);
     });
 
     it("never collects paused or blocked work, however old", () => {

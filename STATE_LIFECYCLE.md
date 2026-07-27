@@ -1,13 +1,31 @@
 # ExClipper 상태·생애주기 명세
 
-- 문서 버전: 0.8.6
+- 문서 버전: 0.8.7
 - 기준 제품 계획: PRODUCT_PLAN.md 현재 revision
-- 기준일: 2026-07-27 (Asia/Seoul)
+- 기준일: 2026-07-28 (Asia/Seoul)
 - 적용 범위: GitHub Pages에서 실행되는 개인 편집 어시스턴트와 선택형 CHZZK 동반 수집기
 - 문서 지위: 구현·회귀 테스트의 canonical 상태 문서
 
+## 다음 배포 후보 · 후보 cohort와 최종 종료 상태
+
+- `candidate ledger`는 fast/semantic discovery가 만든 canonical 원장이다. `context cohort`는 이 원장에서 최대 32개를 골라 whole-context AI에 보낸 집합이고, `detail cohort`는 context가 준비된 항목 중 최대 12개를 골라 화면·오디오 AI에 보내는 집합이다. 세 집합의 상한과 membership을 하나의 `candidateCount`로 추정하지 않는다.
+- context 실행은 exact `contextCandidateIds`와 함께 commit한다. 복구 시 candidate ID·순서·source duration·input signature가 모두 맞아야 현재 context로 사용할 수 있다. detail cohort 밖의 context-qualified 후보는 reservoir에 남지만 `detail-result-missing`이 아니다.
+- detail candidate의 중심 전이는 `pending -> frame-preparing -> four-frames-ready -> media-staged -> remote-review -> receipt-issued | gap`이다. 네 화면이 모두 준비되기 전에는 remote-review를 시작하지 않는다. 후보 하나의 `gap`은 형제 후보를 실패시키지 않으며 run은 모든 candidate가 terminal일 때만 `completed | completedWithGaps`가 된다.
+- `receipt-issued`는 현재 context fingerprint, 오디오 검토, 서로 다른 화면 4장, 그중 하나인 thumbnail timestamp와 provider insight가 모두 같은 candidate operation에 연결됐다는 뜻이다. Qwen·Gemini·quota·receipt는 provider 호출 전에 생성된 동일 canonical packet을 사용하며, receipt와 실제 provider prompt가 다른 silent compaction은 금지한다.
+- candidate context는 전체 방송 원본을 바꾸지 않고 provider 호출 전에 48KiB canonical packet으로 만든다. aggregate 예산 때문에 줄어든 필드는 bilingual omission marker와 앞·뒤를 함께 보존하며, 이 canonical packet 자체를 fingerprint한다. 따라서 합법적인 최대 protocol 입력은 80KiB prompt 제한으로 후보 실패가 되지 않는다. 크기를 이유로 candidate를 gap으로 만드는 전이는 존재하지 않는다.
+- `receipt-issued` 뒤에도 `artifact-write-pending -> artifact-readback-verified | artifact-readback-failed`가 남는다. exact readback 전의 insight는 UI의 임시 검토 자료일 뿐 final projection의 입력이 아니다. 실패하면 stage cursor와 job terminal을 유지하고, 같은 메모리 snapshot의 저장만 다시 시도한다.
+- final projection의 판단 완료 제외는 `context-excluded | program-material-excluded | context-conflict | detail-not-recommended`다. pipeline 미완료는 `context-missing | detail-result-missing | verification-receipt-missing | evidence-incomplete`다. 사건·반응·클립 가치 설명, 등장인물 상태·근거, 최종 판정, 맥락 일치, 프로그램성 판정 중 하나가 비거나 모순인 insight도 `evidence-incomplete`이며, run envelope가 `completed`여도 해당 candidate ID는 AI outstanding/action 목록에 남는다. 전자는 정상 0개가 될 수 있고 후자는 publication과 job completion을 막는다.
+- `AnalysisJob`의 정상 terminal은 `completed | completedEmpty`다. `completed`는 완전 검증 후보가 하나 이상, `completedEmpty`는 pipeline gap 없이 0개다. `failed`, `paused`, `blocked`와 `completedEmpty`를 unfinished 목록이나 retention에서 같은 의미로 다루지 않는다.
+- UI가 실패·복구 panel을 열어도 resume cursor는 전진하지 않는다. `broadcastContext`는 whole-context artifact readback 뒤, `deepPass/publication`은 pipeline gap이 0이고 각 결과가 준비된 뒤에만 순서대로 commit한다.
+- Free candidate media는 `lease-issued -> r2-staged -> ticket-resolved -> execution-waiting -> in-flight -> receipt-issued | gap` 순서다. R2 stage는 헤더가 없어도 counted stream을 `FixedLengthStream`으로 봉인해 signed expected length를 보존하며, 초과·미달 본문은 `r2-staged`에 도달하지 않는다. 동일 object 재사용과 conditional PUT loser는 `reused`로 정산하고 미사용 upload pump를 abort한다. provider 결과가 명시적 429·outcome-unknown이거나 bounded schema 복구 뒤에도 invalid-response이면 object를 보존하고, 성공·확정 영구 실패 뒤 삭제한다. 비정상 종료 orphan은 기존 `transcript/` 1일 lifecycle이 정리한다.
+
 ## `0.8.6` 무료 R2 전사 transport와 유료 전환 상태
 
+- 전사 조각의 phase-local 상태는 `pending -> active -> transcript | no-audio | retryable-gap | outcome-unknown`이다. `transcript`와 `no-audio`는 해결된 근거이고, `decode-failed | transcription-failed | rate-limited`는 최대 3회 시도 안에서 실패한 조각만 다시 `active`로 연다. 성공한 형제 조각은 새 시도에 포함하지 않는다.
+- 각 attempt는 provider 시작 전에 대상 조각을 `in-flight`와 현재 quota ordinal로 checkpoint하고 같은 run에서 다시 읽는다. 각 부분 성공·`no-audio`·gap event도 즉시 정확한 범위·사유·마지막 ordinal로 같은 직렬 저장 queue에 덮어쓴다. 최종 시도 뒤에도 retryable gap이 남으면 transcript는 `failed`, seal은 `null`이며 whole-context는 시작하지 않는다. `completedWithGaps`는 이 자동 전사 phase의 다음 단계 허가 상태가 아니다.
+- quota fragment identity는 `transcript-{uniform|event-boost|refinement}-g{durableOrdinal}-{stableChunkId}`다. 저장된 마지막 ordinal 다음의 manual generation을 계산해 새로고침 뒤에도 terminal operation을 재사용하지 않는다. `in-flight` 상태로 닫힌 탭은 provider 결과를 모르는 상태이므로 자동 재개하지 않고 편집자의 명시적 재시도를 기다린다.
+- `outcome-unknown`은 새 유료 operation을 자동 발급하지 않는다. 같은 lease와 operation의 transport replay로 “첫 요청이 coordinator에 도달하지 않음”만 안전하게 복구한다. 이미 consume됐을 수 있어 결과를 확정할 수 없는 경우에는 exact gap metadata와 성공 chapter를 보존하고 편집자의 명시적 재시도를 기다린다.
+- whole-context start gate는 `analysisComplete && transcript.status == completed && chapterCount > 0 && sealedOperationKey == requiredEventBoostOperationKey`다. 모델 응답을 저장하기 직전에도 저장된 transcript를 다시 compact해 실제 context 입력과 byte-equivalent인지 확인한다. seal 또는 입력이 바뀐 늦은 결과는 저장하지 않는다.
 - 새 브라우저의 전사 ingress 계약은 transport와 무관하게 `audio/wav`다. 브라우저 전사 Worker는 source fence가 정확한 최대 90초·16kHz·mono·PCM16 WAV를 만들고, quota payload digest는 이 raw WAV bytes에 대해 계산한다. Base64·JSON 전송은 `paid-direct`의 구버전 호환 입력일 뿐 `free-r2`에서는 실행하지 않는다.
 - 서버의 `BROADCAST_TRANSCRIPT_TRANSPORT_MODE`는 `free-r2 | paid-direct` 중 하나다. 이 값은 저장된 transcript chapter, context packet, 후보 ID, 재시도 generation을 바꾸지 않는다. 동일한 client request와 quota operation이 `free-r2`에서는 R2 media staging으로, `paid-direct`에서는 메모리 내 provider body 조립으로 갈라진다.
 - `free-r2` ingress는 `lease-inspected -> r2-streaming-put -> native-sha256-matched -> object-size-matched -> 44-byte-header-validated -> execution-waiting -> in-flight -> complete | gap` 순서다. Worker JavaScript는 본문 reader, 전체 digest, 전체 WAV scan, Base64 변환을 하지 않는다. R2가 request stream과 raw WAV digest를 직접 대조하고 Worker는 저장된 객체의 길이와 선행 44바이트만 읽는다.
@@ -2219,8 +2237,8 @@ ExClipper는 개인 편집 어시스턴트이므로 계정·공유·원격 동�
 ## 27. `0.3.28` 방송 문맥 세션과 의미 후보
 
 1. 빠른 분석이 terminal이면 후보 AV 검증과 방송 transcript를 독립 phase로 시작한다. 어느 한 phase의 실패가 빠른 후보나 다른 phase의 성공 결과를 지우지 않는다.
-2. transcript session은 `idle | running | completed | completedWithGaps | failed | cancelled`로 전이한다. chunk 결과는 현재 source/session/operation identity와 순서를 모두 통과해야 chapter 집계에 들어간다.
-3. context는 transcript가 사용 가능한 terminal이고 후보 Pass B가 terminal일 때 시작한다. 입력 서명은 source duration, 시간순 chapter, gap, 후보 ID·범위·허용 요약, provider/model revision을 포함한다.
+2. transcript session은 `idle | running | completed | completedWithGaps | failed | cancelled`로 전이한다. chunk 결과는 현재 source/session/operation identity와 순서를 모두 통과해야 chapter 집계에 들어간다. 현재 자동 전체 방송 전사의 다음-phase gate에는 gap 없는 `completed`만 사용할 수 있으며 `completedWithGaps`는 레거시·사용자 승인형 제한 결과를 표현하는 상태로만 남는다.
+3. context는 현재 event-boost transcript가 저장 readback까지 끝난 `completed`이고 후보 Pass B가 terminal일 때 시작한다. 입력 서명은 source duration, 시간순 chapter, gap, 후보 ID·범위·허용 요약, provider/model revision을 포함한다.
 4. context result는 기존 후보의 `selected | review | rejected` projection과 chapter에 근거한 discovered lead를 가진다. 기존 후보의 점수·경계·사람 판단을 수정하지 않으며, 화면 목록은 projection으로 rejected 후보를 숨길 수 있다.
 5. 의미 lead refinement는 최대 4개·총 예상비 `$0.03`·구간당 70초를 넘지 않는다. chapter 핵심어와 재전사 문구가 맞고 range가 30~60초일 때만 `semantic` 후보를 만든다. 60% 이상 겹친 기존 후보가 있으면 기존 후보를 유지한다.
 6. transcript의 source-fenced partial chapter는 남은 청크를 gap으로 표시한 checkpoint로 write/readback하며, 다음 실행은 uncovered range만 이어 받는다. context/refinement의 성공 payload는 각각 입력 서명과 함께 `broadcastContextSessions` store에 write/readback 검증한다. failed·cancelled payload는 호환되는 complete 결과를 덮어쓰지 않는다.

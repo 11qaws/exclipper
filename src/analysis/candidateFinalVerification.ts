@@ -7,19 +7,34 @@ import {
   type CandidatePassBInsight,
   type CandidatePassBVerificationReceipt,
 } from "./candidatePassBWorkerProtocol";
+import { canonicalizeCandidatePassBContextPacket } from "./candidatePassBContextBudget";
 
 export interface CandidateFinalVerificationInput<
   TCandidate extends SelectableCandidate = SelectableCandidate,
 > {
   readonly candidates: readonly TCandidate[];
+  /**
+   * Candidate IDs deliberately rejected by the whole-broadcast judgement.
+   *
+   * They remain in the canonical reservoir, but are not missing-context
+   * failures. Editor-approved overrides must not be included in this set.
+   */
+  readonly contextExcludedCandidateIds?: ReadonlySet<string>;
   readonly contextByCandidateId: Readonly<Record<string, CandidatePassBContextPacket>>;
   readonly insightByCandidateId: Readonly<Record<string, CandidatePassBInsight>>;
   readonly receiptByCandidateId: Readonly<
     Record<string, CandidatePassBVerificationReceipt>
   >;
+  /**
+   * IDs whose persisted evidence, model identity, representative thumbnail and
+   * receipt all survived a store readback. This fence is mandatory: in-memory
+   * AI results can never be published ahead of durable artifacts.
+   */
+  readonly completeEvidenceCandidateIds: ReadonlySet<string>;
 }
 
 export type CandidateFinalVerificationGap =
+  | "context-excluded"
   | "context-missing"
   | "detail-result-missing"
   | "verification-receipt-missing"
@@ -146,8 +161,14 @@ export function createCandidatePassBVerificationReceipt(
   frames: readonly { readonly timestampMs: number }[],
   thumbnailTimestampMs: number,
 ): CandidatePassBVerificationReceipt | null {
+  let canonicalContext: CandidatePassBContextPacket;
+  try {
+    canonicalContext = canonicalizeCandidatePassBContextPacket(context);
+  } catch {
+    return null;
+  }
   if (
-    context.schemaVersion !== CANDIDATE_PASS_B_CONTEXT_SCHEMA_VERSION ||
+    canonicalContext.schemaVersion !== CANDIDATE_PASS_B_CONTEXT_SCHEMA_VERSION ||
     frames.length !== MAX_CANDIDATE_PASS_B_VIDEO_FRAMES ||
     new Set(frames.map(({ timestampMs }) => timestampMs)).size !==
       MAX_CANDIDATE_PASS_B_VIDEO_FRAMES ||
@@ -158,9 +179,9 @@ export function createCandidatePassBVerificationReceipt(
   }
   return {
     schemaVersion: "1.1.0",
-    contextSchemaVersion: context.schemaVersion,
-    transcriptSource: context.transcriptSource,
-    contextFingerprint: candidatePassBContextFingerprint(context),
+    contextSchemaVersion: canonicalContext.schemaVersion,
+    transcriptSource: canonicalContext.transcriptSource,
+    contextFingerprint: candidatePassBContextFingerprint(canonicalContext),
     audioReviewed: true,
     videoFrameCount: MAX_CANDIDATE_PASS_B_VIDEO_FRAMES,
     thumbnailPrepared: true,
@@ -214,19 +235,20 @@ export function isCandidatePassBVerificationReceipt(
 export function candidatePassBContextFingerprint(
   context: CandidatePassBContextPacket,
 ): string {
+  const canonicalContext = canonicalizeCandidatePassBContextPacket(context);
   const serialized = JSON.stringify([
-    context.schemaVersion,
-    context.transcriptSource,
-    context.transcriptKo,
-    context.beforeContextKo,
-    context.afterContextKo,
-    context.broadcastSummaryKo,
-    context.topicContextKo,
-    context.fastEvidenceKo,
-    context.contextDecision,
-    context.contextCategory,
-    context.contextVerdictKo,
-    context.chatReactionKo,
+    canonicalContext.schemaVersion,
+    canonicalContext.transcriptSource,
+    canonicalContext.transcriptKo,
+    canonicalContext.beforeContextKo,
+    canonicalContext.afterContextKo,
+    canonicalContext.broadcastSummaryKo,
+    canonicalContext.topicContextKo,
+    canonicalContext.fastEvidenceKo,
+    canonicalContext.contextDecision,
+    canonicalContext.contextCategory,
+    canonicalContext.contextVerdictKo,
+    canonicalContext.chatReactionKo,
   ]);
   let hash = 0xcbf29ce484222325n;
   const prime = 0x100000001b3n;
@@ -241,12 +263,18 @@ export function candidatePassBReceiptMatchesContext(
   receipt: CandidatePassBVerificationReceipt,
   context: CandidatePassBContextPacket,
 ): boolean {
-  return (
-    receipt.schemaVersion === "1.1.0" &&
-    receipt.contextSchemaVersion === context.schemaVersion &&
-    receipt.transcriptSource === context.transcriptSource &&
-    receipt.contextFingerprint === candidatePassBContextFingerprint(context)
-  );
+  try {
+    const canonicalContext = canonicalizeCandidatePassBContextPacket(context);
+    return (
+      receipt.schemaVersion === "1.1.0" &&
+      receipt.contextSchemaVersion === canonicalContext.schemaVersion &&
+      receipt.transcriptSource === canonicalContext.transcriptSource &&
+      receipt.contextFingerprint ===
+        candidatePassBContextFingerprint(canonicalContext)
+    );
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -262,6 +290,10 @@ export function finalizeFullyVerifiedCandidates<
   const gapByCandidateId: Record<string, CandidateFinalVerificationGap> = {};
 
   for (const candidate of input.candidates) {
+    if (input.contextExcludedCandidateIds?.has(candidate.id) === true) {
+      gapByCandidateId[candidate.id] = "context-excluded";
+      continue;
+    }
     const context = input.contextByCandidateId[candidate.id];
     if (context === undefined) {
       gapByCandidateId[candidate.id] = "context-missing";
@@ -275,6 +307,10 @@ export function finalizeFullyVerifiedCandidates<
     const receipt = input.receiptByCandidateId[candidate.id];
     if (receipt === undefined) {
       gapByCandidateId[candidate.id] = "verification-receipt-missing";
+      continue;
+    }
+    if (input.completeEvidenceCandidateIds?.has(candidate.id) !== true) {
+      gapByCandidateId[candidate.id] = "evidence-incomplete";
       continue;
     }
     if (

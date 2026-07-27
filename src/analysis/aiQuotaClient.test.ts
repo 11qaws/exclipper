@@ -371,4 +371,138 @@ describe("AI quota browser client", () => {
     expect(response.status).toBe(200);
     expect(preparedFetch).toHaveBeenCalledTimes(1);
   });
+
+  it("replays the same lease once, then classifies a persistent connection loss as outcome unknown", async () => {
+    const fetchImplementation = vi.fn(
+      (_input: RequestInfo | URL, init?: RequestInit) => {
+        expect(requestJsonBody(init)).toMatchObject({ action: "lease" });
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              schemaVersion: AI_QUOTA_SCHEMA_VERSION,
+              status: "granted",
+              leaseToken:
+                "lease_0000000000000000000000000000000000000001",
+              leaseExpiresAtMs: Date.now() + 30_000,
+              retryAfterMs: 0,
+              activeParticipantCount: 1,
+              poolInFlightCount: 0,
+            }),
+            { status: 200 },
+          ),
+        );
+      },
+    );
+    const preparedFetch = vi.fn(() =>
+      Promise.reject(new TypeError("network disconnected")),
+    );
+
+    await expect(
+      fetchWithPreparedAiQuota(
+        new Uint8Array([1, 2, 3]),
+        {
+          participantId: "participant_11111111111111111111111111111111",
+          runId: "analysis-run-1",
+          operationId: "transcript-fragment-1",
+          pool: "transcript",
+          fetchImplementation,
+        },
+        preparedFetch,
+      ),
+    ).rejects.toMatchObject({ code: "OUTCOME_UNKNOWN" });
+    expect(preparedFetch).toHaveBeenCalledTimes(2);
+    expect(fetchImplementation).toHaveBeenCalledTimes(1);
+  });
+
+  it("recovers a one-off transport loss with the same lease and no new paid generation", async () => {
+    const fetchImplementation = vi.fn(
+      (_input: RequestInfo | URL, init?: RequestInit) => {
+        expect(requestJsonBody(init)).toMatchObject({ action: "lease" });
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              schemaVersion: AI_QUOTA_SCHEMA_VERSION,
+              status: "granted",
+              leaseToken:
+                "lease_0000000000000000000000000000000000000001",
+              leaseExpiresAtMs: Date.now() + 30_000,
+              retryAfterMs: 0,
+              activeParticipantCount: 1,
+              poolInFlightCount: 0,
+            }),
+            { status: 200 },
+          ),
+        );
+      },
+    );
+    let transportAttempt = 0;
+    const preparedFetch = vi.fn(() => {
+      transportAttempt += 1;
+      return transportAttempt === 1
+        ? Promise.reject(new TypeError("connection reset"))
+        : Promise.resolve(new Response("{}", { status: 200 }));
+    });
+
+    await expect(
+      fetchWithPreparedAiQuota(
+        new Uint8Array([1, 2, 3]),
+        {
+          participantId: "participant_11111111111111111111111111111111",
+          runId: "analysis-run-1",
+          operationId: "transcript-fragment-replay",
+          pool: "transcript",
+          fetchImplementation,
+        },
+        preparedFetch,
+      ),
+    ).resolves.toMatchObject({ status: 200 });
+    expect(preparedFetch).toHaveBeenCalledTimes(2);
+    expect(fetchImplementation).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not allocate a fresh operation when same-lease replay reports a conflict", async () => {
+    const fetchImplementation = vi.fn(
+      (_input: RequestInfo | URL, init?: RequestInit) => {
+        expect(requestJsonBody(init)).toMatchObject({ action: "lease" });
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              schemaVersion: AI_QUOTA_SCHEMA_VERSION,
+              status: "granted",
+              leaseToken:
+                "lease_0000000000000000000000000000000000000001",
+              leaseExpiresAtMs: Date.now() + 30_000,
+              retryAfterMs: 0,
+              activeParticipantCount: 1,
+              poolInFlightCount: 0,
+            }),
+            { status: 200 },
+          ),
+        );
+      },
+    );
+    let transportAttempt = 0;
+    const preparedFetch = vi.fn(() => {
+      transportAttempt += 1;
+      return transportAttempt === 1
+        ? Promise.reject(new TypeError("connection reset"))
+        : Promise.resolve(new Response("conflict", { status: 409 }));
+    });
+
+    await expect(
+      fetchWithPreparedAiQuota(
+        new Uint8Array([1, 2, 3]),
+        {
+          participantId: "participant_11111111111111111111111111111111",
+          runId: "analysis-run-1",
+          operationId: "transcript-fragment-conflict",
+          pool: "transcript",
+          fetchImplementation,
+        },
+        preparedFetch,
+      ),
+    ).rejects.toMatchObject({ code: "OUTCOME_UNKNOWN" });
+    expect(preparedFetch).toHaveBeenCalledTimes(2);
+    expect(fetchImplementation).toHaveBeenCalledTimes(1);
+  });
 });

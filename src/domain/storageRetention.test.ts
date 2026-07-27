@@ -88,6 +88,14 @@ describe("storage retention", () => {
       const plan = planRetention([job("a", "completed", 29)], NOW, POLICY);
       expect(plan.evict).toEqual([]);
     });
+
+    it("evicts a completed empty job rather than flagging it unfinished", () => {
+      const plan = planRetention([job("a", "completedEmpty", 31)], NOW, POLICY);
+      expect(plan.evict).toEqual([
+        { jobId: "a", reason: "past_retention", bytes: 100 * 1024 * 1024 },
+      ]);
+      expect(plan.flagStale).toEqual([]);
+    });
   });
 
   it("deletes an abandoned job at once, whatever its age", () => {

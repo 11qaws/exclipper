@@ -81,6 +81,7 @@ describe("broadcastTranscriptWorkerClient", () => {
         quota: {
           participantId: "participant_11111111111111111111111111111111",
           runId: "analysis-run-1",
+          operationNamespace: "event-boost",
           attemptOrdinal: 2,
         },
         signal: controller.signal,
@@ -89,7 +90,10 @@ describe("broadcastTranscriptWorkerClient", () => {
     );
 
     expect(worker.posted[0]).toMatchObject({
-      quota: { attemptOrdinal: 2 },
+      quota: {
+        operationNamespace: "event-boost",
+        attemptOrdinal: 2,
+      },
     });
     controller.abort();
     await expect(promise).rejects.toMatchObject({ code: "ABORTED" });
@@ -157,6 +161,11 @@ describe("broadcastTranscriptWorkerClient", () => {
     await expect(promise).resolves.toMatchObject({
       requestedCount: 2,
       gapChunkIds: [],
+      gaps: [],
+      fragments: [
+        { chunkId: "asr-001", result: { sourceStartMs: 0 } },
+        { chunkId: "asr-002", result: { sourceStartMs: 1_000 } },
+      ],
       results: [{ sourceStartMs: 0 }, { sourceStartMs: 1_000 }],
     });
   });
@@ -204,6 +213,9 @@ describe("broadcastTranscriptWorkerClient", () => {
       requestedCount: 1,
       results: [],
       gapChunkIds: ["asr-001"],
+      gaps: [
+        { chunkId: "asr-001", reason: "transcription-failed" },
+      ],
     });
     expect(onChunkGap).toHaveBeenCalledWith(
       "asr-001",

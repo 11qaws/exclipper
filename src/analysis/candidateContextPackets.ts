@@ -11,8 +11,8 @@ import {
   chapterTextForRange,
 } from "./captionCandidateEvidence";
 import {
-  createCandidatePassBContextPacket,
-} from "./candidateFinalVerification";
+  createCanonicalCandidatePassBContextPacket,
+} from "./candidatePassBContextBudget";
 import { buildHighlightNarrative } from "./highlightNarrative";
 import type { CandidatePassBContextPacket } from "./candidatePassBWorkerProtocol";
 
@@ -27,7 +27,9 @@ const ALLOWED_CATEGORIES = new Set<CandidatePassBContextPacket["contextCategory"
 ]);
 
 export interface CandidateContextPacketBuildInput {
-  readonly candidates: readonly UnifiedHighlightCandidate[];
+  readonly candidates: readonly (UnifiedHighlightCandidate & {
+    readonly reviewState?: "unreviewed" | "approved" | "rejected";
+  })[];
   readonly sourceDurationMs: number;
   readonly broadcastContext: BroadcastContextResult | null;
   readonly transcriptChapters: readonly BroadcastContextChapterInput[];
@@ -167,6 +169,7 @@ export function buildCandidatePassBContextPackets(
     const narrative = buildHighlightNarrative(candidate);
     const semantic = candidate.evidence.semantic;
     const annotation = annotationsById.get(candidate.id);
+    const editorApproved = candidate.reviewState === "approved";
     const candidateTranscript =
       semantic === undefined
         ? textForRange(
@@ -182,12 +185,17 @@ export function buildCandidatePassBContextPackets(
       semantic !== undefined
         ? semantic.category
         : annotation === undefined
-          ? null
-          : allowedCategory(annotation.category);
+          ? editorApproved
+            ? "context-dependent"
+            : null
+          : allowedCategory(annotation.category) ??
+            (editorApproved ? "context-dependent" : null);
     if (
       candidateTranscript === null ||
       category === null ||
-      (annotation !== undefined && annotation.clipDecision === "reject")
+      (annotation !== undefined &&
+        annotation.clipDecision === "reject" &&
+        !editorApproved)
     ) {
       continue;
     }
@@ -200,7 +208,7 @@ export function buildCandidatePassBContextPackets(
       semantic === undefined
         ? `${annotation?.contextSummaryKo ?? narrative.event} ${annotation?.whyThisMomentKo ?? narrative.whyRecommended}`
         : `${semantic.eventSummaryKo} ${semantic.whyThisMomentKo}`;
-    const packet = createCandidatePassBContextPacket({
+    const packet = createCanonicalCandidatePassBContextPacket({
       transcriptSource: candidateTranscript.source,
       transcriptKo: candidateTranscript.text,
       beforeContextKo: surroundingContext(input, candidate, "before"),
@@ -209,7 +217,8 @@ export function buildCandidatePassBContextPackets(
       topicContextKo,
       fastEvidenceKo: `${narrative.event} ${narrative.streamerReaction} ${narrative.whyRecommended}`,
       contextDecision:
-        semantic !== undefined || annotation?.clipDecision === "select"
+        !editorApproved &&
+        (semantic !== undefined || annotation?.clipDecision === "select")
           ? "select"
           : "review",
       contextCategory: category,

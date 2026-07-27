@@ -2,6 +2,15 @@ import { describe, expect, it } from "vitest";
 import { buildCandidatePassBContextPackets } from "./candidateContextPackets";
 import type { BroadcastContextResult } from "./broadcastContextProtocol";
 import type { UnifiedHighlightCandidate } from "./highlightFusion";
+import {
+  CANDIDATE_PASS_B_CANONICAL_CONTEXT_UTF8_BUDGET,
+  CANDIDATE_PASS_B_CONTEXT_OMISSION_MARKER,
+} from "./candidatePassBContextBudget";
+import {
+  CANDIDATE_PASS_B_QWEN_MAX_SHARED_PROMPT_UTF8_BYTES,
+  buildCandidatePassBQwenOmniSharedPrompt,
+} from "./candidatePassBQwenOmni";
+import { DEFAULT_CANDIDATE_PASS_B_CAST_ROSTER_ID } from "./participantRoster";
 
 const semanticCandidate: UnifiedHighlightCandidate = {
   id: "semantic-apology",
@@ -95,5 +104,166 @@ describe("candidate context packets", () => {
     expect(packets["semantic-apology"]?.beforeContextKo).toContain("잡담");
     expect(packets["semantic-apology"]?.afterContextKo).toContain("원래 진행");
     expect(packets["semantic-apology"]?.broadcastSummaryKo).toContain("정확히 사과");
+  });
+
+  it("keeps an editor-approved context rejection in the evidence queue", () => {
+    const rejectedContext: BroadcastContextResult = {
+      ...broadcastContext,
+      annotations: [{
+        candidateId: semanticCandidate.id,
+        category: "not-clip-worthy",
+        clipDecision: "reject",
+        confidence: 0.91,
+        rejectionReasons: ["no-distinct-event"],
+        contextSummaryKo: "전체 맥락 AI는 독립 사건이 아니라고 판단했다.",
+        whyThisMomentKo: "편집자 승인이 없으면 상세 검토를 생략한다.",
+        relatedCandidateIds: [],
+        uncertaintiesKo: [],
+      }],
+    };
+    const baseInput = {
+      sourceDurationMs: 300_000,
+      broadcastContext: rejectedContext,
+      transcriptChapters: [
+        {
+          chapterId: "approved-before",
+          startMs: 60_000,
+          endMs: 120_000,
+          evidenceMode: "complete-transcript",
+          evidenceCoverageRatio: 1,
+          summaryKo: "설정 이야기를 나누고 있었다.",
+        },
+        {
+          chapterId: "approved-after",
+          startMs: 170_000,
+          endMs: 230_000,
+          evidenceMode: "complete-transcript",
+          evidenceCoverageRatio: 1,
+          summaryKo: "해명 뒤 원래 진행으로 돌아갔다.",
+        },
+      ],
+      youtubeCaptionTrack: null,
+    } as const;
+
+    expect(
+      buildCandidatePassBContextPackets({
+        ...baseInput,
+        candidates: [semanticCandidate],
+      })[semanticCandidate.id],
+    ).toBeUndefined();
+
+    const approvedPackets = buildCandidatePassBContextPackets({
+      ...baseInput,
+      candidates: [{
+        ...semanticCandidate,
+        reviewState: "approved",
+      }],
+    });
+    expect(approvedPackets[semanticCandidate.id]).toMatchObject({
+      contextDecision: "review",
+      contextCategory: "apology-accountability",
+    });
+  });
+
+  it("returns canonical bounded packets without changing full broadcast data", () => {
+    const maximumField = (label: string, fill: string): string => {
+      const suffix = `${label}끝`;
+      return `${label}시작${fill.repeat(
+        4_000 - `${label}시작`.length - suffix.length,
+      )}${suffix}`;
+    };
+    const transcriptKo = maximumField("대사", "가");
+    const maximumCandidate: UnifiedHighlightCandidate = {
+      ...semanticCandidate,
+      evidence: {
+        ...semanticCandidate.evidence,
+        semantic: {
+          ...semanticCandidate.evidence.semantic!,
+          eventSummaryKo: maximumField("사건", "나"),
+          whyThisMomentKo: maximumField("이유", "다"),
+          transcriptKo,
+        },
+      },
+    };
+    const maximumBroadcastContext: BroadcastContextResult = {
+      ...broadcastContext,
+      broadcastSummaryKo: maximumField("전체", "라"),
+      semanticChapters: [{
+        ...broadcastContext.semanticChapters[0]!,
+        titleKo: maximumField("제목", "마"),
+        summaryKo: maximumField("주제", "바"),
+      }],
+    };
+    const originalBroadcastSummary = maximumBroadcastContext.broadcastSummaryKo;
+    const input = {
+      candidates: [maximumCandidate],
+      sourceDurationMs: 300_000,
+      broadcastContext: maximumBroadcastContext,
+      transcriptChapters: [
+        {
+          chapterId: "maximum-before",
+          startMs: 60_000,
+          endMs: 120_000,
+          evidenceMode: "complete-transcript",
+          evidenceCoverageRatio: 1,
+          summaryKo: maximumField("직전", "사"),
+        },
+        {
+          chapterId: "maximum-after",
+          startMs: 170_000,
+          endMs: 230_000,
+          evidenceMode: "complete-transcript",
+          evidenceCoverageRatio: 1,
+          summaryKo: maximumField("직후", "아"),
+        },
+      ],
+      youtubeCaptionTrack: null,
+    } as const;
+
+    const first = buildCandidatePassBContextPackets(input)[maximumCandidate.id];
+    const second = buildCandidatePassBContextPackets(input)[maximumCandidate.id];
+    const encoder = new TextEncoder();
+    const aggregateBytes = [
+      first?.transcriptKo,
+      first?.beforeContextKo,
+      first?.afterContextKo,
+      first?.broadcastSummaryKo,
+      first?.topicContextKo,
+      first?.fastEvidenceKo,
+      first?.contextVerdictKo,
+    ].reduce(
+      (sum, value) => sum + encoder.encode(value ?? "").byteLength,
+      0,
+    );
+
+    expect(first).toEqual(second);
+    expect(first?.transcriptKo).toBe(transcriptKo);
+    expect(aggregateBytes).toBeLessThanOrEqual(
+      CANDIDATE_PASS_B_CANONICAL_CONTEXT_UTF8_BUDGET,
+    );
+    expect(first?.broadcastSummaryKo).toContain(
+      CANDIDATE_PASS_B_CONTEXT_OMISSION_MARKER,
+    );
+    expect(first?.topicContextKo).toContain(
+      CANDIDATE_PASS_B_CONTEXT_OMISSION_MARKER,
+    );
+    expect(maximumBroadcastContext.broadcastSummaryKo).toBe(
+      originalBroadcastSummary,
+    );
+    if (first === undefined) {
+      throw new Error("Expected a canonical candidate context packet.");
+    }
+    for (const outputLanguage of ["ko", "en"] as const) {
+      const prompt = buildCandidatePassBQwenOmniSharedPrompt(
+        60_000,
+        4,
+        DEFAULT_CANDIDATE_PASS_B_CAST_ROSTER_ID,
+        outputLanguage,
+        first,
+      );
+      expect(encoder.encode(prompt).byteLength).toBeLessThanOrEqual(
+        CANDIDATE_PASS_B_QWEN_MAX_SHARED_PROMPT_UTF8_BYTES,
+      );
+    }
   });
 });

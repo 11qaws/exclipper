@@ -147,17 +147,18 @@ function clamp(value: number, minimum: number, maximum: number): number {
  *
  * **이 값은 올릴 수 없다** — 무료 플랜의 고정 한도다. 그래서 클라이언트가 스스로
  * 맞춰야 하고, 넘기면 429 가 돌아온다. 429 는 적응형 동시성이 실패로 읽어 물러
- * 나므로 결국 멈추지는 않지만, 그 한 번마다 **청크 하나가 gap 으로 버려진다.**
- * 맞고 물러나는 것보다 처음부터 그 속도로 보내는 편이 낫다.
+ * 나며 transcript phase의 실패-조각 복구 queue로 돌아간다. 성공 조각은 그대로
+ * checkpoint되고 429 조각만 제한 재시도하지만, 맞고 물러나는 것보다 처음부터
+ * 그 속도로 보내는 편이 낫다.
  */
 const PROXY_REQUESTS_PER_MINUTE = 60;
 
 /**
  * 다음 요청까지 기다릴 시간.
  *
- * 청크를 30초로 줄이면서 방송 하나가 273 요청이 됐다. 분당 60 이 상한이므로
- * 바닥은 4.5분이고, 실측 전사가 4.1분이었으니 **이 한도가 이제 실질적인 속도를
- * 정한다.** 더 잘게 쪼개도 빨라지지 않는다는 뜻이기도 하다.
+ * 0.8.6의 90초 R2 계획에서도 provider 시작 상한은 분당 60이다. 일반적인 단독
+ * 실행은 이보다 적은 요청 수라 media 준비와 provider latency가 함께 속도를
+ * 정하지만, 5명이 겹치면 coordinator의 이 상한이 최종 처리량 경계가 된다.
  */
 export function requestSpacingMs(): number {
   return Math.ceil(60_000 / PROXY_REQUESTS_PER_MINUTE);

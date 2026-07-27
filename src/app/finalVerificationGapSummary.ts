@@ -18,6 +18,11 @@ export interface FinalVerificationGapCount {
 const GAP_PRESENTATION: Readonly<
   Record<CandidateFinalVerificationGap, { readonly label: string; readonly detail: string }>
 > = {
+  "context-excluded": {
+    label: "전체 맥락 검토에서 제외됨",
+    detail:
+      "방송 전체 흐름을 확인한 결과 독립된 클립 사건이 아니거나 음악·대기·마무리 구간으로 판단했어요.",
+  },
   "context-missing": {
     label: "방송 맥락이 준비되지 않음",
     detail: "전체 흐름과 앞뒤 맥락을 후보에 연결하지 못했어요. 맥락 분석이 끝나지 않았을 수 있어요.",
@@ -54,6 +59,7 @@ const GAP_ORDER: readonly CandidateFinalVerificationGap[] = [
   "detail-result-missing",
   "verification-receipt-missing",
   "evidence-incomplete",
+  "context-excluded",
   "program-material-excluded",
   "context-conflict",
   "detail-not-recommended",

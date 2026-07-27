@@ -17,10 +17,21 @@ import {
 } from "./candidatePassBWorkerProtocol";
 import type { CandidatePassBCastRosterId } from "./participantRoster";
 import type { AnalysisLanguage } from "../domain/analysisLanguage";
+import {
+  canonicalizeCandidatePassBContextPacket,
+} from "./candidatePassBContextBudget";
 
 const MAX_BASE64_WAV_LENGTH = 8 * 1024 * 1024;
 export const CANDIDATE_PASS_B_QWEN_MAX_OUTPUT_TOKENS =
   CANDIDATE_PASS_B_MAX_OUTPUT_TOKENS;
+/**
+ * aiProxy reserves one token for every shared-prompt UTF-8 byte, then adds
+ * 8,192 prompt-margin tokens, 2,048 output tokens, and the bounded audio/image
+ * reservation. Keeping this part at 80 KiB caps a maximum four-frame,
+ * sixty-second candidate at 94,180 reserved tokens, below Qwen's 100k TPM
+ * single-request ceiling.
+ */
+export const CANDIDATE_PASS_B_QWEN_MAX_SHARED_PROMPT_UTF8_BYTES = 80 * 1024;
 
 export interface CandidatePassBQwenOmniRequestBody {
   readonly model: typeof CANDIDATE_PASS_B_QWEN_MODEL_ID;
@@ -40,10 +51,48 @@ export interface CandidatePassBQwenOmniDiagnostics {
   readonly contentWasString: boolean;
   readonly jsonObject: boolean;
   readonly keys: readonly string[];
+  readonly containsHan: boolean;
+  readonly containsHangul: boolean;
+  readonly segmentCount: number | null;
+  readonly participantPresence: string | null;
+  readonly participantCount: number | null;
+  readonly clipDecision: string | null;
+  readonly contextConsistency: string | null;
+  readonly programMaterial: string | null;
+}
+
+export interface CandidatePassBQwenOmniUrlFrame {
+  readonly timestampMs: number;
+  readonly url: string;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Returns the exact shared prompt used by both Base64 and staged-URL Qwen
+ * transports. Candidate context is canonicalized with the same pure contract
+ * used before receipt creation, so the model and receipt describe identical
+ * bounded evidence rather than rejecting a legal maximum-size packet.
+ */
+export function buildCandidatePassBQwenOmniSharedPrompt(
+  candidateDurationMs: number,
+  frameCount: number,
+  castRosterId: CandidatePassBCastRosterId | null = null,
+  outputLanguage: AnalysisLanguage = "ko",
+  context: CandidatePassBContextPacket | null = null,
+): string {
+  const canonicalContext = context === null
+    ? null
+    : canonicalizeCandidatePassBContextPacket(context);
+  return buildCandidatePassBPrompt(
+    candidateDurationMs,
+    frameCount,
+    castRosterId,
+    outputLanguage,
+    canonicalContext,
+  );
 }
 
 function normalizedNarrative(
@@ -355,7 +404,7 @@ export function buildCandidatePassBQwenOmniRequestBody(
         ]),
         {
           type: "text",
-          text: `${buildCandidatePassBPrompt(candidateDurationMs, frames.length, castRosterId, outputLanguage, context)}${qwenGroundingRules}\nDo not mix Chinese or Japanese characters into narrative text.${responseShape}`,
+          text: `${buildCandidatePassBQwenOmniSharedPrompt(candidateDurationMs, frames.length, castRosterId, outputLanguage, context)}${qwenGroundingRules}\nDo not mix Chinese or Japanese characters into narrative text.${responseShape}`,
         },
       ],
     }],
@@ -363,6 +412,92 @@ export function buildCandidatePassBQwenOmniRequestBody(
     stream_options: { include_usage: true },
     modalities: ["text"],
     max_tokens: CANDIDATE_PASS_B_QWEN_MAX_OUTPUT_TOKENS,
+  };
+}
+
+function boundedHttpsMediaUrl(value: string): string {
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    throw new RangeError("Candidate media URL must be valid.");
+  }
+  if (
+    parsed.protocol !== "https:" ||
+    parsed.username !== "" ||
+    parsed.password !== "" ||
+    parsed.hash !== "" ||
+    value.length > 2_048
+  ) {
+    throw new RangeError("Candidate media URL must be bounded HTTPS.");
+  }
+  return value;
+}
+
+/**
+ * Builds the candidate request with provider-fetched private media.
+ *
+ * The prompt and response contract intentionally come from the established
+ * Base64 builder. Only the five media locations are replaced, preventing the
+ * staged transport from drifting away from the direct transport's analysis
+ * semantics.
+ */
+export function buildCandidatePassBQwenOmniUrlRequestBody(
+  audioUrl: string,
+  candidateDurationMs: number,
+  videoFrames: readonly CandidatePassBQwenOmniUrlFrame[],
+  castRosterId: CandidatePassBCastRosterId | null = null,
+  outputLanguage: AnalysisLanguage = "ko",
+  context: CandidatePassBContextPacket | null = null,
+): CandidatePassBQwenOmniRequestBody {
+  const safeAudioUrl = boundedHttpsMediaUrl(audioUrl);
+  if (videoFrames.length !== 4) {
+    throw new RangeError("Candidate staged media requires four frames.");
+  }
+  const safeFrameUrls = videoFrames.map((frame) => ({
+    timestampMs: frame.timestampMs,
+    url: boundedHttpsMediaUrl(frame.url),
+  }));
+  const base = buildCandidatePassBQwenOmniRequestBody(
+    "AAAA",
+    candidateDurationMs,
+    safeFrameUrls.map((frame) => ({
+      timestampMs: frame.timestampMs,
+      mimeType: "image/jpeg" as const,
+      dataBase64: "AAAA",
+    })),
+    castRosterId,
+    outputLanguage,
+    context,
+  );
+  let frameIndex = 0;
+  const content = base.messages[0].content.map((part) => {
+    if (!isRecord(part)) return part;
+    if (part.type === "input_audio") {
+      return {
+        type: "input_audio",
+        input_audio: { data: safeAudioUrl, format: "wav" },
+      };
+    }
+    if (part.type === "image_url") {
+      const frame = safeFrameUrls[frameIndex];
+      frameIndex += 1;
+      if (frame === undefined) {
+        throw new RangeError("Candidate staged frame order is invalid.");
+      }
+      return {
+        type: "image_url",
+        image_url: { url: frame.url },
+      };
+    }
+    return part;
+  });
+  if (frameIndex !== 4) {
+    throw new RangeError("Candidate staged frame count is invalid.");
+  }
+  return {
+    ...base,
+    messages: [{ ...base.messages[0], content }],
   };
 }
 
@@ -452,6 +587,12 @@ export function inspectCandidatePassBQwenOmniSseResponse(
   }
   let jsonObject = false;
   let keys: readonly string[] = [];
+  let segmentCount: number | null = null;
+  let participantPresence: string | null = null;
+  let participantCount: number | null = null;
+  let clipDecision: string | null = null;
+  let contextConsistency: string | null = null;
+  let programMaterial: string | null = null;
   try {
     const parsed = JSON.parse(
       text.trim().replace(/^```(?:json)?\s*/iu, "").replace(/\s*```$/u, ""),
@@ -459,9 +600,45 @@ export function inspectCandidatePassBQwenOmniSseResponse(
     if (isRecord(parsed)) {
       jsonObject = true;
       keys = Object.keys(parsed).sort();
+      segmentCount = Array.isArray(parsed.segments)
+        ? parsed.segments.length
+        : null;
+      participantPresence =
+        typeof parsed.participantPresence === "string"
+          ? parsed.participantPresence
+          : null;
+      participantCount = Array.isArray(parsed.identifiedParticipants)
+        ? parsed.identifiedParticipants.length
+        : null;
+      clipDecision =
+        typeof parsed.clipDecision === "string"
+          ? parsed.clipDecision
+          : null;
+      contextConsistency =
+        typeof parsed.contextConsistency === "string"
+          ? parsed.contextConsistency
+          : null;
+      programMaterial =
+        typeof parsed.programMaterial === "string"
+          ? parsed.programMaterial
+          : null;
     }
   } catch {
     // Shape-only diagnostics intentionally omit generated text.
   }
-  return { sawStop, textLength: text.length, contentWasString, jsonObject, keys };
+  return {
+    sawStop,
+    textLength: text.length,
+    contentWasString,
+    jsonObject,
+    keys,
+    containsHan: /\p{Script=Han}/u.test(text),
+    containsHangul: /\p{Script=Hangul}/u.test(text),
+    segmentCount,
+    participantPresence,
+    participantCount,
+    clipDecision,
+    contextConsistency,
+    programMaterial,
+  };
 }

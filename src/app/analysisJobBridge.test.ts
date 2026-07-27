@@ -106,18 +106,57 @@ describe("analysis job bridge", () => {
     }
   });
 
-  it("refuses to complete a run that produced nothing usable", async () => {
-    // `done` 과 "쓸 만하다" 를 섞으면 후보 0개인 실행이 완료로 굳고, 캐시가 그것을
-    // 영원히 되돌려준다.
+  it("completes a fully verified run that legitimately produced zero candidates", async () => {
     const store = newStore();
     await startedRun(store);
     for (const stage of ANALYSIS_STAGES) {
       await commitAnalysisStage(store, SIGNATURE, stage);
     }
     const outcome = await completeAnalysisJob(store, SIGNATURE, false);
-    expect(outcome.ok).toBe(false);
-    if (!outcome.ok) expect(outcome.reason).toBe("quality_not_usable");
+    expect(outcome.ok).toBe(true);
+    if (outcome.ok) {
+      expect(outcome.job.status).toBe("completedEmpty");
+      expect(outcome.job.quality).toBe("empty");
+    }
   });
+
+  it("re-analyses a completed empty broadcast instead of treating it as running", async () => {
+    const store = newStore();
+    await startedRun(store);
+    for (const stage of ANALYSIS_STAGES) {
+      await commitAnalysisStage(store, SIGNATURE, stage);
+    }
+    await completeAnalysisJob(store, SIGNATURE, false);
+
+    const again = await startAnalysisJob({
+      store,
+      inputSignature: SIGNATURE,
+      runId: "run-2",
+    });
+
+    expect(again.ok).toBe(true);
+    if (again.ok) expect(again.job.status).toBe("running");
+  });
+
+  it.each([
+    { usable: true, status: "completed" },
+    { usable: false, status: "completedEmpty" },
+  ] as const)(
+    "treats a repeated $status completion commit as idempotent",
+    async ({ usable, status }) => {
+      const store = newStore();
+      await startedRun(store);
+      for (const stage of ANALYSIS_STAGES) {
+        await commitAnalysisStage(store, SIGNATURE, stage);
+      }
+      const first = await completeAnalysisJob(store, SIGNATURE, usable);
+      const repeated = await completeAnalysisJob(store, SIGNATURE, usable);
+
+      expect(first.ok).toBe(true);
+      expect(repeated.ok).toBe(true);
+      if (repeated.ok) expect(repeated.job.status).toBe(status);
+    },
+  );
 
   it("keeps a failure's reason so the record says more than 'it failed'", async () => {
     const store = newStore();

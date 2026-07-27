@@ -36,8 +36,11 @@ import {
   prioritizeAdjacentTranscriptChunks,
   shouldExpandBroadcastContextChunk,
 } from "./broadcastContextExploration";
+import { transcriptFragmentQuotaOperationId } from "./broadcastTranscriptFragmentRecovery";
 import {
   MAX_BROADCAST_TRANSCRIPT_WORKER_CHUNKS,
+  isBroadcastTranscriptChunkId,
+  type BroadcastTranscriptChunkGapReason,
   type BroadcastTranscriptWorkerIdentity,
   type BroadcastTranscriptWorkerRequest,
   type BroadcastTranscriptWorkerResponse,
@@ -60,14 +63,6 @@ let activeTask: ActiveTask | null = null;
 
 function post(response: BroadcastTranscriptWorkerResponse): void {
   self.postMessage(response);
-}
-
-function throwFatalProxyFailure(
-  failure: BroadcastTranscriptQwenClientError | null,
-): void {
-  if (failure !== null) {
-    throw failure;
-  }
 }
 
 function sameIdentity(
@@ -114,9 +109,12 @@ function isValidAnalyzeRequest(
   if (
     value.quota !== undefined &&
     (!isRecord(value.quota) ||
-      ![2, 3].includes(Object.keys(value.quota).length) ||
+      ![3, 4].includes(Object.keys(value.quota).length) ||
       !isAiQuotaParticipantId(value.quota.participantId) ||
       !isAiQuotaOpaqueId(value.quota.runId) ||
+      !["uniform", "event-boost", "refinement"].includes(
+        value.quota.operationNamespace as string,
+      ) ||
       (value.quota.attemptOrdinal !== undefined &&
         (!Number.isSafeInteger(value.quota.attemptOrdinal) ||
           (value.quota.attemptOrdinal as number) < 0)))
@@ -129,8 +127,7 @@ function isValidAnalyzeRequest(
   for (const rawChunk of value.chunks as readonly unknown[]) {
     if (
       !isRecord(rawChunk) ||
-      typeof rawChunk.chunkId !== "string" ||
-      rawChunk.chunkId.length === 0 ||
+      !isBroadcastTranscriptChunkId(rawChunk.chunkId) ||
       chunkIds.has(rawChunk.chunkId) ||
       !Number.isSafeInteger(rawChunk.sourceStartMs) ||
       !Number.isSafeInteger(rawChunk.sourceEndMs) ||
@@ -357,13 +354,13 @@ async function runAnalyze(
     /*
      * 프록시의 분당 상한(60)을 넘지 않도록 간격을 둔다.
      *
-     * 넘기면 429 가 오고, 적응형 동시성이 그것을 실패로 읽어 물러난다 — 멈추지는
-     * 않지만 그때마다 청크 하나가 gap 으로 버려진다. 맞고 물러나는 것보다 처음부터
-     * 그 속도로 보내는 편이 낫다.
+     * 넘기면 429 가 오고, 적응형 동시성이 그것을 실패로 읽어 물러난다. 해당
+     * 조각은 상위 transcript recovery queue가 제한 재시도하고 이미 성공한 조각은
+     * checkpoint에서 보존한다. 맞고 물러나는 것보다 처음부터 그 속도로 보내는
+     * 편이 낫다.
      */
     const spacingMs = requestSpacingMs();
     let nextSendAtMs = 0;
-    let fatalProxyFailure: BroadcastTranscriptQwenClientError | null = null;
     const inFlight = new Set<Promise<void>>();
     const chronologicalChunks = [...request.chunks].sort(
       (left, right) =>
@@ -388,6 +385,7 @@ async function runAnalyze(
         },
       });
       let pcm: Float32Array | null;
+      let decodeFailed = false;
       try {
         pcm = await decodeRange(
           audioTrack,
@@ -396,6 +394,7 @@ async function runAnalyze(
           task,
         );
       } catch {
+        decodeFailed = true;
         pcm = new Float32Array();
       }
       if (task.cancelled || pcm === null) return;
@@ -406,7 +405,7 @@ async function runAnalyze(
           type: "broadcast-transcript-gap",
           identity: task.identity,
           chunkId: chunk.chunkId,
-          reason: "no-audio",
+          reason: decodeFailed ? "decode-failed" : "no-audio",
         });
         continue;
       }
@@ -440,7 +439,7 @@ async function runAnalyze(
         nextSendAtMs,
         spacingMs,
         () => {
-          if (task.cancelled || fatalProxyFailure !== null) {
+          if (task.cancelled) {
             wav.fill(0);
             return Promise.resolve();
           }
@@ -461,8 +460,11 @@ async function runAnalyze(
                         quota: {
                           participantId: request.quota.participantId,
                           runId: request.quota.runId,
-                          operationId:
-                            `transcript-g${request.quota.attemptOrdinal ?? 0}-${chunkId}`,
+                          operationId: transcriptFragmentQuotaOperationId(
+                            request.quota.operationNamespace,
+                            request.quota.attemptOrdinal ?? 0,
+                            chunkId,
+                          ),
                         },
                       }),
                 },
@@ -494,24 +496,20 @@ async function runAnalyze(
             } catch (error) {
               if (task.cancelled) return;
               concurrency.onFailure(requestStamp);
-              if (
+              const reason: BroadcastTranscriptChunkGapReason =
                 error instanceof BroadcastTranscriptQwenClientError &&
-                (error.code === "RATE_LIMITED" ||
-                  error.code === "OUTCOME_UNKNOWN")
-              ) {
-                fatalProxyFailure = error;
-                for (const activeController of task.fetchControllers) {
-                  if (activeController !== controller) activeController.abort();
-                }
-                return;
-              }
-              if (fatalProxyFailure !== null) return;
+                error.code === "RATE_LIMITED"
+                  ? "rate-limited"
+                  : error instanceof BroadcastTranscriptQwenClientError &&
+                      error.code === "OUTCOME_UNKNOWN"
+                    ? "outcome-unknown"
+                    : "transcription-failed";
               gapCount += 1;
               post({
                 type: "broadcast-transcript-gap",
                 identity: task.identity,
                 chunkId,
-                reason: "transcription-failed",
+                reason,
               });
             } finally {
               wav.fill(0);
@@ -523,8 +521,6 @@ async function runAnalyze(
         undefined,
         async () => {
           await waitForAdaptiveConcurrencyCapacity(inFlight, concurrency);
-          if (task.cancelled) return;
-          throwFatalProxyFailure(fatalProxyFailure);
         },
       );
       if (task.cancelled) {
@@ -547,12 +543,10 @@ async function runAnalyze(
       // the reduction.
       await waitForAdaptiveConcurrencyCapacity(inFlight, concurrency);
       if (task.cancelled) return;
-      throwFatalProxyFailure(fatalProxyFailure);
     }
 
     await Promise.all(inFlight);
     if (task.cancelled) return;
-    throwFatalProxyFailure(fatalProxyFailure);
     post({
       type: "broadcast-transcript-complete",
       identity: task.identity,

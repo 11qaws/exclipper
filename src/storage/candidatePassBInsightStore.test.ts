@@ -6,6 +6,8 @@ import {
   CANDIDATE_PASS_B_INSIGHT_SCHEMA_VERSION,
   assertCandidatePassBInsightsRecord,
   cloneCandidatePassBInsightsRecord,
+  persistCandidatePassBInsightsWithReadback,
+  type CandidatePassBInsightStorePort,
   type CandidatePassBInsightsRecord,
 } from "./candidatePassBInsightStore";
 import { InMemoryAnalysisResultStore } from "./analysisResultStore";
@@ -69,6 +71,20 @@ const record: CandidatePassBInsightsRecord = {
       timestampMs: 1_500,
       mimeType: "image/jpeg",
       dataBase64: "aGVsbG8=",
+    },
+  },
+  verificationReceiptById: {
+    "candidate-a": {
+      schemaVersion: "1.1.0",
+      contextSchemaVersion: "1.0.0",
+      transcriptSource: "broadcast-transcript",
+      contextFingerprint: "fnv1a64:0123456789abcdef",
+      audioReviewed: true,
+      videoFrameCount: 4,
+      thumbnailPrepared: true,
+      thumbnailTimestampMs: 1_500,
+      referenceTranscriptReviewed: true,
+      broadcastContextReviewed: true,
     },
   },
   recordedAt: "2026-07-21T00:00:00.000Z",
@@ -143,4 +159,156 @@ describe("Candidate Pass B insight persistence", () => {
       }),
     ).toThrow(TypeError);
   });
+});
+
+describe("persistCandidatePassBInsightsWithReadback", () => {
+  it("returns a detached snapshot only after an exact durable readback", async () => {
+    let stored: CandidatePassBInsightsRecord | null = null;
+    const store: CandidatePassBInsightStorePort = {
+      putCandidatePassBInsights(candidateRecord) {
+        stored = cloneCandidatePassBInsightsRecord(candidateRecord);
+        return Promise.resolve();
+      },
+      getCandidatePassBInsights(runId) {
+        expect(runId).toBe(record.runId);
+        return Promise.resolve(
+          stored === null ? null : cloneCandidatePassBInsightsRecord(stored),
+        );
+      },
+    };
+
+    const restored = await persistCandidatePassBInsightsWithReadback(
+      store,
+      record,
+    );
+
+    expect(restored).toEqual(record);
+    expect(restored).not.toBe(record);
+    expect(restored.evidenceById).not.toBe(record.evidenceById);
+    expect(restored.insightById).not.toBe(record.insightById);
+    expect(restored.modelByCandidateId).not.toBe(record.modelByCandidateId);
+    expect(restored.thumbnailById).not.toBe(record.thumbnailById);
+    expect(restored.verificationReceiptById).not.toBe(
+      record.verificationReceiptById,
+    );
+  });
+
+  it("propagates a rejected write and does not attempt readback", async () => {
+    const writeFailure = new Error("indexeddb transaction aborted");
+    let readCount = 0;
+    const store: CandidatePassBInsightStorePort = {
+      putCandidatePassBInsights() {
+        return Promise.reject(writeFailure);
+      },
+      getCandidatePassBInsights() {
+        readCount += 1;
+        return Promise.resolve(record);
+      },
+    };
+
+    await expect(
+      persistCandidatePassBInsightsWithReadback(store, record),
+    ).rejects.toBe(writeFailure);
+    expect(readCount).toBe(0);
+  });
+
+  it("rejects a committed write whose immediate readback is missing", async () => {
+    const store: CandidatePassBInsightStorePort = {
+      putCandidatePassBInsights() {
+        return Promise.resolve();
+      },
+      getCandidatePassBInsights() {
+        return Promise.resolve(null);
+      },
+    };
+
+    await expect(
+      persistCandidatePassBInsightsWithReadback(store, record),
+    ).rejects.toThrow(/readback is missing/u);
+  });
+
+  it.each([
+    [
+      "metadata",
+      {
+        ...record,
+        inputSignature: "sha256:" + "b".repeat(64),
+      },
+    ],
+    [
+      "evidence map",
+      {
+        ...record,
+        evidenceById: {
+          "candidate-a": {
+            ...evidence,
+            overlay: {
+              ...evidence.overlay,
+              event: "다른 사건이 저장됐어요.",
+            },
+          },
+        },
+      },
+    ],
+    [
+      "insight map",
+      {
+        ...record,
+        insightById: {
+          ...record.insightById,
+          "candidate-a": {
+            ...record.insightById["candidate-a"]!,
+            reactionSummaryKo: "다른 반응이 저장됐어요.",
+          },
+        },
+      },
+    ],
+    [
+      "model map",
+      {
+        ...record,
+        modelByCandidateId: {},
+      },
+    ],
+    [
+      "thumbnail map",
+      {
+        ...record,
+        thumbnailById: {
+          "candidate-a": {
+            ...record.thumbnailById!["candidate-a"]!,
+            timestampMs: 2_000,
+          },
+        },
+      },
+    ],
+    [
+      "verification receipt map",
+      {
+        ...record,
+        verificationReceiptById: {
+          "candidate-a": {
+            ...record.verificationReceiptById!["candidate-a"]!,
+            thumbnailTimestampMs: 2_000,
+          },
+        },
+      },
+    ],
+  ] satisfies readonly (readonly [string, CandidatePassBInsightsRecord])[])(
+    "rejects a stale or mismatched %s readback",
+    async (_label, staleRecord) => {
+      const store: CandidatePassBInsightStorePort = {
+        putCandidatePassBInsights() {
+          return Promise.resolve();
+        },
+        getCandidatePassBInsights() {
+          return Promise.resolve(staleRecord);
+        },
+      };
+
+      await expect(
+        persistCandidatePassBInsightsWithReadback(store, record),
+      ).rejects.toThrow(/does not exactly match/u);
+    },
+  );
 });

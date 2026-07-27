@@ -1,5 +1,90 @@
 # Development Log
 
+## 2026-07-28 `0.8.7` 배포 후보 · 실패 전사 조각 선복구와 맥락 봉인
+
+### 확인한 원인
+
+- 전사 Worker는 일부 조각이 CORS처럼 보이는 CPU/네트워크 오류, 429, 디코드·공급자 실패로 끝나도 성공 조각과 gap을 함께 반환했다. App은 이를 `completedWithGaps`로 닫고 whole-context가 불완전한 대사 지도를 사용할 수 있었다.
+- 빠른 탐색 완료 렌더에서는 과거 uniform 전사 완료 상태가 남아 있는 동안 whole-context effect가 event-boost 전사보다 먼저 실행될 수 있었다. 맥락 입력에 최종 전사 operation seal이 없어, 이후 전사가 보강돼도 이전 맥락 요청을 현재 결과로 오인할 여지가 있었다.
+- 저장 checkpoint는 gap ID만 가져 실패한 원본 범위·원인·시도 횟수를 복구하지 못했다. 디코더 예외도 실제 무음과 같은 `no-audio`로 기록했고, 네트워크 결과 불명은 안전한 재시도와 중복 과금 위험을 구분하지 못했다.
+
+### 수정한 복구 계약
+
+- `recoverBroadcastTranscriptFragments`가 한 transcript phase 안에서 성공 조각을 누적하고 `decode-failed | transcription-failed | rate-limited` 조각만 1초·2초 backoff로 최대 3회 시도한다. 조각 A·C가 성공하고 B만 실패하면 이후 Worker에는 B만 들어간다.
+- 정상 디코딩 뒤 분석 가능한 발화가 없는 `no-audio`는 source-fenced 부정 근거 chapter로 저장한다. 디코드 예외는 `decode-failed`로 분리해 자동 복구 대상이 된다.
+- 부분 성공은 매 조각마다 chapter와 아직 남은 정확한 범위를 IndexedDB에 직렬 checkpoint하고 즉시 readback한다. write/readback 실패는 유료 결과를 완료로 취급하지 않으며 다음 phase를 차단한다.
+- 저장 schema `1.3.0`은 실패 조각의 `chunkId/start/end/reason/attemptCount`를 보존하고 `1.2.0` 기록을 migration한다. chunk ID는 배열 번호가 아니라 source start/end에서 결정되므로 missing-only 계획을 다시 만들어도 같은 범위를 식별한다.
+- 자동 재시도와 편집자 재시도의 quota generation을 서로 겹치지 않게 분리했다. lease 뒤 연결이 끊기면 같은 lease·operation transport를 한 번 replay하고, 이미 consume됐을 수 있는 409 또는 반복 단절은 `outcome-unknown`으로 보존해 새 유료 operation을 몰래 만들지 않는다.
+- quota fragment ID에는 uniform/event-boost/refinement namespace를 넣고, 저장된 마지막 attempt ordinal보다 뒤의 generation을 계산한다. 새로고침으로 React state ordinal이 0으로 돌아가도 과거 terminal operation ID를 재사용하지 않는다.
+- provider 호출 전에 대상 조각을 `in-flight`로 write/readback하고, 각 gap event를 받는 즉시 정확한 사유와 ordinal로 같은 직렬 queue에 저장한다. `in-flight | outcome-unknown` checkpoint를 다시 연 실행은 자동 재결제하지 않는다.
+- Free R2 media는 명시적 rate-limit, limiter 일시 장애, provider 결과 불명에서 삭제하지 않는다. 성공·확정 실패 뒤에만 삭제하며 orphan은 기존 1일 lifecycle이 정리한다.
+- whole-context는 최종 event-boost operation key와 transcript seal이 같고, 상태가 `completed`, chapter가 1개 이상이며, 저장 readback이 정확히 일치할 때만 시작한다. 맥락 응답 저장 직전에도 현재 저장 chapter의 compact 결과가 실제 요청 입력과 같은지 확인해 늦은 결과를 거부한다.
+- 재시도 가능한 조각을 3회 안에 복구하지 못하거나 outcome-unknown이 남으면 transcript는 `failed`, seal은 비어 있고 whole-context 요청은 시작하지 않는다. 확보한 성공 chapter와 실패 범위는 그대로 남아 명시적 missing-only 복구가 가능하다.
+
+### Candidate Free R2 실서비스 결함과 수정
+
+- 첫 운영 stage의 `503 CANDIDATE_MEDIA_UNAVAILABLE`는 후보 bundle의 byte-counting `TransformStream`이 HTTP의 known length를 잃어 R2 `put`이 generic chunked stream을 거부한 것이 원인이었다. counted stream을 Cloudflare `FixedLengthStream(expectedByteLength)`에 연결해 R2에는 exact-length readable만 넘기고, checksum·크기·WAV/JPEG signature 검증은 그대로 유지했다.
+- 같은 payload를 다시 stage하면 기존 R2 object와 ticket을 재사용하면서 새 request body는 아무도 읽지 않았다. Worker는 이미 `request body -> counting transform -> FixedLengthStream` pump를 시작했으므로 backpressure가 풀리지 않아 두 번째 stage가 끝나지 않았다.
+- stage 결과에 `stored | reused` disposition을 넣고 pump를 `AbortController`와 연결했다. 정상 저장은 전체 completion을 기다리며, 기존 object 재사용·manifest conflict·conditional PUT loser는 JS drain 없이 pump abort와 readable cancel로 unused body를 terminal 정리한다. completion rejection은 생성 즉시 관찰하고, 의도적 discard만 삼키며 초과·미달은 계속 413·400으로 실패한다.
+- Qwen이 HTTP 200과 완전한 SSE를 보냈지만 strict candidate schema를 한 번 어기는 경우가 실서비스에서 두 차례 확인됐다. Free R2는 Gemini inline fallback을 만들지 않고, 같은 staged media에 대해 fresh internal quota operation으로 schema 검증을 최대 두 번 다시 시도한다. 세 번 모두 invalid이면 object와 정확한 ticket을 10분 동안 보존해 상위 missing-only 복구가 재업로드 없이 이어지며 1일 R2 lifecycle이 orphan을 정리한다.
+
+### 검증 결과
+
+- 실패 조각 복구·quota·Worker protocol·저장 migration·R2 보존·phase seal 집중 회귀: **10개 파일·132개 테스트 통과**
+- Candidate ingress 집중 회귀는 정상 FixedLength handoff, 동일 stage 재사용, manifest conflict, body를 읽지 않는 conditional PUT race, invalid-schema fresh quota 복구와 exhausted-media 보존을 포함한다.
+- `npm run check`: TypeScript strict, ESLint warning 0, **117개 테스트 파일·1,353개 테스트 통과**
+- `npm run build`: Vite production build 통과, 204개 모듈 변환 완료
+- `wrangler deploy --dry-run`: 통과, Durable Object·private R2·rate limiter·`free-r2`·quota required binding 확인
+- Worker version `c2ac9e0c-8213-4580-95ef-eedb75d20ef5`에서 음식 토크 21:00의 실제 10초 후보가 `stage 202 -> identical stage 202 -> resolve 200 -> cleanup 404`를 통과했고 두 stage의 ticket이 같았다. 모델은 `qwen3.5-omni-flash`, 한국어 candidate insight가 반환됐다.
+- 같은 Worker의 음식 토크 21:00~22:30 실제 90초 raw 전사는 HTTP 200, `qwen3.5-omni-flash`, 언어 `ko`와 source fence 1,260,000~1,350,000ms를 반환했다. quota-backed broadcast context는 HTTP 200, `qwen3.7-plus`, 한국어 요약 268자와 후보 주석 1개를 반환했다. 두 경로 모두 CORS·429·502가 없었다.
+- `git diff --check`와 전체 공개 Pages 검증은 `main` push 전후의 마지막 release gate다. Worker-first 호환 배포는 완료했지만 이 기록 시점의 Pages는 아직 이전 버전이다.
+
+## 2026-07-27 파이프라인 정상화 후보 · 최종 검증
+
+### 검증 결과
+
+- `npm run check`: TypeScript strict, ESLint warning 0, **116개 테스트 파일·1,327개 테스트 통과**
+- `npm run build`: Vite production build 통과, 203개 모듈 변환 완료
+- `wrangler deploy --dry-run`: 통과, Worker 435.29KiB(gzip 81.23KiB)와 Durable Object·R2·rate limiter·Free R2 transport binding 확인
+- 최대 다국어 candidate context는 48KiB canonical packet과 80KiB shared prompt 경계 안에서 실제 provider 실행까지 진행하고, Qwen·Gemini·quota·receipt가 동일 packet과 fingerprint를 사용하는 회귀 테스트를 통과했다.
+- 구형·부분 insight와 durable ID를 생략한 비정형 호출자가 completion으로 승격되지 않고 AI 재실행 대상으로 남는 검증, `Content-Length`가 없는 candidate bundle의 streaming exact-byte 차단 테스트를 통과했다.
+- 후보 R2 미디어 경로 보안 감사: **SHIP**
+- 최종 후보 정상화 독립 재감사: **SHIP**
+- `git diff --check`: 통과, 삭제 파일 0개, staging 0개, 변경 diff의 credential pattern 0개
+
+### 배포 상태
+
+- 이 항목은 `0.8.7` 릴리스에 함께 포함하는 파이프라인 정상화 변경이다.
+- 사용자 배포 승인 뒤 패키지와 공개 화면 버전을 `0.8.7`로 올렸다. Worker-first 호환 배포와 Pages smoke를 모두 통과해야 릴리스를 완료로 기록한다.
+- 새 Candidate Free R2 경로의 실서비스 스모크는 Worker 배포 뒤에 실행한다.
+
+## 2026-07-27 다음 배포 후보 · 최종 후보 파이프라인 정상화
+
+### 확인한 원인
+
+- 음식 토크 실행의 canonical ledger에는 후보 17개가 있었지만, 전체 맥락 입력도 후보 상세 분석과 같은 12개 상한으로 잘려 있었다. 그래서 나머지 5개는 AI가 거부한 후보가 아니라 애초에 맥락을 전달받지 못한 `context-missing` 상태였다.
+- 후보 상세 분석은 여러 후보를 한 run으로 묶으면서 후보 하나의 화면 추출·중계·AI 오류가 run 전체의 `failed` envelope로 번졌다. 앞에서 완료해 저장한 insight와 receipt가 있어도 화면은 envelope 실패를 우선해 최종 후보 0개로 표시했고, 재시도는 이미 결제한 후보까지 다시 요청할 수 있었다.
+- 최종 0개는 두 의미를 섞고 있었다. 모든 근거를 검토한 뒤 AI가 전부 제외한 정상 음성 결과와, 맥락·화면·오디오·receipt 중 일부가 빠져 판단 자체를 끝내지 못한 결과가 모두 “분석 미완료”로 보였다.
+
+### 수정한 데이터 계약
+
+- `selectBroadcastContextCandidateCohort`는 전체 맥락 protocol의 실제 상한 32개를 사용한다. 비용이 큰 candidate detail은 계속 최대 12개로 제한하되, 전체 맥락 판정 뒤 승인 우선·점수·시간순으로 별도 cohort를 만든다. 17개 원장을 12개 유료 실행 상한과 혼동하지 않는다.
+- 저장된 whole-context envelope `1.2.0`은 실제로 보낸 `contextCandidateIds`를 함께 기록하고 readback 때 순서까지 검증한다. 구형 결과는 annotation에서 당시 cohort를 복구할 수 있지만, 새 결과는 추측으로 첫 12개를 붙이지 않는다.
+- candidate detail은 공용 frame producer와 최대 두 개 consumer를 사용하되 후보별로 독립 정산한다. 네 JPEG와 대표 thumbnail이 준비된 후보만 AI에 들어가며, 한 후보의 실패는 `CANDIDATE_FAILED`가 되고 나머지 후보는 계속 실행된다.
+- 저장된 context packet, insight, provider identity, 네 화면, thumbnail과 `CandidatePassBVerificationReceipt`가 현재 context fingerprint에 모두 맞는 항목만 final projection에 들어간다. 실패·취소 envelope보다 검증된 durable artifact를 우선하며, 재시도는 artifact가 빠진 candidate ID만 선택한다.
+- candidate insight snapshot은 IndexedDB write 직후 같은 run ID로 readback하여 metadata·evidence·insight·model·thumbnail·receipt 전체가 exact match할 때만 durable로 승격한다. 실패한 write/readback은 `RUN_COMPLETED`와 `deepPass/publication/completed`를 막고 provider 재호출 없는 저장 재시도로 복구한다.
+- whole-context 거부, 음악·오프닝·엔딩·평범한 진행, 상세 AI의 비추천은 “판단 완료 후 제외”다. `context-missing`, `detail-result-missing`, `verification-receipt-missing`, `evidence-incomplete`만 pipeline gap이며 이 경우에만 완료를 막고 구체적인 재시도 대상을 남긴다.
+- 완전 검증 결과가 0개면 `AnalysisJob.completedEmpty`로 정상 종료한다. pipeline gap으로 판단하지 못한 0개는 running/failed 상태를 유지하므로 저장 이력과 복구 목록에서도 두 의미가 다시 섞이지 않는다.
+- 오류 복구 화면이 보인다는 사실은 stage commit이 아니다. whole-context 실패는 `broadcastContext`를, detail gap은 `deepPass/publication`을 완료한 것으로 기록하지 않으며, reload resume cursor는 readback까지 끝난 gap-free artifact까지만 전진한다.
+
+### Free Worker 후보 미디어 경로
+
+- 후보의 PCM16 WAV와 JPEG 4장은 하나의 bounded binary bundle로 브라우저 Worker에서 만든 뒤 private R2에 한 번 staged한다. Cloudflare Worker는 Base64 후보 JSON을 다시 조립하지 않고, HMAC ticket으로 제한된 audio/frame URL을 Qwen 3.5 Omni에 전달한다.
+- quota payload digest, participant, run, candidate hash, duration, audio length와 frame timestamp/length manifest를 ticket과 R2 metadata에 함께 묶는다. native SHA-256, exact byte length, content type과 canonical WAV header가 모두 맞아야 provider 실행으로 넘어간다.
+- 전체 방송 자료는 바꾸지 않고 candidate-specific context만 48KiB canonical packet으로 구성한다. 후보 대사는 protocol 최대 길이를 우선 보존하고, 다른 필드는 중요도별 byte 예산과 `[중간 생략 / middle omitted]` marker로 앞·뒤를 보존한다. receipt와 provider는 이 동일 packet을 사용하며, 최대 한국어·영어 입력도 80KiB shared prompt 안에 들어가므로 정상 후보가 413으로 중단되지 않는다. 네 화면·60초 후보의 최대 예약은 94,180 token으로 100,000 TPM 단일 요청 경계보다 작다.
+- 새 Pages는 `/healthz` 결과를 60초 single-flight cache로 확인해 `free-r2 | paid-direct | legacy`를 고른다. 신 Worker는 한 배포 주기 동안 구 Pages의 bounded JSON 후보 요청도 받으며, 신 Pages가 구 Worker를 만나면 `legacy`로 안전하게 동작한다.
+- Free R2 후보 경로는 URL media를 직접 읽는 Qwen 전용이다. Worker가 R2 bytes를 다시 읽어 Gemini inline-data로 만드는 fallback은 Free CPU 경계를 되살리므로 사용하지 않는다. `paid-direct`의 기존 bounded Qwen→Gemini fallback은 유지한다.
+
 ## 2026-07-27 `0.8.6` Free R2 전사 transport 착수
 
 - 사용자는 무료 Cloudflare 범위 안에서 먼저 안정화하되, 유료 전환 시 구조를 다시 만들지 않도록 내부 전환점을 준비하는 방향을 선택했다.

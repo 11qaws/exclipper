@@ -22,6 +22,13 @@ import {
   extractCandidatePassBGeminiResponse,
 } from "./candidatePassBGemini";
 import {
+  CANDIDATE_INSIGHT_MEDIA_BUNDLE_CONTENT_TYPE,
+  CANDIDATE_INSIGHT_MEDIA_ENDPOINT_PATH,
+  CANDIDATE_INSIGHT_MEDIA_RESOLVE_CONTENT_TYPE,
+  createCandidateInsightMediaResolveRequest,
+  parseCandidateInsightMediaStagedResponse,
+} from "./candidateInsightMediaProtocol";
+import {
   CANDIDATE_PASS_B_DEVICE,
   CANDIDATE_PASS_B_DTYPE,
   CANDIDATE_PASS_B_GEMINI_MODEL_ID,
@@ -57,8 +64,12 @@ import {
 import { isAnalysisLanguage } from "../domain/analysisLanguage";
 import { isCandidatePassBCastRosterId } from "./participantRoster";
 import { isCandidatePassBContextPacket } from "./candidateFinalVerification";
-import { fetchWithAiQuota } from "./aiQuotaClient";
 import {
+  fetchWithAiQuota,
+  fetchWithPreparedAiQuota,
+} from "./aiQuotaClient";
+import {
+  aiQuotaLeaseHeaders,
   isAiQuotaOpaqueId,
   isAiQuotaParticipantId,
 } from "./aiQuotaProtocol";
@@ -671,6 +682,339 @@ async function decodeCandidate(
   return decoded;
 }
 
+type CandidateRemoteTransport =
+  | "free-r2"
+  | "paid-direct"
+  | "legacy"
+  | "unavailable";
+
+const CANDIDATE_REMOTE_TRANSPORT_CACHE_TTL_MS = 60_000;
+
+let candidateRemoteTransportCache: {
+  readonly transport: Exclude<CandidateRemoteTransport, "unavailable">;
+  readonly expiresAtMs: number;
+} | null = null;
+let candidateRemoteTransportPromise:
+  | Promise<CandidateRemoteTransport>
+  | null = null;
+
+function candidateProxyOrigin(): string {
+  return new URL(CANDIDATE_PASS_B_PROXY_ENDPOINT).origin;
+}
+
+async function resolveCandidateRemoteTransport(): Promise<CandidateRemoteTransport> {
+  const nowMs = Date.now();
+  if (
+    candidateRemoteTransportCache !== null &&
+    candidateRemoteTransportCache.expiresAtMs > nowMs
+  ) {
+    return candidateRemoteTransportCache.transport;
+  }
+  candidateRemoteTransportCache = null;
+  if (candidateRemoteTransportPromise !== null) {
+    return candidateRemoteTransportPromise;
+  }
+  const resolution = (async (): Promise<CandidateRemoteTransport> => {
+    const controller = new AbortController();
+    const timeout = globalThis.setTimeout(() => controller.abort(), 5_000);
+    try {
+      const response = await fetch(`${candidateProxyOrigin()}/healthz`, {
+        method: "GET",
+        signal: controller.signal,
+        credentials: "omit",
+        cache: "no-store",
+        referrerPolicy: "no-referrer",
+      });
+      if (!response.ok) return "unavailable";
+      const value: unknown = await response.json();
+      if (!isRecord(value) || value.ok !== true) return "unavailable";
+      if (!isRecord(value.candidateTransport)) {
+        return "legacy";
+      }
+      if (value.candidateTransport.configured !== true) {
+        return "unavailable";
+      }
+      return value.candidateTransport.mode === "free-r2"
+        ? "free-r2"
+        : value.candidateTransport.mode === "paid-direct"
+          ? "paid-direct"
+          : "legacy";
+    } catch {
+      return "unavailable";
+    } finally {
+      globalThis.clearTimeout(timeout);
+    }
+  })();
+  candidateRemoteTransportPromise = resolution;
+  try {
+    const result = await resolution;
+    if (result !== "unavailable") {
+      candidateRemoteTransportCache = {
+        transport: result,
+        expiresAtMs: Date.now() + CANDIDATE_REMOTE_TRANSPORT_CACHE_TTL_MS,
+      };
+    }
+    return result;
+  } finally {
+    if (candidateRemoteTransportPromise === resolution) {
+      candidateRemoteTransportPromise = null;
+    }
+  }
+}
+
+async function stableCandidateHash(candidateId: string): Promise<string> {
+  const digest = new Uint8Array(
+    await crypto.subtle.digest(
+      "SHA-256",
+      new TextEncoder().encode(candidateId),
+    ),
+  );
+  let hex = "";
+  for (const byte of digest) hex += byte.toString(16).padStart(2, "0");
+  digest.fill(0);
+  return hex.slice(0, 24);
+}
+
+function decodeCandidateFrameBase64(value: string): Uint8Array {
+  if (
+    value.length === 0 ||
+    value.length % 4 !== 0 ||
+    !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u.test(
+      value,
+    )
+  ) {
+    throw new ProxyWorkerFailure("PROXY_BAD_REQUEST");
+  }
+  let binary: string;
+  try {
+    binary = atob(value);
+  } catch {
+    throw new ProxyWorkerFailure("PROXY_BAD_REQUEST");
+  }
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  return bytes;
+}
+
+function createCandidateMediaBundle(
+  wav: Uint8Array,
+  frames: NonNullable<CandidatePassBTarget["videoFrames"]>,
+): {
+  readonly bytes: Uint8Array;
+  readonly frameByteLengths: readonly [number, number, number, number];
+} {
+  if (frames.length !== 4) {
+    throw new ProxyWorkerFailure("PROXY_BAD_REQUEST");
+  }
+  const decodedFrames = frames.map((frame) =>
+    decodeCandidateFrameBase64(frame.dataBase64),
+  );
+  try {
+    const totalByteLength =
+      wav.byteLength +
+      decodedFrames.reduce((total, frame) => total + frame.byteLength, 0);
+    const bytes = new Uint8Array(totalByteLength);
+    bytes.set(wav, 0);
+    let offset = wav.byteLength;
+    for (const frame of decodedFrames) {
+      bytes.set(frame, offset);
+      offset += frame.byteLength;
+    }
+    return {
+      bytes,
+      frameByteLengths: decodedFrames.map(
+        (frame) => frame.byteLength,
+      ) as unknown as readonly [number, number, number, number],
+    };
+  } finally {
+    for (const frame of decodedFrames) frame.fill(0);
+  }
+}
+
+function candidateMediaStageUrl(
+  target: CandidatePassBTarget,
+  candidateHash: string,
+  audioByteLength: number,
+  frameByteLengths: readonly [number, number, number, number],
+): string {
+  const frames = target.videoFrames ?? [];
+  const url = new URL(
+    CANDIDATE_INSIGHT_MEDIA_ENDPOINT_PATH,
+    candidateProxyOrigin(),
+  );
+  url.searchParams.set("candidateHash", candidateHash);
+  url.searchParams.set(
+    "durationMs",
+    String(target.endMs - target.startMs),
+  );
+  url.searchParams.set("audioBytes", String(audioByteLength));
+  for (let index = 0; index < 4; index += 1) {
+    url.searchParams.set(`f${index}t`, String(frames[index]?.timestampMs ?? -1));
+    url.searchParams.set(`f${index}b`, String(frameByteLengths[index] ?? -1));
+  }
+  return url.toString();
+}
+
+async function isCandidateMediaTicketInvalidResponse(
+  response: Response,
+): Promise<boolean> {
+  if (response.status !== 409) return false;
+  try {
+    const value: unknown = await response.clone().json();
+    return (
+      isRecord(value) &&
+      isRecord(value.error) &&
+      value.error.code === "CANDIDATE_MEDIA_TICKET_INVALID"
+    );
+  } catch {
+    return false;
+  }
+}
+
+async function requestCandidateWithStagedMedia(
+  wav: Uint8Array,
+  target: CandidatePassBTarget,
+  task: ActiveTask,
+  candidateHash: string,
+  signal: AbortSignal,
+): Promise<Response> {
+  if (task.quota === undefined || (target.videoFrames?.length ?? 0) !== 4) {
+    throw new ProxyWorkerFailure("PROXY_BAD_REQUEST");
+  }
+  const bundle = createCandidateMediaBundle(wav, target.videoFrames ?? []);
+  let mediaTicket: string | null = null;
+  try {
+    for (let mediaGeneration = 0; mediaGeneration <= 1; mediaGeneration += 1) {
+      const response = await fetchWithPreparedAiQuota(
+        bundle.bytes as Uint8Array<ArrayBuffer>,
+        {
+          participantId: task.quota.participantId,
+          runId: task.quota.runId,
+          operationId:
+            `candidate-g${task.quota.attemptOrdinal ?? 0}` +
+            `-${candidateHash}-${target.startMs}-${target.endMs}` +
+            `-m${mediaGeneration}`,
+          pool: "candidate",
+          signal,
+        },
+        async (lease) => {
+          const leaseHeaders = aiQuotaLeaseHeaders(lease);
+          if (mediaTicket === null) {
+            const stagedOrError = await fetch(
+              candidateMediaStageUrl(
+                target,
+                candidateHash,
+                wav.byteLength,
+                bundle.frameByteLengths,
+              ),
+              {
+                method: "POST",
+                headers: {
+                  ...leaseHeaders,
+                  "Content-Type": CANDIDATE_INSIGHT_MEDIA_BUNDLE_CONTENT_TYPE,
+                },
+                body: bundle.bytes as Uint8Array<ArrayBuffer>,
+                signal,
+                credentials: "omit",
+                cache: "no-store",
+                referrerPolicy: "no-referrer",
+              },
+            );
+            if (stagedOrError.status !== 202) return stagedOrError;
+            const replayableResponse = stagedOrError.clone();
+            let value: unknown;
+            try {
+              value = await stagedOrError.json();
+            } catch {
+              return replayableResponse;
+            }
+            const staged = parseCandidateInsightMediaStagedResponse(
+              value,
+              candidateHash,
+              target.endMs - target.startMs,
+            );
+            if (staged === null) return replayableResponse;
+            mediaTicket = staged.mediaTicket;
+          }
+          return fetch(CANDIDATE_PASS_B_PROXY_ENDPOINT, {
+            method: "POST",
+            headers: {
+              ...leaseHeaders,
+              "Content-Type": CANDIDATE_INSIGHT_MEDIA_RESOLVE_CONTENT_TYPE,
+            },
+            body: JSON.stringify(
+              createCandidateInsightMediaResolveRequest(
+                mediaTicket,
+                target.endMs - target.startMs,
+                target.castRosterId ?? null,
+                target.outputLanguage ?? "ko",
+                target.context ?? null,
+              ),
+            ),
+            signal,
+            credentials: "omit",
+            cache: "no-store",
+            referrerPolicy: "no-referrer",
+          });
+        },
+      );
+      if (
+        mediaGeneration === 0 &&
+        await isCandidateMediaTicketInvalidResponse(response)
+      ) {
+        await response.body?.cancel().catch(() => undefined);
+        mediaTicket = null;
+        continue;
+      }
+      return response;
+    }
+    throw new ProxyWorkerFailure("PROXY_REQUEST_REJECTED");
+  } finally {
+    bundle.bytes.fill(0);
+  }
+}
+
+async function requestCandidateDirect(
+  wav: Uint8Array,
+  target: CandidatePassBTarget,
+  task: ActiveTask,
+  candidateHash: string,
+  signal: AbortSignal,
+): Promise<Response> {
+  const serializedRequest = JSON.stringify(
+    buildCandidatePassBProxyRequestBody(
+      encodeCandidatePassBBase64(wav),
+      target.endMs - target.startMs,
+      target.videoFrames ?? [],
+      target.castRosterId ?? null,
+      target.outputLanguage ?? "ko",
+      target.context ?? null,
+    ),
+  );
+  const requestInit: RequestInit = {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: serializedRequest,
+    signal,
+    credentials: "omit",
+    cache: "no-store",
+    referrerPolicy: "no-referrer",
+  };
+  return task.quota === undefined
+    ? fetch(CANDIDATE_PASS_B_PROXY_ENDPOINT, requestInit)
+    : fetchWithAiQuota(CANDIDATE_PASS_B_PROXY_ENDPOINT, requestInit, {
+        participantId: task.quota.participantId,
+        runId: task.quota.runId,
+        operationId:
+          `candidate-g${task.quota.attemptOrdinal ?? 0}` +
+          `-${candidateHash}-${target.startMs}-${target.endMs}`,
+        pool: "candidate",
+        signal,
+      });
+}
+
 async function analyzeCandidateWithRemoteAi(
   pcm: Float32Array,
   target: CandidatePassBTarget,
@@ -684,46 +1028,36 @@ async function analyzeCandidateWithRemoteAi(
   task.fetchAbortControllers.add(fetchAbortController);
 
   try {
-    const base64Wav = encodeCandidatePassBBase64(wav);
-    const serializedRequest = JSON.stringify(
-      buildCandidatePassBProxyRequestBody(
-        base64Wav,
-        target.endMs - target.startMs,
-        target.videoFrames ?? [],
-        target.castRosterId ?? null,
-        target.outputLanguage ?? "ko",
-        target.context ?? null,
-      ),
-    );
-
     let response: Response;
     try {
-      const requestInit: RequestInit = {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: serializedRequest,
-        signal: fetchAbortController.signal,
-        credentials: "omit",
-        cache: "no-store",
-        referrerPolicy: "no-referrer",
-      };
+      const candidateHash = await stableCandidateHash(target.candidateId);
+      const transport = task.quota !== undefined
+        ? await resolveCandidateRemoteTransport()
+        : "legacy";
+      if (transport === "unavailable") {
+        throw new ProxyWorkerFailure("PROXY_UNAVAILABLE");
+      }
+      if (
+        transport === "free-r2" &&
+        target.videoFrames?.length !== 4
+      ) {
+        throw new ProxyWorkerFailure("PROXY_BAD_REQUEST");
+      }
       response =
-        task.quota === undefined
-          ? await fetch(CANDIDATE_PASS_B_PROXY_ENDPOINT, requestInit)
-          : await fetchWithAiQuota(
-              CANDIDATE_PASS_B_PROXY_ENDPOINT,
-              requestInit,
-              {
-                participantId: task.quota.participantId,
-                runId: task.quota.runId,
-                operationId:
-                  `candidate-g${task.quota.attemptOrdinal ?? 0}` +
-                  `-${target.startMs}-${target.endMs}`,
-                pool: "candidate",
-                signal: fetchAbortController.signal,
-              },
+        transport === "free-r2"
+          ? await requestCandidateWithStagedMedia(
+              wav,
+              target,
+              task,
+              candidateHash,
+              fetchAbortController.signal,
+            )
+          : await requestCandidateDirect(
+              wav,
+              target,
+              task,
+              candidateHash,
+              fetchAbortController.signal,
             );
     } catch {
       if (task.cancelled || fetchAbortController.signal.aborted) {

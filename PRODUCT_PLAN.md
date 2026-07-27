@@ -1,6 +1,23 @@
 # ExClipper 제품·UX·기술 계획서
 
-## `0.8.6` 무료 R2 기본·유료 direct 즉시 전환 계약
+## 다음 배포 후보 · 완전 검증 파이프라인 계약
+
+- 전체 방송 전사는 한 번의 Worker run이 아니라 `초기 시도 → 실패 조각만 최대 2회 복구 → 저장 readback → event-boost seal`의 한 phase다. 성공 조각은 즉시 source-fenced checkpoint로 보존하며 자동 복구에서 다시 보내지 않는다.
+- `decode-failed | transcription-failed | rate-limited`만 새 quota attempt로 자동 재시도한다. 정상 디코딩 뒤 발화가 없는 `no-audio`는 음성 없음이라는 완성된 음성 근거로 저장한다. 공급자 요청 전에 해당 source range를 `in-flight`와 영속 attempt ordinal로 먼저 저장하며, 탭이 이 사이 종료되면 새로고침은 이를 결과 불명으로 취급한다. 응답 도달 여부를 알 수 없는 `outcome-unknown`은 동일 lease transport replay로 먼저 확인하되, 결과를 끝내 확인할 수 없으면 새 유료 operation을 몰래 만들지 않고 phase를 실패 상태로 유지한다.
+- quota operation은 `uniform | event-boost | refinement` namespace와 영속 generation, stable source-range chunk ID를 모두 포함한다. 따라서 uniform의 terminal tombstone, 다음 event-boost, 자동 실패 복구, 새로고침 뒤 명시적 복구가 같은 operation ID를 재사용하지 않는다.
+- 다음 whole-context phase는 현재 run의 최종 `event-boost` operation key, transcript `completed`, chapter 1개 이상, 저장소 exact readback이 모두 일치할 때만 시작한다. 복구 가능한 조각이나 결과 불명 조각이 하나라도 남으면 transcript seal을 발급하지 않으며, 부분 지도를 완성된 방송 맥락으로 사용하지 않는다.
+- candidate ledger, whole-context cohort, paid-detail cohort, final projection은 서로 다른 집합이다. ledger는 발견된 후보를 모두 보존하고, whole-context는 protocol 상한 32개까지 판단하며, paid detail은 맥락 판정 뒤 최대 12개만 검토한다. 실행 예산 때문에 detail에 들어가지 않은 후보를 API 실패로 표시하지 않는다.
+- 최종 후보 하나의 최소 단위는 `전체 방송 흐름 + source-fenced 앞뒤 맥락 + 참고 대사 + 후보 WAV + 서로 다른 JPEG 4장 + 그중 하나인 thumbnail + AI insight + 현재 context fingerprint receipt`다. 어느 하나라도 없으면 최종 후보가 아니며, 기존 점수나 사람의 과거 승인으로 이 gate를 우회하지 않는다.
+- candidate detail run은 후보별 독립 pipeline이다. 화면 bundle이 준비된 후보부터 최대 두 개가 AI로 진행하고, 실패한 후보만 gap으로 남는다. 이미 저장한 다른 후보의 유료 결과는 run envelope 오류나 새로고침 때문에 폐기·재결제하지 않는다.
+- 후보 insight는 IndexedDB 쓰기만으로 완료하지 않는다. 같은 run ID로 즉시 다시 읽어 메타데이터·대사 근거·모델·AI 해석·대표 thumbnail·현재 맥락 receipt가 모두 정확히 일치해야 durable artifact로 인정한다. 사건·반응·클립 가치 설명, 등장인물 상태와 근거, 최종 판정, 맥락 일치, 프로그램성 자료 판정 중 하나라도 비거나 서로 모순되면 과거 호환 레코드라도 완료 자료가 아니다. 이때 불완전 insight 객체의 존재만 보고 분석 완료로 착각하지 않고 해당 후보를 AI 재실행 대상으로 남긴다. 확인 실패 시 메모리 결과는 검토용으로만 남고 `deepPass/publication/completed`는 전진하지 않으며, 완전한 AI 결과의 저장만 실패한 경우에는 API를 다시 부르지 않는 저장 재시도를 제공한다.
+- 최종 0개에는 두 종료 의미가 있다. 모든 검증을 마치고 사건성이 없다고 판단한 방송은 `completedEmpty`, 근거 누락으로 판단하지 못한 방송은 pipeline gap이다. UI와 저장 이력은 각각 “쓸 장면 없음”과 “분석을 끝내지 못함”으로 구분하고 후자에만 복구 행동을 제공한다.
+- Free Worker 후보 전송은 browser bundle → private R2 stage → signed range URL → Qwen 순서다. 전체 방송 자료는 세션에 그대로 보존하고, provider 전에는 전체 요약·주제·후보 대사·앞뒤 흐름·빠른 근거·판정·채팅을 48KiB의 공식 candidate context packet으로 결정론적으로 구성한다. 중간을 줄인 필드는 `[중간 생략 / middle omitted]`을 명시하고 앞·뒤를 보존한다. Qwen·Gemini·quota 예약·verification receipt는 모두 이 동일한 canonical packet만 사용하므로 합법적인 최대 입력도 80KiB prompt/100k TPM 경계 안에서 크기 때문에 중단되지 않는다. 세션 원문은 그대로 남고, 모델이 받지 않은 중간 원문을 봤다고 기록하지 않는다.
+- candidate R2 ingress는 `Content-Length` 유무와 관계없이 서명된 exact byte length에서 streaming fence를 건다. 초과 본문은 읽는 즉시 413으로 중단하고, 짧은 본문은 400으로 거부하며, 어느 경우에도 불완전한 객체를 provider 실행이나 최종 후보로 넘기지 않는다.
+- 후보 bundle은 Worker에서 버퍼링·디코딩·Base64 변환하지 않지만 headerless 초과를 막기 위해 각 chunk의 byte count는 관찰한다. 이 counted stream을 exact-length metadata를 보존하는 `FixedLengthStream`에 연결해 R2에 전달한다. 기존 object 재사용·manifest conflict·conditional PUT race에서는 미사용 body를 JS로 drain하지 않고 pump를 abort한다.
+- Qwen이 성공 HTTP를 보냈더라도 candidate schema 검증이 실패하면 같은 staged media와 fresh internal quota operation으로 최대 두 번 복구한다. 이 bounded 복구가 모두 실패한 항목은 완성 후보가 아니며, staged object와 ticket을 보존해 해당 후보만 다시 분석할 수 있게 한다.
+- 배포 호환은 양방향이다. 새 Pages는 구 Worker의 health를 `legacy`로 해석하고, 새 Worker는 bounded 구 candidate JSON을 한 배포 주기 동안 허용한다. transport health cache는 60초 뒤 다시 확인하며 일시 실패는 영구 cache하지 않는다.
+
+## `0.8.7` 무료 R2 기본·유료 direct 즉시 전환 계약
 
 - 브라우저 전사 Worker는 최대 90초의 16kHz mono PCM16 WAV를 한 번 만들고 같은 raw bytes 계약으로만 서버에 보낸다. Cloudflare 요금제에 따라 프런트엔드 코드를 갈라놓지 않는다.
 - `free-r2`는 raw request body를 Worker JavaScript에서 읽지 않고 private R2 binding의 native stream put으로 넘긴다. quota가 이미 계산한 SHA-256을 R2 put checksum으로 사용하고, 저장 뒤 exact byte length와 44-byte WAV header만 range read로 검증한다. Qwen 3.5 Omni에는 Base64가 아니라 짧게 만료되는 HTTPS media capability URL을 전달한다.
@@ -29,7 +46,7 @@
 - `0.8.4` 브라우저 전사는 30초 청크를 사용했다. 전용 브라우저 Web Worker가 WAV를 Base64 JSON으로 준비해 UI thread와 Worker의 byte-to-Base64 변환을 피했지만, 중계의 대용량 JSON 처리까지 제거하지는 못했다. raw WAV 경로는 구버전 탭과 진단용 호환 경로로 유지했다.
 - 실행 안의 `AdaptiveConcurrency`와 배포 전체 시작 간격 1초, shared in-flight 6, participant별 6/3/2 상한이 최종 속도와 공정성을 결정한다. 90초는 중계가 수용하는 호환 transport 상한이지 현재 계획기의 청크 길이가 아니다.
 - 맥락 요청 실패는 제한된 오류 코드로 `응답 형식`, `공급자 거절`, `일시 연결`, `결과 불명`, `종료된 operation`을 구분한다. 본 유료 요청의 non-2xx 뒤에 별도 cancel을 보내지 않아 502 뒤 409가 연쇄되지 않는다.
-- 누락 전사 재시도는 이미 확보한 대사 구간을 보존하고 실패한 30초 범위만 다시 처리한다. 맥락이 바뀌면 후보 상세 receipt의 context 콘텐츠 지문도 달라지므로 과거 불완전 맥락의 판정이 최종 후보로 재사용되지 않는다.
+- 누락 전사 재시도는 이미 확보한 대사 구간을 보존하고 현재 sampling plan에서 실패한 source-fenced 범위만 다시 처리한다. 현재 `0.8.7` 계획기는 최대 90초 조각을 사용한다. 맥락이 바뀌면 후보 상세 receipt의 context 콘텐츠 지문도 달라지므로 과거 불완전 맥락의 판정이 최종 후보로 재사용되지 않는다.
 - 전체 계약, TTL, 요청 크기, 처리량 하한과 장애 분류는 `docs/FIVE_USER_QUOTA_COORDINATOR_2026-07-27.md`를 따른다.
 
 ## `0.4.0` 전사 전송 계약의 과거 기준
@@ -182,7 +199,7 @@
 
 - The shared role policy is now part of the Worker runtime instead of a test-only catalog. Candidate perception uses the configured primary (`qwen3.5-omni-flash` in production) and may switch once to `gemini-3.6-flash` only when bounded fallback is enabled and both credentials are valid.
 - Whole-broadcast compressed-text reasoning uses `qwen3.7-plus`, with one schema-compatible `qwen3.6-flash` fallback. The low-cost selection pass starts with `qwen3.6-flash` and may use `qwen3.7-plus` once when the cheaper model cannot return a valid decision.
-- Full or sampled broadcast transcription remains single-provider per chunk. An ambiguous timeout may already have been billed, so ExClipper does not automatically resend the same long audio to Gemini. This preserves the `$1` run envelope and leaves failed coverage explicit.
+- Full or sampled broadcast transcription remains single-provider per chunk. Known-safe decode, explicit provider failure, and rate-limit gaps retry only that chunk inside the same transcript phase. An ambiguous timeout may already have been billed, so ExClipper first replays the exact same lease transport request and never silently switches that audio to another paid provider; unresolved outcome-unknown coverage blocks the next phase and remains explicit.
 - A provider switch never changes candidate score, range, approval, or review state. The actual candidate model ID and revision are validated from exposed response metadata and stored per candidate so a recovered paid result is not mislabeled as another model.
 - The route has one switch maximum after the primary provider's bounded transient retries. It is a recovery path, not speculative model voting or parallel duplicate spend.
 - Whole-context overview also returns 2–16 grounded, non-overlapping topic chapters. Their ranges must resolve to transcript chapter IDs; they inform the timeline and editor orientation but never alter candidate score, boundary, approval, or review state.

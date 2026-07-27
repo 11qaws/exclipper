@@ -1,11 +1,17 @@
 import { describe, expect, it } from "vitest";
 import {
+  candidatePassBContextFingerprint,
   createCandidatePassBContextPacket,
   createCandidatePassBVerificationReceipt,
   candidatePassBReceiptMatchesContext,
   finalizeFullyVerifiedCandidates,
 } from "./candidateFinalVerification";
-import type { CandidatePassBInsight } from "./candidatePassBWorkerProtocol";
+import {
+  MAX_CANDIDATE_PASS_B_CONTEXT_TEXT_LENGTH,
+  type CandidatePassBContextPacket,
+  type CandidatePassBInsight,
+} from "./candidatePassBWorkerProtocol";
+import { canonicalizeCandidatePassBContextPacket } from "./candidatePassBContextBudget";
 
 const candidate = {
   id: "candidate-1",
@@ -42,6 +48,33 @@ const insight: CandidatePassBInsight = {
   programMaterial: "streamer-event",
 };
 
+function maximumContextField(label: string, fill: string): string {
+  const prefix = `${label}START`;
+  const suffix = `${label}END`;
+  return `${prefix}${fill.repeat(
+    MAX_CANDIDATE_PASS_B_CONTEXT_TEXT_LENGTH -
+      prefix.length -
+      suffix.length,
+  )}${suffix}`;
+}
+
+function maximumContext(
+  label: string,
+  fill: string,
+): CandidatePassBContextPacket {
+  return {
+    ...context!,
+    transcriptKo: maximumContextField(`${label}-transcript`, fill),
+    beforeContextKo: maximumContextField(`${label}-before`, fill),
+    afterContextKo: maximumContextField(`${label}-after`, fill),
+    broadcastSummaryKo: maximumContextField(`${label}-broadcast`, fill),
+    topicContextKo: maximumContextField(`${label}-topic`, fill),
+    fastEvidenceKo: maximumContextField(`${label}-evidence`, fill),
+    contextVerdictKo: maximumContextField(`${label}-verdict`, fill),
+    chatReactionKo: maximumContextField(`${label}-chat`, fill),
+  };
+}
+
 describe("candidate final verification", () => {
   it("publishes only candidates with context, audio, four frames and a consistent recommendation", () => {
     expect(context).not.toBeNull();
@@ -54,6 +87,7 @@ describe("candidate final verification", () => {
       contextByCandidateId: { [candidate.id]: context! },
       insightByCandidateId: { [candidate.id]: insight },
       receiptByCandidateId: { [candidate.id]: receipt! },
+      completeEvidenceCandidateIds: new Set([candidate.id]),
     });
 
     expect(result.candidates.map(({ id }) => id)).toEqual([candidate.id]);
@@ -66,12 +100,84 @@ describe("candidate final verification", () => {
       contextByCandidateId: { [candidate.id]: context! },
       insightByCandidateId: { [candidate.id]: insight },
       receiptByCandidateId: {},
+      completeEvidenceCandidateIds: new Set([candidate.id]),
     });
 
     expect(result.candidates).toEqual([]);
     expect(result.gapByCandidateId[candidate.id]).toBe(
       "verification-receipt-missing",
     );
+  });
+
+  it("does not publish an in-memory result before its artifact set is read back", () => {
+    const frames = [1_000, 2_000, 3_000, 4_000].map((timestampMs) => ({
+      timestampMs,
+    }));
+    const receipt = createCandidatePassBVerificationReceipt(
+      context!,
+      frames,
+      1_000,
+    )!;
+    const result = finalizeFullyVerifiedCandidates({
+      candidates: [candidate],
+      contextByCandidateId: { [candidate.id]: context! },
+      insightByCandidateId: { [candidate.id]: insight },
+      receiptByCandidateId: { [candidate.id]: receipt },
+      completeEvidenceCandidateIds: new Set(),
+    });
+
+    expect(result.candidates).toEqual([]);
+    expect(result.gapByCandidateId[candidate.id]).toBe("evidence-incomplete");
+  });
+
+  it("fails closed when an untyped stale caller omits the durability fence", () => {
+    const frames = [1_000, 2_000, 3_000, 4_000].map((timestampMs) => ({
+      timestampMs,
+    }));
+    const receipt = createCandidatePassBVerificationReceipt(
+      context!,
+      frames,
+      1_000,
+    )!;
+    const staleInput = {
+      candidates: [candidate],
+      contextByCandidateId: { [candidate.id]: context! },
+      insightByCandidateId: { [candidate.id]: insight },
+      receiptByCandidateId: { [candidate.id]: receipt },
+    } as unknown as Parameters<typeof finalizeFullyVerifiedCandidates>[0];
+
+    const result = finalizeFullyVerifiedCandidates(staleInput);
+
+    expect(result.candidates).toEqual([]);
+    expect(result.gapByCandidateId[candidate.id]).toBe("evidence-incomplete");
+  });
+
+  it("records an explicit context rejection as a completed judgement, not missing context", () => {
+    const result = finalizeFullyVerifiedCandidates({
+      candidates: [candidate],
+      contextExcludedCandidateIds: new Set([candidate.id]),
+      contextByCandidateId: {},
+      insightByCandidateId: {},
+      receiptByCandidateId: {},
+      completeEvidenceCandidateIds: new Set(),
+    });
+
+    expect(result.candidates).toEqual([]);
+    expect(result.gapByCandidateId[candidate.id]).toBe("context-excluded");
+  });
+
+  it("keeps a genuinely absent context packet fail-closed", () => {
+    const result = finalizeFullyVerifiedCandidates({
+      candidates: [candidate],
+      contextExcludedCandidateIds: new Set(),
+      contextByCandidateId: {},
+      insightByCandidateId: {},
+      receiptByCandidateId: {},
+      completeEvidenceCandidateIds: new Set(),
+    });
+
+    expect(result.candidates).toEqual([]);
+    expect(result.gapByCandidateId[candidate.id]).toBe("context-missing");
   });
 
   it("invalidates a paid detail receipt when the whole-broadcast context changes", () => {
@@ -97,10 +203,60 @@ describe("candidate final verification", () => {
       contextByCandidateId: { [candidate.id]: changedContext },
       insightByCandidateId: { [candidate.id]: insight },
       receiptByCandidateId: { [candidate.id]: receipt },
+      completeEvidenceCandidateIds: new Set([candidate.id]),
     });
     expect(result.candidates).toEqual([]);
     expect(result.gapByCandidateId[candidate.id]).toBe("evidence-incomplete");
   });
+
+  it.each<{
+    readonly label: string;
+    readonly context: CandidatePassBContextPacket;
+  }>([
+    { label: "maximum Korean", context: maximumContext("한국어", "가") },
+    {
+      label: "maximum multibyte English",
+      context: maximumContext("english", "é"),
+    },
+  ])(
+    "fingerprints the same canonical packet for raw and canonical $label context",
+    ({ context: rawContext }) => {
+      const frames = [1_000, 2_000, 3_000, 4_000].map((timestampMs) => ({
+        timestampMs,
+      }));
+      const canonicalContext =
+        canonicalizeCandidatePassBContextPacket(rawContext);
+      const receiptFromRaw = createCandidatePassBVerificationReceipt(
+        rawContext,
+        frames,
+        1_000,
+      );
+      const receiptFromCanonical = createCandidatePassBVerificationReceipt(
+        canonicalContext,
+        frames,
+        1_000,
+      );
+
+      expect(canonicalizeCandidatePassBContextPacket(canonicalContext)).toEqual(
+        canonicalContext,
+      );
+      expect(receiptFromRaw).toEqual(receiptFromCanonical);
+      expect(receiptFromRaw?.contextFingerprint).toBe(
+        candidatePassBContextFingerprint(canonicalContext),
+      );
+      expect(candidatePassBContextFingerprint(rawContext)).toBe(
+        candidatePassBContextFingerprint(canonicalContext),
+      );
+      expect(candidatePassBReceiptMatchesContext(receiptFromRaw!, rawContext))
+        .toBe(true);
+      expect(
+        candidatePassBReceiptMatchesContext(
+          receiptFromRaw!,
+          canonicalContext,
+        ),
+      ).toBe(true);
+    },
+  );
 
   it("excludes music and context conflicts even with complete local evidence", () => {
     const frames = [1_000, 2_000, 3_000, 4_000].map((timestampMs) => ({
@@ -122,6 +278,7 @@ describe("candidate final verification", () => {
         },
       },
       receiptByCandidateId: { [candidate.id]: receipt },
+      completeEvidenceCandidateIds: new Set([candidate.id]),
     });
 
     expect(result.candidates).toEqual([]);

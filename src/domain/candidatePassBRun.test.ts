@@ -278,6 +278,114 @@ describe("CandidatePassBRun reducer", () => {
     });
   });
 
+  it("records an early frame-preparation gap while loading the model and starts the first remaining candidate", () => {
+    let state = makeLoadingModel();
+
+    state = apply(
+      state,
+      workerEvent("event-frame-preparation-gap", {
+        type: "CANDIDATE_FAILED",
+        candidateId: "candidate-1",
+        expectedProposalRevision: 3,
+        reasonCode: "visual_evidence_incomplete",
+      }),
+    );
+    expect(state).toMatchObject({
+      status: "loadingModel",
+      candidateOutcomes: [
+        {
+          candidateId: "candidate-1",
+          status: "failed",
+          reasonCode: "visual_evidence_incomplete",
+        },
+        {
+          candidateId: "candidate-2",
+          status: "pending",
+        },
+      ],
+    });
+
+    state = apply(
+      state,
+      workerEvent("event-model-ready-after-frame-gap", {
+        type: "MODEL_READY",
+      }),
+    );
+    expect(state).toMatchObject({
+      status: "transcribing",
+      activeCandidateId: "candidate-2",
+    });
+
+    state = apply(
+      state,
+      workerEvent("event-remaining-candidate-result", {
+        type: "CANDIDATE_CLUE_FOUND",
+        candidateId: "candidate-2",
+        expectedProposalRevision: 7,
+        clueCount: 1,
+      }),
+    );
+    expect(state.status).toBe("finalizing");
+    state = apply(
+      state,
+      workerEvent("event-completed-after-frame-gap", {
+        type: "RUN_COMPLETED",
+        requestedCount: 2,
+        resultCount: 1,
+        gapCount: 1,
+      }),
+    );
+    expect(state).toMatchObject({
+      status: "completedWithGaps",
+      summary: {
+        pendingCount: 0,
+        clueFoundCount: 1,
+        failedCount: 1,
+      },
+    });
+  });
+
+  it("moves directly to finalizing when every candidate frame preparation fails before model readiness", () => {
+    let state = makeLoadingModel();
+
+    state = apply(
+      state,
+      workerEvent("event-first-early-frame-gap", {
+        type: "CANDIDATE_FAILED",
+        candidateId: "candidate-1",
+        expectedProposalRevision: 3,
+        reasonCode: "visual_evidence_incomplete",
+      }),
+    );
+    state = apply(
+      state,
+      workerEvent("event-second-early-frame-gap", {
+        type: "CANDIDATE_FAILED",
+        candidateId: "candidate-2",
+        expectedProposalRevision: 7,
+        reasonCode: "visual_evidence_incomplete",
+      }),
+    );
+
+    expect(state.status).toBe("finalizing");
+    state = apply(
+      state,
+      workerEvent("event-all-early-frame-gaps-completed", {
+        type: "RUN_COMPLETED",
+        requestedCount: 2,
+        resultCount: 0,
+        gapCount: 2,
+      }),
+    );
+    expect(state).toMatchObject({
+      status: "completedWithGaps",
+      summary: {
+        pendingCount: 0,
+        failedCount: 2,
+      },
+    });
+  });
+
   it("continues after content and processing gaps, then reports completedWithGaps", () => {
     const candidates = [
       ...CANDIDATES,

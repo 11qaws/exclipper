@@ -4,6 +4,7 @@ import {
   CANDIDATE_PASS_B_PROXY_ENDPOINT,
   buildCandidatePassBAudioOnlySafeResponse,
   buildCandidatePassBGeminiRequestBody,
+  buildCandidatePassBPrompt,
   buildCandidatePassBProxyRequestBody,
   classifyCandidatePassBProxyHttpFailure,
   encodeCandidatePassBBase64,
@@ -12,6 +13,18 @@ import {
   parseCandidatePassBGeminiAnalysis,
 } from "./candidatePassBGemini";
 import { DEFAULT_CANDIDATE_PASS_B_CAST_ROSTER_ID } from "./participantRoster";
+import {
+  MAX_CANDIDATE_PASS_B_CONTEXT_TEXT_LENGTH,
+  type CandidatePassBContextPacket,
+} from "./candidatePassBWorkerProtocol";
+import {
+  CANDIDATE_PASS_B_CONTEXT_OMISSION_MARKER,
+  canonicalizeCandidatePassBContextPacket,
+} from "./candidatePassBContextBudget";
+import {
+  candidatePassBContextFingerprint,
+  createCandidatePassBVerificationReceipt,
+} from "./candidateFinalVerification";
 
 function validAnalysis() {
   return {
@@ -44,6 +57,36 @@ function validAnalysis() {
         observedFrameIndices: [0],
       },
     ],
+  };
+}
+
+function maximumContextField(label: string, fill: string): string {
+  const prefix = `${label}START`;
+  const suffix = `${label}END`;
+  return `${prefix}${fill.repeat(
+    MAX_CANDIDATE_PASS_B_CONTEXT_TEXT_LENGTH -
+      prefix.length -
+      suffix.length,
+  )}${suffix}`;
+}
+
+function maximumContext(
+  label: string,
+  fill: string,
+): CandidatePassBContextPacket {
+  return {
+    schemaVersion: "1.0.0",
+    transcriptSource: "broadcast-transcript",
+    transcriptKo: maximumContextField(`${label}-transcript`, fill),
+    beforeContextKo: maximumContextField(`${label}-before`, fill),
+    afterContextKo: maximumContextField(`${label}-after`, fill),
+    broadcastSummaryKo: maximumContextField(`${label}-broadcast`, fill),
+    topicContextKo: maximumContextField(`${label}-topic`, fill),
+    fastEvidenceKo: maximumContextField(`${label}-evidence`, fill),
+    contextDecision: "select",
+    contextCategory: "reaction",
+    contextVerdictKo: maximumContextField(`${label}-verdict`, fill),
+    chatReactionKo: maximumContextField(`${label}-chat`, fill),
   };
 }
 
@@ -165,6 +208,83 @@ describe("candidatePassBGemini", () => {
     });
     expect(Object.keys(request)).toEqual(["audioBase64", "candidateDurationMs"]);
   });
+
+  it.each<{
+    readonly label: string;
+    readonly outputLanguage: "ko" | "en";
+    readonly context: CandidatePassBContextPacket;
+  }>([
+    {
+      label: "maximum Korean",
+      outputLanguage: "ko",
+      context: maximumContext("한국어", "가"),
+    },
+    {
+      label: "maximum multibyte English",
+      outputLanguage: "en",
+      context: maximumContext("english", "é"),
+    },
+  ])(
+    "uses one canonical context for Gemini direct, proxy fallback, and receipt: $label",
+    ({ outputLanguage, context: rawContext }) => {
+      const canonicalContext =
+        canonicalizeCandidatePassBContextPacket(rawContext);
+      const expectedPrompt = buildCandidatePassBPrompt(
+        60_000,
+        4,
+        DEFAULT_CANDIDATE_PASS_B_CAST_ROSTER_ID,
+        outputLanguage,
+        canonicalContext,
+      );
+      const frames = [1_000, 15_000, 30_000, 45_000].map((timestampMs) => ({
+        timestampMs,
+        mimeType: "image/jpeg" as const,
+        dataBase64: "AQ==",
+      }));
+      const direct = buildCandidatePassBGeminiRequestBody(
+        "UklGRg==",
+        60_000,
+        frames,
+        DEFAULT_CANDIDATE_PASS_B_CAST_ROSTER_ID,
+        outputLanguage,
+        rawContext,
+      );
+      const proxy = buildCandidatePassBProxyRequestBody(
+        "UklGRg==",
+        60_000,
+        frames,
+        DEFAULT_CANDIDATE_PASS_B_CAST_ROSTER_ID,
+        outputLanguage,
+        rawContext,
+      );
+      const receipt = createCandidatePassBVerificationReceipt(
+        rawContext,
+        frames,
+        1_000,
+      );
+
+      expect(direct.contents[0].parts[0].text).toBe(expectedPrompt);
+      expect(proxy.context).toEqual(canonicalContext);
+      expect(
+        buildCandidatePassBPrompt(
+          60_000,
+          4,
+          DEFAULT_CANDIDATE_PASS_B_CAST_ROSTER_ID,
+          outputLanguage,
+          proxy.context,
+        ),
+      ).toBe(expectedPrompt);
+      expect(receipt?.contextFingerprint).toBe(
+        candidatePassBContextFingerprint(canonicalContext),
+      );
+      expect(canonicalizeCandidatePassBContextPacket(canonicalContext)).toEqual(
+        canonicalContext,
+      );
+      expect(expectedPrompt).toContain(
+        CANDIDATE_PASS_B_CONTEXT_OMISSION_MARKER,
+      );
+    },
+  );
 
   it("attaches bounded representative JPEG frames to both Gemini request layers", () => {
     const frames = [

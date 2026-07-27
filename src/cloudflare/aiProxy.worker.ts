@@ -2,15 +2,23 @@ import {
   MAX_CANDIDATE_PASS_B_RESPONSE_BYTES,
   buildCandidatePassBAudioOnlySafeResponse,
   buildCandidatePassBGeminiRequestBody,
-  buildCandidatePassBPrompt,
   extractCandidatePassBGeminiResponse,
 } from "../analysis/candidatePassBGemini";
 import {
   CANDIDATE_PASS_B_QWEN_MAX_OUTPUT_TOKENS,
+  buildCandidatePassBQwenOmniSharedPrompt,
   buildCandidatePassBQwenOmniRequestBody,
+  buildCandidatePassBQwenOmniUrlRequestBody,
   extractCandidatePassBQwenOmniSseResponse,
   inspectCandidatePassBQwenOmniSseResponse,
 } from "../analysis/candidatePassBQwenOmni";
+import {
+  CANDIDATE_INSIGHT_MEDIA_BUNDLE_CONTENT_TYPE,
+  CANDIDATE_INSIGHT_MEDIA_ENDPOINT_PATH,
+  CANDIDATE_INSIGHT_MEDIA_RESOLVE_CONTENT_TYPE,
+  CANDIDATE_INSIGHT_MEDIA_SCHEMA_VERSION,
+  isCandidateInsightMediaTicket,
+} from "../analysis/candidateInsightMediaProtocol";
 import {
   CANDIDATE_PASS_B_RESPONSE_FALLBACK_HEADER,
   CANDIDATE_PASS_B_RESPONSE_MODEL_ID_HEADER,
@@ -148,6 +156,21 @@ import {
   type BroadcastTranscriptTransportEnvironment,
   type BroadcastTranscriptTransportResolution,
 } from "./broadcastTranscriptMedia";
+import {
+  CANDIDATE_INSIGHT_MEDIA_AUDIO_HEADER_BYTES,
+  CANDIDATE_INSIGHT_MEDIA_MAX_AUDIO_BYTES,
+  CANDIDATE_INSIGHT_MEDIA_MAX_BUNDLE_BYTES,
+  CANDIDATE_INSIGHT_MEDIA_MAX_FRAME_BYTES,
+  CandidateInsightMediaError,
+  createCandidateInsightMediaCapabilityUrl,
+  deleteCandidateInsightMediaBestEffort,
+  resolveCandidateInsightMedia,
+  serveCandidateInsightMediaRequest,
+  stageCandidateInsightMedia,
+  type CandidateInsightMediaBinding,
+  type CandidateInsightMediaFrameBinding,
+  type StagedCandidateInsightMedia,
+} from "./candidateInsightMedia";
 
 export { AiQuotaCoordinator } from "./aiQuotaCoordinator";
 
@@ -205,6 +228,7 @@ const UPSTREAM_TIMEOUT_MS = 90_000;
 const QUOTA_EXECUTION_WAIT_TIMEOUT_MS = 3 * 60_000;
 const QUOTA_CANCEL_TIMEOUT_MS = 1_000;
 const DEFAULT_UPSTREAM_RETRY_DELAYS_MS = Object.freeze([1_000, 2_000]);
+const CANDIDATE_INVALID_RESPONSE_RETRY_LIMIT = 2;
 const QWEN_OMNI_SHARED_RATE_LIMIT_KEY = "qwen-omni-media";
 const RATE_LIMIT_KEY = QWEN_OMNI_SHARED_RATE_LIMIT_KEY;
 const BROADCAST_CONTEXT_RATE_LIMIT_KEY = "broadcast-context";
@@ -233,15 +257,21 @@ const CHZZK_VIDEO_NO_PATTERN = /^\d{7,12}$/u;
 const CHZZK_CHANNEL_ID_PATTERN = /^[0-9a-f]{32}$/u;
 
 function candidateTokenReservation(
-  candidateRequest: CandidateInsightRequest,
-): number {
-  const sharedPrompt = buildCandidatePassBPrompt(
-    candidateRequest.candidateDurationMs,
-    candidateRequest.videoFrames.length,
-    candidateRequest.castRosterId,
-    candidateRequest.outputLanguage,
-    candidateRequest.context,
-  );
+  candidateRequest: CandidateInsightProviderRequest,
+): number | null {
+  let sharedPrompt: string;
+  try {
+    sharedPrompt = buildCandidatePassBQwenOmniSharedPrompt(
+      candidateRequest.candidateDurationMs,
+      candidateRequest.videoFrames.length,
+      candidateRequest.castRosterId,
+      candidateRequest.outputLanguage,
+      candidateRequest.context,
+    );
+  } catch (error) {
+    if (error instanceof RangeError) return null;
+    throw error;
+  }
   const textTokenUpperBound =
     new TextEncoder().encode(sharedPrompt).byteLength +
     QWEN_CANDIDATE_PROMPT_TOKEN_MARGIN;
@@ -300,6 +330,29 @@ interface CandidateInsightRequest {
   readonly outputLanguage: AnalysisLanguage;
   readonly context: CandidatePassBContextPacket | null;
 }
+
+interface CandidateInsightUrlFrame {
+  readonly timestampMs: number;
+  readonly url: string;
+}
+
+interface CandidateInsightUrlRequest {
+  readonly audioUrl: string;
+  readonly candidateDurationMs: number;
+  readonly videoFrames: readonly [
+    CandidateInsightUrlFrame,
+    CandidateInsightUrlFrame,
+    CandidateInsightUrlFrame,
+    CandidateInsightUrlFrame,
+  ];
+  readonly castRosterId: CandidatePassBCastRosterId | null;
+  readonly outputLanguage: AnalysisLanguage;
+  readonly context: CandidatePassBContextPacket | null;
+}
+
+type CandidateInsightProviderRequest =
+  | CandidateInsightRequest
+  | CandidateInsightUrlRequest;
 
 type FetchImplementation = (
   input: RequestInfo | URL,
@@ -1587,6 +1640,7 @@ async function healthResponse(
 ): Promise<Response> {
   const quotaMode = aiQuotaMode(environment);
   const transcriptTransport = resolveBroadcastTranscriptTransport(environment);
+  const candidateProvider = resolveCandidateInsightConnection(environment);
   let quotaCoordinatorReady = quotaMode === "disabled";
   if (quotaMode !== "disabled") {
     try {
@@ -1595,18 +1649,27 @@ async function healthResponse(
       quotaCoordinatorReady = false;
     }
   }
-  const headers = new Headers({
-    "Cache-Control": "no-store",
-    "Content-Type": JSON_CONTENT_TYPE,
-    "X-Content-Type-Options": "nosniff",
-  });
+  const requestOrigin = request.headers.get("Origin");
+  const headers = isAllowedOrigin(requestOrigin)
+    ? corsHeaders(requestOrigin)
+    : new Headers();
+  headers.set("Cache-Control", "no-store");
+  headers.set("Content-Type", JSON_CONTENT_TYPE);
+  headers.set("X-Content-Type-Options", "nosniff");
   const transcriptTransportReady =
     transcriptTransport.ok &&
     (transcriptTransport.mode === "paid-direct" ||
       quotaMode === "required");
+  const candidateTransportReady =
+    transcriptTransport.ok &&
+    candidateProvider.ok &&
+    (transcriptTransport.mode === "paid-direct" ||
+      (quotaMode === "required" &&
+        candidateProvider.connection.provider === "qwen"));
   const healthy =
     (quotaMode === "disabled" || quotaCoordinatorReady) &&
-    transcriptTransportReady;
+    transcriptTransportReady &&
+    candidateTransportReady;
   const body = request.method === "HEAD"
     ? null
     : JSON.stringify({
@@ -1633,6 +1696,23 @@ async function healthResponse(
                   BROADCAST_TRANSCRIPT_BASE64_CONTENT_TYPE,
                 ]
               : [],
+        },
+        candidateTransport: {
+          version: 1,
+          mode: transcriptTransport.ok
+            ? transcriptTransport.mode
+            : "unavailable",
+          configured: candidateTransportReady,
+          stagedSchemaVersion: CANDIDATE_INSIGHT_MEDIA_SCHEMA_VERSION,
+          requiredFrameCount: 4,
+          primaryMediaType: CANDIDATE_INSIGHT_MEDIA_BUNDLE_CONTENT_TYPE,
+          providerFallbackMode:
+            transcriptTransport.ok &&
+            transcriptTransport.mode === "free-r2"
+              ? "disabled-capability-url"
+              : isBoundedAiProviderFallbackEnabled(environment)
+                ? "bounded-cross-provider"
+                : "disabled",
         },
         quota: {
           mode: quotaMode,
@@ -1688,9 +1768,18 @@ function shouldAttemptCandidateProviderFallback(
   );
 }
 
+function boundedDiagnosticHeaderValue(
+  value: string,
+  maximumLength: number,
+): string {
+  return value
+    .replace(/[^\x20-\x7e]/gu, "?")
+    .slice(0, maximumLength);
+}
+
 async function attemptCandidateProvider(
   connection: CandidateInsightConnection,
-  candidateRequest: CandidateInsightRequest,
+  candidateRequest: CandidateInsightProviderRequest,
   fetchImplementation: FetchImplementation,
   timeoutMs: number,
   retryDelaysMs: readonly number[],
@@ -1699,22 +1788,37 @@ async function attemptCandidateProvider(
   try {
     upstreamRequestBody = JSON.stringify(
       connection.provider === "qwen"
-        ? buildCandidatePassBQwenOmniRequestBody(
-            candidateRequest.audioBase64,
-            candidateRequest.candidateDurationMs,
-            candidateRequest.videoFrames,
-            candidateRequest.castRosterId,
-            candidateRequest.outputLanguage,
-            candidateRequest.context,
-          )
-        : buildCandidatePassBGeminiRequestBody(
-            candidateRequest.audioBase64,
-            candidateRequest.candidateDurationMs,
-            candidateRequest.videoFrames,
-            candidateRequest.castRosterId,
-            candidateRequest.outputLanguage,
-            candidateRequest.context,
-          ),
+        ? "audioUrl" in candidateRequest
+          ? buildCandidatePassBQwenOmniUrlRequestBody(
+              candidateRequest.audioUrl,
+              candidateRequest.candidateDurationMs,
+              candidateRequest.videoFrames,
+              candidateRequest.castRosterId,
+              candidateRequest.outputLanguage,
+              candidateRequest.context,
+            )
+          : buildCandidatePassBQwenOmniRequestBody(
+              candidateRequest.audioBase64,
+              candidateRequest.candidateDurationMs,
+              candidateRequest.videoFrames,
+              candidateRequest.castRosterId,
+              candidateRequest.outputLanguage,
+              candidateRequest.context,
+            )
+        : "audioBase64" in candidateRequest
+          ? buildCandidatePassBGeminiRequestBody(
+              candidateRequest.audioBase64,
+              candidateRequest.candidateDurationMs,
+              candidateRequest.videoFrames,
+              candidateRequest.castRosterId,
+              candidateRequest.outputLanguage,
+              candidateRequest.context,
+            )
+          : (() => {
+              throw new RangeError(
+                "Gemini candidate requests require inline media.",
+              );
+            })(),
     );
   } catch {
     return { ok: false, kind: "invalid-argument" };
@@ -1864,7 +1968,36 @@ async function attemptCandidateProvider(
                 ? "string"
                 : "other",
               "X-Qwen-Json": qwenDiagnostics.jsonObject ? "record" : "invalid",
-              "X-Qwen-Keys": qwenDiagnostics.keys.join(",").slice(0, 160),
+              "X-Qwen-Keys": boundedDiagnosticHeaderValue(
+                qwenDiagnostics.keys.join(","),
+                160,
+              ),
+              "X-Qwen-Han": qwenDiagnostics.containsHan ? "yes" : "no",
+              "X-Qwen-Hangul": qwenDiagnostics.containsHangul ? "yes" : "no",
+              "X-Qwen-Segments": String(qwenDiagnostics.segmentCount ?? -1),
+              "X-Qwen-Presence":
+                boundedDiagnosticHeaderValue(
+                  qwenDiagnostics.participantPresence ?? "-",
+                  32,
+                ),
+              "X-Qwen-Participants": String(
+                qwenDiagnostics.participantCount ?? -1,
+              ),
+              "X-Qwen-Decision":
+                boundedDiagnosticHeaderValue(
+                  qwenDiagnostics.clipDecision ?? "-",
+                  24,
+                ),
+              "X-Qwen-Consistency":
+                boundedDiagnosticHeaderValue(
+                  qwenDiagnostics.contextConsistency ?? "-",
+                  24,
+                ),
+              "X-Qwen-Material":
+                boundedDiagnosticHeaderValue(
+                  qwenDiagnostics.programMaterial ?? "-",
+                  32,
+                ),
             },
           }),
     };
@@ -1892,6 +2025,38 @@ async function attemptCandidateProvider(
     return { ok: false, kind: "invalid-response" };
   }
   return { ok: true, payload: safePayload, connection };
+}
+
+async function attemptCandidateProviderWithSchemaRecovery(
+  connection: CandidateInsightConnection,
+  candidateRequest: CandidateInsightProviderRequest,
+  fetchImplementation: FetchImplementation,
+  timeoutMs: number,
+  retryDelaysMs: readonly number[],
+): Promise<CandidateProviderAttempt> {
+  let attempt = await attemptCandidateProvider(
+    connection,
+    candidateRequest,
+    fetchImplementation,
+    timeoutMs,
+    retryDelaysMs,
+  );
+  for (
+    let retry = 0;
+    !attempt.ok &&
+    attempt.kind === "invalid-response" &&
+    retry < CANDIDATE_INVALID_RESPONSE_RETRY_LIMIT;
+    retry += 1
+  ) {
+    attempt = await attemptCandidateProvider(
+      connection,
+      candidateRequest,
+      fetchImplementation,
+      timeoutMs,
+      retryDelaysMs,
+    );
+  }
+  return attempt;
 }
 
 function candidateProviderFailureResponse(
@@ -1974,6 +2139,792 @@ function candidateProviderFailureResponse(
   }
 }
 
+interface CandidateInsightBundleFence {
+  readonly candidateHash: string;
+  readonly candidateDurationMs: number;
+  readonly audioByteLength: number;
+  readonly frames: readonly [
+    CandidateInsightMediaFrameBinding,
+    CandidateInsightMediaFrameBinding,
+    CandidateInsightMediaFrameBinding,
+    CandidateInsightMediaFrameBinding,
+  ];
+  readonly expectedByteLength: number;
+}
+
+const MAX_CANDIDATE_INSIGHT_MEDIA_RESOLVE_BYTES = 256 * 1024;
+const CANDIDATE_INSIGHT_UPLOAD_RATE_LIMIT_KEY = "candidate-insight-upload";
+
+function parseBoundedQueryInteger(
+  value: string | null,
+  maximum: number,
+): number | null {
+  if (value === null || !/^\d{1,10}$/u.test(value)) return null;
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed >= 0 && parsed <= maximum
+    ? parsed
+    : null;
+}
+
+function parseCandidateInsightBundleFence(
+  request: Request,
+): CandidateInsightBundleFence | null {
+  const url = new URL(request.url);
+  const candidateHash = url.searchParams.get("candidateHash");
+  const candidateDurationMs = parseBoundedQueryInteger(
+    url.searchParams.get("durationMs"),
+    MAX_CANDIDATE_PASS_B_TARGET_DURATION_MS,
+  );
+  const audioByteLength = parseBoundedQueryInteger(
+    url.searchParams.get("audioBytes"),
+    CANDIDATE_INSIGHT_MEDIA_MAX_AUDIO_BYTES,
+  );
+  const expectedKeys = [
+    "candidateHash",
+    "durationMs",
+    "audioBytes",
+    "f0t",
+    "f0b",
+    "f1t",
+    "f1b",
+    "f2t",
+    "f2b",
+    "f3t",
+    "f3b",
+  ];
+  if (
+    candidateHash === null ||
+    !/^[a-f0-9]{24}$/u.test(candidateHash) ||
+    candidateDurationMs === null ||
+    candidateDurationMs <= 0 ||
+    audioByteLength === null ||
+    audioByteLength < CANDIDATE_INSIGHT_MEDIA_AUDIO_HEADER_BYTES ||
+    [...url.searchParams.keys()].some((key) => !expectedKeys.includes(key)) ||
+    expectedKeys.some((key) => url.searchParams.getAll(key).length !== 1)
+  ) {
+    return null;
+  }
+  const expectedAudioByteLength =
+    WAV_HEADER_BYTES +
+    Math.ceil(
+      (candidateDurationMs / 1_000) * CANDIDATE_PASS_B_SAMPLE_RATE_HZ,
+    ) *
+      PCM_BYTES_PER_SAMPLE;
+  if (audioByteLength !== expectedAudioByteLength) return null;
+  const frames: CandidateInsightMediaFrameBinding[] = [];
+  let previousTimestamp = -1;
+  let expectedByteLength = audioByteLength;
+  for (let index = 0; index < 4; index += 1) {
+    const timestampMs = parseBoundedQueryInteger(
+      url.searchParams.get(`f${index}t`),
+      candidateDurationMs,
+    );
+    const byteLength = parseBoundedQueryInteger(
+      url.searchParams.get(`f${index}b`),
+      CANDIDATE_INSIGHT_MEDIA_MAX_FRAME_BYTES,
+    );
+    if (
+      timestampMs === null ||
+      timestampMs <= previousTimestamp ||
+      byteLength === null ||
+      byteLength < 4
+    ) {
+      return null;
+    }
+    frames.push({ timestampMs, byteLength });
+    previousTimestamp = timestampMs;
+    expectedByteLength += byteLength;
+  }
+  if (expectedByteLength > CANDIDATE_INSIGHT_MEDIA_MAX_BUNDLE_BYTES) {
+    return null;
+  }
+  return {
+    candidateHash,
+    candidateDurationMs,
+    audioByteLength,
+    frames:
+      frames as unknown as CandidateInsightBundleFence["frames"],
+    expectedByteLength,
+  };
+}
+
+function stagedCandidateInsightMediaResponse(
+  staged: {
+    readonly mediaTicket: string;
+    readonly expiresAtMs: number;
+  },
+  fence: CandidateInsightBundleFence,
+  origin: string,
+): Response {
+  const headers = corsHeaders(origin);
+  headers.set("Content-Type", JSON_CONTENT_TYPE);
+  headers.set("Cache-Control", "no-store");
+  headers.set("X-Content-Type-Options", "nosniff");
+  return new Response(
+    JSON.stringify({
+      schemaVersion: CANDIDATE_INSIGHT_MEDIA_SCHEMA_VERSION,
+      status: "staged",
+      mediaTicket: staged.mediaTicket,
+      expiresAtMs: staged.expiresAtMs,
+      candidateHash: fence.candidateHash,
+      candidateDurationMs: fence.candidateDurationMs,
+      frameCount: 4,
+    }),
+    { status: 202, headers },
+  );
+}
+
+interface CandidateInsightUploadByteFence {
+  readonly body: ReadableStream<Uint8Array>;
+  readonly completion: Promise<void>;
+  readonly discard: () => Promise<void>;
+  readonly exceeded: () => boolean;
+  readonly mismatched: () => boolean;
+}
+
+interface CandidateFixedLengthStream {
+  readonly readable: ReadableStream<Uint8Array>;
+  readonly writable: WritableStream<Uint8Array>;
+}
+
+type CandidateFixedLengthStreamConstructor = new (
+  expectedLength: number | bigint,
+) => CandidateFixedLengthStream;
+
+function createCandidateFixedLengthStream(
+  expectedByteLength: number,
+): CandidateFixedLengthStream | null {
+  const constructor = (
+    globalThis as typeof globalThis & {
+      readonly FixedLengthStream?: CandidateFixedLengthStreamConstructor;
+    }
+  ).FixedLengthStream;
+  return constructor === undefined ? null : new constructor(expectedByteLength);
+}
+
+/**
+ * Keeps the Free-R2 upload streaming while enforcing the signed manifest's
+ * exact byte length even when an HTTP client omits Content-Length. Cloudflare
+ * R2 rejects a generic transformed stream because it no longer carries a
+ * known length, so the counted stream is piped into the runtime's
+ * FixedLengthStream before R2 receives it. No media is buffered or decoded in
+ * Worker JavaScript.
+ */
+function fenceCandidateInsightUploadBody(
+  body: ReadableStream<Uint8Array> | null,
+  expectedByteLength: number,
+): CandidateInsightUploadByteFence | null {
+  if (body === null) return null;
+  let receivedByteLength = 0;
+  let exceeded = false;
+  let mismatched = false;
+  const fencedBody = body.pipeThrough(
+    new TransformStream<Uint8Array, Uint8Array>({
+      transform(chunk, controller) {
+        receivedByteLength += chunk.byteLength;
+        if (receivedByteLength > expectedByteLength) {
+          exceeded = true;
+          controller.error(
+            new BodyTooLargeError(
+              "Candidate media upload exceeded its signed byte fence.",
+            ),
+          );
+          return;
+        }
+        controller.enqueue(chunk);
+      },
+      flush(controller) {
+        if (receivedByteLength !== expectedByteLength) {
+          mismatched = true;
+          controller.error(
+            new Error("Candidate media upload ended before its signed byte fence."),
+          );
+        }
+      },
+    }),
+  );
+  const fixedLengthStream = createCandidateFixedLengthStream(
+    expectedByteLength,
+  );
+  if (fixedLengthStream === null) {
+    return {
+      body: fencedBody,
+      completion: Promise.resolve(),
+      discard: async () => {
+        try {
+          await fencedBody.cancel("Candidate media upload was already staged.");
+        } catch {
+          // A consumer may already have released or closed the stream.
+        }
+      },
+      exceeded: () => exceeded,
+      mismatched: () => mismatched,
+    };
+  }
+  const pumpAbortController = new AbortController();
+  const completion = fencedBody.pipeTo(fixedLengthStream.writable, {
+    signal: pumpAbortController.signal,
+  });
+  // The staging lookup can finish before the upload pump does. Attach a
+  // rejection observer immediately, then preserve the original promise for
+  // the explicit settlement below.
+  void completion.catch(() => undefined);
+  return {
+    body: fixedLengthStream.readable,
+    completion,
+    discard: async () => {
+      pumpAbortController.abort("Candidate media upload was already staged.");
+      try {
+        await fixedLengthStream.readable.cancel(
+          "Candidate media upload was already staged.",
+        );
+      } catch {
+        // R2 may briefly retain the reader lock after a conditional put.
+      }
+    },
+    exceeded: () => exceeded,
+    mismatched: () => mismatched,
+  };
+}
+
+async function settleCandidateInsightUpload(
+  uploadFence: CandidateInsightUploadByteFence,
+  disposition: StagedCandidateInsightMedia["uploadDisposition"] | "failed",
+): Promise<void> {
+  const discarded = disposition !== "stored";
+  if (discarded) {
+    await uploadFence.discard();
+  }
+  try {
+    await uploadFence.completion;
+  } catch (error) {
+    if (
+      discarded &&
+      !uploadFence.exceeded() &&
+      !uploadFence.mismatched()
+    ) {
+      return;
+    }
+    throw error;
+  }
+}
+
+async function handleCandidateInsightMediaStage(
+  request: Request,
+  environment: AiProxyEnvironment,
+  transport: FreeR2BroadcastTranscriptTransport,
+  origin: string,
+): Promise<Response> {
+  const fence = parseCandidateInsightBundleFence(request);
+  if (fence === null) {
+    return jsonResponse(
+      400,
+      "INVALID_REQUEST",
+      "후보 미디어 구간 정보가 올바르지 않아요.",
+      origin,
+    );
+  }
+  const declaredLength = request.headers.get("Content-Length");
+  if (
+    declaredLength !== null &&
+    (!/^\d+$/u.test(declaredLength) ||
+      Number(declaredLength) !== fence.expectedByteLength)
+  ) {
+    return jsonResponse(
+      Number(declaredLength) > fence.expectedByteLength ? 413 : 400,
+      Number(declaredLength) > fence.expectedByteLength
+        ? "PAYLOAD_TOO_LARGE"
+        : "INVALID_MEDIA",
+      "후보 미디어 묶음의 크기가 준비 정보와 맞지 않아요.",
+      origin,
+    );
+  }
+  const quotaGuard = await precheckAiQuotaLease(
+    request,
+    environment,
+    "candidate",
+    origin,
+  );
+  if (!quotaGuard.ok) return quotaGuard.response;
+  if (quotaGuard.lease === null) {
+    return jsonResponse(
+      503,
+      "CANDIDATE_MEDIA_NOT_CONFIGURED",
+      "후보 미디어 준비 경로가 설정되지 않았어요.",
+      origin,
+    );
+  }
+  try {
+    const uploadLimit = await environment.IP_RATE_LIMITER.limit({
+      key: scopedClientRateLimitKey(
+        request,
+        CANDIDATE_INSIGHT_UPLOAD_RATE_LIMIT_KEY,
+      ),
+    });
+    if (!uploadLimit.success) {
+      return rejectUnusedQuotaLease(
+        environment,
+        quotaGuard.lease,
+        jsonResponse(
+          429,
+          "RATE_LIMITED",
+          "후보 미디어 준비 요청이 잠시 많아요.",
+          origin,
+          { "Retry-After": "60" },
+        ),
+      );
+    }
+  } catch {
+    return rejectUnusedQuotaLease(
+      environment,
+      quotaGuard.lease,
+      jsonResponse(
+        503,
+        "RATE_LIMIT_UNAVAILABLE",
+        "후보 미디어 준비 요청을 안전하게 확인하지 못했어요.",
+        origin,
+      ),
+    );
+  }
+  const binding: CandidateInsightMediaBinding = {
+    participantId: quotaGuard.lease.participantId,
+    runId: quotaGuard.lease.runId,
+    operationId: quotaGuard.lease.operationId,
+    pool: "candidate",
+    payloadDigest: quotaGuard.lease.payloadDigest,
+    candidateHash: fence.candidateHash,
+    candidateDurationMs: fence.candidateDurationMs,
+    audioByteLength: fence.audioByteLength,
+    frames: fence.frames,
+    expectedByteLength: fence.expectedByteLength,
+  };
+  const uploadFence = fenceCandidateInsightUploadBody(
+    request.body,
+    fence.expectedByteLength,
+  );
+  if (uploadFence === null) {
+    return rejectUnusedQuotaLease(
+      environment,
+      quotaGuard.lease,
+      jsonResponse(
+        400,
+        "INVALID_MEDIA",
+        "후보 화면과 오디오 묶음이 비어 있어요.",
+        origin,
+      ),
+    );
+  }
+  try {
+    let staged: StagedCandidateInsightMedia;
+    try {
+      staged = await stageCandidateInsightMedia({
+        bucket: transport.bucket,
+        signingKey: transport.signingKey,
+        body: uploadFence.body,
+        binding,
+      });
+    } catch (error) {
+      await settleCandidateInsightUpload(uploadFence, "failed");
+      throw error;
+    }
+    await settleCandidateInsightUpload(
+      uploadFence,
+      staged.uploadDisposition,
+    );
+    const validAudio = isCanonicalCandidateWav(
+      staged.audioHeader,
+      fence.audioByteLength,
+      fence.candidateDurationMs,
+    );
+    staged.audioHeader.fill(0);
+    if (!validAudio) {
+      await deleteCandidateInsightMediaBestEffort(
+        transport.bucket,
+        staged.objectKey,
+      );
+      return rejectUnusedQuotaLease(
+        environment,
+        quotaGuard.lease,
+        jsonResponse(
+          400,
+          "INVALID_AUDIO",
+          "16kHz 모노 WAV 후보 오디오를 확인해 주세요.",
+          origin,
+        ),
+      );
+    }
+    return stagedCandidateInsightMediaResponse(staged, fence, origin);
+  } catch (error) {
+    const code =
+      error instanceof CandidateInsightMediaError ? error.code : null;
+    const status =
+      uploadFence.exceeded()
+        ? 413
+        : code === "CHECKSUM_UNCONFIRMED"
+        ? 409
+        : uploadFence.mismatched() ||
+            code === "INVALID_INPUT" ||
+            code === "SIZE_MISMATCH" ||
+            code === "MEDIA_INVALID"
+          ? 400
+          : 503;
+    return rejectUnusedQuotaLease(
+      environment,
+      quotaGuard.lease,
+      jsonResponse(
+        status,
+        uploadFence.exceeded()
+          ? "PAYLOAD_TOO_LARGE"
+          : code === "CHECKSUM_UNCONFIRMED"
+          ? "QUOTA_PAYLOAD_MISMATCH"
+          : status === 400
+            ? "INVALID_MEDIA"
+            : "CANDIDATE_MEDIA_UNAVAILABLE",
+        status === 503
+          ? "후보 미디어를 임시로 준비하지 못했어요."
+          : "후보 화면과 오디오 묶음을 확인해 주세요.",
+        origin,
+        {
+          "X-ExClipper-Candidate-Media-Error":
+            `${code ?? "UNEXPECTED"}:${error instanceof CandidateInsightMediaError ? error.stage : "preflight"}`,
+        },
+      ),
+    );
+  }
+}
+
+function parseCandidateInsightMediaResolveRequest(
+  value: unknown,
+): {
+  readonly mediaTicket: string;
+  readonly candidateDurationMs: number;
+  readonly castRosterId: CandidatePassBCastRosterId | null;
+  readonly outputLanguage: AnalysisLanguage;
+  readonly context: CandidatePassBContextPacket | null;
+} | null {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, [
+      "schemaVersion",
+      "mediaTicket",
+      "candidateDurationMs",
+      "castRosterId",
+      "outputLanguage",
+      "context",
+    ]) ||
+    value.schemaVersion !== CANDIDATE_INSIGHT_MEDIA_SCHEMA_VERSION ||
+    !isCandidateInsightMediaTicket(value.mediaTicket) ||
+    !Number.isSafeInteger(value.candidateDurationMs) ||
+    (value.candidateDurationMs as number) <= 0 ||
+    (value.candidateDurationMs as number) >
+      MAX_CANDIDATE_PASS_B_TARGET_DURATION_MS ||
+    (value.castRosterId !== null &&
+      !isCandidatePassBCastRosterId(value.castRosterId)) ||
+    !isAnalysisLanguage(value.outputLanguage) ||
+    (value.context !== null &&
+      !isCandidatePassBContextPacket(value.context))
+  ) {
+    return null;
+  }
+  return {
+    mediaTicket: value.mediaTicket,
+    candidateDurationMs: value.candidateDurationMs as number,
+    castRosterId: value.castRosterId,
+    outputLanguage: value.outputLanguage,
+    context: value.context,
+  };
+}
+
+async function handleCandidateInsightMediaResolve(
+  request: Request,
+  environment: AiProxyEnvironment,
+  transport: FreeR2BroadcastTranscriptTransport,
+  origin: string,
+  dependencies: AiProxyDependencies,
+): Promise<Response> {
+  const providerResolution = resolveCandidateInsightConnection(environment);
+  if (
+    !providerResolution.ok ||
+    providerResolution.connection.provider !== "qwen" ||
+    environment.RATE_LIMITER === undefined ||
+    environment.IP_RATE_LIMITER === undefined
+  ) {
+    return jsonResponse(
+      503,
+      "CANDIDATE_MEDIA_NOT_CONFIGURED",
+      "후보 미디어 해석 경로가 준비되지 않았어요.",
+      origin,
+    );
+  }
+  const declaredLength = request.headers.get("Content-Length");
+  if (
+    declaredLength !== null &&
+    (!/^\d+$/u.test(declaredLength) ||
+      Number(declaredLength) > MAX_CANDIDATE_INSIGHT_MEDIA_RESOLVE_BYTES)
+  ) {
+    return jsonResponse(
+      413,
+      "PAYLOAD_TOO_LARGE",
+      "후보 맥락 정보가 허용 크기를 넘었어요.",
+      origin,
+    );
+  }
+  const quotaGuard = await precheckAiQuotaLease(
+    request,
+    environment,
+    "candidate",
+    origin,
+  );
+  if (!quotaGuard.ok) return quotaGuard.response;
+  if (quotaGuard.lease === null) {
+    return jsonResponse(
+      503,
+      "CANDIDATE_MEDIA_NOT_CONFIGURED",
+      "후보 미디어 해석 순서를 확인하지 못했어요.",
+      origin,
+    );
+  }
+  let requestBytes: Uint8Array;
+  try {
+    requestBytes = await readBodyWithLimit(
+      request.body,
+      MAX_CANDIDATE_INSIGHT_MEDIA_RESOLVE_BYTES,
+      dependencies.requestBodyTimeoutMs ?? REQUEST_BODY_TIMEOUT_MS,
+      () => new RequestBodyTimeoutError(),
+    );
+  } catch (error) {
+    return rejectUnusedQuotaLease(
+      environment,
+      quotaGuard.lease,
+      jsonResponse(
+        error instanceof RequestBodyTimeoutError
+          ? 408
+          : error instanceof BodyTooLargeError
+            ? 413
+            : 400,
+        error instanceof RequestBodyTimeoutError
+          ? "REQUEST_BODY_TIMEOUT"
+          : error instanceof BodyTooLargeError
+            ? "PAYLOAD_TOO_LARGE"
+            : "INVALID_REQUEST",
+        error instanceof RequestBodyTimeoutError
+          ? "후보 맥락 업로드 시간이 지나 중단했어요."
+          : "후보 맥락 요청을 읽지 못했어요.",
+        origin,
+      ),
+    );
+  }
+  let value: unknown;
+  try {
+    value = JSON.parse(
+      new TextDecoder("utf-8", { fatal: true }).decode(requestBytes),
+    );
+  } catch {
+    requestBytes.fill(0);
+    return rejectUnusedQuotaLease(
+      environment,
+      quotaGuard.lease,
+      jsonResponse(
+        400,
+        "INVALID_REQUEST",
+        "후보 맥락 요청 형식을 확인해 주세요.",
+        origin,
+      ),
+    );
+  }
+  requestBytes.fill(0);
+  const resolveRequest = parseCandidateInsightMediaResolveRequest(value);
+  if (resolveRequest === null) {
+    return rejectUnusedQuotaLease(
+      environment,
+      quotaGuard.lease,
+      jsonResponse(
+        400,
+        "INVALID_REQUEST",
+        "후보 맥락 요청 형식을 확인해 주세요.",
+        origin,
+      ),
+    );
+  }
+  const resolved = await resolveCandidateInsightMedia({
+    bucket: transport.bucket,
+    signingKey: transport.signingKey,
+    mediaTicket: resolveRequest.mediaTicket,
+    expectedIdentity: quotaGuard.lease,
+  }).catch(() => null);
+  if (
+    resolved === null ||
+    resolved.candidateDurationMs !== resolveRequest.candidateDurationMs
+  ) {
+    return rejectUnusedQuotaLease(
+      environment,
+      quotaGuard.lease,
+      jsonResponse(
+        409,
+        "CANDIDATE_MEDIA_TICKET_INVALID",
+        "후보 미디어 준비 정보가 만료되었거나 현재 작업과 맞지 않아요.",
+        origin,
+      ),
+    );
+  }
+  const candidateRequest: CandidateInsightUrlRequest = {
+    audioUrl: createCandidateInsightMediaCapabilityUrl(
+      request.url,
+      resolveRequest.mediaTicket,
+      "audio",
+    ),
+    candidateDurationMs: resolved.candidateDurationMs,
+    videoFrames: resolved.frames.map((frame, index) => ({
+      timestampMs: frame.timestampMs,
+      url: createCandidateInsightMediaCapabilityUrl(
+        request.url,
+        resolveRequest.mediaTicket,
+        String(index) as "0" | "1" | "2" | "3",
+      ),
+    })) as unknown as CandidateInsightUrlRequest["videoFrames"],
+    castRosterId: resolveRequest.castRosterId,
+    outputLanguage: resolveRequest.outputLanguage,
+    context: resolveRequest.context,
+  };
+  const reservedTokens = candidateTokenReservation(candidateRequest);
+  if (
+    reservedTokens === null ||
+    reservedTokens > AI_QUOTA_QWEN_OMNI_MAX_TOKENS_PER_MINUTE
+  ) {
+    return rejectUnusedQuotaLease(
+      environment,
+      quotaGuard.lease,
+      jsonResponse(
+        413,
+        "TOKEN_BUDGET_TOO_LARGE",
+        "후보 맥락이 한 번의 해석 요청에 너무 커요.",
+        origin,
+      ),
+    );
+  }
+  try {
+    const clientLimit = await environment.IP_RATE_LIMITER.limit({
+      key: clientRateLimitKey(request),
+    });
+    const globalLimit = await environment.RATE_LIMITER.limit({
+      key: RATE_LIMIT_KEY,
+    });
+    if (!clientLimit.success || !globalLimit.success) {
+      return rejectUnusedQuotaLease(
+        environment,
+        quotaGuard.lease,
+        jsonResponse(
+          429,
+          "RATE_LIMITED",
+          "후보 해석 요청이 잠시 많아요.",
+          origin,
+          { "Retry-After": "60" },
+        ),
+      );
+    }
+  } catch {
+    return rejectUnusedQuotaLease(
+      environment,
+      quotaGuard.lease,
+      jsonResponse(
+        503,
+        "RATE_LIMIT_UNAVAILABLE",
+        "후보 해석 요청을 안전하게 확인하지 못했어요.",
+        origin,
+      ),
+    );
+  }
+  const attempt = await attemptCandidateProviderWithSchemaRecovery(
+    providerResolution.connection,
+    candidateRequest,
+    createQuotaMeteredFetch(
+      environment,
+      quotaGuard.lease,
+      dependencies.fetchImplementation ?? fetch,
+      reservedTokens,
+    ),
+    dependencies.upstreamTimeoutMs ?? UPSTREAM_TIMEOUT_MS,
+    dependencies.upstreamRetryDelaysMs ?? DEFAULT_UPSTREAM_RETRY_DELAYS_MS,
+  );
+  if (
+    !attempt.ok &&
+    (attempt.kind === "rate-limited" ||
+      attempt.kind === "outcome-unknown" ||
+      attempt.kind === "invalid-response")
+  ) {
+    return candidateProviderFailureResponse(attempt, origin);
+  }
+  await deleteCandidateInsightMediaBestEffort(
+    transport.bucket,
+    resolved.objectKey,
+  );
+  if (!attempt.ok) {
+    if (attempt.kind === "invalid-argument") {
+      return rejectUnusedQuotaLease(
+        environment,
+        quotaGuard.lease,
+        candidateProviderFailureResponse(attempt, origin),
+      );
+    }
+    return candidateProviderFailureResponse(attempt, origin);
+  }
+  return successResponse(attempt.payload, origin, {
+    [CANDIDATE_PASS_B_RESPONSE_MODEL_ID_HEADER]:
+      attempt.connection.descriptor.modelId,
+    [CANDIDATE_PASS_B_RESPONSE_MODEL_REVISION_HEADER]:
+      attempt.connection.descriptor.modelRevision,
+    [CANDIDATE_PASS_B_RESPONSE_FALLBACK_HEADER]: "false",
+  });
+}
+
+async function handleCandidateInsightMediaRequest(
+  request: Request,
+  environment: AiProxyEnvironment,
+): Promise<Response> {
+  const origin = request.headers.get("Origin");
+  if (!isAllowedOrigin(origin)) {
+    return jsonResponse(
+      403,
+      "ORIGIN_NOT_ALLOWED",
+      "이 페이지에서는 후보 미디어를 준비할 수 없어요.",
+      origin,
+    );
+  }
+  if (request.method === "OPTIONS") return preflightResponse(origin);
+  if (request.method !== "POST") {
+    return jsonResponse(
+      405,
+      "METHOD_NOT_ALLOWED",
+      "지원하지 않는 요청 방식이에요.",
+      origin,
+      { Allow: "POST, OPTIONS" },
+    );
+  }
+  if (mediaType(request) !== CANDIDATE_INSIGHT_MEDIA_BUNDLE_CONTENT_TYPE) {
+    return jsonResponse(
+      415,
+      "UNSUPPORTED_MEDIA_TYPE",
+      "후보 미디어 묶음 형식을 확인해 주세요.",
+      origin,
+    );
+  }
+  const transport = resolveBroadcastTranscriptTransport(environment);
+  if (!transport.ok || transport.mode !== "free-r2") {
+    return jsonResponse(
+      409,
+      "CANDIDATE_MEDIA_DIRECT_REQUIRED",
+      "현재 배포는 직접 후보 전송 방식을 사용해요.",
+      origin,
+    );
+  }
+  return handleCandidateInsightMediaStage(
+    request,
+    environment,
+    transport,
+    origin,
+  );
+}
+
 export async function handleCandidateInsightRequest(
   request: Request,
   environment: AiProxyEnvironment,
@@ -2018,7 +2969,28 @@ export async function handleCandidateInsightRequest(
       { Allow: "POST, OPTIONS" },
     );
   }
-  if (mediaType(request) !== "application/json") {
+  const requestMediaType = mediaType(request);
+  if (
+    requestMediaType === CANDIDATE_INSIGHT_MEDIA_RESOLVE_CONTENT_TYPE
+  ) {
+    const transport = resolveBroadcastTranscriptTransport(environment);
+    if (!transport.ok || transport.mode !== "free-r2") {
+      return jsonResponse(
+        409,
+        "CANDIDATE_MEDIA_DIRECT_REQUIRED",
+        "현재 배포는 직접 후보 전송 방식을 사용해요.",
+        origin,
+      );
+    }
+    return handleCandidateInsightMediaResolve(
+      request,
+      environment,
+      transport,
+      origin,
+      dependencies,
+    );
+  }
+  if (requestMediaType !== "application/json") {
     return jsonResponse(
       415,
       "UNSUPPORTED_MEDIA_TYPE",
@@ -2195,7 +3167,10 @@ export async function handleCandidateInsightRequest(
   }
   wavHeader.fill(0);
   const reservedTokens = candidateTokenReservation(candidateRequest);
-  if (reservedTokens > AI_QUOTA_QWEN_OMNI_MAX_TOKENS_PER_MINUTE) {
+  if (
+    reservedTokens === null ||
+    reservedTokens > AI_QUOTA_QWEN_OMNI_MAX_TOKENS_PER_MINUTE
+  ) {
     return rejectUnusedQuotaLease(
       environment,
       quotaGuard.lease,
@@ -2976,10 +3951,6 @@ async function handleFreeR2BroadcastTranscriptResolve(
       );
     }
   } catch {
-    await deleteBroadcastTranscriptMediaBestEffort(
-      transport.bucket,
-      resolved.objectKey,
-    );
     return rejectUnusedQuotaLease(
       environment,
       quotaLease,
@@ -3015,7 +3986,11 @@ async function handleFreeR2BroadcastTranscriptResolve(
     fetchImplementation,
     dependencies.upstreamTimeoutMs ?? UPSTREAM_TIMEOUT_MS,
   );
-  if (!attempt.ok && attempt.kind === "rate-limited") {
+  if (
+    !attempt.ok &&
+    (attempt.kind === "rate-limited" ||
+      attempt.kind === "outcome-unknown")
+  ) {
     return broadcastTranscriptProviderFailureResponse(attempt.kind, origin);
   }
   await deleteBroadcastTranscriptMediaBestEffort(
@@ -4667,6 +5642,27 @@ function routeRequest(
   environment: AiProxyEnvironment,
 ): Promise<Response> {
   const url = new URL(request.url);
+  if (url.pathname === CANDIDATE_INSIGHT_MEDIA_ENDPOINT_PATH) {
+    if (request.method === "POST" || request.method === "OPTIONS") {
+      return handleCandidateInsightMediaRequest(request, environment);
+    }
+    const transport = resolveBroadcastTranscriptTransport(environment);
+    if (!transport.ok || transport.mode !== "free-r2") {
+      return Promise.resolve(
+        new Response(null, {
+          status: 404,
+          headers: {
+            "Cache-Control": "no-store",
+            "X-Content-Type-Options": "nosniff",
+          },
+        }),
+      );
+    }
+    return serveCandidateInsightMediaRequest(request, {
+      bucket: transport.bucket,
+      signingKey: transport.signingKey,
+    });
+  }
   if (url.pathname === BROADCAST_TRANSCRIPT_MEDIA_ENDPOINT_PATH) {
     const transport = resolveBroadcastTranscriptTransport(environment);
     if (!transport.ok || transport.mode !== "free-r2") {

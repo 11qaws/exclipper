@@ -30,3 +30,31 @@ export async function mapWithConcurrency<TInput, TOutput>(
   );
   return outputs;
 }
+
+/**
+ * Maps every input inside the same bounded concurrency window, but records an
+ * individual rejection instead of letting it stop the remaining inputs.
+ *
+ * The returned settled results preserve input order, not completion order.
+ * Callers remain responsible for deciding whether a rejection is a recoverable
+ * per-item gap or a fatal run-level error.
+ */
+export async function mapSettledWithConcurrency<TInput, TOutput>(
+  inputs: readonly TInput[],
+  concurrency: number,
+  mapper: (input: TInput, index: number) => Promise<TOutput>,
+): Promise<PromiseSettledResult<TOutput>[]> {
+  return mapWithConcurrency(inputs, concurrency, async (input, index) => {
+    try {
+      return {
+        status: "fulfilled",
+        value: await mapper(input, index),
+      } satisfies PromiseFulfilledResult<TOutput>;
+    } catch (reason) {
+      return {
+        status: "rejected",
+        reason,
+      } satisfies PromiseRejectedResult;
+    }
+  });
+}

@@ -67,7 +67,10 @@ describe("broadcastContextSamplingPlan", () => {
     const plan = createBroadcastContextSamplingPlan(2 * HOUR_MS, []);
     const chunks = createBroadcastContextTranscriptionChunks(plan.samplingWindows);
     expect(chunks.length).toBeGreaterThan(1);
-    expect(chunks[0]).toMatchObject({ chunkId: "asr-001", sourceStartMs: 0 });
+    expect(chunks[0]).toMatchObject({
+      chunkId: `asr-${(0).toString(36)}-${QWEN_ASR_SAFE_CHUNK_DURATION_MS.toString(36)}`,
+      sourceStartMs: 0,
+    });
     expect(chunks.at(-1)?.sourceEndMs).toBe(2 * HOUR_MS);
     expect(
       chunks.every(
@@ -79,6 +82,17 @@ describe("broadcastContextSamplingPlan", () => {
     expect(
       chunks.reduce((sum, chunk) => sum + chunk.sourceEndMs - chunk.sourceStartMs, 0),
     ).toBe(plan.sampledAudioMs);
+  });
+
+  it("keeps a source range identity stable when only uncovered windows are rebuilt", () => {
+    const complete = createBroadcastContextTranscriptionChunks([
+      { startMs: 0, endMs: 60_000, kind: "uniform" },
+    ], 30_000);
+    const uncovered = createBroadcastContextTranscriptionChunks([
+      { startMs: 30_000, endMs: 60_000, kind: "uniform" },
+    ], 30_000);
+
+    expect(uncovered[0]?.chunkId).toBe(complete[1]?.chunkId);
   });
 
   it("keeps a worst-case twelve-hour plan inside the Worker envelope", () => {

@@ -1,5 +1,6 @@
 import { ANALYSIS_STAGES } from "../domain/analysisRun";
 import {
+  COMPLETED_JOB_STATUSES,
   remainingStageCount,
   type AnalysisJob,
   type SourceAvailability,
@@ -138,7 +139,10 @@ export function selectUnfinishedJobs(
   inputs: readonly UnfinishedJobInput[],
 ): readonly UnfinishedJobSummary[] {
   return inputs
-    .filter(({ job }) => job.status !== "completed" && job.status !== "abandoned")
+    .filter(
+      ({ job }) =>
+        !COMPLETED_JOB_STATUSES.has(job.status) && job.status !== "abandoned",
+    )
     // 많이 진행된 것이 위로. 돌아올 이유가 가장 큰 것이 먼저 보여야 한다.
     .sort((a, b) => committedPercent(b.job) - committedPercent(a.job))
     .map(summarizeUnfinishedJob);

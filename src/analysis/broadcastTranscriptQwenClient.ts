@@ -11,6 +11,7 @@ import {
 } from "./broadcastTranscriptQwen";
 export { BROADCAST_TRANSCRIPT_BASE64_CONTENT_TYPE } from "./broadcastTranscriptQwen";
 import {
+  AiQuotaClientError,
   fetchWithAiQuota,
   fetchWithPreparedAiQuota,
   type AiQuotaClientIdentity,
@@ -106,7 +107,16 @@ async function resolveBroadcastTranscriptProxyResponse(
   let response: Response;
   try {
     response = await responsePromise;
-  } catch {
+  } catch (error) {
+    if (
+      error instanceof AiQuotaClientError &&
+      error.code === "OUTCOME_UNKNOWN"
+    ) {
+      throw new BroadcastTranscriptQwenClientError(
+        "OUTCOME_UNKNOWN",
+        "전사 요청이 처리됐는지 확인할 수 없어 자동으로 다시 결제하지 않았어요.",
+      );
+    }
     throw new BroadcastTranscriptQwenClientError(
       "PROXY_UNAVAILABLE",
       "방송 대사 분석 서버에 연결하지 못했어요.",

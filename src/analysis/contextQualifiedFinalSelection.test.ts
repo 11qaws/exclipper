@@ -3,6 +3,7 @@ import type { BroadcastContextCandidateAnnotation } from "./broadcastContextProt
 import {
   finalizeContextQualifiedCandidates,
   selectCandidateDetailCandidateIds,
+  selectContextExcludedCandidateIds,
 } from "./contextQualifiedFinalSelection";
 
 function candidate(id: string, peakMs: number) {
@@ -38,6 +39,7 @@ describe("finalizeContextQualifiedCandidates", () => {
 
     expect(result.selectedCandidates).toEqual([]);
     expect(result.rejectedCandidateIds).toEqual(["relay-a", "relay-b"]);
+    expect(result.contextExcludedCandidateIds).toEqual(["relay-a", "relay-b"]);
     expect(result.projectionById).toEqual({
       "relay-a": "deprioritized",
       "relay-b": "deprioritized",
@@ -86,6 +88,7 @@ describe("finalizeContextQualifiedCandidates", () => {
     );
 
     expect(result.projectionById[approved.id]).toBe("deprioritized");
+    expect(result.contextExcludedCandidateIds).toEqual([]);
     expect(approved).toMatchObject({
       reviewState: "approved",
       approvedBoundaryRevision: 3,
@@ -133,5 +136,33 @@ describe("finalizeContextQualifiedCandidates", () => {
       ),
     ).toEqual(["approved-music", "ai-recommended"]);
     expect(ledger).toHaveLength(4);
+  });
+
+  it("separates normal context exclusions from missing context without deleting the ledger", () => {
+    const ledger = [
+      { id: "context-rejected", reviewState: "unreviewed" as const },
+      { id: "music-only", reviewState: "unreviewed" as const },
+      { id: "context-missing", reviewState: "unreviewed" as const },
+      { id: "approved-override", reviewState: "approved" as const },
+    ];
+
+    expect(
+      selectContextExcludedCandidateIds(
+        ledger,
+        {
+          "context-rejected": "deprioritized",
+          "music-only": "needs-review",
+          "context-missing": "insufficient-evidence",
+          "approved-override": "deprioritized",
+        },
+        new Set(["music-only"]),
+      ),
+    ).toEqual(["context-rejected", "music-only"]);
+    expect(ledger.map(({ id }) => id)).toEqual([
+      "context-rejected",
+      "music-only",
+      "context-missing",
+      "approved-override",
+    ]);
   });
 });

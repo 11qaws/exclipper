@@ -5,8 +5,25 @@ import {
   type BroadcastContextChapterInput,
 } from "../analysis/broadcastContextProtocol";
 
-export const BROADCAST_CONTEXT_SESSION_SCHEMA_VERSION = "1.2.0" as const;
+export const BROADCAST_CONTEXT_SESSION_SCHEMA_VERSION = "1.3.0" as const;
+const LEGACY_BROADCAST_CONTEXT_SESSION_SCHEMA_VERSION = "1.2.0" as const;
 const MAX_STORED_BROADCAST_CONTEXT_CHAPTERS = 4_096;
+
+export type StoredBroadcastTranscriptGapReason =
+  | "pending"
+  | "in-flight"
+  | "decode-failed"
+  | "transcription-failed"
+  | "rate-limited"
+  | "outcome-unknown";
+
+export interface StoredBroadcastTranscriptGap {
+  readonly chunkId: string;
+  readonly sourceStartMs: number;
+  readonly sourceEndMs: number;
+  readonly reason: StoredBroadcastTranscriptGapReason;
+  readonly attemptCount: number;
+}
 
 export interface BroadcastContextSessionRecord {
   readonly kind: "broadcastContextSession";
@@ -17,6 +34,7 @@ export interface BroadcastContextSessionRecord {
   readonly completeAudioCoverage: boolean;
   readonly chapters: readonly BroadcastContextChapterInput[];
   readonly gapChunkIds: readonly string[];
+  readonly fragmentGaps: readonly StoredBroadcastTranscriptGap[];
   readonly modelRevision: string;
   readonly contextInputSignature: string | null;
   readonly contextResultJson: string | null;
@@ -59,6 +77,7 @@ export function assertBroadcastContextSessionRecord(
       "completeAudioCoverage",
       "chapters",
       "gapChunkIds",
+      "fragmentGaps",
       "modelRevision",
       "contextInputSignature",
       "contextResultJson",
@@ -80,6 +99,7 @@ export function assertBroadcastContextSessionRecord(
     !Array.isArray(value.gapChunkIds) ||
     !value.gapChunkIds.every((item) => boundedString(item, 256)) ||
     new Set(value.gapChunkIds).size !== value.gapChunkIds.length ||
+    !Array.isArray(value.fragmentGaps) ||
     !boundedString(value.modelRevision) ||
     !(
       (value.contextInputSignature === null && value.contextResultJson === null) ||
@@ -100,6 +120,45 @@ export function assertBroadcastContextSessionRecord(
     !Number.isFinite(Date.parse(value.recordedAt))
   ) {
     throw new TypeError("Broadcast context session record is invalid.");
+  }
+  const gapChunkIds = new Set(value.gapChunkIds as readonly string[]);
+  const fragmentGapIds = new Set<string>();
+  let previousGapEndMs = -1;
+  for (const gap of value.fragmentGaps as readonly unknown[]) {
+    if (
+      !isRecord(gap) ||
+      !hasExactKeys(gap, [
+        "chunkId",
+        "sourceStartMs",
+        "sourceEndMs",
+        "reason",
+        "attemptCount",
+      ]) ||
+      !boundedString(gap.chunkId, 256) ||
+      fragmentGapIds.has(gap.chunkId) ||
+      !gapChunkIds.has(gap.chunkId) ||
+      !Number.isSafeInteger(gap.sourceStartMs) ||
+      !Number.isSafeInteger(gap.sourceEndMs) ||
+      (gap.sourceStartMs as number) < 0 ||
+      (gap.sourceEndMs as number) <= (gap.sourceStartMs as number) ||
+      (gap.sourceEndMs as number) > (value.sourceDurationMs as number) ||
+      (gap.sourceStartMs as number) < previousGapEndMs ||
+      ![
+        "pending",
+        "in-flight",
+        "decode-failed",
+        "transcription-failed",
+        "rate-limited",
+        "outcome-unknown",
+      ].includes(typeof gap.reason === "string" ? gap.reason : "") ||
+      !Number.isSafeInteger(gap.attemptCount) ||
+      (gap.attemptCount as number) < 0 ||
+      (gap.attemptCount as number) > 1_000_000
+    ) {
+      throw new TypeError("Stored broadcast transcript fragment gap is invalid.");
+    }
+    fragmentGapIds.add(gap.chunkId);
+    previousGapEndMs = gap.sourceEndMs as number;
   }
   if (typeof value.contextResultJson === "string") {
     try {
@@ -158,13 +217,32 @@ export function assertBroadcastContextSessionRecord(
   }
 }
 
+function migrateLegacyBroadcastContextSessionRecord(
+  value: unknown,
+): unknown {
+  if (
+    isRecord(value) &&
+    value.schemaVersion === LEGACY_BROADCAST_CONTEXT_SESSION_SCHEMA_VERSION &&
+    !Object.hasOwn(value, "fragmentGaps")
+  ) {
+    return {
+      ...value,
+      schemaVersion: BROADCAST_CONTEXT_SESSION_SCHEMA_VERSION,
+      fragmentGaps: [],
+    };
+  }
+  return value;
+}
+
 export function cloneBroadcastContextSessionRecord(
-  value: BroadcastContextSessionRecord,
+  value: unknown,
 ): BroadcastContextSessionRecord {
-  assertBroadcastContextSessionRecord(value);
+  const migrated = migrateLegacyBroadcastContextSessionRecord(value);
+  assertBroadcastContextSessionRecord(migrated);
   return {
-    ...value,
-    chapters: value.chapters.map((chapter) => ({ ...chapter })),
-    gapChunkIds: [...value.gapChunkIds],
+    ...migrated,
+    chapters: migrated.chapters.map((chapter) => ({ ...chapter })),
+    gapChunkIds: [...migrated.gapChunkIds],
+    fragmentGaps: migrated.fragmentGaps.map((gap) => ({ ...gap })),
   };
 }

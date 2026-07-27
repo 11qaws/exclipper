@@ -156,7 +156,10 @@ export function createBroadcastContextTranscriptionChunks(
         sourceStartMs + maximumChunkDurationMs,
       );
       chunks.push({
-        chunkId: `asr-${String(chunks.length + 1).padStart(3, "0")}`,
+        // The identity is source-fenced rather than array-position-fenced.
+        // Rebuilding only uncovered windows after a reload must produce the
+        // same key for the same paid audio range.
+        chunkId: `asr-${sourceStartMs.toString(36)}-${sourceEndMs.toString(36)}`,
         sourceStartMs,
         sourceEndMs,
         kind: window.kind,

@@ -2,6 +2,16 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { CANDIDATE_PASS_B_PROXY_ENDPOINT } from "./candidatePassBGemini";
 import {
+  CANDIDATE_INSIGHT_MEDIA_BUNDLE_CONTENT_TYPE,
+  CANDIDATE_INSIGHT_MEDIA_ENDPOINT_PATH,
+  CANDIDATE_INSIGHT_MEDIA_RESOLVE_CONTENT_TYPE,
+  CANDIDATE_INSIGHT_MEDIA_SCHEMA_VERSION,
+} from "./candidateInsightMediaProtocol";
+import {
+  AI_QUOTA_PROXY_ENDPOINT,
+  AI_QUOTA_SCHEMA_VERSION,
+} from "./aiQuotaProtocol";
+import {
   CANDIDATE_PASS_B_DEVICE,
   CANDIDATE_PASS_B_GEMINI_MODEL_ID,
   CANDIDATE_PASS_B_GEMINI_MODEL_REVISION,
@@ -361,6 +371,381 @@ describe("candidatePassB.worker remote lifecycle", () => {
     expect(
       responses.find((response) => response.type === "candidate-pass-b-completed"),
     ).toMatchObject({ summary: { requestedCount: 2, completedCount: 2, gapCount: 0 } });
+  });
+
+  it("stages raw media and re-stages exactly once after an explicit expired-ticket response", async () => {
+    let messageHandler: ((event: MessageEvent<unknown>) => void) | null = null;
+    const responses: CandidatePassBWorkerResponse[] = [];
+    const calls: Array<{
+      readonly url: string;
+      readonly init: RequestInit | undefined;
+    }> = [];
+    const mediaTickets = [
+      `v1.${"a".repeat(96)}.${"b".repeat(43)}`,
+      `v1.${"c".repeat(96)}.${"d".repeat(43)}`,
+    ] as const;
+    let stageCount = 0;
+    let resolveCount = 0;
+    const validAnalysis = {
+      segments: [
+        { relativeStartMs: 1_000, relativeEndMs: 2_000, text: "실제 한국어 발화" },
+      ],
+      eventSummaryKo: "화면과 대사를 함께 확인한 후보 사건입니다.",
+      reactionSummaryKo: "스트리머가 사건을 알아차리고 놀라 반응합니다.",
+      whyGoodClipKo: "사건과 반응의 인과관계가 분명한 장면입니다.",
+      uncertaintiesKo: [],
+      participantPresence: "present-unidentified",
+      participantSummaryKo: "화면에 진행자가 있으나 이름은 확인되지 않았습니다.",
+      identifiedParticipants: [],
+      clipDecision: "recommend",
+      contextConsistency: "consistent",
+      programMaterial: "streamer-event",
+    };
+    const fetchMock = vi.fn(
+      async (
+        input: RequestInfo | URL,
+        init?: RequestInit,
+      ): Promise<Response> => {
+        await Promise.resolve();
+        const url =
+          typeof input === "string"
+            ? input
+            : input instanceof URL
+              ? input.toString()
+              : input.url;
+        calls.push({ url, init });
+        if (url === `${new URL(CANDIDATE_PASS_B_PROXY_ENDPOINT).origin}/healthz`) {
+          return new Response(
+            JSON.stringify({
+              ok: true,
+              candidateTransport: { mode: "free-r2", configured: true },
+            }),
+            { status: 200 },
+          );
+        }
+        if (url === AI_QUOTA_PROXY_ENDPOINT) {
+          return new Response(
+            JSON.stringify({
+              schemaVersion: AI_QUOTA_SCHEMA_VERSION,
+              status: "granted",
+              leaseToken: `lease_${"a".repeat(40)}`,
+              leaseExpiresAtMs: Date.now() + 60_000,
+              retryAfterMs: 0,
+              activeParticipantCount: 1,
+              poolInFlightCount: 1,
+            }),
+            { status: 200 },
+          );
+        }
+        if (
+          new URL(url).pathname === CANDIDATE_INSIGHT_MEDIA_ENDPOINT_PATH
+        ) {
+          expect(init?.headers).toMatchObject({
+            "Content-Type": CANDIDATE_INSIGHT_MEDIA_BUNDLE_CONTENT_TYPE,
+          });
+          expect(init?.body).toBeInstanceOf(Uint8Array);
+          const bundle = init?.body as Uint8Array;
+          expect(new TextDecoder().decode(bundle.slice(0, 4))).toBe("RIFF");
+          expect(bundle.byteLength).toBe(960_044 + 4 * 7);
+          const mediaTicket = mediaTickets[stageCount];
+          stageCount += 1;
+          if (mediaTicket === undefined) {
+            throw new Error("Candidate media was staged more than twice.");
+          }
+          return new Response(
+            JSON.stringify({
+              schemaVersion: CANDIDATE_INSIGHT_MEDIA_SCHEMA_VERSION,
+              status: "staged",
+              mediaTicket,
+              expiresAtMs: Date.now() + 60_000,
+              candidateHash: new URL(url).searchParams.get("candidateHash"),
+              candidateDurationMs: 30_000,
+              frameCount: 4,
+            }),
+            { status: 202 },
+          );
+        }
+        if (url === CANDIDATE_PASS_B_PROXY_ENDPOINT) {
+          expect(init?.headers).toMatchObject({
+            "Content-Type": CANDIDATE_INSIGHT_MEDIA_RESOLVE_CONTENT_TYPE,
+          });
+          resolveCount += 1;
+          if (resolveCount === 1) {
+            return new Response(
+              JSON.stringify({
+                error: {
+                  code: "CANDIDATE_MEDIA_TICKET_INVALID",
+                  message: "Candidate media ticket expired.",
+                },
+              }),
+              { status: 409 },
+            );
+          }
+          return new Response(
+            JSON.stringify({
+              candidates: [
+                {
+                  finishReason: "STOP",
+                  content: { parts: [{ text: JSON.stringify(validAnalysis) }] },
+                },
+              ],
+            }),
+            { status: 200 },
+          );
+        }
+        throw new Error(`Unexpected fetch ${url}`);
+      },
+    );
+    vi.stubGlobal("self", {
+      crypto: globalThis.crypto,
+      addEventListener(
+        type: string,
+        handler: (event: MessageEvent<unknown>) => void,
+      ): void {
+        if (type === "message") messageHandler = handler;
+      },
+      postMessage(message: CandidatePassBWorkerResponse): void {
+        responses.push(message);
+      },
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await import("./candidatePassB.worker");
+    const jpegBase64 = btoa(
+      String.fromCharCode(0xff, 0xd8, 0xff, 1, 2, 0xff, 0xd9),
+    );
+    (messageHandler as ((event: MessageEvent<unknown>) => void) | null)?.(
+      new MessageEvent("message", {
+        data: {
+          type: "candidate-pass-b-analyze",
+          identity,
+          quota: {
+            participantId: "participant_00000000000001",
+            runId: "run-candidate-r2",
+            attemptOrdinal: 2,
+          },
+          file: new File([new Uint8Array([1])], "source.mp4"),
+          sourceDurationMs: 30_000,
+          device: CANDIDATE_PASS_B_DEVICE,
+          targets: [
+            {
+              candidateId: "candidate-stable-id",
+              startMs: 0,
+              endMs: 30_000,
+              videoFrames: [1_000, 5_000, 10_000, 20_000].map(
+                (timestampMs) => ({
+                  timestampMs,
+                  mimeType: "image/jpeg" as const,
+                  dataBase64: jpegBase64,
+                }),
+              ),
+            },
+          ],
+        } satisfies CandidatePassBWorkerRequest,
+      }),
+    );
+
+    await vi.waitFor(() =>
+      expect(
+        responses.some(
+          (response) => response.type === "candidate-pass-b-completed",
+        ),
+      ).toBe(true),
+    );
+    const stageCall = calls.find(
+      (call) =>
+        new URL(call.url).pathname === CANDIDATE_INSIGHT_MEDIA_ENDPOINT_PATH,
+    );
+    expect(stageCall).toBeDefined();
+    expect(stageCount).toBe(2);
+    expect(resolveCount).toBe(2);
+    const resolveCalls = calls.filter(
+      (call) => call.url === CANDIDATE_PASS_B_PROXY_ENDPOINT,
+    );
+    expect(resolveCalls).toHaveLength(2);
+    expect(typeof resolveCalls[0]?.init?.body).toBe("string");
+    expect((resolveCalls[0]?.init?.body as string).length).toBeLessThan(2_000);
+    expect(resolveCalls[0]?.init?.body).toContain(mediaTickets[0]);
+    expect(resolveCalls[1]?.init?.body).toContain(mediaTickets[1]);
+    const quotaCalls = calls.filter(
+      (call) => call.url === AI_QUOTA_PROXY_ENDPOINT,
+    );
+    expect(quotaCalls).toHaveLength(2);
+    const operationIds = quotaCalls.map((call) => {
+      const quotaBody = call.init?.body;
+      if (typeof quotaBody !== "string") {
+        throw new TypeError("Expected a JSON quota request.");
+      }
+      const quotaRequest: unknown = JSON.parse(quotaBody);
+      expect(quotaRequest).toBeTypeOf("object");
+      return (quotaRequest as Record<string, unknown>).operationId;
+    });
+    expect(operationIds[0]).toMatch(
+      /^candidate-g2-[a-f0-9]{24}-0-30000-m0\./,
+    );
+    expect(operationIds[1]).toMatch(
+      /^candidate-g2-[a-f0-9]{24}-0-30000-m1\./,
+    );
+  });
+
+  it("does not cache a 503 transport, then shares a healthy lookup for sixty seconds", async () => {
+    let messageHandler: ((event: MessageEvent<unknown>) => void) | null = null;
+    const responses: CandidatePassBWorkerResponse[] = [];
+    let nowMs = Date.UTC(2026, 6, 27, 12, 0, 0);
+    const nowSpy = vi.spyOn(Date, "now").mockImplementation(() => nowMs);
+    let healthCallCount = 0;
+    const validAnalysis = {
+      segments: [
+        { relativeStartMs: 1_000, relativeEndMs: 2_000, text: "테스트 발화" },
+      ],
+      eventSummaryKo: "후보 사건과 반응이 이어지는 장면입니다.",
+      reactionSummaryKo: "스트리머가 상황을 알아차리고 반응합니다.",
+      whyGoodClipKo: "사건과 반응의 인과관계가 분명합니다.",
+      uncertaintiesKo: [],
+      participantPresence: "insufficient-evidence",
+      participantSummaryKo: "대표 화면 근거가 없어 인물을 특정하지 않았습니다.",
+      identifiedParticipants: [],
+    };
+    const fetchMock = vi.fn(
+      async (input: RequestInfo | URL): Promise<Response> => {
+        await Promise.resolve();
+        const url =
+          typeof input === "string"
+            ? input
+            : input instanceof URL
+              ? input.toString()
+              : input.url;
+        if (url === `${new URL(CANDIDATE_PASS_B_PROXY_ENDPOINT).origin}/healthz`) {
+          healthCallCount += 1;
+          if (healthCallCount === 1) {
+            return new Response(
+              JSON.stringify({
+                ok: false,
+                candidateTransport: {
+                  mode: "free-r2",
+                  configured: true,
+                },
+              }),
+              { status: 503 },
+            );
+          }
+          return new Response(JSON.stringify({ ok: true }), { status: 200 });
+        }
+        if (url === AI_QUOTA_PROXY_ENDPOINT) {
+          return new Response(
+            JSON.stringify({
+              schemaVersion: AI_QUOTA_SCHEMA_VERSION,
+              status: "granted",
+              leaseToken: `lease_${"a".repeat(40)}`,
+              leaseExpiresAtMs: nowMs + 60_000,
+              retryAfterMs: 0,
+              activeParticipantCount: 1,
+              poolInFlightCount: 1,
+            }),
+            { status: 200 },
+          );
+        }
+        if (url === CANDIDATE_PASS_B_PROXY_ENDPOINT) {
+          return new Response(
+            JSON.stringify({
+              candidates: [
+                {
+                  finishReason: "STOP",
+                  content: { parts: [{ text: JSON.stringify(validAnalysis) }] },
+                },
+              ],
+            }),
+            { status: 200 },
+          );
+        }
+        throw new Error(`Unexpected fetch ${url}`);
+      },
+    );
+    vi.stubGlobal("self", {
+      crypto: globalThis.crypto,
+      addEventListener(
+        type: string,
+        handler: (event: MessageEvent<unknown>) => void,
+      ): void {
+        if (type === "message") messageHandler = handler;
+      },
+      postMessage(message: CandidatePassBWorkerResponse): void {
+        responses.push(message);
+      },
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    try {
+      await import("./candidatePassB.worker");
+      const runOneCandidate = async (ordinal: number): Promise<void> => {
+        const terminalBefore = responses.filter(
+          (response) =>
+            response.type === "candidate-pass-b-completed" ||
+            response.type === "candidate-pass-b-failed",
+        ).length;
+        const requestIdentity: CandidatePassBWorkerIdentity = {
+          ...identity,
+          analysisRunId: `analysis-cache-${ordinal}`,
+          passBRunId: `pass-b-cache-${ordinal}`,
+          taskId: `task-cache-${ordinal}`,
+        };
+        messageHandler?.(
+          new MessageEvent("message", {
+            data: {
+              type: "candidate-pass-b-analyze",
+              identity: requestIdentity,
+              quota: {
+                participantId: "participant_00000000000001",
+                runId: `run-cache-${ordinal}`,
+              },
+              file: new File([new Uint8Array([1])], "source.mp4"),
+              sourceDurationMs: 30_000,
+              device: CANDIDATE_PASS_B_DEVICE,
+              targets: Array.from(
+                { length: ordinal === 1 ? 2 : 1 },
+                (_, targetIndex) => ({
+                  candidateId: `candidate-cache-${ordinal}-${targetIndex}`,
+                  startMs: 0,
+                  endMs: 30_000,
+                }),
+              ),
+            } satisfies CandidatePassBWorkerRequest,
+          }),
+        );
+        await vi.waitFor(() =>
+          expect(
+            responses.filter(
+              (response) =>
+                response.type === "candidate-pass-b-completed" ||
+                response.type === "candidate-pass-b-failed",
+            ),
+          ).toHaveLength(terminalBefore + 1),
+        );
+      };
+
+      await runOneCandidate(0);
+      expect(healthCallCount).toBe(1);
+      await runOneCandidate(1);
+      expect(healthCallCount).toBe(2);
+      nowMs += 59_999;
+      await runOneCandidate(2);
+      expect(healthCallCount).toBe(2);
+      nowMs += 2;
+      await runOneCandidate(3);
+      expect(healthCallCount).toBe(3);
+      expect(
+        responses.filter(
+          (response) => response.type === "candidate-pass-b-failed",
+        ),
+      ).toHaveLength(1);
+      expect(
+        responses.filter(
+          (response) => response.type === "candidate-pass-b-completed",
+        ),
+      ).toHaveLength(3);
+    } finally {
+      nowSpy.mockRestore();
+    }
   });
 
   it("maps a network rejection to a key-free safe Worker failure", async () => {

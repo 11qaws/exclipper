@@ -43,6 +43,14 @@ export function transcriptOperationKey(
   return `${runId}:${contentFingerprint}:${phase}:attempt-${attemptOrdinal}`;
 }
 
+export interface TranscriptContextSealInput {
+  readonly analysisComplete: boolean;
+  readonly broadcastTranscriptStatus: string;
+  readonly completedChapterCount: number;
+  readonly requiredEventBoostOperationKey: string | null;
+  readonly sealedOperationKey: string | null;
+}
+
 /**
  * Whether a transcript pass may start now.
  *
@@ -72,5 +80,40 @@ export function transcriptNeedsExplicitRetry(
     status === "failed" ||
     status === "completedWithGaps" ||
     chapterCount === 0
+  );
+}
+
+/**
+ * A browser that vanished after starting a paid request cannot distinguish
+ * "provider never saw it" from "provider completed but the response was
+ * lost". Reopening such a durable fence requires explicit editor consent,
+ * just like an explicit outcome-unknown response.
+ */
+export function transcriptGapRequiresExplicitBillingRetry(
+  reason: string,
+  attemptCount: number,
+): boolean {
+  return (
+    reason === "outcome-unknown" ||
+    (reason === "in-flight" && attemptCount > 0)
+  );
+}
+
+/**
+ * The whole-context phase may only observe a durable, final event-boost map.
+ *
+ * Checking the operation key is what closes the React effect ordering race:
+ * on the render where fast scan completes, the old uniform map may still say
+ * `completed`, but it is not the required event-boost seal.
+ */
+export function transcriptIsSealedForContext(
+  input: TranscriptContextSealInput,
+): boolean {
+  return (
+    input.analysisComplete &&
+    input.broadcastTranscriptStatus === "completed" &&
+    input.completedChapterCount > 0 &&
+    input.requiredEventBoostOperationKey !== null &&
+    input.sealedOperationKey === input.requiredEventBoostOperationKey
   );
 }

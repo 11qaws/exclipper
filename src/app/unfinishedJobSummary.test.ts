@@ -154,10 +154,16 @@ describe("unfinished job summary", () => {
         { type: "ALL_STAGES_DONE", quality: "usable" },
       ]);
       const thrown = drive(pausedAt(2, "thrown"), [{ type: "ABANDON" }]);
+      const emptyDone = drive(pausedAt(0, "empty-done"), [
+        { type: "RESUME", runId: "run-2" },
+        ...ANALYSIS_STAGES.map((stage) => ({ type: "STAGE_COMMITTED", stage }) as const),
+        { type: "ALL_STAGES_DONE", quality: "empty" },
+      ]);
       const kept = pausedAt(3, "kept");
 
       const rows = selectUnfinishedJobs([
         input(done, "끝난 것"),
+        input(emptyDone, "정상적으로 비어 있는 것"),
         input(thrown, "버린 것"),
         input(kept, "남은 것"),
       ]);

@@ -1,5 +1,23 @@
 # ExClipper 개인용 운영·배포·복구 계획
 
+## 다음 배포 후보 · 후보 파이프라인 전환·복구 계획
+
+- 전사 Worker가 일부 조각을 실패로 반환해도 성공 조각을 버리거나 전체 계획을 처음부터 다시 보내지 않는다. `decode-failed | transcription-failed | rate-limited` 조각만 1초·2초 backoff로 최대 3회 시도하고, 각 성공은 IndexedDB write/readback 뒤 다음 조각 상태에 반영한다. 다음 wave를 시작하기 전 실패 event 자체도 정확한 범위·reason·quota ordinal로 readback되어야 한다.
+- provider 요청 전에는 해당 wave의 모든 대상 범위를 `in-flight`로 먼저 durable commit한다. 탭 종료 뒤 `in-flight` 또는 `outcome-unknown`이 보이면 자동 요청은 0건이어야 하며 명시적 복구 동의만 다음 durable generation을 연다. operation namespace는 uniform/event-boost/refinement를 분리한다.
+- 자동 복구가 끝나기 전에는 진행 패널을 전체 맥락으로 넘기지 않는다. 마지막 시도 뒤에도 실패 조각이 남으면 성공 chapter와 정확한 source range·reason·attempt count를 보존하고 transcript phase를 실패로 닫는다. whole-context API, 의미 후보 탐색, 후보 상세 API는 시작하지 않는다.
+- `outcome-unknown`은 네트워크 단절 뒤 provider 과금 여부를 모르는 상태다. 클라이언트는 exact lease 요청을 한 번 transport replay하고, coordinator가 이미 consume된 operation이라고 답하면 새 operation을 자동 생성하지 않는다. UI의 명시적 재시도만 새 generation을 열며, 그전까지 R2 media와 확보된 chapter를 보존한다.
+- 운영 smoke는 조각 A·B·C 중 B만 첫 시도에 실패시키고 두 번째 Worker가 B만 받는지, A·C의 quota operation과 저장 chapter가 재생성되지 않는지, 최종 exact readback 전에는 context 호출이 0건인지 확인한다. uniform 실패 ID와 event-boost ID가 다르고, outcome-unknown 직후 탭 종료 fixture가 새로고침 뒤 자동 provider 호출 0건인지도 확인한다. 3회 실패 fixture는 transcript `failed`, seal 없음, context 호출 0건이어야 한다.
+- 배포 전 regression은 최소 세 계약을 고정한다. 17개 ledger 입력은 context 17개를 모두 보존하고 detail 12개가 완성되면 pipeline gap 없이 끝나야 한다. detail 후보 하나가 실패해도 나머지는 저장·공개돼야 한다. 완전 검증 뒤 0개인 입력은 `completedEmpty`로 끝나야 한다.
+- Worker `/healthz`는 `candidateTransport.version`, `mode`, `configured`, required frame count 4와 staged schema를 보고한다. 일시적인 503은 Pages에 영구 cache하지 않고, 성공한 transport 판단도 60초 뒤 갱신한다.
+- 후보 media stage는 private `TRANSCRIPT_MEDIA` bucket의 `transcript/candidate/` prefix를 사용한다. public R2 access는 열지 않는다. 정상 실행 후 object 0개를 확인하고, 실패 smoke에서는 capability 만료 뒤 GET 404와 1일 lifecycle 범위를 확인한다.
+- 배포 순서는 호환 Worker → health/OPTIONS/R2 candidate smoke → Pages → cache 최대 10분과 진행 중 구 탭 정리 → 필요 시 호환 경로 축소 순서다. 새 Worker는 배포 전후 구 Pages JSON을 받아야 하고, 새 Pages는 구 Worker에서 `legacy` direct 경로로 동작해야 한다.
+- Free R2 candidate smoke는 실제 후보 WAV와 서로 다른 JPEG 4장을 사용해 stage 202, resolve 200, Qwen model identity, 한국어 event/reaction/context 결과와 object cleanup을 확인한다. byte-counting transform 뒤에는 반드시 `FixedLengthStream(expectedByteLength)`을 두어 R2에 known length를 보존한다. 같은 payload retry는 object·ticket 하나를 재사용하고 재전송 body pump를 abort/cancel해 제한 시간 안에 202를 반환해야 한다. candidate manifest가 달라지면 기존 object를 보존한 채 provider 호출 전에 거부돼야 한다.
+- 합법적인 최대 candidate context도 provider 호출 전에 48KiB canonical packet으로 정리되어 Qwen shared prompt 80KiB와 최대 예약 94,180 token 안에 들어가야 한다. 필드가 줄면 `[중간 생략 / middle omitted]`과 앞·뒤가 남고, 원본 session artifact는 불변이어야 한다. Qwen·Gemini direct/proxy·quota fingerprint·verification receipt의 packet과 fingerprint가 byte-for-byte 같아야 한다. 정상 입력이 크기 때문에 중단되거나 413 `TOKEN_BUDGET_TOO_LARGE`로 끝나면 배포하지 않는다. Free R2에서 Gemini fallback이 없다는 사실은 장애가 아니라 명시적 transport 제한으로 health에 유지한다.
+- candidate bundle smoke는 `Content-Length`가 있는 정상·초과·미달 입력뿐 아니라 헤더 없는 정상·초과 입력도 포함한다. 헤더 없는 초과 stream은 signed exact byte length 직후 413 `PAYLOAD_TOO_LARGE`로 끊기고 R2 object가 남지 않아야 한다.
+- conditional R2 put의 loser는 R2가 본문을 소비한다고 가정하지 않는다. `put() == null` 뒤 강한 일관성의 `head`로 winner metadata·checksum·signature를 재검증하고, 성공하면 `reused`, 실패하면 bounded 오류로 닫되 두 경우 모두 loser pump를 terminal abort한다. Qwen 200 응답이 candidate schema를 어기면 fresh internal quota operation으로 최대 두 번만 복구하고, 모두 실패하면 staged object를 ticket 만료까지 보존해 missing-only 재시도가 재업로드 없이 이어지게 한다.
+- 복구 버튼은 pipeline gap 종류에 따라 작동한다. context 누락은 whole-context checkpoint에서, detail/receipt/frame 누락은 해당 candidate ID만 다시 실행한다. 이미 저장된 insight·receipt·thumbnail이 현재 context fingerprint와 맞으면 failed/cancelled run envelope만으로 다시 결제하지 않는다.
+- candidate detail 완료 직전에는 `putCandidatePassBInsights` 뒤 같은 run ID의 `getCandidatePassBInsights`가 성공하고, 메타데이터와 evidence·insight·model·thumbnail·receipt map이 exact match해야 한다. 사건·반응·클립 가치 설명, 등장인물 상태·근거, 최종 판정, 맥락 일치 또는 프로그램성 판정이 빠진 구형 호환 레코드도 publication을 통과하지 않아야 한다. write/readback 실패를 주입했을 때 `deepPass`, `publication`, `completed/completedEmpty`가 커밋되면 배포하지 않는다. “검증 결과 저장 다시 시도”는 provider API가 아니라 현재 메모리 snapshot의 write/readback만 반복해야 한다.
+
 ## 2026-07-27 `0.8.6` Free R2 전사 운영 계획
 
 - production 기본값은 `BROADCAST_TRANSCRIPT_TRANSPORT_MODE=free-r2`다. `TRANSCRIPT_MEDIA`는 private Standard R2 bucket `exclipper-transcript-media`에 연결하고 public bucket access는 열지 않는다.
@@ -34,7 +52,7 @@
 - Free Worker 10ms CPU 안전성은 live smoke로 확인한다. 주 경로는 byte-to-Base64 변환을 브라우저 Web Worker로 옮겼지만, 중계에는 여전히 약 1.28MB JSON 수신·digest·파싱·검증·공급자 본문 직렬화가 남는다. 1102/CPU 초과가 재현되면 Workers Paid 또는 R2+ASR transport로 전환한다.
 - 전사 브라우저 Worker는 1초 요청 슬롯을 먼저 기다린 뒤 quota lease와 POST를 시작하며 로컬 in-flight 상한은 6이다. 슬롯 대기 전에 fetch/IIFE를 만들면 실제 전송은 이미 시작되므로 배포 검토에서 호출 시점을 확인한다.
 - `/v1/broadcast-context`의 502는 응답 JSON의 allowlist 오류 코드와 제한된 진단 헤더로 구분한다. non-2xx paid 응답 뒤에는 cancel하지 않으며, 이미 끝난 작업의 cancel은 200 멱등 정리, 같은 ID의 새 lease만 409다.
-- `completedWithGaps` 재시도는 성공 chapter를 유지하고 uncovered 30초 range만 새 attempt ID로 보낸다. 맥락을 다시 만들 때는 이전 semantic candidate와 Pass B 결과를 먼저 무효화하고, 새 context 콘텐츠 지문이 일치하는 receipt만 최종 후보에 사용할 수 있다.
+- `completedWithGaps` 또는 실패 조각 재시도는 성공 chapter를 유지하고 현재 sampling plan의 uncovered source range만 새 attempt ID로 보낸다. 현재 `0.8.7`의 한 조각 상한은 90초다. 맥락을 다시 만들 때는 이전 semantic candidate와 Pass B 결과를 먼저 무효화하고, 새 context 콘텐츠 지문이 일치하는 receipt만 최종 후보에 사용할 수 있다.
 - 세부 request/header/body/TTL/rollback 계약은 `docs/FIVE_USER_QUOTA_COORDINATOR_2026-07-27.md`가 소유한다.
 
 ## 2026-07-23 release notes

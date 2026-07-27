@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 
 import {
   canStartTranscriptRun,
+  transcriptGapRequiresExplicitBillingRetry,
+  transcriptIsSealedForContext,
   transcriptNeedsExplicitRetry,
   transcriptOperationKey,
   transcriptPhaseFor,
@@ -102,5 +104,72 @@ describe("transcriptNeedsExplicitRetry", () => {
   it("reopens a completed-with-gaps map so only uncovered chunks can resume", () => {
     expect(transcriptNeedsExplicitRetry("completedWithGaps", 263)).toBe(true);
     expect(transcriptNeedsExplicitRetry("completed", 271)).toBe(false);
+  });
+});
+
+describe("transcriptGapRequiresExplicitBillingRetry", () => {
+  it("blocks automatic rebilling after an ambiguous or interrupted paid request", () => {
+    expect(
+      transcriptGapRequiresExplicitBillingRetry("outcome-unknown", 1),
+    ).toBe(true);
+    expect(transcriptGapRequiresExplicitBillingRetry("in-flight", 5)).toBe(
+      true,
+    );
+    expect(transcriptGapRequiresExplicitBillingRetry("pending", 0)).toBe(
+      false,
+    );
+    expect(
+      transcriptGapRequiresExplicitBillingRetry("transcription-failed", 3),
+    ).toBe(false);
+  });
+});
+
+describe("transcriptIsSealedForContext", () => {
+  const eventBoostKey = transcriptOperationKey(
+    "run-1",
+    "fp",
+    "event-boost",
+    4,
+  );
+
+  it("blocks the context effect while only the earlier uniform phase is complete", () => {
+    expect(
+      transcriptIsSealedForContext({
+        analysisComplete: true,
+        broadcastTranscriptStatus: "completed",
+        completedChapterCount: 20,
+        requiredEventBoostOperationKey: eventBoostKey,
+        sealedOperationKey: transcriptOperationKey(
+          "run-1",
+          "fp",
+          "uniform",
+          4,
+        ),
+      }),
+    ).toBe(false);
+  });
+
+  it("blocks legacy completed-with-gaps maps", () => {
+    expect(
+      transcriptIsSealedForContext({
+        analysisComplete: true,
+        broadcastTranscriptStatus: "completedWithGaps",
+        completedChapterCount: 20,
+        requiredEventBoostOperationKey: eventBoostKey,
+        sealedOperationKey: eventBoostKey,
+      }),
+    ).toBe(false);
+  });
+
+  it("allows context only after the final event-boost map is sealed", () => {
+    expect(
+      transcriptIsSealedForContext({
+        analysisComplete: true,
+        broadcastTranscriptStatus: "completed",
+        completedChapterCount: 20,
+        requiredEventBoostOperationKey: eventBoostKey,
+        sealedOperationKey: eventBoostKey,
+      }),
+    ).toBe(true);
   });
 });

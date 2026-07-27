@@ -19,6 +19,29 @@ export interface CandidateAiQueueItem {
   readonly reviewState: "unreviewed" | "approved" | "rejected";
 }
 
+/**
+ * Returns candidates that the whole-broadcast judgement has deliberately
+ * removed from automatic final verification.
+ *
+ * This is intentionally separate from a missing context packet. An approved
+ * editor override stays in the verification queue, where it must still satisfy
+ * every evidence gate; approval never turns missing evidence into a clip.
+ */
+export function selectContextExcludedCandidateIds(
+  candidates: readonly CandidateAiQueueItem[],
+  projectionById: CandidateAiProjectionById,
+  explicitMusicOnlyCandidateIds: ReadonlySet<string>,
+): readonly string[] {
+  return candidates
+    .filter(
+      (candidate) =>
+        candidate.reviewState !== "approved" &&
+        (projectionById[candidate.id] === "deprioritized" ||
+          explicitMusicOnlyCandidateIds.has(candidate.id)),
+    )
+    .map((candidate) => candidate.id);
+}
+
 /** Editor decisions outrank AI priority when choosing paid detail work. */
 export function selectCandidateDetailCandidateIds(
   candidates: readonly CandidateAiQueueItem[],
@@ -43,6 +66,13 @@ export interface ContextQualifiedFinalSelection<
   readonly selectedCandidates: readonly TCandidate[];
   readonly reviewCandidates: readonly TCandidate[];
   readonly rejectedCandidateIds: readonly string[];
+  /**
+   * Context decisions that are normal exclusions, not missing-packet errors.
+   *
+   * This list deliberately excludes editor-approved overrides. Consumers may
+   * pass it to the final verification gate without deleting reservoir items.
+   */
+  readonly contextExcludedCandidateIds: readonly string[];
   readonly missingContextCandidateIds: readonly string[];
   readonly projectionById: CandidateAiProjectionById;
   readonly eligibilityById: Readonly<
@@ -86,6 +116,7 @@ export function finalizeContextQualifiedCandidates<
   const selectedCandidates: TCandidate[] = [];
   const reviewCandidates: TCandidate[] = [];
   const rejectedCandidateIds: string[] = [];
+  const contextExcludedCandidateIds: string[] = [];
   const missingContextCandidateIds: string[] = [];
   const projectionById: Record<string, CandidateAiProjectionDisposition> = {};
 
@@ -101,6 +132,12 @@ export function finalizeContextQualifiedCandidates<
     if (isContextExcludedProgramMaterial(annotation)) {
       eligibilityById[candidate.id] = "ineligible";
       rejectedCandidateIds.push(candidate.id);
+      if (
+        !("reviewState" in candidate) ||
+        candidate.reviewState !== "approved"
+      ) {
+        contextExcludedCandidateIds.push(candidate.id);
+      }
       projectionById[candidate.id] = "deprioritized";
       continue;
     }
@@ -112,6 +149,12 @@ export function finalizeContextQualifiedCandidates<
       projectionById[candidate.id] = "needs-review";
     } else {
       rejectedCandidateIds.push(candidate.id);
+      if (
+        !("reviewState" in candidate) ||
+        candidate.reviewState !== "approved"
+      ) {
+        contextExcludedCandidateIds.push(candidate.id);
+      }
       projectionById[candidate.id] = "deprioritized";
     }
   }
@@ -121,12 +164,14 @@ export function finalizeContextQualifiedCandidates<
   selectedCandidates.sort(chronological);
   reviewCandidates.sort(chronological);
   rejectedCandidateIds.sort((left, right) => left.localeCompare(right));
+  contextExcludedCandidateIds.sort((left, right) => left.localeCompare(right));
   missingContextCandidateIds.sort((left, right) => left.localeCompare(right));
 
   return {
     selectedCandidates,
     reviewCandidates,
     rejectedCandidateIds,
+    contextExcludedCandidateIds,
     missingContextCandidateIds,
     projectionById,
     eligibilityById,

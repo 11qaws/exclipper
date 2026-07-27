@@ -48,7 +48,10 @@ import {
   type CandidatePassBTarget as CandidatePassBCoreTarget,
 } from "./analysis/candidatePassB";
 import { buildCandidatePassBPresentation } from "./analysis/candidatePassBPresentation";
-import { mapWithConcurrency } from "./analysis/boundedAsyncMap";
+import {
+  mapSettledWithConcurrency,
+  mapWithConcurrency,
+} from "./analysis/boundedAsyncMap";
 import {
   estimateCandidatePassBCost,
   formatEstimatedUsd,
@@ -66,12 +69,14 @@ import {
   createBroadcastContextSamplingPlan,
   createBroadcastContextTranscriptionChunks,
   subtractBroadcastContextCoveredRanges,
+  type BroadcastContextTranscriptionChunk,
 } from "./analysis/broadcastContextSamplingPlan";
 import {
   createDistributedTimelineRevealOrder,
   createDistributedTranscriptExplorationOrder,
 } from "./analysis/broadcastContextExploration";
 import {
+  createBroadcastNoAudioChapters,
   createBroadcastTranscriptChapters,
   mergeBroadcastTranscriptChapters,
 } from "./analysis/broadcastTranscriptChapters";
@@ -91,6 +96,13 @@ import { buildSourceReadyTimelineTicks } from "./analysis/sourceReadyTimelinePre
 import {
   runBroadcastTranscriptWorker,
 } from "./analysis/broadcastTranscriptWorkerClient";
+import {
+  nextTranscriptFragmentManualGeneration,
+  recoverBroadcastTranscriptFragments,
+  transcriptFragmentQuotaAttemptOrdinal,
+  type BroadcastTranscriptFragmentRecoveryProgress,
+  type BroadcastTranscriptFragmentRecoveryResult,
+} from "./analysis/broadcastTranscriptFragmentRecovery";
 import type { BroadcastTranscriptWorkerProgress } from "./analysis/broadcastTranscriptWorkerProtocol";
 import {
   BROADCAST_TRANSCRIPT_ACTIVE_MODEL_REVISION,
@@ -153,12 +165,13 @@ import {
 } from "./analysis/contextAwareCandidateSelection";
 import {
   finalizeContextQualifiedCandidates,
+  selectCandidateDetailCandidateIds,
+  selectContextExcludedCandidateIds,
   type CandidateAiProjectionById,
 } from "./analysis/contextQualifiedFinalSelection";
 import { buildCandidatePassBContextPackets } from "./analysis/candidateContextPackets";
 import {
   createCandidatePassBVerificationReceipt,
-  candidatePassBReceiptMatchesContext,
   finalizeFullyVerifiedCandidates,
 } from "./analysis/candidateFinalVerification";
 import { buildBroadcastSummaryCitationPresentation } from "./analysis/broadcastSummaryCitations";
@@ -191,6 +204,7 @@ import {
   type CandidateRankingFingerprints,
 } from "./analysis/candidateRanking";
 import {
+  ANALYSIS_STAGES,
   createAnalysisRun,
   reduceAnalysisRun,
   type AnalysisRunState,
@@ -274,7 +288,10 @@ import {
   type AnalysisResultStore,
   type SourceCapabilitySnapshotRecord,
 } from "./storage/analysisResultStore";
-import { BROADCAST_CONTEXT_SESSION_SCHEMA_VERSION } from "./storage/broadcastContextSessionStore";
+import {
+  BROADCAST_CONTEXT_SESSION_SCHEMA_VERSION,
+  type StoredBroadcastTranscriptGap,
+} from "./storage/broadcastContextSessionStore";
 import {
   durableCoverageDisposition,
   DURABLE_AUDIO_GAP_ID,
@@ -294,6 +311,7 @@ import {
 } from "./storage/recoverableAnalysisResults";
 import {
   CANDIDATE_PASS_B_INSIGHT_SCHEMA_VERSION,
+  persistCandidatePassBInsightsWithReadback,
   type CandidatePassBInsightsRecord,
 } from "./storage/candidatePassBInsightStore";
 import type {
@@ -376,7 +394,21 @@ import {
   summarizeFinalVerificationGaps,
 } from "./app/finalVerificationGapSummary";
 import {
+  deriveCandidatePublicationGate,
+  deriveCandidateStageCommitGate,
+  selectCandidateDetailActionIds,
+} from "./app/candidatePublicationGate";
+import { selectCandidateVerificationCohort } from "./app/candidateVerificationCohort";
+import { selectBroadcastContextCandidateCohort } from "./app/broadcastContextCandidateCohort";
+import {
+  selectCandidatePassBAnalysisOutstandingIds,
+  selectCandidatePassBDurableIds,
+  selectCandidatePassBDurabilityOutstandingIds,
+} from "./app/candidatePassBDurability";
+import {
   canStartTranscriptRun,
+  transcriptGapRequiresExplicitBillingRetry,
+  transcriptIsSealedForContext,
   transcriptNeedsExplicitRetry,
   transcriptOperationKey,
   transcriptPhaseFor,
@@ -403,6 +435,7 @@ import {
   commitAnalysisStage,
   completeAnalysisJob,
   failAnalysisJob,
+  jobIdFor,
   pauseAnalysisJob,
   startAnalysisJob,
 } from "./app/analysisJobBridge";
@@ -421,12 +454,19 @@ type AnalysisSelectionSummary = DurableAnalysisSelectionSummary;
 type AnalysisCoverageSummary = DurableAnalysisCoverageSummary;
 type AnalysisGapApprovalEvidence = DurableAnalysisGapApprovalEvidence;
 
-const APP_VERSION = "0.8.6";
+const APP_VERSION = "0.8.7";
 const PERSISTENCE_SCHEMA_VERSION = "0.3.0";
 const SIGNAL_ENGINE_VERSION =
   "streamer-reaction-fast-pass-v5-chat-fallback-music-confirmation";
 const MAX_CHAT_FILE_BYTES = 32 * 1024 * 1024;
 const SIGNAL_GAP_POLICY_ID = DURABLE_SIGNAL_GAP_POLICY_ID;
+
+class CandidatePassBInsightPersistenceError extends Error {
+  public constructor(cause: unknown) {
+    super("Candidate Pass B artifacts were not durably verified.", { cause });
+    this.name = "CandidatePassBInsightPersistenceError";
+  }
+}
 
 function initialAiAttemptOrdinal(): number {
   // Terminal quota operation IDs live for six hours. A timestamp-backed
@@ -542,6 +582,10 @@ function App() {
     useState(initialAiAttemptOrdinal);
   const [broadcastTranscriptProgress, setBroadcastTranscriptProgress] =
     useState<BroadcastTranscriptWorkerProgress | null>(null);
+  const [
+    broadcastTranscriptRecoveryProgress,
+    setBroadcastTranscriptRecoveryProgress,
+  ] = useState<BroadcastTranscriptFragmentRecoveryProgress | null>(null);
   const [broadcastTranscriptExplorationCells, setBroadcastTranscriptExplorationCells] =
     useState<readonly BroadcastTranscriptExplorationCell[]>([]);
   const [broadcastTranscriptChapters, setBroadcastTranscriptChapters] =
@@ -608,6 +652,12 @@ function App() {
     useRef<CandidatePassBVerificationReceiptById>({});
   const candidatePassBInsightWriteChainRef = useRef<Promise<void>>(Promise.resolve());
   const candidatePassBInsightWriteEpochRef = useRef(0);
+  const [candidatePassBDurableInsights, setCandidatePassBDurableInsights] =
+    useState<CandidatePassBInsightsRecord | null>(null);
+  const [
+    candidatePassBInsightPersistenceStatus,
+    setCandidatePassBInsightPersistenceStatus,
+  ] = useState<"idle" | "pending" | "verified" | "failed">("idle");
   const [candidatePassBModelProgress, setCandidatePassBModelProgress] =
     useState<CandidatePassBModelProgress | null>(null);
   const [candidatePassBCandidateProgress, setCandidatePassBCandidateProgress] =
@@ -703,6 +753,8 @@ function App() {
   const candidatePassBStartPendingRef = useRef(false);
   const autoCandidatePassBSourceRef = useRef<string | null>(null);
   const autoBroadcastTranscriptSourceRef = useRef<string | null>(null);
+  const sealedBroadcastTranscriptSourceRef = useRef<string | null>(null);
+  const allowAmbiguousTranscriptRetryRef = useRef(false);
   const autoBroadcastContextSourceRef = useRef<string | null>(null);
   const autoSemanticLeadRefinementSourceRef = useRef<string | null>(null);
   const wholeContextRetryPendingRef = useRef(false);
@@ -842,23 +894,28 @@ function App() {
     return () => globalThis.clearTimeout(focusTimer);
   }, [candidates.length, selectionResult]);
 
-  const replaceSourceFile = useCallback((file: File | null): void => {
+  const replaceSourceFile = useCallback((
+    file: File | null,
+    options: { readonly preserveAnalysisArtifacts?: boolean } = {},
+  ): void => {
     if (!isMounted.current) {
       return;
     }
     clipRenderAbortController.current?.abort();
     clipRenderAbortController.current = null;
-    candidateTimelineFramesRef.current = {};
-    setCandidateTimelineFramesById({});
-    candidatePassBVerificationReceiptRef.current = {};
-    setCandidatePassBVerificationReceiptById({});
-    setCandidateTimelineScorePoints([]);
-    setTimelineSemanticChapters([]);
-    setTimelineSemanticChapterRevealCount(0);
-    setTimelineInspectionTarget(null);
-    setBroadcastTranscriptExplorationCells([]);
-    setYouTubeCaptionTrack(null);
-    youtubeCaptionTrackRef.current = null;
+    if (options.preserveAnalysisArtifacts !== true) {
+      candidateTimelineFramesRef.current = {};
+      setCandidateTimelineFramesById({});
+      candidatePassBVerificationReceiptRef.current = {};
+      setCandidatePassBVerificationReceiptById({});
+      setCandidateTimelineScorePoints([]);
+      setTimelineSemanticChapters([]);
+      setTimelineSemanticChapterRevealCount(0);
+      setTimelineInspectionTarget(null);
+      setBroadcastTranscriptExplorationCells([]);
+      setYouTubeCaptionTrack(null);
+      youtubeCaptionTrackRef.current = null;
+    }
     setClipDownloadStatusById({});
     setClipDownloadErrorById({});
     setClipDownloadProgressById({});
@@ -1022,6 +1079,9 @@ function App() {
                   : candidatePassBRun.status === "cancelled"
                     ? "AI 분석 중지"
                     : "AI 분석 실패";
+  const candidatePassBEnvelopeFailed =
+    candidatePassBRun?.status === "failed" ||
+    candidatePassBRun?.status === "cancelled";
   const candidateAudioEventBusy =
     candidateAudioEventStartPending ||
     (candidateAudioEventRun !== null &&
@@ -1147,6 +1207,44 @@ function App() {
       openedRecoveredResult?.finalResult.result.input.source.durationMs ??
       0,
   );
+  const broadcastContextCandidateCohort = useMemo(
+    () => selectBroadcastContextCandidateCohort(candidates),
+    [candidates],
+  );
+  const broadcastContextCandidateIdSet = useMemo(
+    () => new Set(broadcastContextCandidateCohort.map(({ id }) => id)),
+    [broadcastContextCandidateCohort],
+  );
+  const explicitMusicOnlyCandidateIds = useMemo(
+    () =>
+      new Set(
+        youtubeCaptionTrack === null
+          ? []
+          : candidates
+              .filter((candidate) =>
+                isExplicitMusicOnlyCaption(
+                  captionTextForRange(
+                    youtubeCaptionTrack.events,
+                    Math.round(candidate.startMs),
+                    Math.round(candidate.endMs),
+                  ),
+                ),
+              )
+              .map((candidate) => candidate.id),
+      ),
+    [candidates, youtubeCaptionTrack],
+  );
+  const contextExcludedCandidateIds = useMemo(
+    () =>
+      new Set(
+        selectContextExcludedCandidateIds(
+          candidates,
+          candidateAiProjectionById,
+          explicitMusicOnlyCandidateIds,
+        ),
+      ),
+    [candidateAiProjectionById, candidates, explicitMusicOnlyCandidateIds],
+  );
   const candidatePassBContextById = useMemo(
     () =>
       broadcastContextStatus === "completed" &&
@@ -1169,19 +1267,137 @@ function App() {
       youtubeCaptionTrack,
     ],
   );
+  const candidateDetailCandidateIds = useMemo(
+    () => {
+      const queuedCandidateIds = new Set(
+        selectCandidateDetailCandidateIds(
+          candidates,
+          candidateAiProjectionById,
+          explicitMusicOnlyCandidateIds,
+        ),
+      );
+      return candidates
+        .filter(
+          (candidate) =>
+            queuedCandidateIds.has(candidate.id) &&
+            candidatePassBContextById[candidate.id] !== undefined,
+        )
+        .sort(
+          (left, right) =>
+            Number(right.reviewState === "approved") -
+              Number(left.reviewState === "approved") ||
+            right.score - left.score ||
+            left.peakMs - right.peakMs ||
+            left.id.localeCompare(right.id),
+        )
+        .slice(0, 12)
+        .map(({ id }) => id);
+    },
+    [
+      candidateAiProjectionById,
+      candidatePassBContextById,
+      candidates,
+      explicitMusicOnlyCandidateIds,
+    ],
+  );
+  const candidateDetailCandidateIdSet = useMemo(
+    () => new Set(candidateDetailCandidateIds),
+    [candidateDetailCandidateIds],
+  );
+  const automaticCandidateDetailIds = useMemo(() => {
+    return selectCandidatePassBAnalysisOutstandingIds({
+      candidateIds: candidateDetailCandidateIds,
+      insightByCandidateId: candidateGeminiInsightById,
+      receiptByCandidateId: candidatePassBVerificationReceiptById,
+      contextByCandidateId: candidatePassBContextById,
+    });
+  }, [
+    candidateDetailCandidateIds,
+    candidateGeminiInsightById,
+    candidatePassBContextById,
+    candidatePassBVerificationReceiptById,
+  ]);
+  const candidatePassBDurabilityOutstandingIds = useMemo(
+    () =>
+      selectCandidatePassBDurabilityOutstandingIds({
+        candidateIds: candidateDetailCandidateIds,
+        record: candidatePassBDurableInsights,
+        contextByCandidateId: candidatePassBContextById,
+      }),
+    [
+      candidateDetailCandidateIds,
+      candidatePassBContextById,
+      candidatePassBDurableInsights,
+    ],
+  );
+  const candidatePassBDurableIds = useMemo(
+    () =>
+      selectCandidatePassBDurableIds({
+        candidateIds: candidateDetailCandidateIds,
+        record: candidatePassBDurableInsights,
+        contextByCandidateId: candidatePassBContextById,
+      }),
+    [
+      candidateDetailCandidateIds,
+      candidatePassBContextById,
+      candidatePassBDurableInsights,
+    ],
+  );
+  const candidateDetailPipelineOutstandingIds = useMemo(
+    () =>
+      [...new Set([
+        ...automaticCandidateDetailIds,
+        ...candidatePassBDurabilityOutstandingIds,
+      ])],
+    [automaticCandidateDetailIds, candidatePassBDurabilityOutstandingIds],
+  );
+  const candidatePassBPersistenceRetryNeeded =
+    candidatePassBInsightPersistenceStatus === "failed" &&
+    automaticCandidateDetailIds.length === 0 &&
+    candidatePassBDurabilityOutstandingIds.length > 0;
+  const candidatePassBActionIds = selectCandidateDetailActionIds({
+    candidateIds: candidateDetailCandidateIds,
+    outstandingIds: automaticCandidateDetailIds,
+    runStatus: candidatePassBRun?.status ?? null,
+  });
+  const candidatePassBNeedsRecovery =
+    (candidatePassBEnvelopeFailed &&
+      candidateDetailPipelineOutstandingIds.length > 0) ||
+    candidatePassBPersistenceRetryNeeded;
+  const finalVerificationCandidates = useMemo(
+    () =>
+      selectCandidateVerificationCohort({
+        candidates,
+        contextScheduledCandidateIds: broadcastContextCandidateIdSet,
+        contextExcludedCandidateIds,
+        detailScheduledCandidateIds: candidateDetailCandidateIdSet,
+        contextByCandidateId: candidatePassBContextById,
+      }),
+    [
+      broadcastContextCandidateIdSet,
+      candidateDetailCandidateIdSet,
+      candidatePassBContextById,
+      candidates,
+      contextExcludedCandidateIds,
+    ],
+  );
   const finalCandidateVerification = useMemo(
     () =>
       finalizeFullyVerifiedCandidates({
-        candidates,
+        candidates: finalVerificationCandidates,
+        contextExcludedCandidateIds,
         contextByCandidateId: candidatePassBContextById,
-        insightByCandidateId: candidateGeminiInsightById,
-        receiptByCandidateId: candidatePassBVerificationReceiptById,
+        insightByCandidateId: candidatePassBDurableInsights?.insightById ?? {},
+        receiptByCandidateId:
+          candidatePassBDurableInsights?.verificationReceiptById ?? {},
+        completeEvidenceCandidateIds: candidatePassBDurableIds,
       }),
     [
-      candidateGeminiInsightById,
       candidatePassBContextById,
-      candidatePassBVerificationReceiptById,
-      candidates,
+      candidatePassBDurableIds,
+      candidatePassBDurableInsights,
+      contextExcludedCandidateIds,
+      finalVerificationCandidates,
     ],
   );
   const orderedCandidates = useMemo(
@@ -1450,7 +1666,7 @@ function App() {
     readonly BroadcastContextCandidateInput[]
   >(
     () =>
-      candidates.slice(0, 12).map((candidate) => {
+      broadcastContextCandidateCohort.map((candidate) => {
         const narrative = buildHighlightNarrative(candidate);
         const evidence = candidatePassBEvidenceById[candidate.id];
         const insight = candidateGeminiInsightById[candidate.id];
@@ -1493,7 +1709,7 @@ function App() {
       broadcastTranscriptChapters,
       candidateGeminiInsightById,
       candidatePassBEvidenceById,
-      candidates,
+      broadcastContextCandidateCohort,
       youtubeCaptionTrack,
     ],
   );
@@ -1501,60 +1717,6 @@ function App() {
     () => compactBroadcastContextChapters(broadcastTranscriptChapters),
     [broadcastTranscriptChapters],
   );
-  const explicitMusicOnlyCandidateIds = useMemo(
-    () =>
-      new Set(
-        youtubeCaptionTrack === null
-          ? []
-          : candidates
-              .filter((candidate) =>
-                isExplicitMusicOnlyCaption(
-                  captionTextForRange(
-                    youtubeCaptionTrack.events,
-                    Math.round(candidate.startMs),
-                    Math.round(candidate.endMs),
-                  ),
-                ),
-              )
-              .map((candidate) => candidate.id),
-      ),
-    [candidates, youtubeCaptionTrack],
-  );
-  const candidateDetailCandidateIds = useMemo(
-    () =>
-      candidates
-        .filter(
-          (candidate) =>
-            candidatePassBContextById[candidate.id] !== undefined &&
-            !explicitMusicOnlyCandidateIds.has(candidate.id),
-        )
-        .sort(
-          (left, right) =>
-            right.score - left.score ||
-            left.peakMs - right.peakMs ||
-            left.id.localeCompare(right.id),
-        )
-        .slice(0, 12)
-        .map(({ id }) => id),
-    [candidatePassBContextById, candidates, explicitMusicOnlyCandidateIds],
-  );
-  const automaticCandidateDetailIds = useMemo(() => {
-    return candidateDetailCandidateIds.filter(
-      (candidateId) => {
-        const receipt = candidatePassBVerificationReceiptById[candidateId];
-        const context = candidatePassBContextById[candidateId];
-        return (
-          receipt === undefined ||
-          context === undefined ||
-          !candidatePassBReceiptMatchesContext(receipt, context)
-        );
-      },
-    );
-  }, [
-    candidateDetailCandidateIds,
-    candidatePassBContextById,
-    candidatePassBVerificationReceiptById,
-  ]);
   const candidateDetailCostEstimate = useMemo(() => {
     const detailIds = new Set(candidateDetailCandidateIds.slice(0, 12));
     const detailCandidates = candidates.filter((candidate) => detailIds.has(candidate.id));
@@ -1570,8 +1732,7 @@ function App() {
     );
   }, [candidateDetailCandidateIds, candidates]);
   const broadcastTranscriptProgressRatio =
-    broadcastTranscriptStatus === "completed" ||
-    broadcastTranscriptStatus === "completedWithGaps"
+    broadcastTranscriptStatus === "completed"
       ? 1
       : broadcastTranscriptProgress === null || broadcastTranscriptProgress.totalCount === 0
         ? 0
@@ -1650,6 +1811,12 @@ function App() {
   const blockedByPipelineGap = finalVerificationGapSummary.some(({ gap }) =>
     isPipelineGap(gap),
   );
+  const blockedByCandidateDetailGap = finalVerificationGapSummary.some(
+    ({ gap }) =>
+      gap === "detail-result-missing" ||
+      gap === "verification-receipt-missing" ||
+      gap === "evidence-incomplete",
+  );
   const emptyResultReason: "analysis-incomplete" | "no-verified-candidates" =
     wholeContextPhaseFailed ||
     broadcastContextResult === null ||
@@ -1657,15 +1824,6 @@ function App() {
     blockedByPipelineGap
       ? "analysis-incomplete"
       : "no-verified-candidates";
-  const candidatePassBTerminal =
-    candidatePassBRun !== null &&
-    ["completed", "completedWithGaps", "cancelled", "failed"].includes(
-      candidatePassBRun.status,
-    );
-  const detailedReviewPhaseActive =
-    semanticLeadRefinementStatus === "running" || candidatePassBBusy;
-  const detailedReviewPhaseFailed =
-    semanticLeadRefinementStatus === "failed" || candidatePassBRun?.status === "failed";
   /**
    * Candidate detail is the stage that produces the multimodal reading every
    * final candidate is gated on, so the phase is not complete until it has
@@ -1673,18 +1831,33 @@ function App() {
    * published the final list while detail analysis had not yet started, and
    * every candidate was dropped for a result that was still seconds away.
    */
-  const candidateDetailSettled =
-    candidateDetailCandidateIds.length === 0 || candidatePassBTerminal;
-  const detailedReviewPhaseComplete =
-    !detailedReviewPhaseActive &&
-    !detailedReviewPhaseFailed &&
-    candidateDetailSettled &&
-    ((wholeContextPhaseComplete && semanticLeadRefinementStatus === "completed") ||
-      wholeContextPhaseFailed);
-  const finalSelectionPhaseReady =
-    detailedReviewPhaseComplete || detailedReviewPhaseFailed;
+  const { finalSelectionReady: finalSelectionPhaseReady } =
+    deriveCandidatePublicationGate({
+      candidateDetailOutstandingCount:
+        candidateDetailPipelineOutstandingIds.length,
+      candidatePassBStatus: candidatePassBRun?.status ?? null,
+      candidatePassBBusy,
+      semanticLeadRefinementStatus,
+      wholeContextComplete: wholeContextPhaseComplete,
+      wholeContextFailed: wholeContextPhaseFailed,
+    });
   const contextualCandidatePublicationReady =
     finalSelectionPhaseReady && timelineTopicRevealComplete;
+  const candidateStageCommitGate = useMemo(
+    () =>
+      deriveCandidateStageCommitGate({
+        wholeContextComplete: wholeContextPhaseComplete,
+        finalSelectionReady: finalSelectionPhaseReady,
+        publicationReady: contextualCandidatePublicationReady,
+        hasPipelineGap: blockedByPipelineGap,
+      }),
+    [
+      blockedByPipelineGap,
+      contextualCandidatePublicationReady,
+      finalSelectionPhaseReady,
+      wholeContextPhaseComplete,
+    ],
+  );
 
   /*
    * 남은 세 스테이지는 `runSignalAnalysis` 밖에서 끝난다 — 전체 맥락 탐색, 후보
@@ -1693,8 +1866,9 @@ function App() {
    *
    * 이미 확정한 것은 다시 부르지 않는다. 전이표가 중복을 거부하므로 동작은
    * 안전하지만, 렌더마다 저장소에 쓰기를 날리게 된다.
-   */
+  */
   const committedStagesRef = useRef<Set<string>>(new Set());
+  const stageCommitChainRef = useRef<Promise<void>>(Promise.resolve());
   /**
    * 스테이지 실측. `STAGE_WEIGHTS` 는 추정이고, 추정으로 최적화하면 엉뚱한 데를
    * 판다. 확정 지점이 이미 경계이므로 그 사이 시간을 재는 것으로 충분하다.
@@ -1715,49 +1889,81 @@ function App() {
       return;
     }
     const store = getResultStore();
-    const commitOnce = (stage: AnalysisStage, done: boolean): void => {
-      const key = `${jobInputSignature}:${stage}`;
-      if (!done || committedStagesRef.current.has(key)) {
-        return;
-      }
-      committedStagesRef.current.add(key);
-      stageTimerRef.current?.mark(stage, Date.now());
-      setCommittedAnalysisStage(stage);
-      void commitAnalysisStage(store, jobInputSignature, stage);
-    };
+    const resultIsUsable = orderedCandidates.length > 0;
+    stageCommitChainRef.current = stageCommitChainRef.current
+      .catch(() => undefined)
+      .then(async () => {
+        const commitOnce = async (
+          stage: AnalysisStage,
+          done: boolean,
+        ): Promise<boolean> => {
+          const key = `${jobInputSignature}:${stage}`;
+          if (committedStagesRef.current.has(key)) return true;
+          if (!done) return false;
+          const outcome = await commitAnalysisStage(store, jobInputSignature, stage);
+          if (!outcome.ok) {
+            const persisted = await store.getJob(jobIdFor(jobInputSignature));
+            const persistedStage = persisted?.job.lastCommittedStage ?? null;
+            const persistedStageIndex =
+              persistedStage === null ? -1 : ANALYSIS_STAGES.indexOf(persistedStage);
+            if (persistedStageIndex < ANALYSIS_STAGES.indexOf(stage)) return false;
+          }
+          committedStagesRef.current.add(key);
+          stageTimerRef.current?.mark(stage, Date.now());
+          if (isMounted.current) setCommittedAnalysisStage(stage);
+          return true;
+        };
 
-    // 맥락 탐색은 실패해도 파이프라인이 계속 간다. 그때도 이 단계는 지나간
-    // 것이므로 확정한다 — 안 하면 뒤 스테이지가 순서 위반으로 전부 막힌다.
-    commitOnce("broadcastContext", wholeContextPhaseComplete || wholeContextPhaseFailed);
-    commitOnce("deepPass", finalSelectionPhaseReady);
-    commitOnce("publication", contextualCandidatePublicationReady);
+        /*
+         * Stage transitions are serialized. A recovered session can make all
+         * three flags true in one render; firing three IndexedDB transitions in
+         * parallel would let deepPass/publication race ahead of their parent.
+         */
+        if (
+          !(await commitOnce(
+            "broadcastContext",
+            candidateStageCommitGate.broadcastContext,
+          ))
+        ) return;
+        if (!(await commitOnce("deepPass", candidateStageCommitGate.deepPass))) return;
+        if (
+          !(await commitOnce(
+            "publication",
+            candidateStageCommitGate.publication,
+          ))
+        ) {
+          return;
+        }
 
-    /*
-     * 작업 완료는 **마지막 스테이지가 확정된 뒤**다. 최종 결과를 저장하는 시점이
-     * 아니다 — 그때는 아직 맥락 탐색과 정밀 분석이 남아 있고, 거기서 완료로
-     * 굳히면 재개할 것이 없는 반쪽 결과가 캐시에 들어간다.
-     *
-     * 후보가 하나도 없으면 완료가 거부된다(`quality_not_usable`). 그래야 빈
-     * 결과가 완료로 굳어 캐시가 영원히 그것을 되돌려주는 일이 없다.
-     */
-    if (contextualCandidatePublicationReady) {
-      const key = `${jobInputSignature}:complete`;
-      if (!committedStagesRef.current.has(key)) {
-        committedStagesRef.current.add(key);
-        void completeAnalysisJob(store, jobInputSignature, candidates.length > 0);
+        /*
+         * Pipeline gaps remain unfinished. A fully verified empty broadcast is
+         * a valid terminal result and is recorded separately from a positive
+         * result by the job state machine. The completion key is written only
+         * after durable acceptance.
+         */
+        const completionKey = `${jobInputSignature}:complete`;
+        if (
+          !candidateStageCommitGate.completion ||
+          committedStagesRef.current.has(completionKey)
+        ) {
+          return;
+        }
+        const completion = await completeAnalysisJob(
+          store,
+          jobInputSignature,
+          resultIsUsable,
+        );
+        if (!completion.ok) return;
+        committedStagesRef.current.add(completionKey);
         const timer = stageTimerRef.current;
         if (timer !== null) {
           console.info(formatStageTimingReport(timer.report()));
         }
-      }
-    }
+      });
   }, [
     jobInputSignature,
-    wholeContextPhaseComplete,
-    wholeContextPhaseFailed,
-    finalSelectionPhaseReady,
-    contextualCandidatePublicationReady,
-    candidates.length,
+    candidateStageCommitGate,
+    orderedCandidates.length,
     getResultStore,
   ]);
   const liveAnalysisStageNumber =
@@ -1817,10 +2023,21 @@ function App() {
         ? `${analysisProgress.completedSampleCount.toLocaleString("ko-KR")}/${analysisProgress.totalSampleCount.toLocaleString("ko-KR")}`
         : ui("준비 중", "Preparing");
   const transcriptTrackDone =
-    broadcastTranscriptStatus === "completed" ||
-    broadcastTranscriptStatus === "completedWithGaps";
+    broadcastTranscriptStatus === "completed";
   const transcriptTrackStatus = transcriptTrackDone
     ? ui("완료", "Complete")
+    : broadcastTranscriptRecoveryProgress?.waitingBeforeRetryMs !== null &&
+        broadcastTranscriptRecoveryProgress?.waitingBeforeRetryMs !== undefined
+      ? ui(
+          `실패 조각 ${broadcastTranscriptRecoveryProgress.remainingCount}개 재시도 대기`,
+          `Waiting to retry ${broadcastTranscriptRecoveryProgress.remainingCount} failed fragments`,
+        )
+      : broadcastTranscriptRecoveryProgress !== null &&
+          broadcastTranscriptRecoveryProgress.attemptNumber > 1
+        ? ui(
+            `실패 조각 복구 ${broadcastTranscriptRecoveryProgress.attemptNumber}/${broadcastTranscriptRecoveryProgress.maximumAttemptCount} · ${broadcastTranscriptRecoveryProgress.remainingCount}개`,
+            `Fragment recovery ${broadcastTranscriptRecoveryProgress.attemptNumber}/${broadcastTranscriptRecoveryProgress.maximumAttemptCount} · ${broadcastTranscriptRecoveryProgress.remainingCount} remaining`,
+          )
     : broadcastTranscriptProgress !== null
       ? ui(
           `표본 ${Math.min(broadcastTranscriptProgress.totalCount, broadcastTranscriptProgress.completedCount + 1)}/${broadcastTranscriptProgress.totalCount}${transcriptConcurrency === null ? "" : ` · 동시 ${transcriptConcurrency}`}`,
@@ -2084,6 +2301,8 @@ function App() {
     setCandidateGeminiInsightById({});
     setCandidatePassBVerificationReceiptById({});
     setCandidateTimelineFramesById({});
+    setCandidatePassBDurableInsights(null);
+    setCandidatePassBInsightPersistenceStatus("idle");
     setCandidatePassBStartPending(false);
     setCandidatePassBModelProgress(null);
     setCandidatePassBCandidateProgress(null);
@@ -2169,10 +2388,13 @@ function App() {
     semanticLeadRefinementAbortController.current?.abort();
     semanticLeadRefinementAbortController.current = null;
     autoBroadcastTranscriptSourceRef.current = null;
+    sealedBroadcastTranscriptSourceRef.current = null;
+    allowAmbiguousTranscriptRetryRef.current = false;
     autoBroadcastContextSourceRef.current = null;
     autoSemanticLeadRefinementSourceRef.current = null;
     setBroadcastTranscriptStatus("idle");
     setBroadcastTranscriptProgress(null);
+    setBroadcastTranscriptRecoveryProgress(null);
     setBroadcastTranscriptExplorationCells([]);
     setBroadcastTranscriptChapters([]);
     setYouTubeCaptionTrack(null);
@@ -2254,7 +2476,7 @@ function App() {
         }
         resetDownstream();
       } else if (previousRecoveryBinding === null) {
-        replaceSourceFile(null);
+        replaceSourceFile(null, { preserveAnalysisArtifacts: true });
         setPreflight(null);
         setSourceContentFingerprint(null);
       }
@@ -2358,7 +2580,9 @@ function App() {
         });
         setPreflight(result);
         setSourceContentFingerprint(fingerprint.value);
-        replaceSourceFile(isUsableVideo ? file : null);
+        replaceSourceFile(isUsableVideo ? file : null, {
+          preserveAnalysisArtifacts: recoveryTarget !== null,
+        });
         setSourceCheck(machine);
         if (!isUsableVideo) {
           setSourceError("영상 길이를 읽을 수 있는 비디오 파일이 필요해요. 오디오 파일만으로는 아직 시작할 수 없어요.");
@@ -3367,8 +3591,11 @@ function App() {
       broadcastTranscriptAbortController.current.abort();
       broadcastTranscriptAbortController.current = null;
       autoBroadcastTranscriptSourceRef.current = null;
+      sealedBroadcastTranscriptSourceRef.current = null;
+      allowAmbiguousTranscriptRetryRef.current = false;
       setBroadcastTranscriptStatus("idle");
       setBroadcastTranscriptProgress(null);
+      setBroadcastTranscriptRecoveryProgress(null);
       setBroadcastTranscriptError(null);
     }
   };
@@ -3425,25 +3652,63 @@ function App() {
         : {}),
       recordedAt: new Date().toISOString(),
     };
+    if (
+      isMounted.current &&
+      candidatePassBIdentity.current?.analysisRunId === runId
+    ) {
+      setCandidatePassBInsightPersistenceStatus("pending");
+    }
     candidatePassBInsightWriteChainRef.current = candidatePassBInsightWriteChainRef.current
       .catch(() => undefined)
       .then(async () => {
         if (candidatePassBInsightWriteEpochRef.current !== writeEpoch) {
           return;
         }
-        await getResultStore().putCandidatePassBInsights(record);
+        const restored = await persistCandidatePassBInsightsWithReadback(
+          getResultStore(),
+          record,
+        );
+        if (
+          candidatePassBInsightWriteEpochRef.current === writeEpoch &&
+          candidatePassBIdentity.current?.analysisRunId === runId
+        ) {
+          if (isMounted.current) {
+            setCandidatePassBDurableInsights(restored);
+            setCandidatePassBInsightPersistenceStatus("verified");
+          }
+        }
       })
-      .catch(() => {
+      .catch((error: unknown) => {
         if (isMounted.current && candidatePassBIdentity.current?.analysisRunId === runId) {
+          setCandidatePassBInsightPersistenceStatus("failed");
           setCandidatePassBError(
-            "AI 결과를 브라우저 기록에 저장하지 못했어요. 현재 화면의 결과는 계속 확인할 수 있어요.",
+            "AI 결과를 저장하고 다시 확인하지 못했어요. 현재 화면에서는 볼 수 있지만 저장 확인 전에는 최종 후보로 올리지 않습니다.",
           );
         }
+        throw new CandidatePassBInsightPersistenceError(error);
       });
   };
 
   const flushCandidatePassBInsightPersistence = async (): Promise<void> => {
-    await candidatePassBInsightWriteChainRef.current.catch(() => undefined);
+    await candidatePassBInsightWriteChainRef.current;
+  };
+
+  const retryCandidatePassBInsightPersistence = async (): Promise<void> => {
+    queueCandidatePassBInsightPersistence(
+      candidatePassBEvidenceRef.current,
+      candidateGeminiInsightRef.current,
+      firstTimelineFrameById(candidateTimelineFramesRef.current),
+      candidatePassBModelByIdRef.current,
+      candidatePassBVerificationReceiptRef.current,
+    );
+    try {
+      await flushCandidatePassBInsightPersistence();
+      if (isMounted.current) {
+        setCandidatePassBError(null);
+      }
+    } catch {
+      // The queued write already records a visible, retryable persistence error.
+    }
   };
 
   const runCandidatePassB = async (
@@ -3526,6 +3791,10 @@ function App() {
     const videoFramesByCandidateId = new Map<
       string,
       readonly CandidatePassBVideoFrame[]
+    >();
+    const candidateFailureReasonById = new Map<
+      string,
+      "visual_evidence_incomplete"
     >();
     const identity: CandidatePassBWorkerIdentity = {
       sessionId: appSessionId,
@@ -3653,7 +3922,7 @@ function App() {
         }
         return [];
       });
-      const workerResults = await mapWithConcurrency(
+      const workerSettlements = await mapSettledWithConcurrency(
         targets,
         2,
         async (target, targetIndex) => {
@@ -3769,6 +4038,46 @@ function App() {
               text: segment.text,
             })),
           );
+          const context = candidatePassBContextById[result.candidateId];
+          const frames = videoFramesByCandidateId.get(result.candidateId) ?? [];
+          const thumbnail =
+            candidateTimelineFramesRef.current[result.candidateId]?.[0];
+          const receipt =
+            context === undefined || thumbnail === undefined
+              ? null
+              : createCandidatePassBVerificationReceipt(
+                  context,
+                  frames,
+                  thumbnail.timestampMs,
+                );
+          if (receipt === null) {
+            candidateFailureReasonById.set(
+              result.candidateId,
+              "visual_evidence_incomplete",
+            );
+            throw new Error(
+              "The candidate result arrived without a complete context, frame and thumbnail receipt.",
+            );
+          }
+          const nextEvidence = mergeCandidatePassBEvidence(
+            candidatePassBEvidenceRef.current,
+            evidence,
+          );
+          const nextInsights = {
+            ...candidateGeminiInsightRef.current,
+            [result.candidateId]: result.insight,
+          };
+          const nextModels: CandidatePassBModelById = {
+            ...candidatePassBModelByIdRef.current,
+            [result.candidateId]: {
+              id: result.model.id,
+              revision: result.model.revision,
+            },
+          };
+          const nextReceipts = {
+            ...candidatePassBVerificationReceiptRef.current,
+            [result.candidateId]: receipt,
+          };
           const accepted =
             evidence.status !== "fast-pass-fallback"
               ? applyCurrentWorkerEvent({
@@ -3788,42 +4097,6 @@ function App() {
             throw new Error("The Pass B candidate result was rejected.");
           }
           if (isCurrentOperation()) {
-            const context = candidatePassBContextById[result.candidateId];
-            const frames = videoFramesByCandidateId.get(result.candidateId) ?? [];
-            const thumbnail =
-              candidateTimelineFramesRef.current[result.candidateId]?.[0];
-            const receipt =
-              context === undefined || thumbnail === undefined
-                ? null
-                : createCandidatePassBVerificationReceipt(
-                    context,
-                    frames,
-                    thumbnail.timestampMs,
-                  );
-            if (receipt === null) {
-              throw new Error(
-                "The candidate result arrived without a complete context, frame and thumbnail receipt.",
-              );
-            }
-            const nextEvidence = mergeCandidatePassBEvidence(
-              candidatePassBEvidenceRef.current,
-              evidence,
-            );
-            const nextInsights = {
-              ...candidateGeminiInsightRef.current,
-              [result.candidateId]: result.insight,
-            };
-            const nextModels: CandidatePassBModelById = {
-              ...candidatePassBModelByIdRef.current,
-              [result.candidateId]: {
-                id: result.model.id,
-                revision: result.model.revision,
-              },
-            };
-            const nextReceipts = {
-              ...candidatePassBVerificationReceiptRef.current,
-              [result.candidateId]: receipt,
-            };
             candidatePassBEvidenceRef.current = nextEvidence;
             candidateGeminiInsightRef.current = nextInsights;
             candidatePassBModelByIdRef.current = nextModels;
@@ -3836,6 +4109,7 @@ function App() {
               nextInsights,
               firstTimelineFrameById(candidateTimelineFramesRef.current),
               nextModels,
+              nextReceipts,
             );
           }
         },
@@ -3924,20 +4198,60 @@ function App() {
       if (!isCurrentOperation()) {
         return;
       }
-      const workerSummary = workerResults.reduce(
-        (summary, result) => ({
-          requestedCount: summary.requestedCount + result.summary.requestedCount,
-          completedCount: summary.completedCount + result.summary.completedCount,
-          gapCount: summary.gapCount + result.summary.gapCount,
-        }),
-        { requestedCount: 0, completedCount: 0, gapCount: 0 },
-      );
+      for (const [settlementIndex, settlement] of workerSettlements.entries()) {
+        if (settlement.status === "fulfilled") continue;
+        const error = settlement.reason as unknown;
+        if (
+          controller.signal.aborted ||
+          (error instanceof CandidatePassBWorkerError && error.code === "ABORTED")
+        ) {
+          throw error instanceof Error
+            ? error
+            : new CandidatePassBWorkerError(
+                "ABORTED",
+                "The Pass B candidate operation was aborted.",
+              );
+        }
+        const target = targets[settlementIndex]!;
+        const outcome = candidatePassBMachine.current?.candidateOutcomes.find(
+          ({ candidateId }) => candidateId === target.candidateId,
+        );
+        if (
+          outcome?.status === "pending" &&
+          !applyCurrentWorkerEvent({
+            type: "CANDIDATE_FAILED",
+            candidateId: target.candidateId,
+            expectedProposalRevision: 0,
+            reasonCode:
+              candidateFailureReasonById.get(target.candidateId) ??
+              "worker_candidate_failed",
+          })
+        ) {
+          throw new CandidatePassBWorkerError(
+            "WORKER_MESSAGE_ERROR",
+            "A failed Pass B candidate could not be isolated from the remaining batch.",
+          );
+        }
+      }
+      const runBeforeCompletion = candidatePassBMachine.current;
+      if (runBeforeCompletion?.status !== "finalizing") {
+        throw new CandidatePassBWorkerError(
+          "WORKER_MESSAGE_ERROR",
+          "Pass B reached completion before every candidate had a terminal disposition.",
+        );
+      }
+      const resultCount = runBeforeCompletion.candidateOutcomes.filter(
+        (outcome) =>
+          outcome.status !== "pending" &&
+          outcome.workerDisposition === "result",
+      ).length;
+      const gapCount = runBeforeCompletion.candidateOutcomes.length - resultCount;
       if (
         !applyCurrentWorkerEvent({
           type: "RUN_COMPLETED",
-          requestedCount: workerSummary.requestedCount,
-          resultCount: workerSummary.completedCount,
-          gapCount: workerSummary.gapCount,
+          requestedCount: runBeforeCompletion.candidateOutcomes.length,
+          resultCount,
+          gapCount,
         })
       ) {
         throw new CandidatePassBWorkerError(
@@ -3984,9 +4298,15 @@ function App() {
           reasonCode: candidatePassBRunFailureReason(error),
         });
       }
-      setCandidatePassBError(explainCandidatePassBError(error));
+      if (!(error instanceof CandidatePassBInsightPersistenceError)) {
+        setCandidatePassBError(explainCandidatePassBError(error));
+      }
     } finally {
-      await flushCandidatePassBInsightPersistence();
+      try {
+        await flushCandidatePassBInsightPersistence();
+      } catch {
+        // Completion already failed closed above; keep cleanup deterministic.
+      }
       if (isMounted.current) {
         setCandidatePassBActiveCandidateIds([]);
       }
@@ -5071,9 +5391,12 @@ function App() {
         broadcastTranscriptAbortController.current?.abort();
         broadcastTranscriptAbortController.current = null;
         autoBroadcastTranscriptSourceRef.current = null;
+        sealedBroadcastTranscriptSourceRef.current = null;
+        allowAmbiguousTranscriptRetryRef.current = true;
         setBroadcastTranscriptAttemptOrdinal((current) => current + 1);
         setBroadcastTranscriptStatus("idle");
         setBroadcastTranscriptProgress(null);
+        setBroadcastTranscriptRecoveryProgress(null);
         setBroadcastTranscriptError(null);
       }
     })().finally(() => {
@@ -5138,10 +5461,13 @@ function App() {
     semanticLeadRefinementAbortController.current?.abort();
     semanticLeadRefinementAbortController.current = null;
     autoBroadcastTranscriptSourceRef.current = null;
+    sealedBroadcastTranscriptSourceRef.current = null;
+    allowAmbiguousTranscriptRetryRef.current = false;
     autoBroadcastContextSourceRef.current = null;
     autoSemanticLeadRefinementSourceRef.current = null;
     setBroadcastTranscriptStatus("idle");
     setBroadcastTranscriptProgress(null);
+    setBroadcastTranscriptRecoveryProgress(null);
     setBroadcastTranscriptChapters([]);
     setYouTubeCaptionTrack(null);
     youtubeCaptionTrackRef.current = null;
@@ -5235,6 +5561,10 @@ function App() {
     setCandidateGeminiInsightById(recoveredGeminiInsights);
     setCandidateTimelineFramesById(recoveredTimelineFrames);
     setCandidatePassBVerificationReceiptById(recoveredVerificationReceipts);
+    setCandidatePassBDurableInsights(recoveredPassBInsights);
+    setCandidatePassBInsightPersistenceStatus(
+      recoveredPassBInsights === null ? "idle" : "verified",
+    );
     resetCandidateRanking(recoveredCandidates);
     setLastExportFormat(null);
     setCopyStatus("idle");
@@ -5255,9 +5585,19 @@ function App() {
         savedSession === null ||
         savedSession.inputSignature !== recovered.terminal.inputSignature ||
         savedSession.sourceDurationMs !==
-          recovered.finalResult.result.input.source.durationMs ||
-        savedSession.contextResultJson === null
+          recovered.finalResult.result.input.source.durationMs
       ) {
+        setBroadcastContextStatus("idle");
+        return;
+      }
+      setBroadcastTranscriptChapters(savedSession.chapters);
+      if (savedSession.gapChunkIds.length > 0) {
+        setBroadcastTranscriptStatus("completedWithGaps");
+        setBroadcastContextStatus("idle");
+        return;
+      }
+      if (savedSession.contextResultJson === null) {
+        setBroadcastTranscriptStatus("idle");
         setBroadcastContextStatus("idle");
         return;
       }
@@ -5269,8 +5609,22 @@ function App() {
         throw new Error("저장된 전체 맥락 결과 형식을 확인하지 못했어요.");
       }
       const storedEnvelope = unpackPersistedBroadcastContext(storedPayload);
+      const recoveredCandidateById = new Map(
+        recoveredCandidates.map((candidate) => [candidate.id, candidate]),
+      );
+      const restoreCandidateIds =
+        storedEnvelope.contextCandidateIds ??
+        recoveredCandidates.slice(0, 12).map(({ id }) => id);
+      const restoreCandidates = restoreCandidateIds.flatMap((candidateId) => {
+        const candidate = recoveredCandidateById.get(candidateId);
+        return candidate === undefined ? [] : [candidate];
+      });
+      if (restoreCandidates.length !== restoreCandidateIds.length) {
+        setBroadcastContextStatus("idle");
+        return;
+      }
       const restoreCandidateInputs: readonly BroadcastContextCandidateInput[] =
-        recoveredCandidates.slice(0, 12).map((candidate) => ({
+        restoreCandidates.map((candidate) => ({
           candidateId: candidate.id,
           startMs: Math.round(candidate.startMs),
           endMs: Math.round(candidate.endMs),
@@ -5278,7 +5632,7 @@ function App() {
           eventSummaryKo: "저장된 후보 사건",
           reactionSummaryKo: "저장된 스트리머 반응",
           chatReactionSummaryKo: null,
-        }));
+          }));
       const restoredContext = parsePersistedBroadcastContextResult(
         storedEnvelope.resultPayload,
         {
@@ -5363,10 +5717,7 @@ function App() {
       if (!restoreIsCurrent()) return;
 
       autoBroadcastContextSourceRef.current = `${recovered.terminal.runId}:${recovered.terminal.inputSignature}`;
-      setBroadcastTranscriptChapters(savedSession.chapters);
-      setBroadcastTranscriptStatus(
-        savedSession.completeAudioCoverage ? "completed" : "completedWithGaps",
-      );
+      setBroadcastTranscriptStatus("completed");
       setBroadcastContextResult(restoredContext);
       setBroadcastContextRefinementLeadIds(restoredRefinementLeadIds);
       setBroadcastContextFastRefinementLeadIds(restoredFastRefinementLeadIds);
@@ -5789,6 +6140,15 @@ function App() {
       openedRecoveredResult?.terminal.inputSignature ??
       analysisRun?.inputSignature ??
       sourceContentFingerprint;
+    const requiredTranscriptSeal =
+      runId === null || sourceContentFingerprint === null
+        ? null
+        : transcriptOperationKey(
+            runId,
+            sourceContentFingerprint,
+            "event-boost",
+            broadcastTranscriptAttemptOrdinal,
+          );
     if (
       // Whole-context reasoning is billed once per map. During the parallel
       // prelude the transcript map is uniform-only and candidates are absent,
@@ -5797,15 +6157,22 @@ function App() {
       !analysisComplete ||
       runId === null ||
       inputSignature === null ||
+      requiredTranscriptSeal === null ||
       boundarySourceDurationMs <= 0 ||
       boundedBroadcastContextChapters.length === 0 ||
-      !["completed", "completedWithGaps"].includes(broadcastTranscriptStatus)
+      !transcriptIsSealedForContext({
+        analysisComplete,
+        broadcastTranscriptStatus,
+        completedChapterCount: boundedBroadcastContextChapters.length,
+        requiredEventBoostOperationKey: requiredTranscriptSeal,
+        sealedOperationKey: sealedBroadcastTranscriptSourceRef.current,
+      })
     ) {
       return;
     }
 
     const operationKey =
-      `${runId}:${inputSignature}:context-attempt-${broadcastContextAttemptOrdinal}`;
+      `${runId}:${inputSignature}:${requiredTranscriptSeal}:context-attempt-${broadcastContextAttemptOrdinal}`;
     if (autoBroadcastContextSourceRef.current === operationKey) {
       return;
     }
@@ -6063,18 +6430,28 @@ function App() {
       const transcriptSession = await store.getBroadcastContextSession(runId);
       if (
         transcriptSession === null ||
-        transcriptSession.inputSignature !== inputSignature
+        transcriptSession.inputSignature !== inputSignature ||
+        sealedBroadcastTranscriptSourceRef.current !== requiredTranscriptSeal ||
+        JSON.stringify(
+          compactBroadcastContextChapters(transcriptSession.chapters),
+        ) !== JSON.stringify(contextInput.chapters)
       ) {
-        throw new Error("저장된 방송 대사 지도와 전체 맥락 결과를 연결하지 못했어요.");
+        throw new Error(
+          "전사 지도가 갱신되어 이전 맥락 결과를 저장하지 않았어요. 최신 전사로 다시 분석합니다.",
+        );
       }
+      const contextCandidateIds = broadcastContextCandidateInputs.map(
+        ({ candidateId }) => candidateId,
+      );
       await store.putBroadcastContextSession({
         ...transcriptSession,
         contextInputSignature,
         contextResultJson: JSON.stringify({
-          schemaVersion: "1.1.0",
+          schemaVersion: "1.2.0",
           result,
           refinementLeadIds,
           fastRefinementLeadIds,
+          contextCandidateIds,
         }),
         recordedAt: new Date().toISOString(),
       });
@@ -6094,7 +6471,12 @@ function App() {
       if (
         reopenedResult === null ||
         reopenedEnvelope.refinementLeadIds === null ||
-        reopenedEnvelope.fastRefinementLeadIds === null
+        reopenedEnvelope.fastRefinementLeadIds === null ||
+        reopenedEnvelope.contextCandidateIds === null ||
+        reopenedEnvelope.contextCandidateIds.length !== contextCandidateIds.length ||
+        reopenedEnvelope.contextCandidateIds.some(
+          (candidateId, index) => candidateId !== contextCandidateIds[index],
+        )
       ) {
         throw new Error("저장한 방송 전체 맥락 결과 형식을 다시 확인하지 못했어요.");
       }
@@ -6128,6 +6510,7 @@ function App() {
     boundedBroadcastContextChapters,
     broadcastContextAttemptOrdinal,
     broadcastContextCandidateInputs,
+    broadcastTranscriptAttemptOrdinal,
     broadcastTranscriptStatus,
     candidates,
     currentAnalysisRunId,
@@ -6267,7 +6650,7 @@ function App() {
 
       /*
        * 자막이 없을 때만 도는 원격 전사. **이것이 실제 병목이다** — 음식 토크도
-       * 현재 30초 transport에서는 271개 요청이 되고, 배포 전체 1초 gate와
+       * 현재 최대 90초 R2 transport의 표본 수만큼 요청이 되고, 배포 전체 1초 gate와
        * 공급자 응답 시간이 실제 하한을 결정한다.
        *
        * 그런데 지금까지의 실측은 이 경로를 한 번도 타지 않았다. 시험한 파일이
@@ -6283,6 +6666,7 @@ function App() {
               quota: {
                 participantId: aiQuotaParticipantId,
                 runId: currentAnalysisRunId,
+                operationNamespace: "refinement",
                 attemptOrdinal: semanticLeadRefinementAttemptOrdinal,
               },
               signal: controller.signal,
@@ -6530,6 +6914,7 @@ function App() {
       broadcastContextSamplingPlan.samplingWindows,
     );
     if (chunks.length === 0) {
+      sealedBroadcastTranscriptSourceRef.current = operationKey;
       setBroadcastTranscriptStatus("completed");
       setBroadcastTranscriptChapters([]);
       setBroadcastTranscriptExplorationCells([]);
@@ -6539,8 +6924,10 @@ function App() {
     broadcastTranscriptAbortController.current?.abort();
     const controller = new AbortController();
     broadcastTranscriptAbortController.current = controller;
+    sealedBroadcastTranscriptSourceRef.current = null;
     setBroadcastTranscriptStatus("running");
     setBroadcastTranscriptProgress(null);
+    setBroadcastTranscriptRecoveryProgress(null);
     setBroadcastTranscriptError(null);
 
     void (async () => {
@@ -6561,6 +6948,7 @@ function App() {
         completeAudioCoverage: boolean,
         gapChunkIds: readonly string[],
         modelRevision: string,
+        fragmentGaps: readonly StoredBroadcastTranscriptGap[] = [],
       ) => {
         const record = {
           kind: "broadcastContextSession" as const,
@@ -6571,6 +6959,7 @@ function App() {
           completeAudioCoverage,
           chapters,
           gapChunkIds,
+          fragmentGaps,
           modelRevision,
           contextInputSignature: null,
           contextResultJson: null,
@@ -6584,7 +6973,11 @@ function App() {
           reopened === null ||
           reopened.inputSignature !== inputSignature ||
           reopened.sourceDurationMs !== sourceDurationMs ||
-          JSON.stringify(reopened.chapters) !== JSON.stringify(chapters)
+          reopened.completeAudioCoverage !== completeAudioCoverage ||
+          reopened.modelRevision !== modelRevision ||
+          JSON.stringify(reopened.chapters) !== JSON.stringify(chapters) ||
+          JSON.stringify(reopened.gapChunkIds) !== JSON.stringify(gapChunkIds) ||
+          JSON.stringify(reopened.fragmentGaps) !== JSON.stringify(fragmentGaps)
         ) {
           throw new Error("저장한 방송 대사 지도를 다시 확인하지 못했어요.");
         }
@@ -6628,6 +7021,7 @@ function App() {
             createChapterExplorationCells(matchedSaved.chapters),
           );
           setBroadcastTranscriptChapters(matchedSaved.chapters);
+          sealedBroadcastTranscriptSourceRef.current = operationKey;
           setBroadcastTranscriptStatus("completed");
         }
         return;
@@ -6642,29 +7036,33 @@ function App() {
             BROADCAST_TRANSCRIPT_MIXED_CHECKPOINT_MODEL_REVISION)
           ? matchedSaved
           : null;
+      const ambiguousStoredGaps =
+        savedQwenCheckpoint?.fragmentGaps.filter(
+          ({ reason, attemptCount }) =>
+            transcriptGapRequiresExplicitBillingRetry(reason, attemptCount),
+        ) ?? [];
       if (
-        savedQwenCheckpoint !== null &&
-        savedQwenCheckpoint.gapChunkIds.length === 0 &&
-        (savedQwenCheckpoint.completeAudioCoverage ||
-          broadcastContextSamplingPlan.estimatedAudioCoverageRatio < 1)
+        ambiguousStoredGaps.length > 0 &&
+        !allowAmbiguousTranscriptRetryRef.current
       ) {
         if (!controller.signal.aborted && isMounted.current) {
-          setBroadcastTranscriptExplorationCells(
-            createTranscriptExplorationCells(
-              createDistributedTranscriptExplorationOrder(chunks),
-              "complete",
-            ),
-          );
-          setBroadcastTranscriptChapters(savedQwenCheckpoint.chapters);
-          setBroadcastTranscriptStatus(
-            savedQwenCheckpoint.completeAudioCoverage
-              ? "completed"
-              : "completedWithGaps",
+          setBroadcastTranscriptChapters(savedQwenCheckpoint?.chapters ?? []);
+          setBroadcastTranscriptStatus("failed");
+          setBroadcastTranscriptError(
+            `처리 결과를 확인할 수 없는 대사 조각 ${ambiguousStoredGaps.length}개가 남아 있어 자동 재결제를 중단했습니다. 저장된 조각은 보존되어 있습니다.`,
           );
         }
         return;
       }
-
+      allowAmbiguousTranscriptRetryRef.current = false;
+      const transcriptFragmentManualGeneration = Math.max(
+        broadcastTranscriptAttemptOrdinal,
+        nextTranscriptFragmentManualGeneration(
+          savedQwenCheckpoint?.fragmentGaps.map(
+            ({ attemptCount }) => attemptCount,
+          ) ?? [],
+        ),
+      );
       if (youtubeVideoId !== null) {
         try {
           // 자막 받기와 그 뒤의 맥락 분석을 갈라 잰다. `broadcastContext` 가
@@ -6697,6 +7095,7 @@ function App() {
                 createChapterExplorationCells(reopened.chapters),
               );
               setBroadcastTranscriptChapters(reopened.chapters);
+              sealedBroadcastTranscriptSourceRef.current = operationKey;
               setBroadcastTranscriptStatus("completed");
             }
             return;
@@ -6748,9 +7147,9 @@ function App() {
             "complete",
           ),
         );
-        setBroadcastTranscriptStatus(
-          completeAudioCoverage ? "completed" : "completedWithGaps",
-        );
+        sealedBroadcastTranscriptSourceRef.current = operationKey;
+        setBroadcastTranscriptStatus("completed");
+        setBroadcastTranscriptRecoveryProgress(null);
         return;
       }
 
@@ -6773,70 +7172,172 @@ function App() {
         );
       };
       const checkpointResults = new Map<string, BroadcastTranscriptQwenResult>();
+      const checkpointNoAudioChunkIds = new Set<string>();
+      const checkpointGapState = new Map<
+        string,
+        {
+          readonly reason: StoredBroadcastTranscriptGap["reason"];
+          readonly attemptCount: number;
+        }
+      >();
       let checkpointPersistence: Promise<void> = Promise.resolve();
       /*
        * **본 전사.** 화면의 `표본 n/N` 이 이것이고, 자막이 없을 때 방송 전체를
-       * 현재 30초 청크로 잘라 원격 ASR 에 보내는 구간이다. 90초는 Worker가
-       * 호환성 때문에 수용하는 transport 상한이지 현재 계획기의 길이가 아니다.
+       * 현재 sampling plan의 최대 90초 청크로 잘라 원격 ASR 에 보내는 구간이다.
+       * Free 모드는 raw WAV를 R2에 stream하고 Worker에는 작은 ticket만 남긴다.
        *
        * 앞서 계측을 붙였던 `runBroadcastTranscriptWorker` 호출은 이것이 아니라
        * **정련용 재전사**(선별된 리드만 다시 읽는 작은 호출)였다. 이름이 같아
        * 같은 일로 착각했고, 그래서 "전사 21.7초" 라는 값이 나왔다 — 실제로 몇십 분
        * 걸리는 쪽은 재지 않은 채였다. 같은 함수를 두 곳에서 부를 때는 어느 쪽을
        * 재는지 이름이 아니라 **무엇이 그 진행률을 그리는지**로 확인해야 한다.
-       */
+      */
       const mainTranscriptionStartedAtMs = Date.now();
-      const result = await runBroadcastTranscriptWorker(sourceFile, {
-        sourceDurationMs,
-        chunks: explorationChunks,
-        quota: {
-          participantId: aiQuotaParticipantId,
-          runId,
-          attemptOrdinal: broadcastTranscriptAttemptOrdinal,
-        },
-        signal: controller.signal,
-        onProgress: (progress) => {
-          if (!controller.signal.aborted && isMounted.current) {
-            setBroadcastTranscriptProgress(progress);
-            updateExplorationCell(progress.chunkId, "active", progress.stage);
-          }
-        },
-        onPartialResult: (chunkId, partialResult) => {
-          updateExplorationCell(chunkId, "complete");
-          checkpointResults.set(chunkId, partialResult);
-          const resultSnapshot = [...checkpointResults.values()];
-          const pendingGapIds = transcriptChunks
-            .filter((chunk) => !checkpointResults.has(chunk.chunkId))
-            .map((chunk) => chunk.chunkId);
-          checkpointPersistence = checkpointPersistence
-            .catch(() => undefined)
-            .then(async () => {
-              const recoveredChapters = createBroadcastTranscriptChapters(
-                resultSnapshot,
-                sourceDurationMs,
-                false,
-              );
-              const checkpointMap = mergeBroadcastTranscriptChapters(
-                checkpointChapters,
-                recoveredChapters,
-                sourceDurationMs,
-                false,
-              );
-              const reopened = await persistTranscriptMap(
-                checkpointMap,
-                false,
-                pendingGapIds,
-                recoveredCheckpointModelRevision,
-              );
-              if (!controller.signal.aborted && isMounted.current) {
-                setBroadcastTranscriptChapters(reopened.chapters);
-              }
+      const queueTranscriptCheckpoint = (): void => {
+        const resultSnapshot = [...checkpointResults.values()];
+        const noAudioChunkSnapshot = transcriptChunks.filter(({ chunkId }) =>
+          checkpointNoAudioChunkIds.has(chunkId),
+        );
+        const pendingFragmentGaps: readonly StoredBroadcastTranscriptGap[] =
+          transcriptChunks
+            .filter(
+              (chunk) =>
+                !checkpointResults.has(chunk.chunkId) &&
+                !checkpointNoAudioChunkIds.has(chunk.chunkId),
+            )
+            .map((chunk) => {
+              const gapState = checkpointGapState.get(chunk.chunkId);
+              return {
+                chunkId: chunk.chunkId,
+                sourceStartMs: chunk.sourceStartMs,
+                sourceEndMs: chunk.sourceEndMs,
+                reason: gapState?.reason ?? "pending",
+                attemptCount: gapState?.attemptCount ?? 0,
+              };
             });
-        },
-        onChunkGap: (chunkId) => {
-          updateExplorationCell(chunkId, "gap");
-        },
-      });
+        const pendingGapIds = pendingFragmentGaps.map(({ chunkId }) => chunkId);
+        checkpointPersistence = checkpointPersistence.then(async () => {
+          const recoveredChapters = createBroadcastTranscriptChapters(
+            resultSnapshot,
+            sourceDurationMs,
+            false,
+          );
+          const recoveredNoAudioChapters = createBroadcastNoAudioChapters(
+            noAudioChunkSnapshot,
+            sourceDurationMs,
+          );
+          const checkpointMap = mergeBroadcastTranscriptChapters(
+            checkpointChapters,
+            [...recoveredChapters, ...recoveredNoAudioChapters],
+            sourceDurationMs,
+            false,
+          );
+          const reopened = await persistTranscriptMap(
+            checkpointMap,
+            false,
+            pendingGapIds,
+            recoveredCheckpointModelRevision,
+            pendingFragmentGaps,
+          );
+          if (!controller.signal.aborted && isMounted.current) {
+            setBroadcastTranscriptChapters(reopened.chapters);
+          }
+        });
+      };
+      const persistPartialResult = (
+        chunkId: string,
+        partialResult: BroadcastTranscriptQwenResult,
+      ): void => {
+        updateExplorationCell(chunkId, "complete");
+        checkpointResults.set(chunkId, partialResult);
+        checkpointNoAudioChunkIds.delete(chunkId);
+        checkpointGapState.delete(chunkId);
+        queueTranscriptCheckpoint();
+      };
+      const persistGapResult = (
+        chunkId: string,
+        reason: StoredBroadcastTranscriptGap["reason"] | "no-audio",
+        quotaAttemptOrdinal: number,
+      ): void => {
+        updateExplorationCell(chunkId, "gap");
+        if (reason === "no-audio") {
+          checkpointGapState.delete(chunkId);
+          checkpointNoAudioChunkIds.add(chunkId);
+        } else {
+          checkpointGapState.set(chunkId, {
+            reason,
+            attemptCount: quotaAttemptOrdinal + 1,
+          });
+        }
+        queueTranscriptCheckpoint();
+      };
+      const persistAttemptStart = async (
+        attemptChunks: readonly BroadcastContextTranscriptionChunk[],
+        quotaAttemptOrdinal: number,
+      ): Promise<void> => {
+        for (const chunk of attemptChunks) {
+          checkpointGapState.set(chunk.chunkId, {
+            reason: "in-flight",
+            attemptCount: quotaAttemptOrdinal + 1,
+          });
+        }
+        queueTranscriptCheckpoint();
+        await checkpointPersistence;
+      };
+      let recoveryResult: BroadcastTranscriptFragmentRecoveryResult;
+      try {
+        recoveryResult = await recoverBroadcastTranscriptFragments({
+          chunks: explorationChunks,
+          manualAttemptGeneration: transcriptFragmentManualGeneration,
+          signal: controller.signal,
+          onProgress: (progress) => {
+            if (!controller.signal.aborted && isMounted.current) {
+              setBroadcastTranscriptRecoveryProgress(progress);
+            }
+          },
+          runAttempt: async (
+            attemptChunks,
+            quotaAttemptOrdinal,
+          ) => {
+            /*
+             * Commit an `in-flight` fence before a provider request can start.
+             * A tab closed after this point must reopen as outcome-ambiguous,
+             * never as a fresh unpaid-looking pending fragment.
+             */
+            await persistAttemptStart(attemptChunks, quotaAttemptOrdinal);
+            return runBroadcastTranscriptWorker(sourceFile, {
+              sourceDurationMs,
+              chunks: attemptChunks,
+              quota: {
+                participantId: aiQuotaParticipantId,
+                runId,
+                operationNamespace: transcriptPhase,
+                attemptOrdinal: quotaAttemptOrdinal,
+              },
+              signal: controller.signal,
+              onProgress: (progress) => {
+                if (!controller.signal.aborted && isMounted.current) {
+                  setBroadcastTranscriptProgress(progress);
+                  updateExplorationCell(
+                    progress.chunkId,
+                    "active",
+                    progress.stage,
+                  );
+                }
+              },
+              onPartialResult: persistPartialResult,
+              onChunkGap: (chunkId, reason) => {
+                persistGapResult(chunkId, reason, quotaAttemptOrdinal);
+              },
+            });
+          },
+        });
+      } finally {
+        // A paid result is not considered recovered until its checkpoint write
+        // and exact readback have both settled. Storage failure blocks the
+        // phase instead of silently issuing the same provider request again.
+        await checkpointPersistence;
+      }
       stageTimerRef.current?.addSpan(
         "main-transcription",
         Date.now() - mainTranscriptionStartedAtMs,
@@ -6845,25 +7346,69 @@ function App() {
        * 동시성이 어디서 멈췄는지를 실측 표에 남긴다. 진행 중의 "동시 N" 은 스쳐
        * 지나가므로 결론을 알 수 없고, 그것을 모르면 다음 값도 또 추측이 된다.
        */
-      stageTimerRef.current?.note(`전사 ${result.concurrencyOutcome}`);
+      stageTimerRef.current?.note(
+        `전사 ${recoveryResult.concurrencyOutcomes.join(" → ")}`,
+      );
       if (controller.signal.aborted || !isMounted.current) {
         return;
       }
-      await checkpointPersistence.catch(() => undefined);
       setYouTubeCaptionTrack(null);
-    youtubeCaptionTrackRef.current = null;
-      const finalGapChunkIds = result.gapChunkIds;
+      youtubeCaptionTrackRef.current = null;
+      const unresolvedGaps = [
+        ...recoveryResult.unresolvedRetryableGaps,
+        ...recoveryResult.outcomeUnknownGaps,
+      ];
+      const unresolvedFragmentGaps: readonly StoredBroadcastTranscriptGap[] =
+        unresolvedGaps
+          .flatMap((gap) => {
+            const chunk = transcriptChunks.find(
+              ({ chunkId }) => chunkId === gap.chunkId,
+            );
+            if (chunk === undefined || gap.reason === "no-audio") return [];
+            return [
+              {
+                chunkId: gap.chunkId,
+                sourceStartMs: chunk.sourceStartMs,
+                sourceEndMs: chunk.sourceEndMs,
+                reason: gap.reason,
+                attemptCount:
+                  checkpointGapState.get(gap.chunkId)?.attemptCount ??
+                  (transcriptFragmentQuotaAttemptOrdinal(
+                    transcriptFragmentManualGeneration,
+                    Math.max(0, recoveryResult.attemptedCount - 1),
+                  ) + 1),
+              },
+            ];
+          })
+          .sort(
+            (left, right) =>
+              left.sourceStartMs - right.sourceStartMs ||
+              left.sourceEndMs - right.sourceEndMs,
+          );
+      const finalGapChunkIds = unresolvedFragmentGaps.map(
+        ({ chunkId }) => chunkId,
+      );
       const completeAudioCoverage =
         broadcastContextSamplingPlan.estimatedAudioCoverageRatio === 1 &&
         finalGapChunkIds.length === 0;
       const recoveredChapters = createBroadcastTranscriptChapters(
-        result.results,
+        recoveryResult.fragments.map(({ result }) => result),
         sourceDurationMs,
         completeAudioCoverage,
       );
+      const chunkById = new Map(
+        transcriptChunks.map((chunk) => [chunk.chunkId, chunk]),
+      );
+      const noAudioChapters = createBroadcastNoAudioChapters(
+        recoveryResult.noAudioGaps.flatMap(({ chunkId }) => {
+          const chunk = chunkById.get(chunkId);
+          return chunk === undefined ? [] : [chunk];
+        }),
+        sourceDurationMs,
+      );
       const chapters = mergeBroadcastTranscriptChapters(
         checkpointChapters,
-        recoveredChapters,
+        [...recoveredChapters, ...noAudioChapters],
         sourceDurationMs,
         completeAudioCoverage,
       );
@@ -6872,27 +7417,29 @@ function App() {
         completeAudioCoverage,
         finalGapChunkIds,
         recoveredCheckpointModelRevision,
+        unresolvedFragmentGaps,
       );
       if (!controller.signal.aborted && isMounted.current) {
         setBroadcastTranscriptChapters(reopened.chapters);
-        if (reopened.chapters.length === 0) {
+        setBroadcastTranscriptRecoveryProgress(null);
+        if (unresolvedGaps.length > 0) {
           setBroadcastTranscriptStatus("failed");
           setBroadcastTranscriptError(
-            "방송 대사 근거를 한 구간도 확보하지 못했어요. 음성 인식 연결이나 원본 음성을 확인한 뒤 다시 시도해 주세요.",
+            recoveryResult.outcomeUnknownGaps.length > 0
+              ? `처리 결과를 확인할 수 없는 대사 조각 ${recoveryResult.outcomeUnknownGaps.length}개가 있어 중복 결제를 막고 멈췄어요. 확보된 조각은 모두 보존했습니다.`
+              : `대사 조각 ${recoveryResult.unresolvedRetryableGaps.length}개를 자동으로 세 번 복구했지만 아직 완료되지 않았어요. 확보된 조각은 보존했으며 다음 단계로 넘어가지 않았습니다.`,
           );
           return;
         }
-        setBroadcastTranscriptStatus(
-          reopened.gapChunkIds.length > 0 || !reopened.completeAudioCoverage
-            ? "completedWithGaps"
-            : "completed",
-        );
+        sealedBroadcastTranscriptSourceRef.current = operationKey;
+        setBroadcastTranscriptStatus("completed");
       }
     })()
       .catch((error: unknown) => {
         if (controller.signal.aborted || !isMounted.current) {
           return;
         }
+        sealedBroadcastTranscriptSourceRef.current = null;
         setBroadcastTranscriptStatus("failed");
         setBroadcastTranscriptError(
           error instanceof Error && error.message.trim().length > 0
@@ -6901,6 +7448,9 @@ function App() {
         );
       })
       .finally(() => {
+        if (isMounted.current) {
+          setBroadcastTranscriptRecoveryProgress(null);
+        }
         if (broadcastTranscriptAbortController.current === controller) {
           broadcastTranscriptAbortController.current = null;
         }
@@ -8030,9 +8580,12 @@ function App() {
                 </div>
               )}
 
-              {contextualCandidatePublicationReady &&
+              {(contextualCandidatePublicationReady || candidatePassBNeedsRecovery) &&
                 candidateReviewFeatureAvailability.hasCandidates && (
-              <details className="rh-review-tools">
+              <details
+                className="rh-review-tools"
+                open={candidatePassBNeedsRecovery || undefined}
+              >
                 <summary>
                   <span>
                     <strong>AI 보강 분석과 후보 순서</strong>
@@ -8142,15 +8695,26 @@ function App() {
                         disabled={
                           sourceFile === null ||
                           !candidatePassBRuntimeAvailable ||
-                          candidateDetailCandidateIds.length === 0 ||
+                          (candidatePassBActionIds.length === 0 &&
+                            !candidatePassBPersistenceRetryNeeded) ||
                           selectionResult.audioGapReasonCode === "NO_AUDIO_TRACK" ||
                           candidateAudioEventBusy
                         }
-                        onClick={() => void runCandidatePassB(candidateDetailCandidateIds)}
+                        onClick={() => {
+                          if (candidatePassBPersistenceRetryNeeded) {
+                            void retryCandidatePassBInsightPersistence();
+                            return;
+                          }
+                          void runCandidatePassB(candidatePassBActionIds);
+                        }}
                       >
-                        {candidatePassBRun === null
+                        {candidatePassBPersistenceRetryNeeded
+                          ? "검증 결과 저장 다시 시도"
+                          : candidatePassBRun === null
                           ? `후보 ${Math.min(12, candidateDetailCandidateIds.length)}개 자세히 분석`
-                          : `후보 ${Math.min(12, candidateDetailCandidateIds.length)}개 다시 분석`}
+                          : automaticCandidateDetailIds.length > 0
+                            ? `미완료 후보 ${automaticCandidateDetailIds.length}개 다시 분석`
+                            : `후보 ${Math.min(12, candidateDetailCandidateIds.length)}개 다시 분석`}
                       </button>
                     )}
                     {candidatePassBBusy && (
@@ -8415,6 +8979,60 @@ function App() {
               </details>
               )}
 
+              {contextualCandidatePublicationReady &&
+                orderedCandidates.length > 0 &&
+                blockedByPipelineGap && (
+                  <div
+                    className="rh-notice rh-notice-with-action"
+                    data-tone="warning"
+                    role="status"
+                  >
+                    <div>
+                      <strong>
+                        검증이 끝난 후보 {orderedCandidates.length}개를 먼저 보여드려요.
+                      </strong>
+                      <span>
+                        미완료 후보는 최종 목록에 섞지 않았습니다. 성공한 AI 결과는
+                        보존하고 빠진 후보만 다시 분석할 수 있어요.
+                      </span>
+                      <dl className="rh-verification-gap-list">
+                        {finalVerificationGapSummary
+                          .filter(({ gap }) => isPipelineGap(gap))
+                          .map((entry) => (
+                            <div key={entry.gap} data-pipeline="true">
+                              <dt>
+                                {entry.label}
+                                <span>{entry.count}개</span>
+                              </dt>
+                              <dd>{entry.detail}</dd>
+                            </div>
+                          ))}
+                      </dl>
+                    </div>
+                    <button
+                      className="btn btn-secondary"
+                      type="button"
+                      disabled={
+                        candidatePassBBusy ||
+                        analysisBusy ||
+                        (blockedByCandidateDetailGap &&
+                          automaticCandidateDetailIds.length === 0)
+                      }
+                      onClick={() => {
+                        if (blockedByCandidateDetailGap) {
+                          void runCandidatePassB(automaticCandidateDetailIds);
+                          return;
+                        }
+                        retryWholeContextPhase();
+                      }}
+                    >
+                      {blockedByCandidateDetailGap
+                        ? `미완료 후보 ${automaticCandidateDetailIds.length}개 다시 분석`
+                        : "맥락 누락 다시 분석"}
+                    </button>
+                  </div>
+                )}
+
               {contextualCandidatePublicationReady && orderedCandidates.length === 0 ? (
                 <div className="rh-empty-state" data-reason={emptyResultReason}>
                   {emptyResultReason === "analysis-incomplete" ? (
@@ -8439,9 +9057,23 @@ function App() {
                         <button
                           className="btn btn-primary"
                           type="button"
-                          onClick={retryWholeContextPhase}
+                          disabled={
+                            analysisBusy ||
+                            candidatePassBBusy ||
+                            (blockedByCandidateDetailGap &&
+                              automaticCandidateDetailIds.length === 0)
+                          }
+                          onClick={() => {
+                            if (blockedByCandidateDetailGap) {
+                              void runCandidatePassB(automaticCandidateDetailIds);
+                              return;
+                            }
+                            retryWholeContextPhase();
+                          }}
                         >
-                          {broadcastTranscriptStatus === "completedWithGaps"
+                          {blockedByCandidateDetailGap
+                            ? `미완료 후보 ${automaticCandidateDetailIds.length}개 다시 분석`
+                            : broadcastTranscriptStatus === "completedWithGaps"
                             ? "누락 구간부터 다시 시도"
                             : "맥락 분석 다시 시도"}
                         </button>
@@ -8663,8 +9295,7 @@ function App() {
                               ? orderedCandidates.length
                               : broadcastTranscriptExplorationCells.length > 0
                                 ? `${broadcastTranscriptExploredCount}/${broadcastTranscriptExplorationCells.length}`
-                                : broadcastTranscriptStatus === "completed" ||
-                                    broadcastTranscriptStatus === "completedWithGaps"
+                                : broadcastTranscriptStatus === "completed"
                                   ? "완료"
                                   : "…"}
                           </strong>

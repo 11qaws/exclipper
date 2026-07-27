@@ -1,6 +1,6 @@
 # ExClipper 최대 5인 AI 처리 설계 — 2026-07-27
 
-상태: **v0.8.6 Free R2 전사 transport 통합·배포 검증 중**
+상태: **v0.8.7 배포 후보 · Free R2 candidate transport와 실패 전사 조각 선복구 검증 완료**
 
 ## 1. 결론
 
@@ -29,6 +29,13 @@ ExClipper는 다섯 사람이 서로 다른 방송을 분석하는 개인 편집
 후보 실행은 네 개만 허용하지만 준비 pipeline은 여섯 개다. 따라서 다섯 명이 동시에
 후보를 올려도 각자 적어도 한 요청을 준비 상태로 만들 수 있다. 큰 본문을 받는 단계와
 실제 유료 호출 단계를 분리해 속도와 메모리 상한을 동시에 지킨다.
+
+Free candidate 경로는 브라우저가 만든 bounded WAV+JPEG 4장 bundle을 private R2에
+한 번 stage하고 Qwen에는 signed HTTPS URL만 전달한다. Worker가 media를 Base64
+JSON으로 다시 만들지 않는다. 48KiB canonical context prompt, 60초 audio, image 4장과
+2,048 output을 합친 최대 token 예약은 94,180이며 100,000 TPM 단일 요청보다 작다.
+이 경로는 Qwen URL media 전용이다. Gemini inline-data fallback은 `paid-direct`에만
+남기며, Free mode에서 provider별 독립 quota가 있는 것처럼 두 번째 호출을 만들지 않는다.
 
 ## 2. 확인된 외부 한도
 
@@ -115,7 +122,9 @@ reservation =
 
 UTF-8 byte 수는 실제 text token보다 큰 보수 상한으로 쓴다. 화면은 가로 영상
 640×360, 세로 영상 360×640처럼 가장 긴 변을 640px로 제한하므로 화면당 400 token
-상한과 일치한다. 한 후보 예약이 100,000을 넘으면 공급자 호출 전에 413으로 거절한다.
+상한과 일치한다. 합법적인 최대 context packet은 provider 호출 전에 48KiB 이하로
+canonicalize되므로 전체 예약이 100,000을 넘지 않는다. 이 불변식이 깨진 내부·변조
+요청만 공급자 호출 전에 413으로 거절하며 정상 후보의 복구 경로로 사용하지 않는다.
 
 ### 전체 맥락
 

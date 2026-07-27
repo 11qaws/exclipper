@@ -188,6 +188,53 @@ describe("broadcastTranscriptQwenClient", () => {
     expect(fetchImplementation).toHaveBeenCalledTimes(2);
   });
 
+  it("preserves an ambiguous post-lease connection loss without resending it", async () => {
+    const wav = silentWav(1_000);
+    let paidRequestCount = 0;
+    const fetchImplementation = vi.fn(
+      (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+        const url =
+          typeof input === "string"
+            ? input
+            : input instanceof URL
+              ? input.href
+              : input.url;
+        if (new URL(url).pathname === AI_QUOTA_ENDPOINT_PATH) {
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                schemaVersion: AI_QUOTA_SCHEMA_VERSION,
+                status: "granted",
+                leaseToken:
+                  "lease_0000000000000000000000000000000000000001",
+                leaseExpiresAtMs: Date.now() + 30_000,
+                retryAfterMs: 0,
+                activeParticipantCount: 1,
+                poolInFlightCount: 0,
+              }),
+              { status: 200 },
+            ),
+          );
+        }
+        paidRequestCount += 1;
+        expect(init?.body).toBe(wav);
+        return Promise.reject(new TypeError("connection lost"));
+      },
+    );
+
+    await expect(
+      requestBroadcastTranscriptChunkBinary(wav, 0, 1_000, {
+        fetchImplementation,
+        quota: {
+          participantId: "participant_11111111111111111111111111111111",
+          runId: "analysis-run-1",
+          operationId: "transcript-ambiguous-1",
+        },
+      }),
+    ).rejects.toMatchObject({ code: "OUTCOME_UNKNOWN" });
+    expect(paidRequestCount).toBe(2);
+  });
+
   it("reuses one staged upload with a fresh quota operation after 429", async () => {
     const wav = silentWav(90_000);
       const ticket =

@@ -1,4 +1,5 @@
 import {
+  COMPLETED_JOB_STATUSES,
   createAnalysisJob,
   transitionAnalysisJob,
   type AnalysisJob,
@@ -120,7 +121,7 @@ export async function startAnalysisJob(input: StartJobInput): Promise<JobBridgeO
 
     // 끝난 작업을 다시 돌리는 것은 재분석이다 — 먼저 무효화해야 전이가 열린다.
     const base =
-      current.status === "completed"
+      COMPLETED_JOB_STATUSES.has(current.status)
         ? transitionAnalysisJob(current, {
             type: "INVALIDATE",
             reasonCode: "reanalysis_requested",
@@ -161,15 +162,28 @@ export function commitAnalysisStage(
 /**
  * 분석이 끝났을 때.
  *
- * **`quality` 를 받는다** — `done` 과 "쓸 만하다" 는 다르고, 그 구분이 없으면
- * 후보가 0개인 실행도 완료로 굳어 캐시가 영원히 그것을 되돌려준다.
+ * **`quality` 를 받는다** — `done` 과 "후보가 있다" 는 다르다. 완전 검증 뒤
+ * 후보가 0개인 정상 음성 결과는 `completedEmpty`, 근거가 빠진 미완료 결과는
+ * running/failed 상태로 남겨야 저장 이력이 두 의미를 섞지 않는다.
  */
-export function completeAnalysisJob(
+export async function completeAnalysisJob(
   store: AnalysisResultStore,
   inputSignature: string,
   usable: boolean,
 ): Promise<JobBridgeOutcome> {
   const jobId = jobIdFor(inputSignature);
+  try {
+    const existing = await store.getJob(jobId);
+    if (
+      existing !== null &&
+      ((usable && existing.job.status === "completed") ||
+        (!usable && existing.job.status === "completedEmpty"))
+    ) {
+      return { ok: true, job: existing.job };
+    }
+  } catch (cause) {
+    return { ok: false, reason: String((cause as Error)?.message ?? cause) };
+  }
   return apply(
     store,
     jobId,

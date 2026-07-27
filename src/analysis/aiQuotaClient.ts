@@ -61,6 +61,7 @@ export class AiQuotaClientError extends Error {
       | "UNSUPPORTED_BODY"
       | "COORDINATOR_UNAVAILABLE"
       | "COORDINATOR_REJECTED"
+      | "OUTCOME_UNKNOWN"
       | "ABORTED",
     message: string,
     public readonly coordinatorStatus: AiQuotaPublicResponse["status"] | null = null,
@@ -415,10 +416,28 @@ export async function fetchWithPreparedAiQuota(
         await cancelQuotaOperationBestEffort(fetchImplementation, identity);
         throw abortError();
       }
-      throw new AiQuotaClientError(
-        "COORDINATOR_UNAVAILABLE",
-        "AI 분석 서버에 연결하지 못했어요.",
-      );
+      /*
+       * Replay the exact same lease once. The coordinator accepts it only when
+       * the first transport never consumed the operation; an in-flight or
+       * terminal operation is rejected before another provider call. This
+       * repairs a lost preflight/ingress connection without allocating a new
+       * billable generation.
+       */
+      try {
+        response = await preparedFetch(lease, attempt);
+      } catch {
+        throw new AiQuotaClientError(
+          "OUTCOME_UNKNOWN",
+          "AI 요청이 서버에 도착한 뒤 연결이 끊겨 처리 결과를 확인할 수 없어요.",
+        );
+      }
+      if (response.status === 409) {
+        await response.body?.cancel().catch(() => undefined);
+        throw new AiQuotaClientError(
+          "OUTCOME_UNKNOWN",
+          "동일 요청이 이미 처리되었을 수 있어 새 결제 요청을 만들지 않았어요.",
+        );
+      }
     }
     const retryableRateLimit = await isRetryableRateLimitResponse(response);
     if (attempt >= MAX_RATE_LIMIT_RETRIES || !retryableRateLimit) {
