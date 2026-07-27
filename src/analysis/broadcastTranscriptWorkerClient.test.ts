@@ -63,6 +63,38 @@ describe("broadcastTranscriptWorkerClient", () => {
     await expect(promise).rejects.toMatchObject({ code: "ABORTED" });
   });
 
+  it("passes the explicit retry generation to the transcript worker", async () => {
+    const worker = new FakeWorker();
+    const controller = new AbortController();
+    const promise = runBroadcastTranscriptWorker(
+      new File(["x"], "retry.mp4"),
+      {
+        sourceDurationMs: 1_000,
+        chunks: [
+          {
+            chunkId: "asr-001",
+            sourceStartMs: 0,
+            sourceEndMs: 1_000,
+            kind: "uniform",
+          },
+        ],
+        quota: {
+          participantId: "participant_11111111111111111111111111111111",
+          runId: "analysis-run-1",
+          attemptOrdinal: 2,
+        },
+        signal: controller.signal,
+        workerFactory: () => worker,
+      },
+    );
+
+    expect(worker.posted[0]).toMatchObject({
+      quota: { attemptOrdinal: 2 },
+    });
+    controller.abort();
+    await expect(promise).rejects.toMatchObject({ code: "ABORTED" });
+  });
+
   it("reports the precise invalid chunk instead of blaming API credentials", async () => {
     try {
       await runBroadcastTranscriptWorker(new File(["x"], "sample.mp4"), {

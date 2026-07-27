@@ -99,6 +99,16 @@ describe("candidatePassBGemini", () => {
     );
   });
 
+  it("keeps exact base64 across native 32 KiB chunk boundaries", () => {
+    const bytes = Uint8Array.from(
+      { length: 0x8000 * 2 + 7 },
+      (_, index) => index % 251,
+    );
+    expect(encodeCandidatePassBBase64(bytes)).toBe(
+      Buffer.from(bytes).toString("base64"),
+    );
+  });
+
   it("keeps the fixed structured Gemini request builder for the owner proxy", () => {
     const request = buildCandidatePassBGeminiRequestBody("UklGRg==", 45_000);
 

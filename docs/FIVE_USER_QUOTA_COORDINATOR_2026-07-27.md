@@ -1,6 +1,6 @@
 # ExClipper 최대 5인 AI 처리 설계 — 2026-07-27
 
-상태: **v0.8.3 통합·배포 검증 중**
+상태: **v0.8.4 통합·배포 검증 중**
 
 ## 1. 결론
 
@@ -138,9 +138,9 @@ DeepSeek 호환 경로까지 포함한 안전 상한 8,192를 예약한다.
 | 경로 | 앱 wire 상한 | 근거 |
 |---|---:|---|
 | 후보 JSON | 4,257,596 bytes | 60초 WAV Base64 + JPEG 4장 + context 8필드 worst escape + 64KiB |
-| 전사 raw WAV transport 상한 | 2,880,044 bytes | PCM16 mono 16kHz, 최대 90초 |
-| 현재 계획기의 전사 raw WAV | 960,044 bytes | Worker CPU 완화용 30초 |
-| 전사 legacy JSON | 4,008,192 bytes | Base64 WAV + JSON 여유 |
+| 전사 Base64 JSON | 4,008,192 bytes | 현재 주 경로. 30초 WAV는 약 1.28MB, 방어 상한은 90초 WAV + JSON 여유 |
+| 전사 raw WAV 호환 상한 | 2,880,044 bytes | 구버전 탭·진단용 PCM16 mono 16kHz, 최대 90초 |
+| 현재 계획기의 WAV 원본 | 960,044 bytes | 브라우저 Web Worker가 Base64로 바꾸는 30초 PCM |
 | 전체 맥락 JSON | 8MiB | 144 chapter + 32 candidate의 모든 유효 필드 수용 |
 | quota 요청 | 2KiB | ID, digest, action만 허용 |
 | 후보·맥락 응답 | 256KiB | bounded JSON |
@@ -155,7 +155,7 @@ quota header는 participant 96자, run/operation 160자, digest 71자, lease 128
 제한되어 전체 128KB header 한도에 비해 매우 작다.
 
 모든 ingress body는 60초 안에 끝나야 한다. 최대 후보 본문 기준 약 0.57Mbps,
-현재 30초 raw WAV 기준 약 0.13Mbps가 필요하다. 중계 transport 상한인 90초
+현재 주 경로의 30초 Base64 JSON 기준 약 0.17Mbps가 필요하다. 호환 경로에서 90초
 raw WAV를 직접 보낼 때는 약 0.38Mbps가 필요하다. deadline은
 2분 upload-ticket TTL보다 짧다. timeout은 413이 아니라 408
 `REQUEST_BODY_TIMEOUT`으로 구분하고, 아직 consume되지 않은 같은 lease token의
@@ -261,21 +261,23 @@ cell 안의 분산 표본 경계 때문에 단순히 `200분 ÷ 30초 = 400`으�
 432개가 된다. 사건 피크의 위치·겹침에 따라 실제 개수는 달라지며 760은 계획값이
 아니라 비정상 조각화도 거부하지 않기 위한 protocol 방어 상한이다.
 
-## 9. 아직 남은 실제 병목: Worker Free CPU
+## 9. 현재 전사 경로와 남은 Worker Free CPU 검증
 
-현재 계획기의 raw 전사 경로는 Worker에서 약 0.96MB의 30초 WAV를 버퍼링하고
-SHA-256을 확인한 뒤 Base64와 공급자 JSON byte body를 만든다. 호환 transport는
-최대 2.88MB의 90초 WAV도 수용한다. JavaScript 수백만 회 loop는 제거했지만,
-native Base64·byte assembly는 여전히 CPU 작업이다.
+현재 주 경로는 전용 브라우저 Web Worker가 약 0.96MB의 30초 WAV를 Base64로
+인코드하고 약 1.28MB JSON을 만든다. Cloudflare Worker는 quota digest와 JSON 계약,
+Base64 문자·길이, 선행 44바이트 WAV 헤더를 확인한 뒤 이미 준비된 문자열로 공급자
+본문을 만든다. UI thread와 Cloudflare Worker 어느 쪽에도 WAV 전체를 순회하는
+JavaScript byte-to-Base64 loop가 없다. 호환 transport는 최대 2.88MB의 90초 raw
+WAV도 수용하지만, 그 경로에서는 Cloudflare Worker가 변환을 수행한다.
 
-Cloudflare Free의 요청당 10ms에서는 안전하다고 확정할 수 없다. 실제 배포에서
-`Worker exceeded CPU time limit`가 관측됐으므로 **현재 raw 경로를 Free-safe라고
-표현하면 안 된다.**
+Cloudflare Free의 요청당 CPU 안전성은 아직 production smoke로 확인해야 한다.
+기존 1102의 가장 큰 원인이던 byte-to-Base64 변환은 제거했지만, 약 1.28MB 요청의
+수신·SHA-256·JSON parse·선형 Base64 검사·공급자 본문 직렬화는 남아 있다.
 
 ### 즉시 운영 가능한 경로
 
 - Workers Paid로 전환하면 월 최소 $5이며 기본 CPU 30초다.
-- 현재 배포는 30초 raw WAV 완화 경로와 본 문서의 gate를 사용한다. Paid 전환과
+- 현재 배포는 30초 Base64 JSON 경로와 본 문서의 gate를 사용한다. Paid 전환과
   90초 복원은 각각 실제 CPU p99와 live transcript 결과를 확인한 뒤 별도 결정한다.
 - 1명 → 2명 → 5명 smoke에서 `wrangler tail` CPU, wall time, 429, 1102를 측정한다.
 - 측정 뒤 `limits.cpu_ms`를 실제 p99에 여유를 둔 값으로 고정한다.
@@ -318,6 +320,11 @@ operation은 최대 768개, 정리 목표는 512개다. 최악 ID 회귀 테스�
 이 전이는 `lease-issued`에서만 허용되며 execution-waiting/in-flight에는
 `already-consumed`를 반환한다.
 
+paid endpoint가 HTTP 응답을 반환한 뒤에는 client가 cancel을 보내지 않는다.
+이미 terminal인 operation의 cancel은 구버전 client 호환을 위한 멱등 HTTP 200이고,
+같은 operation ID로 새 lease를 요청할 때는 HTTP 409를 유지한다. 명시적 재시도는
+attempt ordinal을 올린 새 operation ID를 사용한다.
+
 상태 schema는 `1.4.0`이다. 최초 v0.8.3 배포에서는 이전 coordinator state가 없어
 migration이 필요 없다. 한 번 배포한 뒤에는 `providerGates.tokenReservations`가 없는 옛 코드로
 즉시 롤백할 수 없으므로, 롤백은 먼저 Worker quota mode를 `optional`로 낮추고
@@ -343,13 +350,17 @@ migration이 필요 없다. 한 번 배포한 뒤에는 `providerGates.tokenRese
 - invalid body·digest·WAV·schema는 consume과 upstream fetch 0회
 - stalled candidate/transcript/context/quota ingress는 60초 뒤 408, 미사용 ticket 회수
 - late duplicate의 upload release가 execution-waiting/in-flight를 취소하지 않음
+- terminal cancel은 200, terminal ID의 새 lease는 409이며 502 뒤 cancel/409 연쇄 없음
 - retry/fallback마다 별도 ticket·consume·token 예약
 - 명시적 HTTP 408/5xx는 별도 operation으로 제한 재시도하고, 전송 결과가 모호한
   network/timeout/200-body-stall만 `outcome-unknown`으로 자동 재전송 금지
 - 200-header/body-stall은 `outcome-unknown`, 자동 이중 결제 0회
 - restart 뒤 clock·backoff·token window·ticket·terminal 상태 복원
 - state < 1.5MB, request/header/response 상한 회귀
+- 145~760개 stale context chapter는 원본 schema 검증 뒤 144개로만 압축되고,
+  duplicate ID·잘못된 evidence mode·coverage는 upstream 전에 거절
+- 새 전체 맥락과 context 콘텐츠 지문이 다른 Pass B receipt는 최종 후보에서 제외
 - full test, strict TypeScript, ESLint warning 0, build, Wrangler dry-run
-- 30초 raw WAV live smoke에서 1102·CPU 초과가 없음을 확인. 실패하면 required
+- 30초 Base64 JSON live smoke에서 1102·CPU 초과가 없음을 확인. 실패하면 required
   전환을 중단하고 Workers Paid 또는 R2+ASR 경로를 선택
 - 승인 전 commit·push·deploy 금지

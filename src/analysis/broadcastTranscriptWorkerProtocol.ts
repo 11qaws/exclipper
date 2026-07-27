@@ -1,7 +1,7 @@
 import type { BroadcastContextTranscriptionChunk } from "./broadcastContextSamplingPlan";
 import type { BroadcastTranscriptQwenResult } from "./broadcastTranscriptQwen";
 
-export const BROADCAST_TRANSCRIPT_WORKER_VERSION = "1.2.0" as const;
+export const BROADCAST_TRANSCRIPT_WORKER_VERSION = "1.3.0" as const;
 /**
  * 한 실행이 보낼 수 있는 청크 수의 상한.
  *
@@ -20,6 +20,8 @@ export interface BroadcastTranscriptWorkerIdentity {
 export interface BroadcastTranscriptQuotaIdentity {
   readonly participantId: string;
   readonly runId: string;
+  /** Increments only after the editor explicitly retries a partial/failed run. */
+  readonly attemptOrdinal?: number;
 }
 
 export type BroadcastTranscriptWorkerRequest =

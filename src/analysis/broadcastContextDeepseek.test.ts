@@ -518,6 +518,70 @@ describe("broadcastContextDeepseek", () => {
       }
     });
 
+    it("keeps a paid overview when a narrative field contains stray Han text", () => {
+      const payload = {
+        choices: [{
+          message: {
+            content: JSON.stringify({
+              summary: "음식 퀴즈를 진행하다 突然 당황하고 실수를 인정했다.",
+              themes: ["음식과 反應"],
+              candidates: [{
+                id: "can1",
+                d: "select",
+                c: "reaction",
+                p: 0.91,
+                reason: "예상 밖 結果에 반응했다.",
+              }],
+              leads: [],
+            }),
+          },
+        }],
+      };
+
+      const parsed = extractBroadcastContextQwenOverviewResponse(payload, dummyRequest);
+      expect(parsed.ok).toBe(true);
+      if (parsed.ok) {
+        expect(parsed.result.broadcastSummaryKo).toContain("한글 표기 미확인");
+        expect(parsed.result.annotations[0]?.contextSummaryKo).toContain(
+          "한글 표기 미확인",
+        );
+        expect(JSON.stringify(parsed.result)).not.toMatch(/\p{Script=Han}/u);
+      }
+    });
+
+    it("keeps an English session English-only when replacing stray Han text", () => {
+      const payload = {
+        choices: [{
+          message: {
+            content: JSON.stringify({
+              summary: "The food quiz suddenly changed after 突然 confusion.",
+              themes: ["food and 反應"],
+              candidates: [{
+                id: "can1",
+                d: "select",
+                c: "reaction",
+                p: 0.91,
+                reason: "The host reacted to an unexpected 結果.",
+              }],
+              leads: [],
+            }),
+          },
+        }],
+      };
+
+      const parsed = extractBroadcastContextQwenOverviewResponse(payload, {
+        ...dummyRequest,
+        outputLanguage: "en",
+      });
+      expect(parsed.ok).toBe(true);
+      if (parsed.ok) {
+        const serialized = JSON.stringify(parsed.result);
+        expect(serialized).toContain("wording not verified");
+        expect(serialized).not.toContain("한글 표기 미확인");
+        expect(serialized).not.toMatch(/\p{Script=Han}/u);
+      }
+    });
+
     it("keeps routine gameplay on the score map without adding editor-review clips", () => {
       const gameRequest: BroadcastContextRequest = {
         ...dummyRequest,

@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   BROADCAST_CONTEXT_PROXY_ENDPOINT,
+  BroadcastContextDeepseekClientError,
   requestBroadcastContextDeepseek,
 } from "./broadcastContextDeepseekClient";
 import { DEFAULT_CANDIDATE_PASS_B_CAST_ROSTER_ID } from "./participantRoster";
@@ -161,6 +162,191 @@ describe("requestBroadcastContextDeepseek", () => {
       }),
     ).rejects.toMatchObject({
       code: "PROXY_INVALID_RESPONSE",
+    });
+  });
+
+  it.each([
+    [502, "UPSTREAM_OUTCOME_UNKNOWN"],
+    [502, "UPSTREAM_INVALID_RESPONSE"],
+    [502, "UPSTREAM_REJECTED"],
+    [502, "UPSTREAM_UNAVAILABLE"],
+    [504, "UPSTREAM_TIMEOUT"],
+    [429, "UPSTREAM_RATE_LIMITED"],
+    [409, "OPERATION_ALREADY_FINISHED"],
+  ])(
+    "preserves bounded proxy failure identity for HTTP %i %s",
+    async (status, proxyErrorCode) => {
+      const request = requestBroadcastContextDeepseek(input, {
+        fetchImplementation: () =>
+          Promise.resolve(
+            new Response(
+              JSON.stringify({
+                error: {
+                  code: proxyErrorCode,
+                  message: "provider raw text must not escape",
+                },
+              }),
+              {
+                status,
+                headers: {
+                  "Content-Type": "application/json; charset=utf-8",
+                  "Retry-After": status === 429 ? "60" : "9999",
+                  "X-ExClipper-Primary-Failure": "invalid-response",
+                  "X-ExClipper-Fallback-Failure": "unavailable",
+                  "X-ExClipper-Fallback-Reason": "invalid-response",
+                  "X-Provider-Raw": "provider raw text must not escape",
+                },
+              },
+            ),
+          ),
+      });
+
+      try {
+        await request;
+        throw new Error("Expected the proxy request to fail.");
+      } catch (error) {
+        expect(error).toBeInstanceOf(BroadcastContextDeepseekClientError);
+        expect(error).toMatchObject({
+          code: "PROXY_REJECTED",
+          status,
+          proxyErrorCode,
+        });
+        const clientError = error as BroadcastContextDeepseekClientError;
+        expect(clientError.message).not.toContain("provider raw text");
+        expect(clientError.diagnosticHeaders).toEqual({
+          ...(status === 429 ? { "Retry-After": "60" } : {}),
+          "X-ExClipper-Fallback-Reason": "invalid-response",
+          "X-ExClipper-Primary-Failure": "invalid-response",
+          "X-ExClipper-Fallback-Failure": "unavailable",
+        });
+        expect(
+          (clientError.diagnosticHeaders as Record<string, string>)[
+            "X-Provider-Raw"
+          ],
+        ).toBeUndefined();
+        expect(JSON.stringify(clientError)).not.toContain("provider raw text");
+      }
+    },
+  );
+
+  it("preserves a terminal quota conflict without sending a second cancel", async () => {
+    const quotaActions: string[] = [];
+    const paidRequests: string[] = [];
+    const fetchImplementation = vi.fn(
+      (request: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+        const url =
+          typeof request === "string"
+            ? request
+            : request instanceof URL
+              ? request.href
+              : request.url;
+        if (url.endsWith("/v1/ai-quota")) {
+          if (typeof init?.body !== "string") {
+            throw new TypeError("Expected a serialized quota request.");
+          }
+          const body = JSON.parse(init.body) as { readonly action: string };
+          quotaActions.push(body.action);
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                schemaVersion: "1.0.0",
+                status: "terminal",
+                retryAfterMs: 0,
+                activeParticipantCount: 1,
+                poolInFlightCount: 0,
+              }),
+              {
+                status: 409,
+                headers: { "Content-Type": "application/json" },
+              },
+            ),
+          );
+        }
+        paidRequests.push(url);
+        return Promise.resolve(new Response("{}", { status: 500 }));
+      },
+    );
+
+    await expect(
+      requestBroadcastContextDeepseek(input, {
+        quota: {
+          participantId: "participant_11111111111111111111111111111111",
+          runId: "analysis-run-1",
+          operationId: "context-overview-restored",
+        },
+        fetchImplementation,
+      }),
+    ).rejects.toMatchObject({
+      code: "PROXY_REJECTED",
+      status: 409,
+      proxyErrorCode: "OPERATION_ALREADY_FINISHED",
+    });
+    expect(quotaActions).toEqual(["lease"]);
+    expect(paidRequests).toEqual([]);
+  });
+
+  it("stops reading oversized proxy error bodies and exposes no raw payload", async () => {
+    let pulls = 0;
+    let cancelled = false;
+    const oversizedBody = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        pulls += 1;
+        controller.enqueue(new Uint8Array(1_024).fill(65));
+        if (pulls >= 20) controller.close();
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+
+    await expect(
+      requestBroadcastContextDeepseek(input, {
+        fetchImplementation: () =>
+          Promise.resolve(
+            new Response(oversizedBody, {
+              status: 502,
+              headers: { "Content-Type": "application/json" },
+            }),
+          ),
+      }),
+    ).rejects.toMatchObject({
+      code: "PROXY_REJECTED",
+      status: 502,
+      proxyErrorCode: null,
+      diagnosticHeaders: {},
+    });
+    expect(cancelled).toBe(true);
+    expect(pulls).toBeLessThan(20);
+  });
+
+  it("drops malformed proxy codes and unapproved diagnostic values", async () => {
+    await expect(
+      requestBroadcastContextDeepseek(input, {
+        fetchImplementation: () =>
+          Promise.resolve(
+            new Response(
+              JSON.stringify({
+                error: {
+                  code: "not a bounded public code",
+                  message: "secret provider explanation",
+                },
+              }),
+              {
+                status: 502,
+                headers: {
+                  "Content-Type": "application/json",
+                  "Retry-After": "3600",
+                  "X-ExClipper-Primary-Failure":
+                    "secret provider explanation",
+                },
+              },
+            ),
+          ),
+      }),
+    ).rejects.toMatchObject({
+      status: 502,
+      proxyErrorCode: null,
+      diagnosticHeaders: {},
     });
   });
 

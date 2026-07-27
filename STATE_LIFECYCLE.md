@@ -1,12 +1,12 @@
 # ExClipper 상태·생애주기 명세
 
-- 문서 버전: 0.8.3
+- 문서 버전: 0.8.4
 - 기준 제품 계획: PRODUCT_PLAN.md 현재 revision
 - 기준일: 2026-07-27 (Asia/Seoul)
 - 적용 범위: GitHub Pages에서 실행되는 개인 편집 어시스턴트와 선택형 CHZZK 동반 수집기
 - 문서 지위: 구현·회귀 테스트의 canonical 상태 문서
 
-## `0.8.3` 배포 전체 AI quota 상태
+## `0.8.4` 배포 전체 AI quota·복구 상태
 
 - 각 브라우저는 무작위 installation participant ID를 하나 갖고 분석 run마다 불변 `runId`를 사용한다. participant ID는 공정 분배용이지 로그인이나 인증이 아니다.
 - 유료 AI operation의 상태는 `queued -> lease-issued -> execution-waiting -> in-flight -> succeeded | failed | outcome-unknown | cancelled`다. `lease-issued`는 본문 업로드 허가일 뿐 공급자 실행권이 아니며, digest·schema·WAV·화면·시간 범위 검증 뒤 JIT consume이 성공해야 `in-flight`가 된다.
@@ -14,7 +14,11 @@
 - `transcript`와 `candidate`는 동일한 `qwen-omni` provider gate를 공유한다. 실제 시작 간격 1초, shared in-flight 6, candidate in-flight 4, rolling 100k TPM을 함께 지킨다. `context`는 독립 gate다.
 - 본문 검증에 실패한 미사용 ticket은 동일 lease token의 `lease-issued` 상태에서만 `release-upload -> cancelled`가 된다. 늦은 중복 요청은 `execution-waiting | in-flight`인 정상 요청을 취소할 수 없다.
 - 명시적 HTTP 408/5xx는 새 operation과 새 token 예약으로 제한 재시도할 수 있다. network timeout, fetch 결과 불명, 200 response body stall은 `outcome-unknown`이며 자동 재전송하지 않는다.
-- 현재 계획기는 Worker CPU 완화를 위해 30초 전사 청크를 만들며 Worker 상한은 760개다. 90초는 중계가 거부하지 않는 transport ceiling일 뿐 현재 계획기의 기본 청크가 아니다.
+- 현재 계획기는 30초 전사 청크를 만들며 Worker 상한은 760개다. 전용 브라우저 Web Worker가 WAV를 Base64 JSON으로 바꾼 뒤 요청하므로 화면 UI를 막지 않고 Cloudflare Worker의 byte-to-Base64 변환도 피한다. 90초 raw WAV는 중계가 구버전 탭에 대해 거부하지 않는 compatibility ceiling일 뿐 현재 계획기의 기본 청크나 주 전송 경로가 아니다.
+- `completedWithGaps`는 성공으로 닫힌 상태가 아니다. 편집자의 명시적 재시도는 저장된 chapter 범위를 보존하고 처리 실패로 비어 있는 sampling range만 새 attempt operation ID로 다시 연다. 맥락 overview가 실패해도 완료된 discovery slice는 같은 탭의 checkpoint로 유지한다.
+- paid endpoint가 HTTP 응답을 낸 뒤에는 브라우저가 별도 cancel을 보내지 않는다. terminal operation의 cancel은 멱등 HTTP 200이고, terminal ID로 새 lease를 요청할 때만 409다. 따라서 본 요청의 502와 정리 요청의 409가 연쇄되는 상태는 없다.
+- 맥락 재시도는 이전 semantic candidate와 Pass B projection을 먼저 무효화한다. verification receipt `1.1.0`은 실제로 검토한 context packet의 콘텐츠 지문을 가지며, 현재 packet과 지문이 다르면 기존 insight가 저장돼 있어도 `evidence-incomplete`다. 구형 `1.0.0` receipt는 저장 자료를 읽기 위한 호환 입력일 뿐 최종 publication을 통과하지 않는다.
+- stale client의 145~760개 context chapter는 원본 schema 전체를 먼저 검증한 뒤에만 144개로 압축한다. 중복 ID, 잘못된 evidence mode·coverage·시간 범위가 압축 과정에서 정상화되어 검증을 우회하는 전이는 금지한다.
 
 ## `0.3.45` 완전 검증·양방향 맥락 연결 상태
 

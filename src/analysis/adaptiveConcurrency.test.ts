@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   AdaptiveConcurrency,
   DEFAULT_ADAPTIVE_CONCURRENCY,
+  startAfterRequestSpacing,
 } from "./adaptiveConcurrency";
 
 function succeed(limiter: AdaptiveConcurrency, times: number): void {
@@ -27,13 +28,21 @@ describe("adaptive concurrency", () => {
   it("halves on a single failure rather than stepping down", () => {
     // 넘어서면 늦어지는 것이 아니라 진행 중인 작업을 **버린다.** 한 칸 아래는
     // 조금 느리고, 한 칸 위는 한 배치를 잃는다.
-    const limiter = new AdaptiveConcurrency({ ...DEFAULT_ADAPTIVE_CONCURRENCY, start: 8 });
+    const limiter = new AdaptiveConcurrency({
+      ...DEFAULT_ADAPTIVE_CONCURRENCY,
+      maximum: 10,
+      start: 8,
+    });
     limiter.onFailure();
     expect(limiter.limit).toBe(4);
   });
 
   it("never returns to a value that failed", () => {
-    const limiter = new AdaptiveConcurrency({ ...DEFAULT_ADAPTIVE_CONCURRENCY, start: 8 });
+    const limiter = new AdaptiveConcurrency({
+      ...DEFAULT_ADAPTIVE_CONCURRENCY,
+      maximum: 10,
+      start: 8,
+    });
     limiter.onFailure();
     for (let i = 0; i < 200; i += 1) limiter.onSuccess();
     expect(limiter.limit).toBeLessThan(8);
@@ -48,7 +57,11 @@ describe("adaptive concurrency", () => {
 
   it("keeps the lowest ceiling it has seen", () => {
     // 두 번째 실패가 더 낮은 곳에서 났다면 그쪽이 진짜 벽이다.
-    const limiter = new AdaptiveConcurrency({ ...DEFAULT_ADAPTIVE_CONCURRENCY, start: 8 });
+    const limiter = new AdaptiveConcurrency({
+      ...DEFAULT_ADAPTIVE_CONCURRENCY,
+      maximum: 10,
+      start: 8,
+    });
     limiter.onFailure();
     limiter.onFailure();
     for (let i = 0; i < 200; i += 1) limiter.onSuccess();
@@ -83,5 +96,35 @@ describe("adaptive concurrency", () => {
     expect(fresh.describe()).toContain("상한 미확인");
     fresh.onFailure();
     expect(fresh.describe()).toContain("에서 실패");
+  });
+
+  it("does not start the next request before its one-second slot", async () => {
+    let nowMs = 10_000;
+    const starts: number[] = [];
+    const waits: number[] = [];
+    const timing = {
+      now: () => nowMs,
+      wait: (delayMs: number) => {
+        waits.push(delayMs);
+        expect(starts).toEqual([]);
+        nowMs += delayMs;
+        return Promise.resolve();
+      },
+    };
+
+    const paced = await startAfterRequestSpacing(
+      11_000,
+      1_000,
+      () => {
+        starts.push(nowMs);
+        return Promise.resolve("started");
+      },
+      timing,
+    );
+
+    expect(waits).toEqual([1_000]);
+    expect(starts).toEqual([11_000]);
+    expect(paced.nextStartAtMs).toBe(12_000);
+    await expect(paced.started).resolves.toBe("started");
   });
 });

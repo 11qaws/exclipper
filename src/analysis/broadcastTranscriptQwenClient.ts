@@ -231,17 +231,18 @@ export async function requestBroadcastTranscriptQwenChunk(
   );
 }
 
-/** WAV byte ceiling implied by the base64 contract the proxy already enforces. */
+/** WAV byte ceiling shared by the production Base64 and compatibility binary paths. */
 const MAX_BROADCAST_TRANSCRIPT_WAV_BYTES =
   (MAX_BROADCAST_TRANSCRIPT_QWEN_BASE64_LENGTH / 4) * 3;
 
 /**
- * Sends the chunk as raw WAV bytes instead of base64 wrapped in JSON.
+ * Backward-compatible raw WAV transport retained for old tabs and diagnostics.
  *
- * The old transport inflated every chunk by a third and forced the relay to
- * materialise megabyte strings, which is what capped transcription at one
- * request in flight. Raw bytes keep the relay memory flat, so chunks can
- * finally overlap.
+ * The production analysis worker prepares Base64 in the browser and uses
+ * `requestBroadcastTranscriptQwenChunk`. Keeping this route lets an older
+ * deployed client survive a Worker-first rollout, but it makes the Cloudflare
+ * Worker perform the byte-to-Base64 conversion and is therefore not the
+ * preferred path on the Free CPU tier.
  */
 export async function requestBroadcastTranscriptChunkBinary(
   wavBytes: Uint8Array,

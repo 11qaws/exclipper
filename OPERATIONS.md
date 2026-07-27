@@ -1,12 +1,15 @@
 # ExClipper 개인용 운영·배포·복구 계획
 
-## 2026-07-27 `0.8.3` 최대 5개 독립 편집 세션
+## 2026-07-27 `0.8.4` 최대 5개 독립 편집 세션
 
 - 프로젝트·원본·후보·편집 판단은 계속 각 브라우저에만 남는다. 한 배포의 AI 공급자 용량만 신뢰된 편집자 세션 최대 5개가 공유하며, `AiQuotaCoordinator`가 participant별 FIFO와 participant 간 round-robin을 적용한다.
 - `transcript`와 `candidate`는 Singapore `qwen3.5-omni-flash`의 1초 start clock, shared in-flight 6, 100k TPM과 429 backoff를 공유한다. `context`는 독립 250ms·5M TPM 앱 gate다.
-- 현재 브라우저 계획기는 30초 청크를 사용하고 한 실행 안에서 `AdaptiveConcurrency`를 조정한다. Worker는 호환성을 위해 최대 90초 raw WAV를 수용하지만 운영 처리량과 Worker 상한 760개는 30초 기준으로 계산한다. 아래 과거 release note의 90초·240개·91청크 수치는 현재 운영값이 아니다.
-- 배포는 무중단 호환 순서로 진행한다: ① Worker `AI_QUOTA_MODE=optional` 배포 ② quota client가 포함된 Pages 배포·공개 버전 확인 ③ Worker `AI_QUOTA_MODE=required` 재배포 ④ health, Origin preflight, quota lease, 30초 raw transcript smoke 확인.
-- Free Worker 10ms CPU 안전성은 확정하지 않는다. 30초·native Base64는 관측된 90초 실패를 완화하지만, live smoke에서 1102/CPU 초과가 재현되면 Workers Paid 또는 R2+ASR transport로 전환한다.
+- 현재 브라우저 계획기는 30초 청크를 사용하고 한 실행 안에서 `AdaptiveConcurrency`를 조정한다. 전용 브라우저 Web Worker가 약 0.96MB WAV를 약 1.28MB Base64 JSON으로 준비하며, Cloudflare Worker는 전체 오디오를 다시 변환하지 않는다. Worker는 구버전 탭을 위해 최대 90초 raw WAV도 수용하지만 운영 처리량과 Worker 상한 760개는 30초 기준으로 계산한다. 아래 과거 release note의 90초·240개·91청크 수치는 현재 운영값이 아니다.
+- 배포는 무중단 호환 순서로 진행한다: ① Worker 배포 ② quota client가 포함된 Pages 배포·공개 버전 확인 ③ health, Origin preflight, quota lease, 30초 Base64 JSON transcript smoke 확인. 현재 운영이 이미 `AI_QUOTA_MODE=required`이면 이를 낮추지 않는다.
+- Free Worker 10ms CPU 안전성은 live smoke로 확인한다. 주 경로는 byte-to-Base64 변환을 브라우저 Web Worker로 옮겼지만, 중계에는 여전히 약 1.28MB JSON 수신·digest·파싱·검증·공급자 본문 직렬화가 남는다. 1102/CPU 초과가 재현되면 Workers Paid 또는 R2+ASR transport로 전환한다.
+- 전사 브라우저 Worker는 1초 요청 슬롯을 먼저 기다린 뒤 quota lease와 POST를 시작하며 로컬 in-flight 상한은 6이다. 슬롯 대기 전에 fetch/IIFE를 만들면 실제 전송은 이미 시작되므로 배포 검토에서 호출 시점을 확인한다.
+- `/v1/broadcast-context`의 502는 응답 JSON의 allowlist 오류 코드와 제한된 진단 헤더로 구분한다. non-2xx paid 응답 뒤에는 cancel하지 않으며, 이미 끝난 작업의 cancel은 200 멱등 정리, 같은 ID의 새 lease만 409다.
+- `completedWithGaps` 재시도는 성공 chapter를 유지하고 uncovered 30초 range만 새 attempt ID로 보낸다. 맥락을 다시 만들 때는 이전 semantic candidate와 Pass B 결과를 먼저 무효화하고, 새 context 콘텐츠 지문이 일치하는 receipt만 최종 후보에 사용할 수 있다.
 - 세부 request/header/body/TTL/rollback 계약은 `docs/FIVE_USER_QUOTA_COORDINATOR_2026-07-27.md`가 소유한다.
 
 ## 2026-07-23 release notes

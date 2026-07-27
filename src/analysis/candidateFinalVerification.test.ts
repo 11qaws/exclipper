@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   createCandidatePassBContextPacket,
   createCandidatePassBVerificationReceipt,
+  candidatePassBReceiptMatchesContext,
   finalizeFullyVerifiedCandidates,
 } from "./candidateFinalVerification";
 import type { CandidatePassBInsight } from "./candidatePassBWorkerProtocol";
@@ -71,6 +72,34 @@ describe("candidate final verification", () => {
     expect(result.gapByCandidateId[candidate.id]).toBe(
       "verification-receipt-missing",
     );
+  });
+
+  it("invalidates a paid detail receipt when the whole-broadcast context changes", () => {
+    const frames = [1_000, 2_000, 3_000, 4_000].map((timestampMs) => ({
+      timestampMs,
+    }));
+    const receipt = createCandidatePassBVerificationReceipt(
+      context!,
+      frames,
+      1_000,
+    )!;
+    const changedContext = {
+      ...context!,
+      broadcastSummaryKo:
+        "복구된 누락 대사를 포함해 음식 퀴즈의 앞뒤 사건 순서가 달라졌다.",
+    };
+
+    expect(candidatePassBReceiptMatchesContext(receipt, changedContext)).toBe(
+      false,
+    );
+    const result = finalizeFullyVerifiedCandidates({
+      candidates: [candidate],
+      contextByCandidateId: { [candidate.id]: changedContext },
+      insightByCandidateId: { [candidate.id]: insight },
+      receiptByCandidateId: { [candidate.id]: receipt },
+    });
+    expect(result.candidates).toEqual([]);
+    expect(result.gapByCandidateId[candidate.id]).toBe("evidence-incomplete");
   });
 
   it("excludes music and context conflicts even with complete local evidence", () => {

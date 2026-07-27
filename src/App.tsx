@@ -158,6 +158,7 @@ import {
 import { buildCandidatePassBContextPackets } from "./analysis/candidateContextPackets";
 import {
   createCandidatePassBVerificationReceipt,
+  candidatePassBReceiptMatchesContext,
   finalizeFullyVerifiedCandidates,
 } from "./analysis/candidateFinalVerification";
 import { buildBroadcastSummaryCitationPresentation } from "./analysis/broadcastSummaryCitations";
@@ -376,6 +377,7 @@ import {
 } from "./app/finalVerificationGapSummary";
 import {
   canStartTranscriptRun,
+  transcriptNeedsExplicitRetry,
   transcriptOperationKey,
   transcriptPhaseFor,
 } from "./app/transcriptPhase";
@@ -419,12 +421,27 @@ type AnalysisSelectionSummary = DurableAnalysisSelectionSummary;
 type AnalysisCoverageSummary = DurableAnalysisCoverageSummary;
 type AnalysisGapApprovalEvidence = DurableAnalysisGapApprovalEvidence;
 
-const APP_VERSION = "0.8.3";
+const APP_VERSION = "0.8.4";
 const PERSISTENCE_SCHEMA_VERSION = "0.3.0";
 const SIGNAL_ENGINE_VERSION =
   "streamer-reaction-fast-pass-v5-chat-fallback-music-confirmation";
 const MAX_CHAT_FILE_BYTES = 32 * 1024 * 1024;
 const SIGNAL_GAP_POLICY_ID = DURABLE_SIGNAL_GAP_POLICY_ID;
+
+function initialAiAttemptOrdinal(): number {
+  // Terminal quota operation IDs live for six hours. A timestamp-backed
+  // generation prevents a restored tab from reusing generation zero.
+  return Date.now();
+}
+
+function isContextDiscoveredCandidate(candidate: ReviewedCandidate): boolean {
+  return (
+    candidate.id.startsWith("semantic-") &&
+    candidate.signalKinds.length === 1 &&
+    candidate.signalKinds[0] === "semantic" &&
+    candidate.evidence.semantic !== undefined
+  );
+}
 
 function App() {
   const [theme, setTheme] = useState<Theme>(initialTheme);
@@ -521,6 +538,8 @@ function App() {
   const [broadcastTranscriptStatus, setBroadcastTranscriptStatus] = useState<
     "idle" | "running" | "completed" | "completedWithGaps" | "failed"
   >("idle");
+  const [broadcastTranscriptAttemptOrdinal, setBroadcastTranscriptAttemptOrdinal] =
+    useState(initialAiAttemptOrdinal);
   const [broadcastTranscriptProgress, setBroadcastTranscriptProgress] =
     useState<BroadcastTranscriptWorkerProgress | null>(null);
   const [broadcastTranscriptExplorationCells, setBroadcastTranscriptExplorationCells] =
@@ -557,6 +576,8 @@ function App() {
     useState<string | null>(null);
   const [broadcastContextStatus, setBroadcastContextStatus] =
     useState<BroadcastContextUiStatus>("idle");
+  const [broadcastContextAttemptOrdinal, setBroadcastContextAttemptOrdinal] =
+    useState(initialAiAttemptOrdinal);
   const [broadcastContextResult, setBroadcastContextResult] =
     useState<BroadcastContextResult | null>(null);
   const [candidateAiProjectionById, setCandidateAiProjectionById] =
@@ -566,9 +587,17 @@ function App() {
   const [broadcastContextFastRefinementLeadIds, setBroadcastContextFastRefinementLeadIds] =
     useState<readonly string[] | null>(null);
   const [broadcastContextError, setBroadcastContextError] = useState<string | null>(null);
+  const broadcastContextDiscoveryCheckpointRef = useRef<{
+    readonly contextInputSignature: string;
+    readonly resultBySlice: ReadonlyMap<number, BroadcastContextResult>;
+  } | null>(null);
   const [semanticLeadRefinementStatus, setSemanticLeadRefinementStatus] = useState<
     "idle" | "running" | "completed" | "failed"
   >("idle");
+  const [
+    semanticLeadRefinementAttemptOrdinal,
+    setSemanticLeadRefinementAttemptOrdinal,
+  ] = useState(initialAiAttemptOrdinal);
   const [semanticLeadRefinementError, setSemanticLeadRefinementError] =
     useState<string | null>(null);
   const candidatePassBEvidenceRef = useRef<CandidatePassBEvidenceById>({});
@@ -670,12 +699,13 @@ function App() {
   const candidateAudioEventAbortController = useRef<AbortController | null>(null);
   const analysisStartOperation = useRef<number | null>(null);
   const analysisOperationEpoch = useRef(0);
-  const candidatePassBOperationEpoch = useRef(0);
+  const candidatePassBOperationEpoch = useRef(initialAiAttemptOrdinal());
   const candidatePassBStartPendingRef = useRef(false);
   const autoCandidatePassBSourceRef = useRef<string | null>(null);
   const autoBroadcastTranscriptSourceRef = useRef<string | null>(null);
   const autoBroadcastContextSourceRef = useRef<string | null>(null);
   const autoSemanticLeadRefinementSourceRef = useRef<string | null>(null);
+  const wholeContextRetryPendingRef = useRef(false);
   const recoveredContextRestoreEpoch = useRef(0);
   const runCandidatePassBRef = useRef<
     (targetCandidateIds?: readonly string[], autoStartKey?: string) => Promise<void>
@@ -1509,14 +1539,20 @@ function App() {
     [candidatePassBContextById, candidates, explicitMusicOnlyCandidateIds],
   );
   const automaticCandidateDetailIds = useMemo(() => {
-    const alreadyHandledIds = new Set(
-      Object.keys(candidatePassBVerificationReceiptById),
-    );
     return candidateDetailCandidateIds.filter(
-      (candidateId) => !alreadyHandledIds.has(candidateId),
+      (candidateId) => {
+        const receipt = candidatePassBVerificationReceiptById[candidateId];
+        const context = candidatePassBContextById[candidateId];
+        return (
+          receipt === undefined ||
+          context === undefined ||
+          !candidatePassBReceiptMatchesContext(receipt, context)
+        );
+      },
     );
   }, [
     candidateDetailCandidateIds,
+    candidatePassBContextById,
     candidatePassBVerificationReceiptById,
   ]);
   const candidateDetailCostEstimate = useMemo(() => {
@@ -2043,9 +2079,11 @@ function App() {
     candidateGeminiInsightRef.current = {};
     candidatePassBModelByIdRef.current = {};
     candidatePassBVerificationReceiptRef.current = {};
+    candidateTimelineFramesRef.current = {};
     setCandidatePassBEvidenceById({});
     setCandidateGeminiInsightById({});
     setCandidatePassBVerificationReceiptById({});
+    setCandidateTimelineFramesById({});
     setCandidatePassBStartPending(false);
     setCandidatePassBModelProgress(null);
     setCandidatePassBCandidateProgress(null);
@@ -3682,6 +3720,7 @@ function App() {
         quota: {
           participantId: aiQuotaParticipantId,
           runId: identity.analysisRunId,
+          attemptOrdinal: operationEpoch,
         },
         sourceDurationMs,
         device: runtimeDevice,
@@ -4938,20 +4977,108 @@ function App() {
 
   /** Re-runs whichever whole-context stage stopped, keeping fast candidates. */
   const retryWholeContextPhase = (): void => {
-    if (broadcastContextStatus === "failed" || broadcastContextResult === null) {
-      autoBroadcastContextSourceRef.current = null;
-      setBroadcastContextStatus("idle");
-      setBroadcastContextError(null);
-    }
-    if (
-      broadcastTranscriptStatus === "failed" ||
-      broadcastTranscriptChapters.length === 0
-    ) {
-      autoBroadcastTranscriptSourceRef.current = null;
-      setBroadcastTranscriptStatus("idle");
-      setBroadcastTranscriptProgress(null);
-      setBroadcastTranscriptError(null);
-    }
+    if (wholeContextRetryPendingRef.current) return;
+    const transcriptNeedsRetry = transcriptNeedsExplicitRetry(
+      broadcastTranscriptStatus,
+      broadcastTranscriptChapters.length,
+    );
+    const contextNeedsRetry =
+      broadcastContextStatus === "failed" ||
+      broadcastContextResult === null ||
+      transcriptNeedsRetry;
+
+    if (!contextNeedsRetry && !transcriptNeedsRetry) return;
+    wholeContextRetryPendingRef.current = true;
+
+    void (async () => {
+      if (contextNeedsRetry) {
+        broadcastContextAbortController.current?.abort();
+        broadcastContextAbortController.current = null;
+        semanticLeadRefinementAbortController.current?.abort();
+        semanticLeadRefinementAbortController.current = null;
+        setBroadcastContextStatus("restoring");
+        setBroadcastContextError(null);
+        setSemanticLeadRefinementStatus("idle");
+        setSemanticLeadRefinementError(null);
+
+        const retainedCandidates = candidates.filter(
+          (candidate) => !isContextDiscoveredCandidate(candidate),
+        );
+        if (retainedCandidates.length !== candidates.length) {
+          const retainedIds = new Set(retainedCandidates.map(({ id }) => id));
+          setCandidates(retainedCandidates);
+          setSelectionResult((current) =>
+            current === null
+              ? current
+              : { ...current, candidateCount: retainedCandidates.length },
+          );
+          setBoundaryRevisions((current) =>
+            Object.fromEntries(
+              Object.entries(current).filter(([candidateId]) =>
+                retainedIds.has(candidateId),
+              ),
+            ),
+          );
+          resetCandidateRanking(retainedCandidates);
+        }
+
+        // Candidate Pass B consumes the whole-broadcast packet. Once that
+        // packet is reopened, every old insight and verification receipt is
+        // stale in memory and in the durable analysis session.
+        resetCandidatePassB();
+        queueCandidatePassBInsightPersistence({}, {}, {}, {}, {});
+        setCandidateAiProjectionById({});
+        setBroadcastContextResult(null);
+        setBroadcastContextRefinementLeadIds(null);
+        setBroadcastContextFastRefinementLeadIds(null);
+        setTimelineSemanticChapters([]);
+        setTimelineSemanticChapterRevealCount(0);
+        setTimelineInspectionTarget(null);
+
+        try {
+          await flushCandidatePassBInsightPersistence();
+          const runId = currentAnalysisRunId;
+          if (runId !== null) {
+            const store = getResultStore();
+            const savedSession = await store.getBroadcastContextSession(runId);
+            if (savedSession !== null) {
+              await store.putBroadcastContextSession({
+                ...savedSession,
+                contextInputSignature: null,
+                contextResultJson: null,
+                refinementInputSignature: null,
+                refinementCandidatesJson: null,
+                recordedAt: new Date().toISOString(),
+              });
+            }
+          }
+        } catch {
+          setBroadcastContextStatus("failed");
+          setBroadcastContextError(
+            "기존 맥락 판정을 안전하게 무효화하지 못했어요. 저장 공간을 확인한 뒤 다시 시도해 주세요.",
+          );
+          return;
+        }
+
+        autoSemanticLeadRefinementSourceRef.current = null;
+        setSemanticLeadRefinementAttemptOrdinal((current) => current + 1);
+        autoBroadcastContextSourceRef.current = null;
+        setBroadcastContextAttemptOrdinal((current) => current + 1);
+        setBroadcastContextStatus("idle");
+      }
+
+      if (transcriptNeedsRetry) {
+        broadcastTranscriptAbortController.current?.abort();
+        broadcastTranscriptAbortController.current = null;
+        autoBroadcastTranscriptSourceRef.current = null;
+        setBroadcastTranscriptAttemptOrdinal((current) => current + 1);
+        setBroadcastTranscriptStatus("idle");
+        setBroadcastTranscriptProgress(null);
+        setBroadcastTranscriptError(null);
+      }
+    })().finally(() => {
+      wholeContextRetryPendingRef.current = false;
+    });
   };
 
   const focusSourceSection = (): void => {
@@ -5677,7 +5804,8 @@ function App() {
       return;
     }
 
-    const operationKey = `${runId}:${inputSignature}`;
+    const operationKey =
+      `${runId}:${inputSignature}:context-attempt-${broadcastContextAttemptOrdinal}`;
     if (autoBroadcastContextSourceRef.current === operationKey) {
       return;
     }
@@ -5787,42 +5915,79 @@ function App() {
         "broadcast-context-ai",
         Date.now(),
       );
-      const [overviewResult, discoveryResults] = await Promise.all([
-        requestBroadcastContextDeepseek(contextInput, {
-          signal: controller.signal,
-          quota: {
-            participantId: aiQuotaParticipantId,
-            runId,
-            operationId: "context-overview",
-          },
+      const previousDiscoveryCheckpoint =
+        broadcastContextDiscoveryCheckpointRef.current?.contextInputSignature ===
+        contextInputSignature
+          ? broadcastContextDiscoveryCheckpointRef.current.resultBySlice
+          : new Map<number, BroadcastContextResult>();
+      const overviewSettlement = requestBroadcastContextDeepseek(contextInput, {
+        signal: controller.signal,
+        quota: {
+          participantId: aiQuotaParticipantId,
+          runId,
+          operationId: `context-overview-g${broadcastContextAttemptOrdinal}`,
+        },
+      }).then(
+        (value) => ({ status: "fulfilled" as const, value }),
+        (reason: unknown) => ({ status: "rejected" as const, reason }),
+      );
+      const discoverySettlements = Promise.all(
+        discoverySlices.map((slice, sliceIndex) => {
+          const checkpoint = previousDiscoveryCheckpoint.get(sliceIndex);
+          if (checkpoint !== undefined) {
+            return Promise.resolve({
+              status: "fulfilled" as const,
+              value: checkpoint,
+            });
+          }
+          return requestBroadcastContextDeepseek(
+            {
+              sourceDurationMs: boundarySourceDurationMs,
+              chapters: slice.chapters,
+              candidates: [],
+              outputLanguage: analysisLanguage,
+              ...(sourceCastRosterId === null
+                ? {}
+                : { castRosterId: sourceCastRosterId }),
+            },
+            {
+              signal: controller.signal,
+              analysisMode: "discovery",
+              quota: {
+                participantId: aiQuotaParticipantId,
+                runId,
+                operationId:
+                  `context-discovery-${sliceIndex}-g${broadcastContextAttemptOrdinal}`,
+              },
+            },
+          ).then(
+            (value) => ({ status: "fulfilled" as const, value }),
+            (reason: unknown) => ({ status: "rejected" as const, reason }),
+          );
         }),
-        Promise.allSettled(
-          discoverySlices.map((slice, sliceIndex) =>
-            requestBroadcastContextDeepseek(
-              {
-                sourceDurationMs: boundarySourceDurationMs,
-                chapters: slice.chapters,
-                candidates: [],
-                outputLanguage: analysisLanguage,
-                ...(sourceCastRosterId === null
-                  ? {}
-                  : { castRosterId: sourceCastRosterId }),
-              },
-              {
-                signal: controller.signal,
-                analysisMode: "discovery",
-                quota: {
-                  participantId: aiQuotaParticipantId,
-                  runId,
-                  operationId: `context-discovery-${sliceIndex}`,
-                },
-              },
-            ),
-          ),
-        ),
+      );
+      const [settledOverview, discoveryResults] = await Promise.all([
+        overviewSettlement,
+        discoverySettlements,
       ]);
       endContextSpan?.(Date.now());
       if (controller.signal.aborted || !isMounted.current) return;
+      const nextDiscoveryCheckpoint = new Map(previousDiscoveryCheckpoint);
+      discoveryResults.forEach((discovery, sliceIndex) => {
+        if (discovery.status === "fulfilled") {
+          nextDiscoveryCheckpoint.set(sliceIndex, discovery.value);
+        }
+      });
+      if (nextDiscoveryCheckpoint.size > 0) {
+        broadcastContextDiscoveryCheckpointRef.current = {
+          contextInputSignature,
+          resultBySlice: nextDiscoveryCheckpoint,
+        };
+      }
+      if (settledOverview.status === "rejected") {
+        throw settledOverview.reason;
+      }
+      const overviewResult = settledOverview.value;
       const result: BroadcastContextResult = {
         ...overviewResult,
         discoveredLeads: mergeBroadcastTopicalDiscoveryLeads([
@@ -5863,7 +6028,7 @@ function App() {
               quota: {
                 participantId: aiQuotaParticipantId,
                 runId,
-                operationId: "context-selection",
+                operationId: `context-selection-g${broadcastContextAttemptOrdinal}`,
               },
             },
           );
@@ -5961,6 +6126,7 @@ function App() {
     analysisRun?.inputSignature,
     boundarySourceDurationMs,
     boundedBroadcastContextChapters,
+    broadcastContextAttemptOrdinal,
     broadcastContextCandidateInputs,
     broadcastTranscriptStatus,
     candidates,
@@ -6006,7 +6172,10 @@ function App() {
       setSemanticLeadRefinementStatus("completed");
       return;
     }
-    const operationKey = `${currentAnalysisRunId}:${plan.selectedLeadIds.join("|")}`;
+    const operationKey =
+      `${currentAnalysisRunId}:${plan.selectedLeadIds.join("|")}` +
+      `:context-${broadcastContextAttemptOrdinal}` +
+      `:refinement-${semanticLeadRefinementAttemptOrdinal}`;
     if (autoSemanticLeadRefinementSourceRef.current === operationKey) {
       return;
     }
@@ -6026,9 +6195,12 @@ function App() {
     const applySemanticCandidates = (
       proposals: readonly UnifiedHighlightCandidate[],
     ): void => {
+      const baseCandidates = candidates.filter(
+        (candidate) => !isContextDiscoveredCandidate(candidate),
+      );
       const semanticCandidates: ReviewedCandidate[] = [];
       for (const proposal of proposals) {
-        const duplicatesExisting = candidates.some((candidate) => {
+        const duplicatesExisting = baseCandidates.some((candidate) => {
           const overlapMs = Math.max(
             0,
             Math.min(candidate.endMs, proposal.endMs) -
@@ -6048,7 +6220,7 @@ function App() {
           });
         }
       }
-      const nextCandidates = [...candidates, ...semanticCandidates].sort(
+      const nextCandidates = [...baseCandidates, ...semanticCandidates].sort(
         (left, right) => left.peakMs - right.peakMs || left.id.localeCompare(right.id),
       );
       setCandidates(nextCandidates);
@@ -6065,6 +6237,8 @@ function App() {
       const refinementInputSignature = await createContentFingerprint([
         currentAnalysisRunId,
         JSON.stringify(plan),
+        JSON.stringify(boundedBroadcastContextChapters),
+        JSON.stringify(broadcastContextResult),
         JSON.stringify(broadcastContextFastRefinementLeadIds),
         JSON.stringify(broadcastContextResult.discoveredLeads),
         youtubeCaptionTrack === null
@@ -6109,6 +6283,7 @@ function App() {
               quota: {
                 participantId: aiQuotaParticipantId,
                 runId: currentAnalysisRunId,
+                attemptOrdinal: semanticLeadRefinementAttemptOrdinal,
               },
               signal: controller.signal,
             })
@@ -6172,7 +6347,10 @@ function App() {
                 quota: {
                   participantId: aiQuotaParticipantId,
                   runId: currentAnalysisRunId,
-                  operationId: `context-refinement-${leadIndex}`,
+                  operationId:
+                    `context-refinement-${leadIndex}` +
+                    `-c${broadcastContextAttemptOrdinal}` +
+                    `-r${semanticLeadRefinementAttemptOrdinal}`,
                 },
               },
             );
@@ -6297,6 +6475,8 @@ function App() {
   }, [
     aiQuotaParticipantId,
     boundarySourceDurationMs,
+    boundedBroadcastContextChapters,
+    broadcastContextAttemptOrdinal,
     broadcastContextRefinementLeadIds,
     broadcastContextFastRefinementLeadIds,
     broadcastContextResult,
@@ -6305,6 +6485,7 @@ function App() {
     currentAnalysisRunId,
     getResultStore,
     resetCandidateRanking,
+    semanticLeadRefinementAttemptOrdinal,
     sourceCastRosterId,
     sourceFile,
     youtubeCaptionTrack,
@@ -6338,6 +6519,7 @@ function App() {
       runId,
       sourceContentFingerprint,
       transcriptPhase,
+      broadcastTranscriptAttemptOrdinal,
     );
     if (autoBroadcastTranscriptSourceRef.current === operationKey) {
       return;
@@ -6610,6 +6792,7 @@ function App() {
         quota: {
           participantId: aiQuotaParticipantId,
           runId,
+          attemptOrdinal: broadcastTranscriptAttemptOrdinal,
         },
         signal: controller.signal,
         onProgress: (progress) => {
@@ -6728,6 +6911,7 @@ function App() {
     analysisRun?.inputSignature,
     analysisRun?.status,
     broadcastContextSamplingPlan,
+    broadcastTranscriptAttemptOrdinal,
     broadcastTranscriptStatus,
     currentAnalysisRunId,
     getResultStore,
@@ -7683,36 +7867,45 @@ function App() {
               )}
 
               {(broadcastTranscriptStatus === "failed" ||
+                broadcastTranscriptStatus === "completedWithGaps" ||
                 broadcastContextStatus === "failed" ||
                 semanticLeadRefinementStatus === "failed") && (
                 <div className="rh-notice rh-notice-with-action" data-tone="warning" role="status">
                   <span>
-                    {semanticLeadRefinementError ??
-                      broadcastContextError ??
-                      broadcastTranscriptError ??
-                      "방송 전체 맥락 분석을 마치지 못했어요."}
+                    {broadcastTranscriptStatus === "completedWithGaps"
+                      ? ui(
+                          "일부 방송 대사 구간에 근거 공백이 남아 있어요. 성공한 구간은 유지하고 누락 구간만 다시 분석할 수 있습니다.",
+                          "Some transcript evidence is still missing. Completed ranges will be kept and only missing ranges will be retried.",
+                        )
+                      : semanticLeadRefinementError ??
+                        broadcastContextError ??
+                        broadcastTranscriptError ??
+                        ui(
+                          "방송 전체 맥락 분석을 마치지 못했어요.",
+                          "The whole-broadcast context analysis did not finish.",
+                        )}
                   </span>
                   <button
                     className="btn btn-secondary"
                     type="button"
                     onClick={() => {
-                      if (semanticLeadRefinementStatus === "failed") {
+                      if (broadcastTranscriptStatus === "completedWithGaps") {
+                        retryWholeContextPhase();
+                      } else if (semanticLeadRefinementStatus === "failed") {
                         autoSemanticLeadRefinementSourceRef.current = null;
+                        setSemanticLeadRefinementAttemptOrdinal(
+                          (current) => current + 1,
+                        );
                         setSemanticLeadRefinementStatus("idle");
                         setSemanticLeadRefinementError(null);
-                      } else if (broadcastContextStatus === "failed") {
-                        autoBroadcastContextSourceRef.current = null;
-                        setBroadcastContextStatus("idle");
-                        setBroadcastContextError(null);
                       } else {
-                        autoBroadcastTranscriptSourceRef.current = null;
-                        setBroadcastTranscriptStatus("idle");
-                        setBroadcastTranscriptProgress(null);
-                        setBroadcastTranscriptError(null);
+                        retryWholeContextPhase();
                       }
                     }}
                   >
-                    다시 시도
+                    {broadcastTranscriptStatus === "completedWithGaps"
+                      ? "누락 구간부터 다시 시도"
+                      : "다시 시도"}
                   </button>
                 </div>
               )}
@@ -8248,7 +8441,9 @@ function App() {
                           type="button"
                           onClick={retryWholeContextPhase}
                         >
-                          맥락 분석 다시 시도
+                          {broadcastTranscriptStatus === "completedWithGaps"
+                            ? "누락 구간부터 다시 시도"
+                            : "맥락 분석 다시 시도"}
                         </button>
                         <button
                           className="btn btn-secondary"

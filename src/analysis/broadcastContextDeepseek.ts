@@ -70,13 +70,32 @@ export interface BroadcastContextParseOptions {
   readonly recoverMalformedItems?: boolean;
 }
 
-function containsUnexpectedHan(value: unknown): boolean {
-  if (typeof value === "string") return /\p{Script=Han}/u.test(value);
-  if (Array.isArray(value)) return value.some(containsUnexpectedHan);
-  if (typeof value === "object" && value !== null) {
-    return Object.values(value as Record<string, unknown>).some(containsUnexpectedHan);
+const UNEXPECTED_HAN_REPLACEMENT_KO = "한글 표기 미확인";
+const UNEXPECTED_HAN_REPLACEMENT_EN = "wording not verified";
+
+function replaceUnexpectedHan(
+  value: unknown,
+  outputLanguage: BroadcastContextRequest["outputLanguage"],
+): unknown {
+  const replacement =
+    outputLanguage === "en"
+      ? UNEXPECTED_HAN_REPLACEMENT_EN
+      : UNEXPECTED_HAN_REPLACEMENT_KO;
+  if (typeof value === "string") {
+    return value.replace(/\p{Script=Han}+/gu, replacement);
   }
-  return false;
+  if (Array.isArray(value)) {
+    return value.map((item) => replaceUnexpectedHan(item, outputLanguage));
+  }
+  if (typeof value === "object" && value !== null) {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>).map(([key, item]) => [
+        key,
+        replaceUnexpectedHan(item, outputLanguage),
+      ]),
+    );
+  }
+  return value;
 }
 
 const SYSTEM_PROMPT = `당신은 긴 인터넷 방송(라이브 스트리밍)의 전체 흐름과 맥락을 파악하여, 특정 하이라이트 구간(후보)들이 전체 방송에서 어떤 역할을 하는지 분류하고 방송을 의미 단위로 묶는(Semantic Chapters) 전문 편집 어시스턴트입니다.
@@ -393,7 +412,7 @@ export function extractBroadcastContextQwenRefinementResponse(
   } catch {
     return { ok: false };
   }
-  if (containsUnexpectedHan(parsed)) return { ok: false };
+  parsed = replaceUnexpectedHan(parsed, request.outputLanguage);
   if (!isRecord(parsed) || typeof parsed.summary !== "string" || !Array.isArray(parsed.leads)) {
     return { ok: false };
   }
@@ -485,7 +504,7 @@ export function extractBroadcastContextQwenDiscoveryResponse(
   } catch {
     return { ok: false };
   }
-  if (containsUnexpectedHan(parsed)) return { ok: false };
+  parsed = replaceUnexpectedHan(parsed, request.outputLanguage);
   if (!isRecord(parsed) || typeof parsed.summary !== "string" || !Array.isArray(parsed.leads)) {
     return { ok: false };
   }
@@ -567,7 +586,7 @@ export function extractBroadcastContextQwenOverviewResponse(
   } catch {
     return { ok: false };
   }
-  if (containsUnexpectedHan(parsed)) return { ok: false };
+  parsed = replaceUnexpectedHan(parsed, request.outputLanguage);
   if (!isRecord(parsed) || typeof parsed.summary !== "string") return { ok: false };
   const broadcastSummaryKo = parsed.summary;
   const themes = isStringArray(parsed.themes) ? parsed.themes.slice(0, 4) : [];
@@ -789,7 +808,7 @@ export function extractBroadcastContextQwenSelectionResponse(
   } catch {
     return { ok: false };
   }
-  if (containsUnexpectedHan(parsed)) return { ok: false };
+  parsed = replaceUnexpectedHan(parsed, request.outputLanguage);
   if (!isRecord(parsed) || typeof parsed.summary !== "string" || !Array.isArray(parsed.selected)) {
     return { ok: false };
   }
@@ -1115,7 +1134,7 @@ export function extractBroadcastContextDeepseekResponse(
     return { ok: false };
   }
 
-  if (containsUnexpectedHan(parsed)) return { ok: false };
+  parsed = replaceUnexpectedHan(parsed, request.outputLanguage);
 
   if (!isRecord(parsed) || typeof parsed.broadcastSummaryKo !== "string") {
     return { ok: false };

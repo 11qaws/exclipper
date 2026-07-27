@@ -10,6 +10,8 @@ import {
 export const BROADCAST_CONTEXT_SCHEMA_VERSION = "1.6.0" as const;
 export const MAX_BROADCAST_CONTEXT_SOURCE_DURATION_MS = 12 * 60 * 60_000;
 export const MAX_BROADCAST_CONTEXT_CHAPTERS = 144;
+/** Stale-client input ceiling before the Worker compacts to the 144-item model contract. */
+export const MAX_BROADCAST_CONTEXT_UNCOMPACTED_CHAPTERS = 760;
 export const MAX_BROADCAST_CONTEXT_CANDIDATES = 32;
 // A 210-second Korean ASR cell can legitimately exceed 1,200 characters.
 // Keeping 3,000 avoids deleting a short apology or payoff near the end while
@@ -61,6 +63,14 @@ export interface BroadcastContextRequest {
   readonly candidates: readonly BroadcastContextCandidateInput[];
   readonly castRosterId: CandidatePassBCastRosterId | null;
   readonly outputLanguage: AnalysisLanguage;
+}
+
+export interface CreateBroadcastContextRequestOptions {
+  /**
+   * Internal stale-client validation ceiling. Production callers should omit
+   * this and stay on the canonical 144-chapter contract.
+   */
+  readonly maximumChapterCount?: number;
 }
 
 export type BroadcastContextCandidateCategory =
@@ -323,7 +333,19 @@ function assertUniqueIdentifiers(
 
 export function createBroadcastContextRequest(
   input: BroadcastContextRequestInput,
+  options: CreateBroadcastContextRequestOptions = {},
 ): BroadcastContextRequest {
+  const maximumChapterCount =
+    options.maximumChapterCount ?? MAX_BROADCAST_CONTEXT_CHAPTERS;
+  if (
+    !Number.isSafeInteger(maximumChapterCount) ||
+    maximumChapterCount < 1 ||
+    maximumChapterCount > MAX_BROADCAST_CONTEXT_UNCOMPACTED_CHAPTERS
+  ) {
+    throw new RangeError(
+      "Broadcast context validation chapter limit is invalid.",
+    );
+  }
   if (
     input.outputLanguage !== undefined &&
     !isAnalysisLanguage(input.outputLanguage)
@@ -354,11 +376,11 @@ export function createBroadcastContextRequest(
   }
   if (
     input.chapters.length < 1 ||
-    input.chapters.length > MAX_BROADCAST_CONTEXT_CHAPTERS
+    input.chapters.length > maximumChapterCount
   ) {
     throw new BroadcastContextInputError(
       "INVALID_CHAPTER_COUNT",
-      "Broadcast context requires between 1 and 144 bounded chapter summaries.",
+      `Broadcast context requires between 1 and ${maximumChapterCount} bounded chapter summaries.`,
     );
   }
   if (input.candidates.length > MAX_BROADCAST_CONTEXT_CANDIDATES) {

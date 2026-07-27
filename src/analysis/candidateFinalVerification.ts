@@ -157,9 +157,10 @@ export function createCandidatePassBVerificationReceipt(
     return null;
   }
   return {
-    schemaVersion: "1.0.0",
+    schemaVersion: "1.1.0",
     contextSchemaVersion: context.schemaVersion,
     transcriptSource: context.transcriptSource,
+    contextFingerprint: candidatePassBContextFingerprint(context),
     audioReviewed: true,
     videoFrameCount: MAX_CANDIDATE_PASS_B_VIDEO_FRAMES,
     thumbnailPrepared: true,
@@ -172,34 +173,79 @@ export function createCandidatePassBVerificationReceipt(
 export function isCandidatePassBVerificationReceipt(
   value: unknown,
 ): value is CandidatePassBVerificationReceipt {
+  if (!isRecord(value)) return false;
+  const isLegacy = value.schemaVersion === "1.0.0";
+  const expectedKeys = [
+    "schemaVersion",
+    "contextSchemaVersion",
+    "transcriptSource",
+    ...(isLegacy ? [] : ["contextFingerprint"]),
+    "audioReviewed",
+    "videoFrameCount",
+    "thumbnailPrepared",
+    "thumbnailTimestampMs",
+    "referenceTranscriptReviewed",
+    "broadcastContextReviewed",
+  ];
   return (
-    isRecord(value) &&
-    Object.keys(value).sort().join() ===
-      [
-        "schemaVersion",
-        "contextSchemaVersion",
-        "transcriptSource",
-        "audioReviewed",
-        "videoFrameCount",
-        "thumbnailPrepared",
-        "thumbnailTimestampMs",
-        "referenceTranscriptReviewed",
-        "broadcastContextReviewed",
-      ]
-        .sort()
-        .join() &&
-    value.schemaVersion === "1.0.0" &&
+    Object.keys(value).sort().join() === expectedKeys.sort().join() &&
+    (isLegacy || value.schemaVersion === "1.1.0") &&
     value.contextSchemaVersion === CANDIDATE_PASS_B_CONTEXT_SCHEMA_VERSION &&
     ["youtube-caption", "broadcast-transcript", "semantic-refinement"].includes(
       value.transcriptSource as string,
     ) &&
     value.audioReviewed === true &&
+    (isLegacy ||
+      (typeof value.contextFingerprint === "string" &&
+        /^fnv1a64:[0-9a-f]{16}$/u.test(value.contextFingerprint))) &&
     value.videoFrameCount === MAX_CANDIDATE_PASS_B_VIDEO_FRAMES &&
     value.thumbnailPrepared === true &&
     Number.isSafeInteger(value.thumbnailTimestampMs) &&
     (value.thumbnailTimestampMs as number) >= 0 &&
     value.referenceTranscriptReviewed === true &&
     value.broadcastContextReviewed === true
+  );
+}
+
+/**
+ * A compact deterministic fence for the exact whole-broadcast context handed
+ * to Pass B. This is an integrity/version key, not a security primitive.
+ */
+export function candidatePassBContextFingerprint(
+  context: CandidatePassBContextPacket,
+): string {
+  const serialized = JSON.stringify([
+    context.schemaVersion,
+    context.transcriptSource,
+    context.transcriptKo,
+    context.beforeContextKo,
+    context.afterContextKo,
+    context.broadcastSummaryKo,
+    context.topicContextKo,
+    context.fastEvidenceKo,
+    context.contextDecision,
+    context.contextCategory,
+    context.contextVerdictKo,
+    context.chatReactionKo,
+  ]);
+  let hash = 0xcbf29ce484222325n;
+  const prime = 0x100000001b3n;
+  for (let index = 0; index < serialized.length; index += 1) {
+    hash ^= BigInt(serialized.charCodeAt(index));
+    hash = BigInt.asUintN(64, hash * prime);
+  }
+  return `fnv1a64:${hash.toString(16).padStart(16, "0")}`;
+}
+
+export function candidatePassBReceiptMatchesContext(
+  receipt: CandidatePassBVerificationReceipt,
+  context: CandidatePassBContextPacket,
+): boolean {
+  return (
+    receipt.schemaVersion === "1.1.0" &&
+    receipt.contextSchemaVersion === context.schemaVersion &&
+    receipt.transcriptSource === context.transcriptSource &&
+    receipt.contextFingerprint === candidatePassBContextFingerprint(context)
   );
 }
 
@@ -232,8 +278,7 @@ export function finalizeFullyVerifiedCandidates<
       continue;
     }
     if (
-      receipt.contextSchemaVersion !== context.schemaVersion ||
-      receipt.transcriptSource !== context.transcriptSource ||
+      !candidatePassBReceiptMatchesContext(receipt, context) ||
       receipt.audioReviewed !== true ||
       receipt.videoFrameCount !== MAX_CANDIDATE_PASS_B_VIDEO_FRAMES ||
       receipt.thumbnailPrepared !== true ||

@@ -58,6 +58,7 @@ export class AiQuotaClientError extends Error {
       | "COORDINATOR_REJECTED"
       | "ABORTED",
     message: string,
+    public readonly coordinatorStatus: AiQuotaPublicResponse["status"] | null = null,
   ) {
     super(message);
     this.name = "AiQuotaClientError";
@@ -298,10 +299,16 @@ async function acquireLease(
         response.status === "terminal"
           ? "이미 끝난 AI 분석 요청을 다시 실행하지 않았어요."
           : "현재 AI 분석 작업과 요청 순서가 일치하지 않아요.",
+        response.status,
       );
     }
   } catch (error) {
-    await cancelQuotaOperationBestEffort(fetchImplementation, identity);
+    if (
+      error instanceof AiQuotaClientError &&
+      error.code === "ABORTED"
+    ) {
+      await cancelQuotaOperationBestEffort(fetchImplementation, identity);
+    }
     throw error;
   }
 }
@@ -412,9 +419,6 @@ export async function fetchWithAiQuota(
       );
     }
     const retryableRateLimit = await isRetryableRateLimitResponse(response);
-    if (!response.ok) {
-      await cancelQuotaOperationBestEffort(fetchImplementation, identity);
-    }
     if (attempt >= MAX_RATE_LIMIT_RETRIES || !retryableRateLimit) {
       return response;
     }

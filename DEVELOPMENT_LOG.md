@@ -1,5 +1,38 @@
 # Development Log
 
+## 2026-07-27 `0.8.4` 맥락 502 복구 · 누락 구간 이어하기
+
+### 실제 장애 원인
+
+- 음식 토크 2시간 15분 분석은 전사와 빠른 탐색까지 완료했지만, `/v1/broadcast-context`가 약 389초 뒤 HTTP 502를 반환하면서 최종 후보가 0개인 미완료 화면으로 끝났다. 현재 클라이언트는 오류 JSON을 읽지 않고 모든 비정상 응답을 같은 `PROXY_REJECTED`로 바꿨으므로, 남아 있는 화면만으로 502의 하위 유형(`UPSTREAM_INVALID_RESPONSE`, `UPSTREAM_UNAVAILABLE`, `UPSTREAM_OUTCOME_UNKNOWN`, `UPSTREAM_REJECTED`)까지 단정할 수는 없다.
+- 바로 뒤의 `/v1/ai-quota` 409는 502의 원인이 아니었다. Worker가 이미 lease를 소비·종료했는데 브라우저가 모든 non-2xx 뒤에 다시 `cancel`을 보내 `OPERATION_ALREADY_FINISHED`가 발생한 2차 오류였다.
+- 재시도 버튼도 실제로는 같은 operation ID를 다시 사용했다. coordinator가 terminal operation을 6시간 보존하므로, 맥락·전사·후보 상세 검토 모두 같은 입력의 재시도가 409로 차단될 수 있었다.
+- 전사의 `completedWithGaps`는 재시도 대상으로 취급되지 않았다. 따라서 약 190번째 구간에서 발생한 8개 CORS/network gap은 성공한 챕터와 함께 저장되기는 했지만 같은 실행의 버튼으로 메워지지 않았다.
+
+### 수정한 데이터 흐름
+
+- paid endpoint가 HTTP 응답을 반환한 뒤에는 브라우저가 quota `cancel`을 보내지 않는다. 대기열에서 사용자가 중단한 경우의 `lease → cancel`만 유지한다. 구버전 브라우저가 이미 끝난 operation을 `cancel`하더라도 Worker는 이를 멱등 정리로 보고 HTTP 200을 반환한다. 같은 terminal operation으로 새 `lease`를 요청한 경우에는 계속 409를 반환해 중복 유료 실행을 막는다.
+- 맥락 오류 본문은 최대 2KB까지만 읽고 안전한 `error.code`, HTTP status, allowlist 진단 헤더만 보존한다. 공급자 원문은 UI나 로그 객체에 넣지 않으며, 오류 유형별 한국어 안내에 저장된 대사·탐색 자료의 보존 여부를 명시한다.
+- 편집자가 누른 명시적 재시도마다 맥락·전사·후보 상세 검토의 attempt ordinal을 올린다. 자동 재전송이나 매 렌더 nonce는 쓰지 않는다. 같은 attempt는 멱등성을 유지하고, 새 attempt만 새 quota operation ID를 사용한다.
+- `completedWithGaps` 전사도 다시 연다. 이미 저장된 챕터 범위를 sampling window에서 빼고 남은 30초 구간만 화면 디코딩·전사 큐로 보낸다. 성공 구간은 재과금하지 않는다.
+- 전사 WAV의 Base64 변환을 Cloudflare Worker에서 전용 브라우저 Web Worker로 옮겼다. 30초 PCM WAV 약 0.96MB가 wire에서는 약 1.28MB로 늘지만 UI thread를 막지 않으며, Cloudflare Free Worker가 요청마다 하던 byte-to-Base64 변환을 제거한다. 중계는 전체 오디오를 디코드하지 않고 Base64 길이·문자 집합·선행 44바이트 WAV 헤더만 검사한다. raw WAV endpoint는 구버전 탭과 진단용 호환 경로로 유지한다.
+- 전사 요청은 1초 슬롯을 기다린 **뒤에** quota lease와 POST를 시작한다. 브라우저별 동시성 상한도 배포 전체 Qwen in-flight 상한과 같은 6으로 맞추고, Base64를 만든 직후 원본 WAV buffer를 비워 요청 종료까지 중복 보유하지 않는다.
+- 전체 맥락 overview와 분산 discovery는 모두 정산될 때까지 관찰한다. overview가 실패해도 성공한 discovery slice를 메모리 checkpoint에 보존하고, 같은 화면에서 재시도하면 실패한 slice와 overview만 새로 요청한다.
+- 최신 브라우저가 이미 144개 이하로 압축하지만, 오래 열린 탭도 안전하도록 Worker는 최대 760개 원본 chapter의 ID·시간·evidence mode·coverage를 먼저 엄격히 검증하고, 검증을 통과한 입력만 144개 이하로 압축한다.
+- Qwen이 정상 JSON 안에 드문 한자 표기를 섞었을 때 유료 응답 전체를 폐기하지 않고 해당 문자열 조각만 선택 언어에 맞는 표기로 치환한다. 한국어 세션은 `한글 표기 미확인`, 영어 세션은 `wording not verified`를 쓰며 나머지 방송 흐름·후보 판정·주제 구간은 그대로 검증한다.
+- 전체 맥락을 다시 열면 과거 의미 후보·후보 상세 판정·대표 화면 receipt를 먼저 무효화한다. 새 receipt `1.1.0`은 후보에게 실제 전달된 전체 맥락 packet의 64-bit 콘텐츠 지문을 포함하며, 현재 packet과 지문이 다른 과거 유료 판정은 최종 후보에도 자동 처리 완료 목록에도 들어가지 않고 해당 후보만 다시 검증한다.
+
+### 회귀 기준
+
+- context 502 뒤 quota 호출은 `lease → paid request`에서 끝나며 후속 cancel/409가 없다.
+- 대기 중 abort는 기존대로 `lease → cancel`이다.
+- `completedWithGaps`와 실패 상태는 새 generation으로 재개하고, 완료된 전사는 재개하지 않는다.
+- 145개 이상을 보내는 구버전 context 요청도 Worker에서 144개로 압축되어 provider까지 도달한다.
+- 502 4종·504·429·409를 구분하고, 2KB를 넘는 오류 스트림과 비허용 헤더는 폐기한다.
+- 한자가 섞인 overview는 전체 실패하지 않으며 최종 결과에는 Han 문자가 남지 않는다.
+- candidate/context의 HTTP 200 응답 본문이 끝나지 않으면 quota 정산은 `succeeded`가 아니라 `outcome-unknown`을 선점한다. 유료 요청을 자동으로 다시 보내거나 fallback으로 이중 결제하지 않는다.
+- 릴리스 게이트는 strict TypeScript, ESLint warning 0, **106개 테스트 파일 / 1,174개 테스트**, production Vite build, Wrangler dry-run을 통과했다. 빌드는 main JS 739.96kB(gzip 215.62kB), CSS 185.95kB(gzip 32.52kB), Worker 323.08KiB(gzip 62.12KiB)다.
+
 ## 2026-07-27 `0.8.3` 5인 AI 용량 조정 · 30초 전사 경로 확정
 
 ### 기준선과 병합 범위

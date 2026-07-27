@@ -168,6 +168,107 @@ describe("AI quota browser client", () => {
     expect(quotaActions).toEqual(["lease", "cancel"]);
   });
 
+  it("does not cancel an operation the coordinator already marked terminal", async () => {
+    const quotaActions: string[] = [];
+    const fetchImplementation = vi.fn(
+      (_input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+        const request = requestJsonBody(init) as {
+          readonly action: string;
+        };
+        quotaActions.push(request.action);
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              schemaVersion: AI_QUOTA_SCHEMA_VERSION,
+              status: "terminal",
+              retryAfterMs: 0,
+              activeParticipantCount: 1,
+              poolInFlightCount: 0,
+            }),
+            { status: 409, headers: { "Content-Type": "application/json" } },
+          ),
+        );
+      },
+    );
+
+    await expect(
+      fetchWithAiQuota(
+        "https://worker.example/v1/broadcast-context",
+        { method: "POST", body: "{}" },
+        {
+          participantId: "participant_11111111111111111111111111111111",
+          runId: "analysis-run-1",
+          operationId: "context-terminal",
+          pool: "context",
+          fetchImplementation,
+        },
+      ),
+    ).rejects.toMatchObject({
+      code: "COORDINATOR_REJECTED",
+      coordinatorStatus: "terminal",
+    });
+    expect(quotaActions).toEqual(["lease"]);
+  });
+
+  it("does not cancel an operation after the paid endpoint returns 502", async () => {
+    const quotaActions: string[] = [];
+    const calls: string[] = [];
+    const fetchImplementation = vi.fn(
+      (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+        const url = requestUrl(input);
+        calls.push(url);
+        if (url.endsWith("/v1/ai-quota")) {
+          const request = requestJsonBody(init) as {
+            readonly action: string;
+          };
+          quotaActions.push(request.action);
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                schemaVersion: AI_QUOTA_SCHEMA_VERSION,
+                status: "granted",
+                leaseToken:
+                  "lease_0000000000000000000000000000000000000001",
+                leaseExpiresAtMs: Date.now() + 30_000,
+                retryAfterMs: 0,
+                activeParticipantCount: 1,
+                poolInFlightCount: 1,
+              }),
+              { status: 200 },
+            ),
+          );
+        }
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              error: { code: "UPSTREAM_UNAVAILABLE" },
+            }),
+            { status: 502, headers: { "Content-Type": "application/json" } },
+          ),
+        );
+      },
+    );
+
+    const response = await fetchWithAiQuota(
+      "https://worker.example/v1/broadcast-context",
+      { method: "POST", body: "{}" },
+      {
+        participantId: "participant_11111111111111111111111111111111",
+        runId: "analysis-run-1",
+        operationId: "context-upstream-failure",
+        pool: "context",
+        fetchImplementation,
+      },
+    );
+
+    expect(response.status).toBe(502);
+    expect(quotaActions).toEqual(["lease"]);
+    expect(calls).toEqual([
+      expect.stringMatching(/\/v1\/ai-quota$/u),
+      "https://worker.example/v1/broadcast-context",
+    ]);
+  });
+
   it("adds the payload digest to the bounded operation ID", async () => {
     const operationIds: string[] = [];
     const fetchImplementation = vi.fn(

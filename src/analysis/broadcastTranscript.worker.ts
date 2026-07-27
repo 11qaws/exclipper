@@ -11,6 +11,7 @@ import {
   type InputAudioTrack,
 } from "mediabunny";
 import {
+  encodeCandidatePassBBase64,
   encodeCandidatePassBPcm16Wav,
 } from "./candidatePassBGemini";
 import { CANDIDATE_PASS_B_SAMPLE_RATE_HZ } from "./candidatePassBWorkerProtocol";
@@ -20,9 +21,13 @@ import {
 import type { BroadcastContextTranscriptionChunk } from "./broadcastContextSamplingPlan";
 import {
   BroadcastTranscriptQwenClientError,
-  requestBroadcastTranscriptChunkBinary,
+  requestBroadcastTranscriptQwenChunk,
 } from "./broadcastTranscriptQwenClient";
-import { AdaptiveConcurrency, requestSpacingMs } from "./adaptiveConcurrency";
+import {
+  AdaptiveConcurrency,
+  requestSpacingMs,
+  startAfterRequestSpacing,
+} from "./adaptiveConcurrency";
 import {
   isAiQuotaOpaqueId,
   isAiQuotaParticipantId,
@@ -109,9 +114,12 @@ function isValidAnalyzeRequest(
   if (
     value.quota !== undefined &&
     (!isRecord(value.quota) ||
-      Object.keys(value.quota).length !== 2 ||
+      ![2, 3].includes(Object.keys(value.quota).length) ||
       !isAiQuotaParticipantId(value.quota.participantId) ||
-      !isAiQuotaOpaqueId(value.quota.runId))
+      !isAiQuotaOpaqueId(value.quota.runId) ||
+      (value.quota.attemptOrdinal !== undefined &&
+        (!Number.isSafeInteger(value.quota.attemptOrdinal) ||
+          (value.quota.attemptOrdinal as number) < 0)))
   ) {
     return false;
   }
@@ -419,85 +427,103 @@ async function runAnalyze(
         CANDIDATE_PASS_B_SAMPLE_RATE_HZ,
       );
       pcm.fill(0);
+      // Base64 is deliberately prepared in this dedicated browser Worker.
+      // Cloudflare's Free Worker CPU ceiling is far tighter than the browser's,
+      // and converting even a 30-second WAV at the relay caused headerless 1102
+      // failures that browsers reported as CORS errors.
+      const audioBase64 = encodeCandidatePassBBase64(wav);
+      wav.fill(0);
 
       const controller = new AbortController();
       task.fetchControllers.add(controller);
       const chunkId = chunk.chunkId;
-      const inFlightRequest = (async (): Promise<void> => {
-        try {
-          const result = await requestBroadcastTranscriptChunkBinary(
-            wav,
-            chunk.sourceStartMs,
-            durationMs,
-            {
-              signal: controller.signal,
-              ...(request.quota === undefined
-                ? {}
-                : {
-                    quota: {
-                      participantId: request.quota.participantId,
-                      runId: request.quota.runId,
-                      operationId: `transcript-${chunkId}`,
-                    },
-                  }),
-            },
-          );
-          if (task.cancelled) return;
-          successfulCount += 1;
-          post({
-            type: "broadcast-transcript-partial",
-            identity: task.identity,
-            chunkId,
-            result,
-          });
-          // Pulling neighbours forward is a recall heuristic, never a scoring
-          // input, so applying it when the response lands rather than before
-          // the next decode costs nothing but the ordering of exploration.
-          if (shouldExpandBroadcastContextChunk(result) && pendingChunks.length > 0) {
-            pendingChunks = [
-              ...prioritizeAdjacentTranscriptChunks(
-                pendingChunks,
-                chronologicalChunks,
+      // Reserve the public request start time before creating the async
+      // request. An async IIFE runs immediately until its first await, so
+      // constructing it first would start the lease/POST before the delay.
+      const pacedStart = await startAfterRequestSpacing(
+        nextSendAtMs,
+        spacingMs,
+        () =>
+          task.cancelled
+            ? Promise.resolve()
+            : (async (): Promise<void> => {
+            try {
+              const result = await requestBroadcastTranscriptQwenChunk(
+                audioBase64,
+                chunk.sourceStartMs,
+                durationMs,
+                {
+                  signal: controller.signal,
+                  ...(request.quota === undefined
+                    ? {}
+                    : {
+                        quota: {
+                          participantId: request.quota.participantId,
+                          runId: request.quota.runId,
+                          operationId:
+                            `transcript-g${request.quota.attemptOrdinal ?? 0}-${chunkId}`,
+                        },
+                      }),
+                },
+              );
+              if (task.cancelled) return;
+              successfulCount += 1;
+              post({
+                type: "broadcast-transcript-partial",
+                identity: task.identity,
                 chunkId,
-              ),
-            ];
-          }
-          concurrency.onSuccess();
-        } catch (error) {
-          if (task.cancelled) return;
-          concurrency.onFailure();
-          if (
-            error instanceof BroadcastTranscriptQwenClientError &&
-            (error.code === "RATE_LIMITED" ||
-              error.code === "OUTCOME_UNKNOWN")
-          ) {
-            fatalProxyFailure = error;
-            for (const activeController of task.fetchControllers) {
-              if (activeController !== controller) activeController.abort();
+                result,
+              });
+              // Pulling neighbours forward is a recall heuristic, never a
+              // scoring input, so applying it when the response lands rather
+              // than before the next decode only changes exploration order.
+              if (
+                shouldExpandBroadcastContextChunk(result) &&
+                pendingChunks.length > 0
+              ) {
+                pendingChunks = [
+                  ...prioritizeAdjacentTranscriptChunks(
+                    pendingChunks,
+                    chronologicalChunks,
+                    chunkId,
+                  ),
+                ];
+              }
+              concurrency.onSuccess();
+            } catch (error) {
+              if (task.cancelled) return;
+              concurrency.onFailure();
+              if (
+                error instanceof BroadcastTranscriptQwenClientError &&
+                (error.code === "RATE_LIMITED" ||
+                  error.code === "OUTCOME_UNKNOWN")
+              ) {
+                fatalProxyFailure = error;
+                for (const activeController of task.fetchControllers) {
+                  if (activeController !== controller) activeController.abort();
+                }
+                return;
+              }
+              if (fatalProxyFailure !== null) return;
+              gapCount += 1;
+              post({
+                type: "broadcast-transcript-gap",
+                identity: task.identity,
+                chunkId,
+                reason: "transcription-failed",
+              });
+            } finally {
+              task.fetchControllers.delete(controller);
+              processedCount += 1;
             }
-            return;
-          }
-          if (fatalProxyFailure !== null) return;
-          gapCount += 1;
-          post({
-            type: "broadcast-transcript-gap",
-            identity: task.identity,
-            chunkId,
-            reason: "transcription-failed",
-          });
-        } finally {
-          wav.fill(0);
-          task.fetchControllers.delete(controller);
-          processedCount += 1;
-        }
-      })();
-      // 다음 요청을 보낼 수 있는 시각까지 기다린다.
-      const waitMs = nextSendAtMs - Date.now();
-      if (waitMs > 0) {
-        await new Promise((resolve) => setTimeout(resolve, waitMs));
-        if (task.cancelled) return;
+              })(),
+      );
+      if (task.cancelled) {
+        controller.abort();
+        return;
       }
-      nextSendAtMs = Date.now() + spacingMs;
+      nextSendAtMs = pacedStart.nextStartAtMs;
+      const inFlightRequest = pacedStart.started;
 
       inFlight.add(inFlightRequest);
       // The body swallows its own failures, so settling always means done.

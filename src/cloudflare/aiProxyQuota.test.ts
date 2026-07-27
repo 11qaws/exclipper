@@ -398,6 +398,84 @@ describe("AI quota integration at the paid Worker boundary", () => {
     expect(coordinator.fetch).not.toHaveBeenCalled();
   });
 
+  it("treats cancellation of an already-terminal operation as idempotent success", async () => {
+    const coordinator = createCoordinator(() =>
+      jsonResponse({
+        schemaVersion: AI_QUOTA_SCHEMA_VERSION,
+        status: "terminal",
+        reason: "OPERATION_ALREADY_FINISHED",
+        retryAfterMs: 0,
+        activeParticipantCount: 1,
+        poolInFlightCount: 0,
+      }),
+    );
+    const { environment } = createEnvironment(coordinator);
+    const request = new Request(
+      "https://rettohighlight-gemini.example/v1/ai-quota",
+      {
+        method: "POST",
+        headers: {
+          Origin: PRODUCTION_ORIGIN,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          schemaVersion: AI_QUOTA_SCHEMA_VERSION,
+          action: "cancel",
+          participantId: "participant_00000000000001",
+          runId: "run-quota-1",
+          operationId: "context-overview-g1",
+          pool: "context",
+          payloadDigest: `sha256:${"a".repeat(64)}`,
+        }),
+      },
+    );
+
+    const response = await handleAiQuotaRequest(request, environment);
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      status: "terminal",
+      reason: "OPERATION_ALREADY_FINISHED",
+    });
+  });
+
+  it("keeps a terminal lease request as a 409 conflict", async () => {
+    const coordinator = createCoordinator(() =>
+      jsonResponse({
+        schemaVersion: AI_QUOTA_SCHEMA_VERSION,
+        status: "terminal",
+        reason: "OPERATION_ALREADY_FINISHED",
+        retryAfterMs: 0,
+        activeParticipantCount: 1,
+        poolInFlightCount: 0,
+      }),
+    );
+    const { environment } = createEnvironment(coordinator);
+    const request = new Request(
+      "https://rettohighlight-gemini.example/v1/ai-quota",
+      {
+        method: "POST",
+        headers: {
+          Origin: PRODUCTION_ORIGIN,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          schemaVersion: AI_QUOTA_SCHEMA_VERSION,
+          action: "lease",
+          participantId: "participant_00000000000001",
+          runId: "run-quota-1",
+          operationId: "context-overview-g1",
+          pool: "context",
+          payloadDigest: `sha256:${"a".repeat(64)}`,
+        }),
+      },
+    );
+
+    const response = await handleAiQuotaRequest(request, environment);
+
+    expect(response.status).toBe(409);
+  });
+
   it("atomically consumes a valid lease before the paid fetch and completes it after the response is read", async () => {
     const wav = silentWav(2_000);
     const lease = quotaLease(await payloadDigest(wav));

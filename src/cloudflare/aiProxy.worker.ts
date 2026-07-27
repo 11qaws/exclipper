@@ -45,9 +45,12 @@ import {
 import {
   createBroadcastContextRequest,
   BroadcastContextInputError,
+  MAX_BROADCAST_CONTEXT_CHAPTERS,
+  MAX_BROADCAST_CONTEXT_UNCOMPACTED_CHAPTERS,
   type BroadcastContextRequest,
   type BroadcastContextRequestInput,
 } from "../analysis/broadcastContextProtocol";
+import { compactBroadcastContextChapters } from "../analysis/broadcastContextChapterCompaction";
 import {
   BROADCAST_TRANSCRIPT_QWEN_MAX_OUTPUT_TOKENS,
   MAX_BROADCAST_TRANSCRIPT_QWEN_BASE64_LENGTH,
@@ -3478,7 +3481,25 @@ export async function handleBroadcastContextRequest(
       : "overview" as const;
   let broadcastContextRequest;
   try {
-    broadcastContextRequest = createBroadcastContextRequest(inputValue as BroadcastContextRequestInput);
+    const validatedInput = createBroadcastContextRequest(
+      inputValue as BroadcastContextRequestInput,
+      {
+        maximumChapterCount: MAX_BROADCAST_CONTEXT_UNCOMPACTED_CHAPTERS,
+      },
+    );
+    if (validatedInput.chapters.length <= MAX_BROADCAST_CONTEXT_CHAPTERS) {
+      broadcastContextRequest = validatedInput;
+    } else {
+      broadcastContextRequest = createBroadcastContextRequest({
+        sourceDurationMs: validatedInput.sourceDurationMs,
+        chapters: compactBroadcastContextChapters(validatedInput.chapters),
+        candidates: validatedInput.candidates,
+        outputLanguage: validatedInput.outputLanguage,
+        ...(validatedInput.castRosterId === null
+          ? {}
+          : { castRosterId: validatedInput.castRosterId }),
+      });
+    }
   } catch (error) {
     return rejectUnusedQuotaLease(
       environment,
@@ -3733,11 +3754,13 @@ export async function handleBroadcastContextRequest(
 function quotaPublicResponse(
   payload: AiQuotaPublicResponse,
   origin: string,
+  terminalCancellationIsSuccess = false,
 ): Response {
   const status =
     payload.status === "capacity-full" || payload.status === "queue-full"
       ? 429
-      : payload.status === "conflict" || payload.status === "terminal"
+      : payload.status === "conflict" ||
+          (payload.status === "terminal" && !terminalCancellationIsSuccess)
         ? 409
         : 200;
   const headers = corsHeaders(origin);
@@ -3851,6 +3874,7 @@ export async function handleAiQuotaRequest(
     return quotaPublicResponse(
       await requestCoordinatorPublicLease(environment, quotaRequest),
       origin,
+      quotaRequest.action === "cancel",
     );
   } catch {
     return jsonResponse(

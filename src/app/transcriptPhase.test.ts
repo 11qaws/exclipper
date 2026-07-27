@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   canStartTranscriptRun,
+  transcriptNeedsExplicitRetry,
   transcriptOperationKey,
   transcriptPhaseFor,
 } from "./transcriptPhase";
@@ -26,6 +27,12 @@ describe("transcriptOperationKey", () => {
   it("never lets a new run inherit a previous run's fence", () => {
     expect(transcriptOperationKey("run-1", "fp", "uniform")).not.toBe(
       transcriptOperationKey("run-2", "fp", "uniform"),
+    );
+  });
+
+  it("gives an explicit retry a fresh operation fence", () => {
+    expect(transcriptOperationKey("run-1", "fp", "uniform", 0)).not.toBe(
+      transcriptOperationKey("run-1", "fp", "uniform", 1),
     );
   });
 });
@@ -88,5 +95,12 @@ describe("canStartTranscriptRun", () => {
         broadcastTranscriptStatus: "running",
       }),
     ).toBe(false);
+  });
+});
+
+describe("transcriptNeedsExplicitRetry", () => {
+  it("reopens a completed-with-gaps map so only uncovered chunks can resume", () => {
+    expect(transcriptNeedsExplicitRetry("completedWithGaps", 263)).toBe(true);
+    expect(transcriptNeedsExplicitRetry("completed", 271)).toBe(false);
   });
 });

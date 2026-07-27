@@ -137,9 +137,15 @@ export type CandidatePassBProgramMaterial =
 
 /** Locally issued only after the actual audio, four frames and context packet succeeded. */
 export interface CandidatePassBVerificationReceipt {
-  readonly schemaVersion: "1.0.0";
+  /**
+   * 1.0.0 receipts are readable only so an existing paid insight can be
+   * recovered. They do not carry a context fingerprint and therefore never
+   * satisfy the current final-publication gate.
+   */
+  readonly schemaVersion: "1.0.0" | "1.1.0";
   readonly contextSchemaVersion: typeof CANDIDATE_PASS_B_CONTEXT_SCHEMA_VERSION;
   readonly transcriptSource: CandidatePassBReferenceTranscriptSource;
+  readonly contextFingerprint?: string;
   readonly audioReviewed: true;
   readonly videoFrameCount: typeof MAX_CANDIDATE_PASS_B_VIDEO_FRAMES;
   readonly thumbnailPrepared: true;
@@ -165,6 +171,8 @@ export interface CandidatePassBWorkerIdentity {
 export interface CandidatePassBQuotaIdentity {
   readonly participantId: string;
   readonly runId: string;
+  /** A stable number for one run, incremented only by an explicit rerun. */
+  readonly attemptOrdinal?: number;
 }
 
 export interface CandidatePassBTarget {

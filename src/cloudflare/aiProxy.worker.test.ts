@@ -331,6 +331,106 @@ describe("aiProxy.worker", () => {
     );
   });
 
+  it("compacts an older client's oversized chapter map before validation", async () => {
+    const chapters = Array.from({ length: 145 }, (_, index) => ({
+      chapterId: `chapter-${index + 1}`,
+      startMs: index * 1_000,
+      endMs: (index + 1) * 1_000,
+      evidenceMode: "complete-transcript" as const,
+      evidenceCoverageRatio: 1,
+      summaryKo: `방송 구간 ${index + 1}의 대사`,
+    }));
+    const upstreamFetch = vi.fn(
+      (_input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+        if (typeof init?.body !== "string") {
+          throw new TypeError("Expected a serialized Qwen context request.");
+        }
+        const providerBody = JSON.parse(init.body) as {
+          readonly messages: readonly { readonly content?: string }[];
+        };
+        const prompt = providerBody.messages[1]?.content ?? "";
+        expect(prompt).toContain("context-144");
+        expect(prompt).not.toContain('"chapter-145"');
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              choices: [{
+                message: {
+                  content: JSON.stringify({
+                    summary: "전체 방송의 흐름을 압축해 파악했다.",
+                    themes: ["전체 흐름"],
+                    leads: [],
+                    candidates: [],
+                  }),
+                },
+              }],
+            }),
+            { status: 200 },
+          ),
+        );
+      },
+    );
+    const response = await handleBroadcastContextRequest(
+      createRequest(
+        {
+          sourceDurationMs: 145_000,
+          chapters,
+          candidates: [],
+        },
+        { url: "https://rettohighlight-gemini.example/v1/broadcast-context" },
+      ),
+      {
+        ...createEnvironment(),
+        BROADCAST_CONTEXT_PROVIDER: "qwen",
+        QWEN_API_KEY: "qwen-secret",
+      },
+      { fetchImplementation: upstreamFetch },
+    );
+
+    expect(response.status).toBe(200);
+    expect(upstreamFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ["duplicate chapter ID", { chapterId: "chapter-1" }],
+    ["invalid evidence mode", { evidenceMode: "music-only" }],
+    ["invalid evidence coverage", { evidenceCoverageRatio: 999 }],
+  ])(
+    "rejects %s in an oversized stale-client map before compaction",
+    async (_label, invalidPatch) => {
+      const chapters = Array.from({ length: 145 }, (_, index) => ({
+        chapterId: `chapter-${index + 1}`,
+        startMs: index * 1_000,
+        endMs: (index + 1) * 1_000,
+        evidenceMode: "complete-transcript",
+        evidenceCoverageRatio: 1,
+        summaryKo: `방송 구간 ${index + 1}의 대사`,
+      }));
+      chapters[144] = { ...chapters[144]!, ...invalidPatch };
+      const upstreamFetch = vi.fn();
+
+      const response = await handleBroadcastContextRequest(
+        createRequest(
+          {
+            sourceDurationMs: 145_000,
+            chapters,
+            candidates: [],
+          },
+          { url: "https://rettohighlight-gemini.example/v1/broadcast-context" },
+        ),
+        {
+          ...createEnvironment(),
+          BROADCAST_CONTEXT_PROVIDER: "qwen",
+          QWEN_API_KEY: "qwen-secret",
+        },
+        { fetchImplementation: upstreamFetch },
+      );
+
+      expect(response.status).toBe(400);
+      expect(upstreamFetch).not.toHaveBeenCalled();
+    },
+  );
+
   it("rejects an arbitrary whole-context roster before any paid call", async () => {
     const upstreamFetch = vi.fn();
     const response = await handleBroadcastContextRequest(

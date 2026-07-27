@@ -30,11 +30,11 @@ export const DEFAULT_ADAPTIVE_CONCURRENCY: AdaptiveConcurrencyOptions = {
   /**
    * 위쪽 상한.
    *
-   * 무한히 올리지 않는 이유는 상류가 조용히 느려지는 구간이 있기 때문이다 —
-   * 요청이 실패하지 않고 **느려지기만** 하면 이 알고리즘은 계속 올린다. 그
-   * 지점을 아직 모르므로 관측된 값(12) 아래에 둔다.
+   * 배포 전체 quota coordinator의 Qwen shared in-flight 상한도 6이다. 그보다
+   * 많은 요청을 브라우저가 미리 보유해도 공급자 처리량은 늘지 않고 모바일
+   * 메모리만 사용하므로 로컬 상한도 같은 값으로 고정한다.
    */
-  maximum: 10,
+  maximum: 6,
   /** 마지막으로 안전하다고 확인된 값. */
   start: 4,
   /**
@@ -127,4 +127,44 @@ const PROXY_REQUESTS_PER_MINUTE = 60;
  */
 export function requestSpacingMs(): number {
   return Math.ceil(60_000 / PROXY_REQUESTS_PER_MINUTE);
+}
+
+export interface RequestStartTiming {
+  readonly now: () => number;
+  readonly wait: (delayMs: number) => Promise<void>;
+}
+
+const DEFAULT_REQUEST_START_TIMING: RequestStartTiming = {
+  now: () => Date.now(),
+  wait: (delayMs) =>
+    new Promise<void>((resolve) => globalThis.setTimeout(resolve, delayMs)),
+};
+
+/**
+ * Starts an operation only after its reserved clock slot.
+ *
+ * The started value is wrapped in an object so a returned Promise is not
+ * awaited here; callers can keep several provider requests in flight while
+ * still proving that every request *began* after the spacing gate.
+ */
+export async function startAfterRequestSpacing<T>(
+  nextStartAtMs: number,
+  spacingMs: number,
+  start: () => T,
+  timing: RequestStartTiming = DEFAULT_REQUEST_START_TIMING,
+): Promise<{ readonly nextStartAtMs: number; readonly started: T }> {
+  if (
+    !Number.isFinite(nextStartAtMs) ||
+    !Number.isSafeInteger(spacingMs) ||
+    spacingMs < 0
+  ) {
+    throw new RangeError("Request start timing must be finite and non-negative.");
+  }
+  const waitMs = nextStartAtMs - timing.now();
+  if (waitMs > 0) await timing.wait(waitMs);
+  const startedAtMs = timing.now();
+  return {
+    nextStartAtMs: startedAtMs + spacingMs,
+    started: start(),
+  };
 }

@@ -120,6 +120,7 @@ function startWith(
     Pick<
       RunCandidatePassBWorkerOptions,
       | "targets"
+      | "quota"
       | "signal"
       | "onModelProgress"
       | "onCandidateProgress"
@@ -140,6 +141,7 @@ function startWith(
       device: CANDIDATE_PASS_B_DEVICE,
       targets: overrides.targets ?? targets,
       workerFactory: () => worker,
+      ...(overrides.quota === undefined ? {} : { quota: overrides.quota }),
       ...(overrides.signal === undefined ? {} : { signal: overrides.signal }),
       ...(overrides.onModelProgress === undefined
         ? {}
@@ -184,6 +186,26 @@ function emit(
 }
 
 describe("runCandidatePassBWorker", () => {
+  it("passes an explicit retry generation to the candidate worker", async () => {
+    const worker = new FakeWorker();
+    const controller = new AbortController();
+    const promise = startWith(worker, {
+      quota: {
+        participantId: "participant_11111111111111111111111111111111",
+        runId: "analysis-run-1",
+        attemptOrdinal: 3,
+      },
+      signal: controller.signal,
+      cancelAcknowledgementTimeoutMs: 10,
+    });
+
+    expect(worker.requests[0]).toMatchObject({
+      quota: { attemptOrdinal: 3 },
+    });
+    controller.abort();
+    await expect(promise).rejects.toMatchObject({ code: "ABORTED" });
+  });
+
   it("streams fenced progress, isolates a candidate gap, and resolves with later partial results", async () => {
     const worker = new FakeWorker();
     const onModelProgress = vi.fn();

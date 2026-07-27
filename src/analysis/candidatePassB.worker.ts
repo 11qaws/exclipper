@@ -45,6 +45,7 @@ import {
   type CandidatePassBCandidateGapReason,
   type CandidatePassBCandidateProgress,
   type CandidatePassBModelProgress,
+  type CandidatePassBQuotaIdentity,
   type CandidatePassBTarget,
   type CandidatePassBTranscriptResult,
   type CandidatePassBWorkerFailureReason,
@@ -80,9 +81,7 @@ const PROGRESS_MIN_RATIO_STEP = 0.01;
 
 interface ActiveTask {
   readonly identity: CandidatePassBWorkerIdentity;
-  readonly quota:
-    | { readonly participantId: string; readonly runId: string }
-    | undefined;
+  readonly quota: CandidatePassBQuotaIdentity | undefined;
   cancelled: boolean;
   input: Input<BlobSource> | null;
   inputWasDisposed: boolean;
@@ -328,9 +327,15 @@ function isValidAnalyzeRequest(value: unknown): value is AnalyzeRequest {
   if (
     value.quota !== undefined &&
     (!isRecord(value.quota) ||
-      !hasExactKeys(value.quota, ["participantId", "runId"]) ||
+      !(
+        hasExactKeys(value.quota, ["participantId", "runId"]) ||
+        hasExactKeys(value.quota, ["participantId", "runId", "attemptOrdinal"])
+      ) ||
       !isAiQuotaParticipantId(value.quota.participantId) ||
-      !isAiQuotaOpaqueId(value.quota.runId))
+      !isAiQuotaOpaqueId(value.quota.runId) ||
+      (value.quota.attemptOrdinal !== undefined &&
+        (!Number.isSafeInteger(value.quota.attemptOrdinal) ||
+          (value.quota.attemptOrdinal as number) < 0)))
   ) {
     return false;
   }
@@ -713,7 +718,9 @@ async function analyzeCandidateWithRemoteAi(
               {
                 participantId: task.quota.participantId,
                 runId: task.quota.runId,
-                operationId: `candidate-${target.startMs}-${target.endMs}`,
+                operationId:
+                  `candidate-g${task.quota.attemptOrdinal ?? 0}` +
+                  `-${target.startMs}-${target.endMs}`,
                 pool: "candidate",
                 signal: fetchAbortController.signal,
               },

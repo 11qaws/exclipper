@@ -19,6 +19,7 @@ const file = option("--file");
 const startSeconds = Number(option("--start", "0"));
 const requestedDurationSeconds = Number(option("--duration", "30"));
 const endpoint = option("--endpoint", DEFAULT_ENDPOINT);
+const transport = option("--transport", "raw");
 
 if (
   typeof file !== "string" ||
@@ -28,10 +29,11 @@ if (
   !Number.isFinite(requestedDurationSeconds) ||
   requestedDurationSeconds <= 0 ||
   requestedDurationSeconds > MAX_DURATION_SECONDS ||
-  typeof endpoint !== "string"
+  typeof endpoint !== "string" ||
+  (transport !== "raw" && transport !== "json")
 ) {
   throw new Error(
-    "Usage: node scripts/smoke-broadcast-transcript.mjs --file <video> [--start 1260] [--duration 30]",
+    "Usage: node scripts/smoke-broadcast-transcript.mjs --file <video> [--start 1260] [--duration 30] [--transport raw|json]",
   );
 }
 
@@ -91,13 +93,23 @@ pcm.copy(wav, 44, 0, dataLength);
 const participantId = `smoke_${randomBytes(24).toString("base64url")}`;
 const runId = `smoke-run-${Date.now()}`;
 const operationId = `transcript-smoke-${Date.now()}`;
-const payloadDigest = `sha256:${createHash("sha256").update(wav).digest("hex")}`;
 const transcriptUrl = new URL(endpoint);
-transcriptUrl.searchParams.set(
-  "startMs",
-  String(Math.round(startSeconds * 1_000)),
-);
-transcriptUrl.searchParams.set("durationMs", String(durationMs));
+const sourceStartMs = Math.round(startSeconds * 1_000);
+const requestBody =
+  transport === "json"
+    ? JSON.stringify({
+        audioBase64: wav.toString("base64"),
+        sourceStartMs,
+        durationMs,
+      })
+    : wav;
+if (transport === "raw") {
+  transcriptUrl.searchParams.set("startMs", String(sourceStartMs));
+  transcriptUrl.searchParams.set("durationMs", String(durationMs));
+}
+const payloadDigest = `sha256:${createHash("sha256")
+  .update(requestBody)
+  .digest("hex")}`;
 const quotaUrl = new URL("/v1/ai-quota", transcriptUrl.origin);
 const quotaIdentity = {
   participantId,
@@ -147,7 +159,7 @@ while (lease === undefined) {
 const response = await fetch(transcriptUrl, {
   method: "POST",
   headers: {
-    "Content-Type": "audio/wav",
+    "Content-Type": transport === "json" ? "application/json" : "audio/wav",
     Origin: PRODUCTION_ORIGIN,
     "X-ExClipper-Quota-Participant": participantId,
     "X-ExClipper-Quota-Run": runId,
@@ -155,12 +167,16 @@ const response = await fetch(transcriptUrl, {
     "X-ExClipper-Quota-Payload-Digest": payloadDigest,
     "X-ExClipper-Quota-Lease": lease.leaseToken,
   },
-  body: wav,
+  body: requestBody,
 });
 
 const payload = await response.json();
 process.stdout.write(
-  `${JSON.stringify({ status: response.status, durationMs, payload }, null, 2)}\n`,
+  `${JSON.stringify(
+    { status: response.status, transport, durationMs, payload },
+    null,
+    2,
+  )}\n`,
 );
 if (!response.ok) process.exitCode = 1;
 

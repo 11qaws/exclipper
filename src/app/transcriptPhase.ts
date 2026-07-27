@@ -35,8 +35,12 @@ export function transcriptOperationKey(
   runId: string,
   contentFingerprint: string,
   phase: TranscriptPhase,
+  attemptOrdinal = 0,
 ): string {
-  return `${runId}:${contentFingerprint}:${phase}`;
+  if (!Number.isSafeInteger(attemptOrdinal) || attemptOrdinal < 0) {
+    throw new RangeError("Transcript attempt ordinal must be a non-negative integer.");
+  }
+  return `${runId}:${contentFingerprint}:${phase}:attempt-${attemptOrdinal}`;
 }
 
 /**
@@ -57,4 +61,16 @@ export function canStartTranscriptRun(input: TranscriptStartInput): boolean {
     return true;
   }
   return input.analysisRunStatus === "running";
+}
+
+/** Whether an editor-triggered retry still has transcript evidence to recover. */
+export function transcriptNeedsExplicitRetry(
+  status: string,
+  chapterCount: number,
+): boolean {
+  return (
+    status === "failed" ||
+    status === "completedWithGaps" ||
+    chapterCount === 0
+  );
 }
