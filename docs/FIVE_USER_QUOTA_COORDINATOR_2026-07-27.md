@@ -1,6 +1,6 @@
 # ExClipper 최대 5인 AI 처리 설계 — 2026-07-27
 
-상태: **v0.8.5 직접 Base64 transport 통합·배포 검증 중**
+상태: **v0.8.6 Free R2 전사 transport 통합·배포 검증 중**
 
 ## 1. 결론
 

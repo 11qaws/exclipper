@@ -1,5 +1,29 @@
 # Development Log
 
+## 2026-07-27 `0.8.6` Free R2 전사 transport 착수
+
+- 사용자는 무료 Cloudflare 범위 안에서 먼저 안정화하되, 유료 전환 시 구조를 다시 만들지 않도록 내부 전환점을 준비하는 방향을 선택했다.
+- 공식 문서 기준 Workers Free는 요청당 CPU 10ms·일 100,000 요청이고, R2 Standard 무료분은 10GB-month·Class A 100만·Class B 1,000만이다. R2 binding은 `ReadableStream` put과 native SHA-256 검증, range get을 지원하고 Qwen 3.5 Omni는 HTTPS audio URL 입력을 지원한다.
+- 구현 계약은 browser raw WAV 90초 하나로 통일한다. `free-r2`는 JS body read 없이 R2 stream put→native checksum→44-byte range validation→Qwen media URL, `paid-direct`는 같은 request를 기존 in-memory provider body로 처리한다. transport mode는 Worker 환경변수 하나이며 quota/result/context 계약은 공유한다.
+- Free 실행은 CPU가 큰 upload와 provider control을 서로 다른 Worker invocation으로 분리했다. 첫 요청은 native R2 put 뒤 202 ticket을 반환하고 두 번째 요청은 작은 resolve JSON만 읽는다. 429 재시도는 새 operation ID와 lease를 쓰되 같은 ticket을 재사용해 raw WAV 업로드는 한 번으로 고정했다.
+- ticket HMAC binding에서 operation ID와 lease token은 제외하고 participant/run/raw digest/source fence/byte length를 포함했다. 그래서 재시도는 허용되지만 다른 사용자·분석·오디오·시간 범위로의 ticket 재사용은 거부된다.
+- private R2 object는 provider terminal 뒤 즉시 삭제하고 수분 단위 capability expiry와 1일 lifecycle을 이중 정리 경계로 둔다. Durable Object에는 media bytes나 URL을 넣지 않는다.
+
+### 구현·회귀 검증
+
+- 브라우저는 transport를 묻지 않고 항상 최대 90초 raw WAV 하나만 보낸다. Free 응답이 HTTP 202이면 같은 quota lease의 작은 resolve 요청으로 이어지고, Paid 응답이 HTTP 200이면 즉시 완료한다. resolve가 local/provider 429를 받으면 새 operation과 lease를 발급하되 같은 media ticket을 사용하므로 WAV upload는 한 번뿐이다.
+- `free-r2`에서는 legacy JSON/Base64를 body read 전에 HTTP 426으로 거부한다. Qwen에는 HTTPS media URL만 전달하며, Worker가 다시 media bytes를 읽어 Gemini inline-data로 만드는 fallback은 사용하지 않는다. `paid-direct` fixture는 기존 Qwen→Gemini bounded fallback을 계속 검증한다.
+- media capability는 `GET`, `HEAD`, 단일 `Range`만 허용하며 CORS와 cache를 열지 않는다. 성공·영구 실패·결과 불명에서는 object를 즉시 지우고, local/provider 429에서만 재시도를 위해 유지한다.
+- `npm run check`는 TypeScript strict, ESLint warning 0, **109개 테스트 파일·1,224개 테스트**를 통과했다. production Vite build와 Wrangler dry-run도 통과했고, dry-run에서 `TRANSCRIPT_MEDIA`, quota Durable Object, 두 rate limiter, `free-r2` 변수를 확인했다.
+
+### 무료 자원과 실서비스 검증
+
+- private Standard R2 bucket `exclipper-transcript-media`를 APAC에 만들고 public `r2.dev` access를 비활성화했다. `transcript/` prefix에는 1일 orphan lifecycle을 설정했으며, 정상 경로는 이 lifecycle을 기다리지 않고 즉시 삭제한다.
+- `TRANSCRIPT_MEDIA_SIGNING_KEY`를 Worker secret으로 등록하고 `free-r2` Worker version `a16061ed-3a4c-4f38-8706-1089d6264aed`를 배포했다. `/healthz`는 protocol 5, transport 2, mode `free-r2`, configured true, primary `audio/wav`, 90,000ms, staged schema `1.0.0`, quota required, coordinator ready, 최대 참가자 5명을 보고했다.
+- 음식 토크 원본 21:00 지점의 2초와 90초를 실제 Qwen 경로로 보냈다. 두 요청 모두 HTTP 200과 source fence가 맞는 한국어 전사를 반환했고, 각 완료 뒤 R2 bucket은 object 0개·0B로 돌아왔다.
+- tail에서 90초 경로의 upload·media GET·resolve는 각각 CPU 약 5ms·2ms·6ms, outcome `ok`였다. 2초 경로는 약 7ms·3ms·14ms였고 모두 성공했다. 따라서 큰 media 처리 CPU가 분리된 효과는 확인했지만 모든 invocation이 항상 Free 10ms 이내라고 단정하지 않는다. 2초 resolve의 14ms 단발값과 장시간 연속 실행의 `exceededCpu`, gap, orphan 수를 후속 관찰한다.
+- Cloudflare 인프라는 무료 경계 안에서만 구성했다. 다만 Qwen API 호출 비용은 기존과 동일하며 Cloudflare 무료 범위와 별개다. 유료 전환은 계정에서 Workers Paid를 명시적으로 활성화한 뒤 `BROADCAST_TRANSCRIPT_TRANSPORT_MODE=paid-direct`로 재배포하는 config-only 절차이고, 브라우저·저장 데이터·quota 계약은 바꾸지 않는다.
+
 ## 2026-07-27 `0.8.5` 전사 CORS의 실제 원인·직접 Base64 transport
 
 ### 운영 증거와 원인
@@ -28,6 +52,16 @@
 
 - Worker version `a3cbf5c5-f7aa-43e5-b552-1c3912fbb851`를 먼저 배포했다. `/healthz`는 protocol 4, quota `required`, coordinator ready, 최대 5명, 직접 전사 media type `application/vnd.exclipper.transcript-base64`를 보고했고 Pages origin의 transcript OPTIONS는 HTTP 204와 정확한 허용 헤더를 반환했다.
 - 음식 토크 21:00부터 30초를 새 직접 경로로 전송했다. 본문은 1,280,060바이트였고 HTTP 200, 올바른 한국어 전사, Worker `outcome=ok`, 예외 0건이었다. 관찰된 stateless Worker CPU는 36ms였으나 강제 종료나 헤더 없는 503은 없었다. 단일 성공만으로 장시간 안정성을 단정하지 않고 Pages 배포 뒤 271구간 tail을 최종 gate로 사용한다.
+
+### 장시간 후속 검증과 판정 수정
+
+- 음식 토크 전체 계획을 연속 실행한 운영 tail에는 `/v1/broadcast-transcript` 444건이 남았다. 그중 438건은 `ok`, 6건은 `exceededCpu`였고 성공 요청까지 CPU p50 29ms, p95 38ms, 최대 51ms였다. Cloudflare Workers Free의 요청당 CPU 기준은 10ms이며 드문 초과에는 유연성이 있지만 지속 초과는 종료된다. 첫 실행이 거의 완주한 것은 안전 여유의 증거가 아니라 이 유연성의 결과였다.
+- 첫 전체 실행의 마지막 14.817초 조각 400은 실제 앱과 달리 진단 harness가 source fence의 마지막 한 sample을 zero-padding하지 않은 문제였다. 앱과 같은 sample 수로 고친 단독 요청은 HTTP 200이었다. 반면 수정한 두 번째 전체 실행은 약 159번째 조각부터 6건의 헤더 없는 HTTP 503을 냈고, tail 예외가 모두 `Worker exceeded CPU time limit`였으므로 제품 장애는 별개로 재현됐다.
+- 14.817초의 잘못된 WAV가 provider 합성·rate limiter·quota consume·upstream 호출 전에 거부된 두 요청도 CPU 9ms와 11ms를 사용했다. 따라서 30초를 15초로 줄이거나 provider JSON 복사 약 1ms를 없애는 것만으로 Free 안정성을 보장할 수 없다. 15초는 12시간 계획의 760개 protocol 상한도 넘기고 60 RPM 완료 시간도 두 배로 늘린다.
+- 현재 확정된 병목은 요청 크기나 CORS가 아니라 대용량 ingress의 반복 reader/timer, 1.28MB SHA-256, strict Base64 전체 검사, provider body 합성, quota 경계와 응답 파싱이 한 Free invocation에 겹치는 구조다. CORS 메시지는 플랫폼이 만든 CPU 503에 앱의 CORS 헤더를 붙일 기회가 없어서 나타난 2차 증상이다.
+- 가장 빠른 안정 경로는 Workers Paid의 월 최소 $5 CPU 여유에서 기존 보안·quota 계약을 유지하고 90초 청크를 복원하는 것이다. 5명 동시 음식 토크의 provider 시작 하한은 30초 1,355건 약 22분 35초에서 90초 455건 약 8~9분으로 줄어든다. 새 월 비용이므로 명시적 승인 전에는 전환하지 않는다.
+- Free를 유지하는 구조적 경로는 브라우저 raw WAV를 private R2에 stream upload하고 R2의 native checksum과 44바이트 range 검증을 사용한 뒤, 작은 media ticket·URL만 Qwen URL/Filetrans에 전달하는 것이다. 큰 본문 검사·해시·Base64·provider 복사를 Worker JavaScript에서 제거할 수 있지만 새 private bucket·capability URL·수명주기·비동기 ASR 상태가 필요하므로 명시적 리소스 승인과 별도 구현이 필요하다.
+- 결과적으로 `0.8.5`는 0.8.4보다 CPU 작업을 크게 줄인 완화 릴리스이지만 Free 장시간 안정화 완료 릴리스는 아니다. 같은 구조를 미세 조정해 다시 성공으로 표시하지 않으며, Paid 또는 private R2 경로 중 하나를 승인받은 뒤 연속 전체 실행 2회 또는 600건 이상에서 `exceededCpu=0`, 누락 0을 확인해야 완료로 판정한다.
 
 ## 2026-07-27 `0.8.4` 맥락 502 복구 · 누락 구간 이어하기
 

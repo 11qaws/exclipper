@@ -298,6 +298,7 @@ function createEnvironment(
       GEMINI_API_KEY: "gemini-secret",
       QWEN_API_KEY: "qwen-secret",
       BROADCAST_TRANSCRIPT_PROVIDER: "qwen",
+      BROADCAST_TRANSCRIPT_TRANSPORT_MODE: "paid-direct",
       AI_PROVIDER_FALLBACK_MODE: "bounded",
       AI_QUOTA_MODE: "required",
       AI_QUOTA_COORDINATOR: coordinator.namespace,

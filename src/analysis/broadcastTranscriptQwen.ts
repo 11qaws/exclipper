@@ -251,6 +251,58 @@ export function buildBroadcastTranscriptQwenOmniRequestBody(audioBase64: string)
   };
 }
 
+/**
+ * Builds the same transcript request with provider-fetched audio.
+ *
+ * The URL is created by the server from a short-lived private media
+ * capability. Accepting only HTTPS and a bounded length keeps callers from
+ * turning this builder into an arbitrary local-network fetch surface.
+ */
+export function buildBroadcastTranscriptQwenOmniUrlRequestBody(
+  audioUrl: string,
+): unknown {
+  let parsed: URL;
+  try {
+    parsed = new URL(audioUrl);
+  } catch {
+    throw new RangeError("Qwen Omni transcript audio URL must be valid.");
+  }
+  if (
+    parsed.protocol !== "https:" ||
+    parsed.username !== "" ||
+    parsed.password !== "" ||
+    parsed.hash !== "" ||
+    audioUrl.length > 2_048
+  ) {
+    throw new RangeError("Qwen Omni transcript audio URL must be bounded HTTPS.");
+  }
+  return {
+    model: BROADCAST_TRANSCRIPT_QWEN_OMNI_MODEL_ID,
+    messages: [
+      {
+        role: "user",
+        content: [
+          {
+            type: "input_audio",
+            input_audio: {
+              data: audioUrl,
+              format: "wav",
+            },
+          },
+          {
+            type: "text",
+            text: "VTuber 스트리머의 한국어 방송 음성이다. 들리는 발화를 한국어 원문 그대로 순서대로 전사하라. 번역·요약·설명·추측을 하지 말고 전사문만 출력하라. 사람 발화가 없고 음악이나 효과음뿐이면 정확히 [대사 없음]만 출력하라.",
+          },
+        ],
+      },
+    ],
+    stream: true,
+    stream_options: { include_usage: true },
+    modalities: ["text"],
+    max_tokens: BROADCAST_TRANSCRIPT_QWEN_MAX_OUTPUT_TOKENS,
+  };
+}
+
 export function extractBroadcastTranscriptQwenOmniSseResponse(
   value: string,
   request: Pick<BroadcastTranscriptQwenProxyRequest, "sourceStartMs" | "durationMs">,

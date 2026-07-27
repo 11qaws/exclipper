@@ -1,15 +1,13 @@
 import type { BroadcastContextTranscriptionChunk } from "./broadcastContextSamplingPlan";
 import type { BroadcastTranscriptQwenResult } from "./broadcastTranscriptQwen";
 
-export const BROADCAST_TRANSCRIPT_WORKER_VERSION = "1.3.0" as const;
+export const BROADCAST_TRANSCRIPT_WORKER_VERSION = "1.4.0" as const;
 /**
  * 한 실행이 보낼 수 있는 청크 수의 상한.
  *
- * 240 은 90초 청크 시절의 값이었다 — 12시간 계획이 216 + 이벤트 창 정도였다.
- * 릴레이 CPU 때문에 청크를 30초로 줄이면서 같은 계획이 세 배가 되므로 함께
- * 올린다. 이 값을 안 올리면 긴 방송이 **계획 단계에서 거부된다.**
- *
- * 스트리밍 중계로 청크를 90초로 되돌리면 이것도 함께 낮춘다.
+ * 0.8.5의 30초 완화 실행과 저장된 재개 계획을 읽을 수 있도록 760을 유지한다.
+ * 새 0.8.6 계획은 90초 raw WAV라 실제 최악 수가 더 작지만, protocol ceiling을
+ * 낮춰 과거 partial checkpoint를 거부할 이유는 없다.
  */
 export const MAX_BROADCAST_TRANSCRIPT_WORKER_CHUNKS = 760;
 

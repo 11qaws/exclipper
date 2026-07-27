@@ -1,6 +1,19 @@
 # ExClipper 개인용 운영·배포·복구 계획
 
-## 2026-07-27 `0.8.5` 전사 CPU 초과 제거
+## 2026-07-27 `0.8.6` Free R2 전사 운영 계획
+
+- production 기본값은 `BROADCAST_TRANSCRIPT_TRANSPORT_MODE=free-r2`다. `TRANSCRIPT_MEDIA`는 private Standard R2 bucket `exclipper-transcript-media`에 연결하고 public bucket access는 열지 않는다.
+- ingress는 raw `audio/wav`만 사용한다. Worker는 quota lease를 inspect한 뒤 request body를 R2에 stream put하며 `X-ExClipper-Quota-Payload-Digest`의 SHA-256을 native checksum으로 넘긴다. 전체 body를 `arrayBuffer`, `text`, Base64 또는 사용자 정의 reader로 읽는 회귀는 금지한다.
+- Free 경로는 한 청크를 두 invocation으로 처리한다. 첫 POST는 R2 저장·검증 후 HTTP 202와 10분 media ticket만 반환하고, 두 번째 작은 resolve POST가 같은 quota lease를 consume해 Qwen을 시작한다. 429에서는 새 operation lease를 받되 ticket과 R2 object를 재사용하므로 WAV를 다시 올리지 않는다.
+- upload는 사용자별 `broadcast-transcript-upload` 60회/분 키만 사용하고 provider resolve만 기존 사용자별·전역 `qwen-omni-media` 60회/분을 사용한다. 두 요청을 같은 전역 키에 세어 실제 Qwen 처리량을 30회/분으로 줄이지 않는다.
+- object put 뒤 returned size와 source duration의 canonical WAV byte count를 대조하고 R2 range read로 처음 44바이트만 검증한다. 하나라도 다르면 provider gate를 consume하지 않고 object 삭제와 upload lease release를 수행한다.
+- Qwen provider가 media URL을 읽는 capability는 임의 object ID와 짧은 metadata expiry를 함께 요구한다. `GET | HEAD` 이외 method, 잘못된 ID, 만료 object, non-WAV metadata는 공개하지 않는다. response는 `no-store`, 정확한 `Content-Length`, `Accept-Ranges`를 사용한다.
+- 정상·명시 실패 terminal에는 object를 즉시 삭제한다. 마지막 안전망은 `transcript/` prefix 1일 lifecycle이며 lifecycle 삭제가 최대 24시간 늦을 수 있으므로 capability expiry가 실제 접근 만료를 담당한다.
+- 배포 전 확인 순서는 ① private bucket·1일 lifecycle ② Worker R2 binding과 `free-r2` 변수 ③ `/healthz`의 transport ready/mode/90초 ④ 2초 raw WAV ⑤ 90초 raw WAV ⑥ 음식 토크 전체 2회다. tail에서 upload, provider control, media GET을 구분하고 어느 invocation도 지속적으로 Free 10ms를 넘지 않는지 확인한다.
+- 유료 전환은 Cloudflare 요금제 변경 뒤 Worker 변수만 `paid-direct`로 바꾸고 재배포한다. R2 binding과 cleanup 코드는 그대로 두어 롤백할 수 있게 하며, client/Pages를 먼저 바꾸지 않는다.
+- R2 무료 경계는 월 10GB-month, Class A 100만, Class B 1,000만이고 delete는 무료다. Worker 무료 경계는 일 100,000 요청이다. 12시간을 90초 단위로 전부 훑는 보수적 상한 480청크를 5명이 동시에 실행해도 약 2,400 put, 수만 회 미만의 R2 read/head, 약 1만 회 안팎의 Worker 요청으로 무료 한도보다 충분히 작다. 실제 기본 표본 계획은 이보다 작다. 운영 지표가 80%에 도달하면 새 분석 시작 전에 경고하며 자동으로 비용이 나는 storage class나 Workers Paid로 전환하지 않는다.
+
+## 2026-07-27 `0.8.5` 전사 CPU 초과 완화와 미해결 운영 gate
 
 - 2026-07-27 18:13:55~18:17:29 KST 운영 tail에서 `/v1/broadcast-transcript` 15건 중 6건이 HTTP 503, `outcome=exceededCpu`, `Worker exceeded CPU time limit`로 종료됐다. 요청은 모두 약 1,280,121 bytes였고 quota는 모두 200이었다. 브라우저의 CORS 오류는 Cloudflare가 대신 만든 503에 CORS 헤더가 없어서 생긴 2차 증상이다.
 - 기본 ingress는 Base64-only 전용 media type이다. Worker는 약 1.28MB envelope의 UTF-8 decode·`JSON.parse`, Base64 중복 grouped regex, provider용 대형 `JSON.stringify`를 제거하고 검증된 원본 Base64 bytes를 서버 고정 JSON prefix/suffix 사이에 넣는다.
@@ -8,6 +21,9 @@
 - 배포 순서는 ① protocol 4 Worker 배포 ② health의 `transcriptTransport.primaryMediaType`, OPTIONS·quota·직접 Base64 30초 smoke 확인 ③ Pages `0.8.5` 배포 ④ 공개 번들의 전용 media type 확인 ⑤ 음식 토크 missing-only 또는 전체 271구간 검증이다. `AI_QUOTA_MODE=required`는 낮추지 않는다.
 - 롤백은 Pages를 `0.8.4`로 되돌리기 전에 Worker의 JSON/raw 호환 경로가 살아 있는지 확인한다. 호환 기간에는 오래 열린 구버전 탭이 JSON 경로를 사용할 수 있으므로 운영 tail에서 transport별 CPU를 구분한다.
 - 완료 기준은 CORS 메시지가 잠시 사라지는 것이 아니라 전체 계획에서 `exceededCpu=0`, gap 0, quota 409/429 비정상 연쇄 0, provider body byte identity 유지다. 실제 tail p95/p99가 Free CPU를 계속 넘으면 동시성 숫자를 더 낮추는 것으로 숨기지 않고 Workers Paid 또는 URL 기반 ASR 전환을 승인받는다.
+- 후속 전체 실행 444건은 성공 438건·`exceededCpu` 6건이었고 성공 요청도 CPU p50 29ms·p95 38ms였다. 따라서 이 gate는 통과하지 못했다. provider body stream, single ingress timer, 15~20초 축소는 보조 최적화일 뿐 Free 10ms의 완료 조건으로 인정하지 않는다.
+- 운영 전환 선택지는 ① 명시적 승인 뒤 Workers Paid 월 최소 $5와 90초 청크를 사용해 현재 보안·quota 계약을 유지하는 단기 경로, ② private R2 stream upload·native checksum·짧은 media capability URL·URL/Filetrans ASR로 큰 본문을 Worker JavaScript에서 제거하는 Free 장기 경로다. 새 비용이나 bucket을 승인 없이 만들지 않는다.
+- 어느 경로든 최종 release gate는 연속 전체 계획 2회 또는 600건 이상, `exceededCpu=0`, CORS 없는 정상 오류 envelope, transcript gap 0, terminal quota 연쇄 오류 0이다.
 
 ## 2026-07-27 `0.8.4` 최대 5개 독립 편집 세션
 

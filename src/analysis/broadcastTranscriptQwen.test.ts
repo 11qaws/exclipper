@@ -1,12 +1,46 @@
 import { describe, expect, it } from "vitest";
 import {
   BROADCAST_TRANSCRIPT_QWEN_MODEL_ID,
+  buildBroadcastTranscriptQwenOmniUrlRequestBody,
   buildBroadcastTranscriptQwenRequestBody,
   extractBroadcastTranscriptQwenResponse,
   parseBroadcastTranscriptQwenProxyRequest,
 } from "./broadcastTranscriptQwen";
 
 describe("broadcastTranscriptQwen", () => {
+  it("builds a bounded HTTPS media URL request without embedding audio bytes", () => {
+    const mediaUrl =
+      "https://rettohighlight-gemini.example/v1/broadcast-transcript-media/0123456789abcdef0123456789abcdef.wav";
+    const request = buildBroadcastTranscriptQwenOmniUrlRequestBody(mediaUrl) as {
+      readonly messages: readonly [{
+        readonly content: readonly [
+          { readonly input_audio: { readonly data: string; readonly format: string } },
+          { readonly type: string },
+        ];
+      }];
+    };
+    expect(request).toMatchObject({
+      model: "qwen3.5-omni-flash",
+      stream: true,
+      modalities: ["text"],
+    });
+    expect(request.messages[0].content[0].input_audio).toEqual({
+      data: mediaUrl,
+      format: "wav",
+    });
+    expect(request.messages[0].content[1].type).toBe("text");
+  });
+
+  it.each([
+    "http://example.com/audio.wav",
+    "https://user:secret@example.com/audio.wav",
+    "not-a-url",
+  ])("rejects unsafe transcript media URL %s", (mediaUrl) => {
+    expect(() =>
+      buildBroadcastTranscriptQwenOmniUrlRequestBody(mediaUrl),
+    ).toThrow(RangeError);
+  });
+
   it("builds the documented Korean ASR request without accepting provider controls", () => {
     expect(buildBroadcastTranscriptQwenRequestBody("UklGRg==")).toEqual({
       model: BROADCAST_TRANSCRIPT_QWEN_MODEL_ID,

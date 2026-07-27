@@ -5,22 +5,12 @@ export const BROADCAST_CONTEXT_TOTAL_BUDGET_USD = 1;
 /**
  * 한 요청에 담는 오디오 길이.
  *
- * 상류(Qwen Omni)는 60초와 90초에서 성공했고 120·180초에서 실패했다. 그래서 오래
- * 90초였는데, **막는 것은 상류가 아니라 우리 릴레이의 CPU 였다.**
- *
- * 90초는 2.75MB 이고 base64 로 3.66MB 가 된다. 그 인코딩만으로 Worker 의 CPU
- * 한도를 넘어 요청이 죽었다(`wrangler tail`: "Worker exceeded CPU time limit").
- * 동시성을 1까지 낮춰도 났다 — 요청 **하나**가 이미 넘었기 때문이다.
- *
- * 30초면 0.92MB, base64 1.22MB 로 CPU 가 약 1/3 이 된다. 요청 수는 세 배가 되지만
- * 리미터(60회/60초)에는 여유가 크고, 과금은 길이 기준이라 총 비용은 같다.
- *
- * **이것은 완화이지 해결이 아니다.** 근본은 워커가 오디오를 만지지 않는 것이다 —
- * 브라우저가 base64 까지 만들어 보내고 워커는 인증 헤더만 붙여 흘려보내면 CPU 가
- * 0 에 수렴한다(`REDESIGN` §2.2 스트리밍 중계). 그때 이 값은 다시 90초로 돌릴 수
- * 있다.
+ * 0.8.5의 30초는 Base64 전체를 Free Worker JavaScript가 검사·복사하던 구조의
+ * 임시 완화였다. 0.8.6은 브라우저가 raw WAV를 보내고 Free 모드가 R2 native
+ * checksum/stream put을 사용하므로 검증된 Qwen 3.5 Omni 상한인 90초로 복원한다.
+ * paid-direct도 같은 raw WAV 계약을 사용해 요금제 전환이 chunk 계획을 바꾸지 않는다.
  */
-export const QWEN_ASR_SAFE_CHUNK_DURATION_MS = 30_000;
+export const QWEN_ASR_SAFE_CHUNK_DURATION_MS = 90_000;
 
 const MAX_SOURCE_DURATION_MS = 12 * 60 * 60_000;
 const CHAPTER_CELL_MS = 10 * 60_000;

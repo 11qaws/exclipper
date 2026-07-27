@@ -49,6 +49,11 @@ export interface FetchWithAiQuotaOptions extends AiQuotaClientIdentity {
   readonly onWait?: (progress: AiQuotaWaitProgress) => void;
 }
 
+export type PreparedAiQuotaFetch = (
+  lease: AiQuotaLeaseHeaders,
+  attempt: number,
+) => Promise<Response>;
+
 export class AiQuotaClientError extends Error {
   public constructor(
     public readonly code:
@@ -357,10 +362,18 @@ async function isRetryableRateLimitResponse(response: Response): Promise<boolean
   }
 }
 
-export async function fetchWithAiQuota(
-  input: RequestInfo | URL,
-  init: RequestInit,
+/**
+ * Runs one logical paid operation with a lease bound to `payloadBody`.
+ *
+ * The callback may perform more than one HTTP exchange with that lease. This
+ * is needed by the Free transcript transport, where the first request stages
+ * raw WAV in R2 and the second small request starts the provider. The quota
+ * digest always remains bound to the original media bytes.
+ */
+export async function fetchWithPreparedAiQuota(
+  payloadBody: BodyInit | null | undefined,
   options: FetchWithAiQuotaOptions,
+  preparedFetch: PreparedAiQuotaFetch,
 ): Promise<Response> {
   const normalizedOperationId = normalizeOperationId(options.operationId);
   if (
@@ -373,7 +386,7 @@ export async function fetchWithAiQuota(
       "AI 분석 작업 식별자를 준비하지 못했어요.",
     );
   }
-  const payloadDigest = await createAiQuotaPayloadDigest(init.body);
+  const payloadDigest = await createAiQuotaPayloadDigest(payloadBody);
   if (!isAiQuotaPayloadDigest(payloadDigest)) {
     throw new AiQuotaClientError(
       "UNSUPPORTED_BODY",
@@ -396,18 +409,7 @@ export async function fetchWithAiQuota(
     const lease = await acquireLease(identity, options);
     let response: Response;
     try {
-      const headers = new Headers(init.headers);
-      for (const [name, value] of Object.entries(aiQuotaLeaseHeaders(lease))) {
-        headers.set(name, value);
-      }
-      response = await fetchImplementation(input, {
-        ...init,
-        headers,
-        credentials: "omit",
-        cache: "no-store",
-        referrerPolicy: "no-referrer",
-        ...(options.signal === undefined ? {} : { signal: options.signal }),
-      });
+      response = await preparedFetch(lease, attempt);
     } catch {
       if (options.signal?.aborted === true) {
         await cancelQuotaOperationBestEffort(fetchImplementation, identity);
@@ -430,6 +432,28 @@ export async function fetchWithAiQuota(
     "COORDINATOR_REJECTED",
     "AI 분석 요청 순서를 다시 잡지 못했어요.",
   );
+}
+
+export async function fetchWithAiQuota(
+  input: RequestInfo | URL,
+  init: RequestInit,
+  options: FetchWithAiQuotaOptions,
+): Promise<Response> {
+  const fetchImplementation = options.fetchImplementation ?? fetch;
+  return fetchWithPreparedAiQuota(init.body, options, async (lease) => {
+    const headers = new Headers(init.headers);
+    for (const [name, value] of Object.entries(aiQuotaLeaseHeaders(lease))) {
+      headers.set(name, value);
+    }
+    return fetchImplementation(input, {
+      ...init,
+      headers,
+      credentials: "omit",
+      cache: "no-store",
+      referrerPolicy: "no-referrer",
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
+    });
+  });
 }
 
 export function isAiQuotaEndpoint(url: string): boolean {

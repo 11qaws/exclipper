@@ -3,12 +3,14 @@ import { describe, expect, it, vi } from "vitest";
 import {
   createAiQuotaPayloadDigest,
   fetchWithAiQuota,
+  fetchWithPreparedAiQuota,
   getOrCreateAiQuotaParticipantId,
 } from "./aiQuotaClient";
 import {
   AI_QUOTA_LEASE_HEADER,
   AI_QUOTA_PARTICIPANT_HEADER,
   AI_QUOTA_SCHEMA_VERSION,
+  type AiQuotaLeaseHeaders,
 } from "./aiQuotaProtocol";
 
 function requestUrl(input: RequestInfo | URL): string {
@@ -319,5 +321,54 @@ describe("AI quota browser client", () => {
     expect(operationIds).toHaveLength(2);
     expect(operationIds[0]).not.toBe(operationIds[1]);
     expect(operationIds.every((value) => value.length <= 160)).toBe(true);
+  });
+
+  it("keeps a prepared media operation bound to the raw WAV digest", async () => {
+    const wav = new Uint8Array([82, 73, 70, 70, 1, 2, 3, 4]);
+    const expectedDigest = await createAiQuotaPayloadDigest(wav);
+    const preparedFetch = vi.fn((lease: AiQuotaLeaseHeaders) => {
+      expect(lease.payloadDigest).toBe(expectedDigest);
+      expect(lease.pool).toBe("transcript");
+      return Promise.resolve(new Response("{}", { status: 200 }));
+    });
+    const fetchImplementation = vi.fn(
+      (_input: RequestInfo | URL, init?: RequestInit) => {
+        expect(requestJsonBody(init)).toMatchObject({
+          action: "lease",
+          pool: "transcript",
+          payloadDigest: expectedDigest,
+        });
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              schemaVersion: AI_QUOTA_SCHEMA_VERSION,
+              status: "granted",
+              leaseToken:
+                "lease_0000000000000000000000000000000000000001",
+              leaseExpiresAtMs: Date.now() + 30_000,
+              retryAfterMs: 0,
+              activeParticipantCount: 1,
+              poolInFlightCount: 0,
+            }),
+            { status: 200 },
+          ),
+        );
+      },
+    );
+
+    const response = await fetchWithPreparedAiQuota(
+      wav,
+      {
+        participantId: "participant_11111111111111111111111111111111",
+        runId: "analysis-run-1",
+        operationId: "transcript-media-1",
+        pool: "transcript",
+        fetchImplementation,
+      },
+      preparedFetch,
+    );
+
+    expect(response.status).toBe(200);
+    expect(preparedFetch).toHaveBeenCalledTimes(1);
   });
 });

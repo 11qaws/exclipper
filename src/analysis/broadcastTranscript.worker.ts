@@ -11,7 +11,6 @@ import {
   type InputAudioTrack,
 } from "mediabunny";
 import {
-  encodeCandidatePassBBase64,
   encodeCandidatePassBPcm16Wav,
 } from "./candidatePassBGemini";
 import { CANDIDATE_PASS_B_SAMPLE_RATE_HZ } from "./candidatePassBWorkerProtocol";
@@ -21,7 +20,7 @@ import {
 import type { BroadcastContextTranscriptionChunk } from "./broadcastContextSamplingPlan";
 import {
   BroadcastTranscriptQwenClientError,
-  requestBroadcastTranscriptQwenChunk,
+  requestBroadcastTranscriptChunkBinary,
 } from "./broadcastTranscriptQwenClient";
 import {
   AdaptiveConcurrency,
@@ -428,12 +427,10 @@ async function runAnalyze(
         CANDIDATE_PASS_B_SAMPLE_RATE_HZ,
       );
       pcm.fill(0);
-      // Base64 is deliberately prepared in this dedicated browser Worker.
-      // Cloudflare's Free Worker CPU ceiling is far tighter than the browser's,
-      // and converting even a 30-second WAV at the relay caused headerless 1102
-      // failures that browsers reported as CORS errors.
-      const audioBase64 = encodeCandidatePassBBase64(wav);
-      wav.fill(0);
+      // Keep one raw WAV contract for both server transports. Free mode streams
+      // these bytes into private R2 without reading them in Worker JavaScript;
+      // paid mode may assemble the provider body directly. The browser never
+      // needs to know which Cloudflare plan is active.
 
       const chunkId = chunk.chunkId;
       // Reserve the public request start time before creating the async
@@ -444,6 +441,7 @@ async function runAnalyze(
         spacingMs,
         () => {
           if (task.cancelled || fatalProxyFailure !== null) {
+            wav.fill(0);
             return Promise.resolve();
           }
           const controller = new AbortController();
@@ -451,8 +449,8 @@ async function runAnalyze(
           const requestStamp = concurrency.captureRequestWave();
           return (async (): Promise<void> => {
             try {
-              const result = await requestBroadcastTranscriptQwenChunk(
-                audioBase64,
+              const result = await requestBroadcastTranscriptChunkBinary(
+                wav,
                 chunk.sourceStartMs,
                 durationMs,
                 {
@@ -516,6 +514,7 @@ async function runAnalyze(
                 reason: "transcription-failed",
               });
             } finally {
+              wav.fill(0);
               task.fetchControllers.delete(controller);
               processedCount += 1;
             }

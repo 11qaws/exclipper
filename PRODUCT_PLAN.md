@@ -1,6 +1,17 @@
 # ExClipper 제품·UX·기술 계획서
 
-## `0.8.5` 전사 직접 전송·CPU 초과 복구 계약
+## `0.8.6` 무료 R2 기본·유료 direct 즉시 전환 계약
+
+- 브라우저 전사 Worker는 최대 90초의 16kHz mono PCM16 WAV를 한 번 만들고 같은 raw bytes 계약으로만 서버에 보낸다. Cloudflare 요금제에 따라 프런트엔드 코드를 갈라놓지 않는다.
+- `free-r2`는 raw request body를 Worker JavaScript에서 읽지 않고 private R2 binding의 native stream put으로 넘긴다. quota가 이미 계산한 SHA-256을 R2 put checksum으로 사용하고, 저장 뒤 exact byte length와 44-byte WAV header만 range read로 검증한다. Qwen 3.5 Omni에는 Base64가 아니라 짧게 만료되는 HTTPS media capability URL을 전달한다.
+- Free 경로는 `raw WAV upload → 202 media ticket → 작은 resolve JSON → Qwen URL fetch`의 두 요청이다. 브라우저는 이 차이를 내부에서 흡수하며 최종 transcript 결과 계약은 그대로다. resolve가 429이면 새 quota operation만 발급하고 이미 검증된 ticket을 재사용한다.
+- provider 응답이 terminal이면 staged object를 즉시 삭제한다. capability 자체는 수분 안에 만료하고, 비정상 Worker 종료로 남은 object는 `transcript/` prefix 1일 lifecycle로 제거한다. media bytes와 URL은 Durable Object, IndexedDB 분석 결과, 로그용 상태에 저장하지 않는다.
+- `paid-direct`는 동일한 raw WAV 요청을 기존 bounded in-memory provider body 경로로 보낸다. 전환은 `BROADCAST_TRANSCRIPT_TRANSPORT_MODE` 한 값으로 끝나며 client protocol, quota fairness, source fence, transcript result schema, context/candidate handoff는 바뀌지 않는다.
+- Free 모드에서 Base64/JSON 구버전 ingress를 조용히 direct 처리하지 않는다. 플랫폼 CPU 오류를 다시 만들지 않도록 명시적인 client-upgrade 응답을 내고 새 raw-WAV client만 실행한다. 유료 모드에서는 진단·롤백을 위해 호환 입력을 계속 받을 수 있다.
+- Free tier 산정 기준은 Standard R2 10GB-month, Class A 100만 건, Class B 1,000만 건과 Workers 100,000 requests/day 안이다. 정상 상태에는 provider 동시 실행 수만큼의 90초 WAV만 잠시 존재하므로 저장량보다 Qwen 60 RPM이 실제 처리량 경계다. 5명이 12시간 원본을 90초 단위로 전부 처리하는 과대 추정에서도 무료 요청·R2 작업 한도에 충분한 여유가 있다.
+- 출시 gate는 음식 토크 전체와 장시간 연속 실행에서 Worker tail CPU, CORS envelope, quota terminal, transcript gap, R2 orphan을 함께 본다. 검증 전에는 0.8.5의 CPU 완화를 안정화 완료로 표시하지 않는다.
+
+## `0.8.5` 전사 직접 전송·CPU 초과 완화 계약
 
 - 브라우저의 30초 전사 청크는 더 이상 약 1.28MB의 JSON 객체로 Worker에 전달하지 않는다. 전용 media type의 본문에는 브라우저 Web Worker가 준비한 Base64 ASCII만 두고, `startMs`와 `durationMs`는 정확히 한 번씩 URL 매개변수로 전달한다. Free Worker CPU 여유를 지키기 위해 이 직접 경로 자체도 최대 30초로 닫는다.
 - Worker는 quota lease와 본문 SHA-256을 먼저 대조한 뒤 실제 길이·패딩·Base64 문자 집합과 선행 WAV 헤더만 검증한다. 모델·endpoint·prompt·출력 상한은 계속 서버가 소유한다. 검증을 통과한 Base64 바이트는 서버 고정 provider JSON prefix와 suffix 사이에 직접 복사하며, 대용량 `JSON.parse`, 중복 정규식, 대용량 `JSON.stringify`를 하지 않는다.
@@ -8,6 +19,8 @@
 - 최대 활성 편집자 5명과 Qwen 전역 in-flight 6은 서로 다른 제한이다. 브라우저 로컬 상한은 6을 유지하고 coordinator가 1명 6개, 2명 3개, 3~5명 2개의 공정한 실행 슬롯을 배분한다.
 - 같은 시점에 시작한 요청 여러 개가 하나의 장애로 함께 실패해도 적응형 동시성은 그 failure wave에서 한 번만 감소한다. 감속 뒤에는 기존 요청 수가 새 상한 아래로 빠질 때까지 새 요청을 보충하지 않는다.
 - 출시 판정은 짧은 순차 스모크만으로 끝내지 않는다. 음식 토크 271개 전체, 1·2·5 participant, Worker tail의 `exceededCpu` 0건과 CORS 포함 응답, 누락 구간 0개를 확인한다. Free Worker CPU p99가 안정 범위에 들지 않으면 유료 CPU 한도 또는 URL 기반 ASR transport를 별도 승인 대상으로 올린다.
+- 실제 후속 tail 444건에서 성공 요청도 CPU p50 29ms·p95 38ms였고 두 번째 장시간 실행에 `exceededCpu` 6건이 발생했다. 따라서 직접 Base64는 과거 JSON 경로보다 가벼운 호환·완화 경로지만 Free 장시간 완료 계약은 아니다. 청크 축소나 동시성 감소로 플랫폼 CPU 한도를 숨기지 않는다.
+- 가장 작은 안정 전환은 명시적 비용 승인 뒤 Workers Paid에서 현재 검증·quota·Secret 경계를 유지하고 90초를 복원하는 것이다. Free 유지 전환은 private R2에 raw WAV를 stream upload하고 native checksum·44바이트 header 검증 뒤 작은 media ticket과 URL만 ASR에 전달한다. 두 경로 모두 승인 전에는 새 비용·bucket을 만들지 않는다.
 
 ## `0.8.4` 최대 5개 독립 편집 세션의 AI 용량·복구 계약
 

@@ -18,9 +18,9 @@ function option(name, fallback = null) {
 
 const file = option("--file");
 const startSeconds = Number(option("--start", "0"));
-const requestedDurationSeconds = Number(option("--duration", "30"));
+const requestedDurationSeconds = Number(option("--duration", "90"));
 const endpoint = option("--endpoint", DEFAULT_ENDPOINT);
-const transport = option("--transport", "base64");
+const transport = option("--transport", "raw");
 
 if (
   typeof file !== "string" ||
@@ -36,7 +36,7 @@ if (
   !["base64", "raw", "json"].includes(transport)
 ) {
   throw new Error(
-    "Usage: node scripts/smoke-broadcast-transcript.mjs --file <video> [--start 1260] [--duration 30] [--transport base64|raw|json]",
+    "Usage: node scripts/smoke-broadcast-transcript.mjs --file <video> [--start 1260] [--duration 90] [--transport raw|base64|json]",
   );
 }
 
@@ -124,44 +124,56 @@ const quotaIdentity = {
   payloadDigest,
 };
 
-let lease;
-while (lease === undefined) {
-  const quotaResponse = await fetch(quotaUrl, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Origin: PRODUCTION_ORIGIN,
-    },
-    body: JSON.stringify({
-      schemaVersion: QUOTA_SCHEMA_VERSION,
-      action: "lease",
-      ...quotaIdentity,
-    }),
-  });
-  const quotaPayload = await quotaResponse.json();
-  if (!quotaResponse.ok) {
-    throw new Error(
-      `Quota smoke failed with HTTP ${quotaResponse.status}: ${quotaPayload?.error?.code ?? "UNKNOWN"}`,
+async function acquireQuotaLease(identity) {
+  while (true) {
+    const quotaResponse = await fetch(quotaUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Origin: PRODUCTION_ORIGIN,
+      },
+      body: JSON.stringify({
+        schemaVersion: QUOTA_SCHEMA_VERSION,
+        action: "lease",
+        ...identity,
+      }),
+    });
+    const quotaPayload = await quotaResponse.json();
+    if (!quotaResponse.ok) {
+      throw new Error(
+        `Quota smoke failed with HTTP ${quotaResponse.status}: ${quotaPayload?.error?.code ?? "UNKNOWN"}`,
+      );
+    }
+    if (quotaPayload?.status === "granted") return quotaPayload;
+    if (
+      quotaPayload?.status !== "queued" &&
+      quotaPayload?.status !== "capacity-full"
+    ) {
+      throw new Error(
+        `Quota smoke was rejected: ${JSON.stringify(quotaPayload)}`,
+      );
+    }
+    const retryAfterMs = Math.min(
+      15_000,
+      Math.max(250, Number(quotaPayload.retryAfterMs) || 2_000),
     );
+    await new Promise((resolveWait) => setTimeout(resolveWait, retryAfterMs));
   }
-  if (quotaPayload?.status === "granted") {
-    lease = quotaPayload;
-    break;
-  }
-  if (
-    quotaPayload?.status !== "queued" &&
-    quotaPayload?.status !== "capacity-full"
-  ) {
-    throw new Error(`Quota smoke was rejected: ${JSON.stringify(quotaPayload)}`);
-  }
-  const retryAfterMs = Math.min(
-    15_000,
-    Math.max(250, Number(quotaPayload.retryAfterMs) || 2_000),
-  );
-  await new Promise((resolveWait) => setTimeout(resolveWait, retryAfterMs));
 }
 
-const response = await fetch(transcriptUrl, {
+function quotaHeaders(identity, lease) {
+  return {
+    "X-ExClipper-Quota-Participant": identity.participantId,
+    "X-ExClipper-Quota-Run": identity.runId,
+    "X-ExClipper-Quota-Operation": identity.operationId,
+    "X-ExClipper-Quota-Payload-Digest": identity.payloadDigest,
+    "X-ExClipper-Quota-Lease": lease.leaseToken,
+  };
+}
+
+let activeIdentity = quotaIdentity;
+let lease = await acquireQuotaLease(activeIdentity);
+let response = await fetch(transcriptUrl, {
   method: "POST",
   headers: {
     "Content-Type":
@@ -171,16 +183,54 @@ const response = await fetch(transcriptUrl, {
           ? "application/vnd.exclipper.transcript-base64"
           : "audio/wav",
     Origin: PRODUCTION_ORIGIN,
-    "X-ExClipper-Quota-Participant": participantId,
-    "X-ExClipper-Quota-Run": runId,
-    "X-ExClipper-Quota-Operation": operationId,
-    "X-ExClipper-Quota-Payload-Digest": payloadDigest,
-    "X-ExClipper-Quota-Lease": lease.leaseToken,
+    ...quotaHeaders(activeIdentity, lease),
   },
   body: requestBody,
 });
 
-const payload = await response.json();
+let payload = await response.json();
+if (response.status === 202) {
+  const mediaTicket = payload?.mediaTicket;
+  if (typeof mediaTicket !== "string") {
+    throw new Error("The staged transcript response did not contain a ticket.");
+  }
+  for (let attempt = 0; attempt <= 5; attempt += 1) {
+    response = await fetch(new URL("/v1/broadcast-transcript", transcriptUrl.origin), {
+      method: "POST",
+      headers: {
+        "Content-Type":
+          "application/vnd.exclipper.transcript-media-resolve+json",
+        Origin: PRODUCTION_ORIGIN,
+        ...quotaHeaders(activeIdentity, lease),
+      },
+      body: JSON.stringify({
+        schemaVersion: "1.0.0",
+        mediaTicket,
+      }),
+    });
+    payload = await response.json();
+    const rateLimited =
+      response.status === 429 &&
+      (payload?.error?.code === "RATE_LIMITED" ||
+        payload?.error?.code === "UPSTREAM_RATE_LIMITED");
+    if (!rateLimited || attempt === 5) break;
+    const retryAfterSeconds = Number(response.headers.get("Retry-After"));
+    await new Promise((resolveWait) =>
+      setTimeout(
+        resolveWait,
+        Math.min(
+          60_000,
+          Math.max(1_000, (retryAfterSeconds || 1) * 1_000),
+        ),
+      ),
+    );
+    activeIdentity = {
+      ...quotaIdentity,
+      operationId: `${operationId}.attempt-${attempt + 1}`,
+    };
+    lease = await acquireQuotaLease(activeIdentity);
+  }
+}
 process.stdout.write(
   `${JSON.stringify(
     { status: response.status, transport, durationMs, payload },

@@ -11,6 +11,7 @@
     "CANDIDATE_INSIGHT_PROVIDER": "qwen",
     "BROADCAST_CONTEXT_PROVIDER": "qwen",
     "BROADCAST_TRANSCRIPT_PROVIDER": "qwen",
+    "BROADCAST_TRANSCRIPT_TRANSPORT_MODE": "free-r2",
     "AI_PROVIDER_FALLBACK_MODE": "bounded",
     "AI_QUOTA_MODE": "required",
     "QWEN_REGION": "singapore"
@@ -29,8 +30,18 @@
       "storage": "sqlite"
     }
   },
+  "r2_buckets": [
+    {
+      "binding": "TRANSCRIPT_MEDIA",
+      "bucket_name": "exclipper-transcript-media"
+    }
+  ],
   "secrets": {
-    "required": ["GEMINI_API_KEY", "QWEN_API_KEY"]
+    "required": [
+      "GEMINI_API_KEY",
+      "QWEN_API_KEY",
+      "TRANSCRIPT_MEDIA_SIGNING_KEY"
+    ]
   },
   "ratelimits": [
     {

@@ -1,10 +1,22 @@
 # ExClipper 상태·생애주기 명세
 
-- 문서 버전: 0.8.5
+- 문서 버전: 0.8.6
 - 기준 제품 계획: PRODUCT_PLAN.md 현재 revision
 - 기준일: 2026-07-27 (Asia/Seoul)
 - 적용 범위: GitHub Pages에서 실행되는 개인 편집 어시스턴트와 선택형 CHZZK 동반 수집기
 - 문서 지위: 구현·회귀 테스트의 canonical 상태 문서
+
+## `0.8.6` 무료 R2 전사 transport와 유료 전환 상태
+
+- 새 브라우저의 전사 ingress 계약은 transport와 무관하게 `audio/wav`다. 브라우저 전사 Worker는 source fence가 정확한 최대 90초·16kHz·mono·PCM16 WAV를 만들고, quota payload digest는 이 raw WAV bytes에 대해 계산한다. Base64·JSON 전송은 `paid-direct`의 구버전 호환 입력일 뿐 `free-r2`에서는 실행하지 않는다.
+- 서버의 `BROADCAST_TRANSCRIPT_TRANSPORT_MODE`는 `free-r2 | paid-direct` 중 하나다. 이 값은 저장된 transcript chapter, context packet, 후보 ID, 재시도 generation을 바꾸지 않는다. 동일한 client request와 quota operation이 `free-r2`에서는 R2 media staging으로, `paid-direct`에서는 메모리 내 provider body 조립으로 갈라진다.
+- `free-r2` ingress는 `lease-inspected -> r2-streaming-put -> native-sha256-matched -> object-size-matched -> 44-byte-header-validated -> execution-waiting -> in-flight -> complete | gap` 순서다. Worker JavaScript는 본문 reader, 전체 digest, 전체 WAV scan, Base64 변환을 하지 않는다. R2가 request stream과 raw WAV digest를 직접 대조하고 Worker는 저장된 객체의 길이와 선행 44바이트만 읽는다.
+- 실제 HTTP 상태는 `raw POST + lease A -> 202 staged -> resolve POST + lease A -> provider terminal`이다. local/provider 429이면 lease A만 terminal로 닫고 `lease B -> 같은 ticket resolve`로 이어간다. stable ticket binding에는 participant, run, pool, raw payload digest, source fence, byte length만 들어가며 재시도를 위해 operation ID와 lease token은 포함하지 않는다.
+- staged media의 object key는 추측 불가능한 request별 capability다. 객체는 private bucket에 있고 provider가 접근하는 경로는 `GET | HEAD`만 허용한다. capability 만료 뒤에는 객체가 남아 있어도 읽을 수 없으며 provider terminal 뒤 즉시 삭제한다. Worker 중단으로 즉시 삭제하지 못한 객체는 `transcript/` prefix의 1일 lifecycle이 마지막 정리 경계다.
+- provider media read는 원본 객체를 변경하거나 quota state를 만들지 않는다. Durable Object에는 participant·run·operation·digest·lease 상태만 남고 media bytes·object body·provider URL은 들어가지 않는다.
+- `free-r2`에서 primary provider는 HTTPS audio URL을 지원하는 Qwen 3.5 Omni다. URL media를 Gemini inline-data로 자동 변환하는 fallback은 대용량 bytes를 Worker로 되돌리므로 금지한다. `paid-direct`는 기존 bounded Qwen→Gemini fallback을 유지한다.
+- quota lease는 upload ticket이면서 아직 provider 실행권은 아니다. R2 checksum·크기·WAV header 검증이 끝난 뒤에만 JIT consume을 요청한다. upload/checksum/header 실패는 `release-upload -> cancelled`, provider 결과 불명은 `outcome-unknown`, 명시적 rate-limit은 새 operation 재시도 규칙을 그대로 따른다.
+- transport 변경의 완료 조건은 한 번의 200이 아니다. 연속 전체 계획 2회 또는 600개 이상의 transcript 요청에서 `exceededCpu=0`, headerless CORS 오류 0, 누락 0, terminal quota 연쇄 오류 0을 확인하고 staged object가 terminal 뒤 남지 않는 것을 함께 확인해야 한다.
 
 ## `0.8.5` 전사 transport와 failure-wave 상태
 

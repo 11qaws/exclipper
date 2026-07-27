@@ -12,8 +12,15 @@ import {
 export { BROADCAST_TRANSCRIPT_BASE64_CONTENT_TYPE } from "./broadcastTranscriptQwen";
 import {
   fetchWithAiQuota,
+  fetchWithPreparedAiQuota,
   type AiQuotaClientIdentity,
 } from "./aiQuotaClient";
+import { aiQuotaLeaseHeaders, type AiQuotaLeaseHeaders } from "./aiQuotaProtocol";
+import {
+  BROADCAST_TRANSCRIPT_MEDIA_RESOLVE_CONTENT_TYPE,
+  createBroadcastTranscriptMediaResolveRequest,
+  parseBroadcastTranscriptMediaStagedResponse,
+} from "./broadcastTranscriptMediaProtocol";
 
 export const BROADCAST_TRANSCRIPT_PROXY_ENDPOINT =
   "https://rettohighlight-gemini.11qaws.workers.dev/v1/broadcast-transcript" as const;
@@ -234,18 +241,17 @@ export async function requestBroadcastTranscriptQwenChunk(
   );
 }
 
-/** WAV byte ceiling shared by the production Base64 and compatibility binary paths. */
+/** WAV byte ceiling shared by both server-selected transcript transports. */
 const MAX_BROADCAST_TRANSCRIPT_WAV_BYTES =
   (MAX_BROADCAST_TRANSCRIPT_QWEN_BASE64_LENGTH / 4) * 3;
 
 /**
- * Backward-compatible raw WAV transport retained for old tabs and diagnostics.
+ * Sends one raw WAV contract and lets the server select its infrastructure.
  *
- * The production analysis worker prepares Base64 in the browser and uses
- * `requestBroadcastTranscriptQwenChunk`. Keeping this route lets an older
- * deployed client survive a Worker-first rollout, but it makes the Cloudflare
- * Worker perform the byte-to-Base64 conversion and is therefore not the
- * preferred path on the Free CPU tier.
+ * Workers Paid can answer this first request directly. Workers Free stages the
+ * same stream in private R2 and returns a short-lived ticket, which this client
+ * resolves without uploading the WAV again. A 429 acquires a fresh quota
+ * operation while retaining that ticket.
  */
 export async function requestBroadcastTranscriptChunkBinary(
   wavBytes: Uint8Array,
@@ -283,17 +289,63 @@ export async function requestBroadcastTranscriptChunkBinary(
   };
   const endpoint =
     `${BROADCAST_TRANSCRIPT_PROXY_ENDPOINT}?startMs=${sourceStartMs}&durationMs=${durationMs}`;
+  const fetchImplementation = options.fetchImplementation ?? fetch;
+  let mediaTicket: string | null = null;
+  const preparedFetch = async (
+    lease: AiQuotaLeaseHeaders | null,
+  ): Promise<Response> => {
+    const leaseHeaders =
+      lease === null ? {} : aiQuotaLeaseHeaders(lease);
+    if (mediaTicket === null) {
+      const stagedOrDirect = await fetchImplementation(endpoint, {
+        ...requestInit,
+        headers: {
+          ...leaseHeaders,
+          "Content-Type": "audio/wav",
+        },
+      });
+      if (stagedOrDirect.status !== 202) return stagedOrDirect;
+      const replayableStagedResponse = stagedOrDirect.clone();
+      let value: unknown;
+      try {
+        value = await stagedOrDirect.json();
+      } catch {
+        return replayableStagedResponse;
+      }
+      const staged = parseBroadcastTranscriptMediaStagedResponse(
+        value,
+        sourceStartMs,
+        durationMs,
+      );
+      if (staged === null) return replayableStagedResponse;
+      mediaTicket = staged.mediaTicket;
+    }
+    return fetchImplementation(BROADCAST_TRANSCRIPT_PROXY_ENDPOINT, {
+      method: "POST",
+      headers: {
+        ...leaseHeaders,
+        "Content-Type": BROADCAST_TRANSCRIPT_MEDIA_RESOLVE_CONTENT_TYPE,
+      },
+      body: JSON.stringify(
+        createBroadcastTranscriptMediaResolveRequest(mediaTicket),
+      ),
+      credentials: "omit",
+      cache: "no-store",
+      referrerPolicy: "no-referrer",
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
+    });
+  };
   return resolveBroadcastTranscriptProxyResponse(
     options.quota === undefined
-      ? (options.fetchImplementation ?? fetch)(endpoint, requestInit)
-      : fetchWithAiQuota(endpoint, requestInit, {
+      ? preparedFetch(null)
+      : fetchWithPreparedAiQuota(wavBytes as Uint8Array<ArrayBuffer>, {
           ...options.quota,
           pool: "transcript",
           ...(options.signal === undefined ? {} : { signal: options.signal }),
           ...(options.fetchImplementation === undefined
             ? {}
             : { fetchImplementation: options.fetchImplementation }),
-        }),
+        }, (lease) => preparedFetch(lease)),
     sourceStartMs,
     durationMs,
   );

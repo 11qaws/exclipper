@@ -60,11 +60,18 @@ import {
   MAX_BROADCAST_TRANSCRIPT_QWEN_RESPONSE_BYTES,
   buildBroadcastTranscriptGeminiRequestBody,
   buildBroadcastTranscriptQwenOmniRequestBody,
+  buildBroadcastTranscriptQwenOmniUrlRequestBody,
   extractBroadcastTranscriptGeminiResponse,
   extractBroadcastTranscriptQwenOmniSseResponse,
   parseBroadcastTranscriptQwenProxyRequest,
   type BroadcastTranscriptQwenResult,
 } from "../analysis/broadcastTranscriptQwen";
+import {
+  BROADCAST_TRANSCRIPT_MEDIA_ENDPOINT_PATH,
+  BROADCAST_TRANSCRIPT_MEDIA_RESOLVE_CONTENT_TYPE,
+  BROADCAST_TRANSCRIPT_MEDIA_SCHEMA_VERSION,
+  parseBroadcastTranscriptMediaResolveRequest,
+} from "../analysis/broadcastTranscriptMediaProtocol";
 import {
   YOUTUBE_VIDEO_ID_PATTERN,
   extractKoreanYouTubeCaptionTrackFromPlayerResponse,
@@ -127,6 +134,20 @@ import {
   AI_QUOTA_QWEN_OMNI_MAX_TOKENS_PER_MINUTE,
   AI_QUOTA_TOKEN_WINDOW_MS,
 } from "./aiQuotaPolicy";
+import {
+  BROADCAST_TRANSCRIPT_MEDIA_HEADER_BYTES,
+  BROADCAST_TRANSCRIPT_MEDIA_MAX_BYTES,
+  BroadcastTranscriptMediaError,
+  createBroadcastTranscriptMediaCapabilityUrl,
+  deleteBroadcastTranscriptMediaBestEffort,
+  resolveBroadcastTranscriptMedia,
+  resolveBroadcastTranscriptTransport,
+  serveBroadcastTranscriptMediaRequest,
+  stageBroadcastTranscriptMedia,
+  type BroadcastTranscriptMediaBinding,
+  type BroadcastTranscriptTransportEnvironment,
+  type BroadcastTranscriptTransportResolution,
+} from "./broadcastTranscriptMedia";
 
 export { AiQuotaCoordinator } from "./aiQuotaCoordinator";
 
@@ -261,7 +282,10 @@ interface RateLimitBinding {
 }
 
 export interface AiProxyEnvironment
-  extends AiProviderEnvironment, AiQuotaCoordinatorEnvironment {
+  extends
+    AiProviderEnvironment,
+    AiQuotaCoordinatorEnvironment,
+    BroadcastTranscriptTransportEnvironment {
   readonly RATE_LIMITER: RateLimitBinding;
   readonly IP_RATE_LIMITER: RateLimitBinding;
   readonly CONTEXT_RATE_LIMITER?: RateLimitBinding;
@@ -751,7 +775,8 @@ type BroadcastTranscriptAudioPayload =
       readonly kind: "base64-bytes";
       readonly audioBase64Bytes: Uint8Array;
     }
-  | { readonly kind: "wav-bytes"; readonly wavBytes: Uint8Array };
+  | { readonly kind: "wav-bytes"; readonly wavBytes: Uint8Array }
+  | { readonly kind: "audio-url"; readonly audioUrl: string };
 
 function clearBroadcastTranscriptAudio(
   audio: BroadcastTranscriptAudioPayload,
@@ -1561,6 +1586,7 @@ async function healthResponse(
   environment: AiProxyEnvironment,
 ): Promise<Response> {
   const quotaMode = aiQuotaMode(environment);
+  const transcriptTransport = resolveBroadcastTranscriptTransport(environment);
   let quotaCoordinatorReady = quotaMode === "disabled";
   if (quotaMode !== "disabled") {
     try {
@@ -1574,19 +1600,39 @@ async function healthResponse(
     "Content-Type": JSON_CONTENT_TYPE,
     "X-Content-Type-Options": "nosniff",
   });
-  const healthy = quotaMode === "disabled" || quotaCoordinatorReady;
+  const transcriptTransportReady =
+    transcriptTransport.ok &&
+    (transcriptTransport.mode === "paid-direct" ||
+      quotaMode === "required");
+  const healthy =
+    (quotaMode === "disabled" || quotaCoordinatorReady) &&
+    transcriptTransportReady;
   const body = request.method === "HEAD"
     ? null
     : JSON.stringify({
         ok: healthy,
         service: "rettohighlight-gemini",
-        version: 4,
+        version: 5,
         routingPolicyVersion: AI_PROVIDER_ROUTING_POLICY_VERSION,
         contextModelRevision: QWEN_CONTEXT_MODEL_REVISION,
         transcriptTransport: {
-          version: 1,
-          primaryMediaType: BROADCAST_TRANSCRIPT_BASE64_CONTENT_TYPE,
-          legacyMediaTypes: ["application/json", "audio/wav"],
+          version: 2,
+          mode: transcriptTransport.ok
+            ? transcriptTransport.mode
+            : "unavailable",
+          configured: transcriptTransportReady,
+          primaryMediaType: "audio/wav",
+          maximumChunkDurationMs:
+            MAX_BROADCAST_TRANSCRIPT_QWEN_DURATION_MS,
+          stagedSchemaVersion: BROADCAST_TRANSCRIPT_MEDIA_SCHEMA_VERSION,
+          legacyMediaTypes:
+            transcriptTransport.ok &&
+            transcriptTransport.mode === "paid-direct"
+              ? [
+                  "application/json",
+                  BROADCAST_TRANSCRIPT_BASE64_CONTENT_TYPE,
+                ]
+              : [],
         },
         quota: {
           mode: quotaMode,
@@ -2339,7 +2385,17 @@ async function attemptBroadcastTranscriptProvider(
   let upstreamBody: string | Uint8Array<ArrayBuffer>;
   try {
     upstreamBody =
-      audio.kind === "wav-bytes"
+      audio.kind === "audio-url"
+        ? connection.provider === "qwen"
+          ? JSON.stringify(
+              buildBroadcastTranscriptQwenOmniUrlRequestBody(audio.audioUrl),
+            )
+          : (() => {
+              throw new Error(
+                "URL-backed transcript media requires the Qwen provider.",
+              );
+            })()
+        : audio.kind === "wav-bytes"
         ? buildBroadcastTranscriptUpstreamBytes(
             connection.provider,
             audio.wavBytes,
@@ -2489,6 +2545,543 @@ function broadcastTranscriptProviderFailureResponse(
   }
 }
 
+type FreeR2BroadcastTranscriptTransport = Extract<
+  BroadcastTranscriptTransportResolution,
+  { readonly ok: true; readonly mode: "free-r2" }
+>;
+
+interface BroadcastTranscriptRawFence {
+  readonly sourceStartMs: number;
+  readonly durationMs: number;
+  readonly expectedWavBytes: number;
+}
+
+const MAX_BROADCAST_TRANSCRIPT_MEDIA_RESOLVE_BYTES = 1_024;
+const BROADCAST_TRANSCRIPT_UPLOAD_RATE_LIMIT_KEY =
+  "broadcast-transcript-upload";
+
+function parseBroadcastTranscriptRawFence(
+  request: Request,
+): BroadcastTranscriptRawFence | null {
+  const requestUrl = new URL(request.url);
+  const startRaw = requestUrl.searchParams.get("startMs");
+  const durationRaw = requestUrl.searchParams.get("durationMs");
+  const sourceStartMs =
+    startRaw !== null && /^\d{1,10}$/u.test(startRaw)
+      ? Number(startRaw)
+      : null;
+  const durationMs =
+    durationRaw !== null && /^\d{1,7}$/u.test(durationRaw)
+      ? Number(durationRaw)
+      : null;
+  const queryKeys = [...requestUrl.searchParams.keys()];
+  if (
+    queryKeys.length !== 2 ||
+    queryKeys.some((key) => key !== "startMs" && key !== "durationMs") ||
+    requestUrl.searchParams.getAll("startMs").length !== 1 ||
+    requestUrl.searchParams.getAll("durationMs").length !== 1 ||
+    sourceStartMs === null ||
+    durationMs === null ||
+    durationMs <= 0 ||
+    durationMs > MAX_BROADCAST_TRANSCRIPT_QWEN_DURATION_MS ||
+    sourceStartMs + durationMs > MAX_BROADCAST_TRANSCRIPT_SOURCE_DURATION_MS
+  ) {
+    return null;
+  }
+  const expectedWavBytes =
+    WAV_HEADER_BYTES +
+    Math.ceil(
+      (durationMs / 1_000) * CANDIDATE_PASS_B_SAMPLE_RATE_HZ,
+    ) *
+      PCM_BYTES_PER_SAMPLE;
+  if (
+    expectedWavBytes < BROADCAST_TRANSCRIPT_MEDIA_HEADER_BYTES ||
+    expectedWavBytes > BROADCAST_TRANSCRIPT_MEDIA_MAX_BYTES ||
+    expectedWavBytes !== MAX_BROADCAST_TRANSCRIPT_WAV_BYTES &&
+      durationMs === MAX_BROADCAST_TRANSCRIPT_QWEN_DURATION_MS
+  ) {
+    return null;
+  }
+  return { sourceStartMs, durationMs, expectedWavBytes };
+}
+
+function transcriptTransportUnavailableResponse(
+  origin: string,
+): Response {
+  return jsonResponse(
+    503,
+    "TRANSCRIPT_TRANSPORT_NOT_CONFIGURED",
+    "방송 대사 분석 전송 경로가 준비되지 않았어요.",
+    origin,
+  );
+}
+
+function stagedBroadcastTranscriptResponse(
+  staged: {
+    readonly mediaTicket: string;
+    readonly expiresAtMs: number;
+  },
+  fence: BroadcastTranscriptRawFence,
+  origin: string,
+): Response {
+  const headers = corsHeaders(origin);
+  headers.set("Content-Type", JSON_CONTENT_TYPE);
+  headers.set("Cache-Control", "no-store");
+  headers.set("X-Content-Type-Options", "nosniff");
+  return new Response(
+    JSON.stringify({
+      schemaVersion: BROADCAST_TRANSCRIPT_MEDIA_SCHEMA_VERSION,
+      status: "staged",
+      mediaTicket: staged.mediaTicket,
+      expiresAtMs: staged.expiresAtMs,
+      sourceStartMs: fence.sourceStartMs,
+      sourceEndMs: fence.sourceStartMs + fence.durationMs,
+    }),
+    { status: 202, headers },
+  );
+}
+
+function freeR2TranscriptProvider(
+  environment: AiProxyEnvironment,
+): ActiveBroadcastTranscriptConnection | null {
+  const resolution = resolveBroadcastTranscriptConnection(environment);
+  return resolution.ok &&
+    resolution.connection.provider === "qwen"
+    ? resolution.connection
+    : null;
+}
+
+async function handleFreeR2BroadcastTranscriptStage(
+  request: Request,
+  environment: AiProxyEnvironment,
+  transport: FreeR2BroadcastTranscriptTransport,
+  origin: string,
+): Promise<Response> {
+  const fence = parseBroadcastTranscriptRawFence(request);
+  if (fence === null) {
+    return jsonResponse(
+      400,
+      "INVALID_REQUEST",
+      "방송 대사 분석 구간을 확인해 주세요.",
+      origin,
+    );
+  }
+  const declaredLength = request.headers.get("Content-Length");
+  if (
+    declaredLength !== null &&
+    (!/^\d+$/u.test(declaredLength) ||
+      Number(declaredLength) !== fence.expectedWavBytes)
+  ) {
+    return jsonResponse(
+      Number(declaredLength) > fence.expectedWavBytes ? 413 : 400,
+      Number(declaredLength) > fence.expectedWavBytes
+        ? "PAYLOAD_TOO_LARGE"
+        : "INVALID_AUDIO",
+      "16kHz 모노 WAV 방송 오디오를 확인해 주세요.",
+      origin,
+    );
+  }
+  const quotaGuard = await precheckAiQuotaLease(
+    request,
+    environment,
+    "transcript",
+    origin,
+  );
+  if (!quotaGuard.ok) return quotaGuard.response;
+  const quotaLease = quotaGuard.lease;
+  if (quotaLease === null) {
+    return transcriptTransportUnavailableResponse(origin);
+  }
+
+  try {
+    const uploadLimit = await environment.IP_RATE_LIMITER.limit({
+      key: scopedClientRateLimitKey(
+        request,
+        BROADCAST_TRANSCRIPT_UPLOAD_RATE_LIMIT_KEY,
+      ),
+    });
+    if (!uploadLimit.success) {
+      return rejectUnusedQuotaLease(
+        environment,
+        quotaLease,
+        jsonResponse(
+          429,
+          "RATE_LIMITED",
+          "오디오 준비 요청이 잠시 많아요. 1분 뒤 다시 시도해 주세요.",
+          origin,
+          { "Retry-After": "60" },
+        ),
+      );
+    }
+  } catch {
+    return rejectUnusedQuotaLease(
+      environment,
+      quotaLease,
+      jsonResponse(
+        503,
+        "RATE_LIMIT_UNAVAILABLE",
+        "오디오 준비 요청을 안전하게 확인하지 못했어요.",
+        origin,
+      ),
+    );
+  }
+
+  const binding: BroadcastTranscriptMediaBinding = {
+    participantId: quotaLease.participantId,
+    runId: quotaLease.runId,
+    operationId: quotaLease.operationId,
+    pool: "transcript",
+    payloadDigest: quotaLease.payloadDigest,
+    sourceStartMs: fence.sourceStartMs,
+    durationMs: fence.durationMs,
+    expectedByteLength: fence.expectedWavBytes,
+  };
+  try {
+    const staged = await stageBroadcastTranscriptMedia({
+      bucket: transport.bucket,
+      signingKey: transport.signingKey,
+      body: request.body,
+      binding,
+    });
+    const validHeader = isCanonicalBroadcastTranscriptWav(
+      staged.header,
+      staged.byteLength,
+      fence.durationMs,
+    );
+    staged.header.fill(0);
+    if (!validHeader) {
+      await deleteBroadcastTranscriptMediaBestEffort(
+        transport.bucket,
+        staged.objectKey,
+      );
+      return rejectUnusedQuotaLease(
+        environment,
+        quotaLease,
+        jsonResponse(
+          400,
+          "INVALID_AUDIO",
+          "16kHz 모노 WAV 방송 오디오를 확인해 주세요.",
+          origin,
+        ),
+      );
+    }
+    return stagedBroadcastTranscriptResponse(staged, fence, origin);
+  } catch (error) {
+    const mediaError =
+      error instanceof BroadcastTranscriptMediaError ? error.code : null;
+    const status =
+      mediaError === "CHECKSUM_UNCONFIRMED"
+        ? 409
+        : mediaError === "SIZE_MISMATCH" ||
+            mediaError === "HEADER_UNAVAILABLE" ||
+            mediaError === "INVALID_INPUT"
+          ? 400
+          : 503;
+    const code =
+      mediaError === "CHECKSUM_UNCONFIRMED"
+        ? "QUOTA_PAYLOAD_MISMATCH"
+        : status === 400
+          ? "INVALID_AUDIO"
+          : "TRANSCRIPT_MEDIA_UNAVAILABLE";
+    return rejectUnusedQuotaLease(
+      environment,
+      quotaLease,
+      jsonResponse(
+        status,
+        code,
+        status === 503
+          ? "방송 오디오를 임시로 준비하지 못했어요."
+          : "16kHz 모노 WAV 방송 오디오를 확인해 주세요.",
+        origin,
+      ),
+    );
+  }
+}
+
+async function handleFreeR2BroadcastTranscriptResolve(
+  request: Request,
+  environment: AiProxyEnvironment,
+  transport: FreeR2BroadcastTranscriptTransport,
+  origin: string,
+  dependencies: AiProxyDependencies,
+): Promise<Response> {
+  const providerConnection = freeR2TranscriptProvider(environment);
+  if (
+    providerConnection === null ||
+    environment.RATE_LIMITER === undefined ||
+    environment.IP_RATE_LIMITER === undefined
+  ) {
+    return transcriptTransportUnavailableResponse(origin);
+  }
+  const declaredLength = request.headers.get("Content-Length");
+  if (
+    declaredLength !== null &&
+    (!/^\d+$/u.test(declaredLength) ||
+      Number(declaredLength) > MAX_BROADCAST_TRANSCRIPT_MEDIA_RESOLVE_BYTES)
+  ) {
+    return jsonResponse(
+      413,
+      "PAYLOAD_TOO_LARGE",
+      "방송 대사 분석 티켓이 허용 크기를 넘었어요.",
+      origin,
+    );
+  }
+  const quotaGuard = await precheckAiQuotaLease(
+    request,
+    environment,
+    "transcript",
+    origin,
+  );
+  if (!quotaGuard.ok) return quotaGuard.response;
+  const quotaLease = quotaGuard.lease;
+  if (quotaLease === null) {
+    return transcriptTransportUnavailableResponse(origin);
+  }
+
+  let requestBytes: Uint8Array;
+  try {
+    requestBytes = await readBodyWithLimit(
+      request.body,
+      MAX_BROADCAST_TRANSCRIPT_MEDIA_RESOLVE_BYTES,
+      dependencies.requestBodyTimeoutMs ?? REQUEST_BODY_TIMEOUT_MS,
+      () => new RequestBodyTimeoutError(),
+    );
+  } catch (error) {
+    return rejectUnusedQuotaLease(
+      environment,
+      quotaLease,
+      error instanceof RequestBodyTimeoutError
+        ? jsonResponse(
+            408,
+            "REQUEST_BODY_TIMEOUT",
+            "방송 대사 분석 티켓 업로드가 너무 오래 걸렸어요.",
+            origin,
+          )
+        : jsonResponse(
+            error instanceof BodyTooLargeError ? 413 : 400,
+            error instanceof BodyTooLargeError
+              ? "PAYLOAD_TOO_LARGE"
+              : "INVALID_REQUEST",
+            "방송 대사 분석 티켓을 읽지 못했어요.",
+            origin,
+          ),
+    );
+  }
+  let value: unknown;
+  try {
+    value = JSON.parse(
+      new TextDecoder("utf-8", { fatal: true }).decode(requestBytes),
+    );
+  } catch {
+    requestBytes.fill(0);
+    return rejectUnusedQuotaLease(
+      environment,
+      quotaLease,
+      jsonResponse(
+        400,
+        "INVALID_REQUEST",
+        "방송 대사 분석 티켓 형식을 확인해 주세요.",
+        origin,
+      ),
+    );
+  }
+  requestBytes.fill(0);
+  const resolveRequest = parseBroadcastTranscriptMediaResolveRequest(value);
+  if (resolveRequest === null) {
+    return rejectUnusedQuotaLease(
+      environment,
+      quotaLease,
+      jsonResponse(
+        400,
+        "INVALID_REQUEST",
+        "방송 대사 분석 티켓 형식을 확인해 주세요.",
+        origin,
+      ),
+    );
+  }
+
+  let resolved: Awaited<
+    ReturnType<typeof resolveBroadcastTranscriptMedia>
+  >;
+  try {
+    resolved = await resolveBroadcastTranscriptMedia({
+      bucket: transport.bucket,
+      signingKey: transport.signingKey,
+      mediaTicket: resolveRequest.mediaTicket,
+      expectedIdentity: quotaLease,
+    });
+  } catch {
+    return rejectUnusedQuotaLease(
+      environment,
+      quotaLease,
+      jsonResponse(
+        503,
+        "TRANSCRIPT_MEDIA_UNAVAILABLE",
+        "준비된 방송 오디오를 불러오지 못했어요.",
+        origin,
+      ),
+    );
+  }
+  if (
+    resolved === null ||
+    resolved.sourceStartMs + resolved.durationMs >
+      MAX_BROADCAST_TRANSCRIPT_SOURCE_DURATION_MS
+  ) {
+    return rejectUnusedQuotaLease(
+      environment,
+      quotaLease,
+      jsonResponse(
+        409,
+        "TRANSCRIPT_MEDIA_TICKET_INVALID",
+        "방송 오디오 준비 정보가 만료되었거나 현재 작업과 맞지 않아요.",
+        origin,
+      ),
+    );
+  }
+
+  try {
+    const clientLimit = await environment.IP_RATE_LIMITER.limit({
+      key: scopedClientRateLimitKey(
+        request,
+        BROADCAST_TRANSCRIPT_RATE_LIMIT_KEY,
+      ),
+    });
+    if (!clientLimit.success) {
+      return rejectUnusedQuotaLease(
+        environment,
+        quotaLease,
+        jsonResponse(
+          429,
+          "RATE_LIMITED",
+          "방송 대사 분석 요청이 잠시 많아요. 1분 뒤 다시 시도해 주세요.",
+          origin,
+          { "Retry-After": "60" },
+        ),
+      );
+    }
+    const globalLimit = await environment.RATE_LIMITER.limit({
+      key: BROADCAST_TRANSCRIPT_RATE_LIMIT_KEY,
+    });
+    if (!globalLimit.success) {
+      return rejectUnusedQuotaLease(
+        environment,
+        quotaLease,
+        jsonResponse(
+          429,
+          "RATE_LIMITED",
+          "방송 대사 분석 요청이 잠시 많아요. 1분 뒤 다시 시도해 주세요.",
+          origin,
+          { "Retry-After": "60" },
+        ),
+      );
+    }
+  } catch {
+    await deleteBroadcastTranscriptMediaBestEffort(
+      transport.bucket,
+      resolved.objectKey,
+    );
+    return rejectUnusedQuotaLease(
+      environment,
+      quotaLease,
+      jsonResponse(
+        503,
+        "RATE_LIMIT_UNAVAILABLE",
+        "방송 대사 분석 요청을 안전하게 확인하지 못했어요.",
+        origin,
+      ),
+    );
+  }
+
+  const transcriptTimes = {
+    sourceStartMs: resolved.sourceStartMs,
+    durationMs: resolved.durationMs,
+  };
+  const fetchImplementation = createQuotaMeteredFetch(
+    environment,
+    quotaLease,
+    dependencies.fetchImplementation ?? fetch,
+    transcriptTokenReservation(resolved.durationMs),
+  );
+  const attempt = await attemptBroadcastTranscriptProvider(
+    providerConnection,
+    transcriptTimes,
+    {
+      kind: "audio-url",
+      audioUrl: createBroadcastTranscriptMediaCapabilityUrl(
+        request.url,
+        resolveRequest.mediaTicket,
+      ),
+    },
+    fetchImplementation,
+    dependencies.upstreamTimeoutMs ?? UPSTREAM_TIMEOUT_MS,
+  );
+  if (!attempt.ok && attempt.kind === "rate-limited") {
+    return broadcastTranscriptProviderFailureResponse(attempt.kind, origin);
+  }
+  await deleteBroadcastTranscriptMediaBestEffort(
+    transport.bucket,
+    resolved.objectKey,
+  );
+  if (!attempt.ok) {
+    if (attempt.kind === "invalid-argument") {
+      return rejectUnusedQuotaLease(
+        environment,
+        quotaLease,
+        broadcastTranscriptProviderFailureResponse(attempt.kind, origin),
+      );
+    }
+    return broadcastTranscriptProviderFailureResponse(attempt.kind, origin);
+  }
+  return successResponse(attempt.result, origin, {
+    [CANDIDATE_PASS_B_RESPONSE_MODEL_ID_HEADER]:
+      attempt.connection.descriptor.modelId,
+    [CANDIDATE_PASS_B_RESPONSE_MODEL_REVISION_HEADER]:
+      attempt.connection.descriptor.modelRevision,
+    [CANDIDATE_PASS_B_RESPONSE_FALLBACK_HEADER]: "false",
+  });
+}
+
+async function handleFreeR2BroadcastTranscriptRequest(
+  request: Request,
+  environment: AiProxyEnvironment,
+  transport: FreeR2BroadcastTranscriptTransport,
+  origin: string,
+  dependencies: AiProxyDependencies,
+): Promise<Response> {
+  if (
+    aiQuotaMode(environment) !== "required" ||
+    environment.IP_RATE_LIMITER === undefined
+  ) {
+    return transcriptTransportUnavailableResponse(origin);
+  }
+  const requestMediaType = mediaType(request);
+  if (requestMediaType === "audio/wav") {
+    return handleFreeR2BroadcastTranscriptStage(
+      request,
+      environment,
+      transport,
+      origin,
+    );
+  }
+  if (
+    requestMediaType === BROADCAST_TRANSCRIPT_MEDIA_RESOLVE_CONTENT_TYPE
+  ) {
+    return handleFreeR2BroadcastTranscriptResolve(
+      request,
+      environment,
+      transport,
+      origin,
+      dependencies,
+    );
+  }
+  return jsonResponse(
+    426,
+    "CLIENT_UPDATE_REQUIRED",
+    "새 전사 전송 방식을 사용하려면 ExClipper 페이지를 새로고침해 주세요.",
+    origin,
+  );
+}
+
 
 export async function handleBroadcastTranscriptRequest(
   request: Request,
@@ -2512,6 +3105,19 @@ export async function handleBroadcastTranscriptRequest(
       "지원하지 않는 요청 방식이에요.",
       origin,
       { Allow: "POST, OPTIONS" },
+    );
+  }
+  const transport = resolveBroadcastTranscriptTransport(environment);
+  if (!transport.ok) {
+    return transcriptTransportUnavailableResponse(origin);
+  }
+  if (transport.mode === "free-r2") {
+    return handleFreeR2BroadcastTranscriptRequest(
+      request,
+      environment,
+      transport,
+      origin,
+      dependencies,
     );
   }
   const requestMediaType = mediaType(request);
@@ -4061,6 +4667,24 @@ function routeRequest(
   environment: AiProxyEnvironment,
 ): Promise<Response> {
   const url = new URL(request.url);
+  if (url.pathname === BROADCAST_TRANSCRIPT_MEDIA_ENDPOINT_PATH) {
+    const transport = resolveBroadcastTranscriptTransport(environment);
+    if (!transport.ok || transport.mode !== "free-r2") {
+      return Promise.resolve(
+        new Response(null, {
+          status: 404,
+          headers: {
+            "Cache-Control": "no-store",
+            "X-Content-Type-Options": "nosniff",
+          },
+        }),
+      );
+    }
+    return serveBroadcastTranscriptMediaRequest(request, {
+      bucket: transport.bucket,
+      signingKey: transport.signingKey,
+    });
+  }
   if (url.pathname === AI_QUOTA_ENDPOINT_PATH && url.search === "") {
     return handleAiQuotaRequest(request, environment);
   }

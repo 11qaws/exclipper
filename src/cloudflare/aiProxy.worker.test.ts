@@ -22,6 +22,7 @@ function createEnvironment(): AiProxyEnvironment {
   return {
     GEMINI_API_KEY: API_KEY,
     AI_QUOTA_MODE: "disabled",
+    BROADCAST_TRANSCRIPT_TRANSPORT_MODE: "paid-direct",
     RATE_LIMITER: {
       limit: vi.fn(() => Promise.resolve({ success: true })),
     },
@@ -1053,14 +1054,21 @@ describe("aiProxy.worker", () => {
     expect(payload).toMatchObject({
       ok: true,
       service: "rettohighlight-gemini",
-      version: 4,
+      version: 5,
       routingPolicyVersion: "1.11.0",
       contextModelRevision:
         "qwen3.7-plus-context-editorial-jury-topic-balanced-2026-07-22",
       transcriptTransport: {
-        version: 1,
-        primaryMediaType: "application/vnd.exclipper.transcript-base64",
-        legacyMediaTypes: ["application/json", "audio/wav"],
+        version: 2,
+        mode: "paid-direct",
+        configured: true,
+        primaryMediaType: "audio/wav",
+        maximumChunkDurationMs: 90_000,
+        stagedSchemaVersion: "1.0.0",
+        legacyMediaTypes: [
+          "application/json",
+          "application/vnd.exclipper.transcript-base64",
+        ],
       },
       providers: {
         schemaVersion: "1.2.0",
