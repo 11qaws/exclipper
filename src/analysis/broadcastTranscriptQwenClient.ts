@@ -1,12 +1,15 @@
 import {
+  BROADCAST_TRANSCRIPT_BASE64_CONTENT_TYPE,
   BROADCAST_TRANSCRIPT_QWEN_SCHEMA_VERSION,
   MAX_BROADCAST_TRANSCRIPT_QWEN_BASE64_LENGTH,
+  MAX_BROADCAST_TRANSCRIPT_DIRECT_DURATION_MS,
   MAX_BROADCAST_TRANSCRIPT_QWEN_DURATION_MS,
   MAX_BROADCAST_TRANSCRIPT_QWEN_RESPONSE_BYTES,
   MAX_BROADCAST_TRANSCRIPT_QWEN_TEXT_LENGTH,
   isBroadcastTranscriptModelId,
   type BroadcastTranscriptQwenResult,
 } from "./broadcastTranscriptQwen";
+export { BROADCAST_TRANSCRIPT_BASE64_CONTENT_TYPE } from "./broadcastTranscriptQwen";
 import {
   fetchWithAiQuota,
   type AiQuotaClientIdentity,
@@ -191,7 +194,7 @@ export async function requestBroadcastTranscriptQwenChunk(
     sourceStartMs < 0 ||
     !Number.isSafeInteger(durationMs) ||
     durationMs <= 0 ||
-    durationMs > MAX_BROADCAST_TRANSCRIPT_QWEN_DURATION_MS
+    durationMs > MAX_BROADCAST_TRANSCRIPT_DIRECT_DURATION_MS
   ) {
     throw new BroadcastTranscriptQwenClientError(
       "INVALID_INPUT",
@@ -201,8 +204,8 @@ export async function requestBroadcastTranscriptQwenChunk(
 
   const requestInit: RequestInit = {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ audioBase64, sourceStartMs, durationMs }),
+    headers: { "Content-Type": BROADCAST_TRANSCRIPT_BASE64_CONTENT_TYPE },
+    body: audioBase64,
     credentials: "omit",
     cache: "no-store",
     referrerPolicy: "no-referrer",
@@ -211,11 +214,11 @@ export async function requestBroadcastTranscriptQwenChunk(
   return resolveBroadcastTranscriptProxyResponse(
     options.quota === undefined
       ? (options.fetchImplementation ?? fetch)(
-          BROADCAST_TRANSCRIPT_PROXY_ENDPOINT,
+          `${BROADCAST_TRANSCRIPT_PROXY_ENDPOINT}?startMs=${sourceStartMs}&durationMs=${durationMs}`,
           requestInit,
         )
       : fetchWithAiQuota(
-          BROADCAST_TRANSCRIPT_PROXY_ENDPOINT,
+          `${BROADCAST_TRANSCRIPT_PROXY_ENDPOINT}?startMs=${sourceStartMs}&durationMs=${durationMs}`,
           requestInit,
           {
             ...options.quota,

@@ -5,6 +5,7 @@ import { resolve } from "node:path";
 const SAMPLE_RATE_HZ = 16_000;
 const BYTES_PER_SAMPLE = 2;
 const MAX_DURATION_SECONDS = 90;
+const MAX_DIRECT_DURATION_SECONDS = 30;
 const PRODUCTION_ORIGIN = "https://11qaws.github.io";
 const QUOTA_SCHEMA_VERSION = "1.0.0";
 const DEFAULT_ENDPOINT =
@@ -19,7 +20,7 @@ const file = option("--file");
 const startSeconds = Number(option("--start", "0"));
 const requestedDurationSeconds = Number(option("--duration", "30"));
 const endpoint = option("--endpoint", DEFAULT_ENDPOINT);
-const transport = option("--transport", "raw");
+const transport = option("--transport", "base64");
 
 if (
   typeof file !== "string" ||
@@ -29,11 +30,13 @@ if (
   !Number.isFinite(requestedDurationSeconds) ||
   requestedDurationSeconds <= 0 ||
   requestedDurationSeconds > MAX_DURATION_SECONDS ||
+  (transport === "base64" &&
+    requestedDurationSeconds > MAX_DIRECT_DURATION_SECONDS) ||
   typeof endpoint !== "string" ||
-  (transport !== "raw" && transport !== "json")
+  !["base64", "raw", "json"].includes(transport)
 ) {
   throw new Error(
-    "Usage: node scripts/smoke-broadcast-transcript.mjs --file <video> [--start 1260] [--duration 30] [--transport raw|json]",
+    "Usage: node scripts/smoke-broadcast-transcript.mjs --file <video> [--start 1260] [--duration 30] [--transport base64|raw|json]",
   );
 }
 
@@ -102,8 +105,10 @@ const requestBody =
         sourceStartMs,
         durationMs,
       })
-    : wav;
-if (transport === "raw") {
+    : transport === "base64"
+      ? wav.toString("base64")
+      : wav;
+if (transport !== "json") {
   transcriptUrl.searchParams.set("startMs", String(sourceStartMs));
   transcriptUrl.searchParams.set("durationMs", String(durationMs));
 }
@@ -159,7 +164,12 @@ while (lease === undefined) {
 const response = await fetch(transcriptUrl, {
   method: "POST",
   headers: {
-    "Content-Type": transport === "json" ? "application/json" : "audio/wav",
+    "Content-Type":
+      transport === "json"
+        ? "application/json"
+        : transport === "base64"
+          ? "application/vnd.exclipper.transcript-base64"
+          : "audio/wav",
     Origin: PRODUCTION_ORIGIN,
     "X-ExClipper-Quota-Participant": participantId,
     "X-ExClipper-Quota-Run": runId,

@@ -52,7 +52,9 @@ import {
 } from "../analysis/broadcastContextProtocol";
 import { compactBroadcastContextChapters } from "../analysis/broadcastContextChapterCompaction";
 import {
+  BROADCAST_TRANSCRIPT_BASE64_CONTENT_TYPE,
   BROADCAST_TRANSCRIPT_QWEN_MAX_OUTPUT_TOKENS,
+  MAX_BROADCAST_TRANSCRIPT_DIRECT_DURATION_MS,
   MAX_BROADCAST_TRANSCRIPT_QWEN_BASE64_LENGTH,
   MAX_BROADCAST_TRANSCRIPT_QWEN_DURATION_MS,
   MAX_BROADCAST_TRANSCRIPT_QWEN_RESPONSE_BYTES,
@@ -172,6 +174,7 @@ const MAX_BROADCAST_TRANSCRIPT_WAV_BYTES =
   CANDIDATE_PASS_B_SAMPLE_RATE_HZ *
     PCM_BYTES_PER_SAMPLE *
     (MAX_BROADCAST_TRANSCRIPT_QWEN_DURATION_MS / 1_000);
+const MAX_BROADCAST_TRANSCRIPT_SOURCE_DURATION_MS = 12 * 60 * 60_000;
 const MAX_BROADCAST_TRANSCRIPT_REQUEST_BODY_BYTES =
   MAX_BROADCAST_TRANSCRIPT_QWEN_BASE64_LENGTH + 8_192;
 const MAX_UPSTREAM_ERROR_BYTES = 16 * 1024;
@@ -744,14 +747,41 @@ function base64EncodeToBytes(input: Uint8Array): Uint8Array<ArrayBuffer> {
 
 type BroadcastTranscriptAudioPayload =
   | { readonly kind: "base64"; readonly audioBase64: string }
+  | {
+      readonly kind: "base64-bytes";
+      readonly audioBase64Bytes: Uint8Array;
+    }
   | { readonly kind: "wav-bytes"; readonly wavBytes: Uint8Array };
 
-function buildBroadcastTranscriptUpstreamBytes(
+function clearBroadcastTranscriptAudio(
+  audio: BroadcastTranscriptAudioPayload,
+): void {
+  if (audio.kind === "wav-bytes") {
+    audio.wavBytes.fill(0);
+  } else if (audio.kind === "base64-bytes") {
+    audio.audioBase64Bytes.fill(0);
+  }
+}
+
+const broadcastTranscriptUpstreamTemplateCache = new Map<
+  "gemini" | "qwen",
+  {
+    readonly prefix: Uint8Array;
+    readonly suffix: Uint8Array;
+  }
+>();
+
+function broadcastTranscriptUpstreamTemplate(
   provider: string,
-  wavBytes: Uint8Array,
-): Uint8Array<ArrayBuffer> {
+): {
+  readonly prefix: Uint8Array;
+  readonly suffix: Uint8Array;
+} {
+  const providerKey = provider === "gemini" ? "gemini" : "qwen";
+  const cached = broadcastTranscriptUpstreamTemplateCache.get(providerKey);
+  if (cached !== undefined) return cached;
   const template = JSON.stringify(
-    provider === "gemini"
+    providerKey === "gemini"
       ? buildBroadcastTranscriptGeminiRequestBody(TRANSCRIPT_AUDIO_SENTINEL)
       : buildBroadcastTranscriptQwenOmniRequestBody(TRANSCRIPT_AUDIO_SENTINEL),
   );
@@ -760,17 +790,116 @@ function buildBroadcastTranscriptUpstreamBytes(
     throw new Error("The audio sentinel must split the template exactly once.");
   }
   const encoder = new TextEncoder();
-  const prefix = encoder.encode(parts[0]);
-  const suffix = encoder.encode(parts[1]);
-  const audio = base64EncodeToBytes(wavBytes);
+  const created = {
+    prefix: encoder.encode(parts[0]),
+    suffix: encoder.encode(parts[1]),
+  };
+  broadcastTranscriptUpstreamTemplateCache.set(providerKey, created);
+  return created;
+}
+
+function buildBroadcastTranscriptUpstreamBase64Bytes(
+  provider: string,
+  audioBase64Bytes: Uint8Array,
+): Uint8Array<ArrayBuffer> {
+  const { prefix, suffix } = broadcastTranscriptUpstreamTemplate(provider);
   const output = new Uint8Array(
-    prefix.byteLength + audio.byteLength + suffix.byteLength,
+    prefix.byteLength + audioBase64Bytes.byteLength + suffix.byteLength,
   );
   output.set(prefix, 0);
-  output.set(audio, prefix.byteLength);
-  output.set(suffix, prefix.byteLength + audio.byteLength);
+  output.set(audioBase64Bytes, prefix.byteLength);
+  output.set(suffix, prefix.byteLength + audioBase64Bytes.byteLength);
+  return output;
+}
+
+function buildBroadcastTranscriptUpstreamBytes(
+  provider: string,
+  wavBytes: Uint8Array,
+): Uint8Array<ArrayBuffer> {
+  const audio = base64EncodeToBytes(wavBytes);
+  const output = buildBroadcastTranscriptUpstreamBase64Bytes(provider, audio);
   audio.fill(0);
   return output;
+}
+
+const BASE64_BODY_SCAN_CHUNK_BYTES = 64 * 1024;
+const BASE64_BODY_CHUNK_PATTERN = /^[A-Za-z0-9+/]+$/u;
+const BASE64_ONE_BYTE_TAIL_CHARACTERS = "AQgw";
+const BASE64_TWO_BYTE_TAIL_CHARACTERS = "AEIMQUYcgkosw048";
+
+/**
+ * Validates a browser-prepared Base64 body without materializing a second
+ * megabyte-scale string. The expected decoded WAV length fixes both the exact
+ * encoded length and the only legal padding, so each bounded chunk only needs
+ * an alphabet check.
+ */
+function isStrictBase64Bytes(
+  bytes: Uint8Array,
+  expectedDecodedByteLength: number,
+): boolean {
+  const expectedLength = 4 * Math.ceil(expectedDecodedByteLength / 3);
+  if (bytes.byteLength !== expectedLength || bytes.byteLength === 0) {
+    return false;
+  }
+  const padding = (3 - (expectedDecodedByteLength % 3)) % 3;
+  const contentLength = bytes.byteLength - padding;
+  for (let index = contentLength; index < bytes.byteLength; index += 1) {
+    if (bytes[index] !== 0x3d) return false;
+  }
+  const decoder = new TextDecoder("utf-8", { fatal: true });
+  try {
+    for (
+      let offset = 0;
+      offset < contentLength;
+      offset += BASE64_BODY_SCAN_CHUNK_BYTES
+    ) {
+      const chunk = decoder.decode(
+        bytes.subarray(
+          offset,
+          Math.min(contentLength, offset + BASE64_BODY_SCAN_CHUNK_BYTES),
+        ),
+      );
+      if (!BASE64_BODY_CHUNK_PATTERN.test(chunk)) return false;
+    }
+  } catch {
+    return false;
+  }
+  if (
+    (padding === 2 &&
+      !BASE64_ONE_BYTE_TAIL_CHARACTERS.includes(
+        String.fromCharCode(bytes[contentLength - 1] ?? 0),
+      )) ||
+    (padding === 1 &&
+      !BASE64_TWO_BYTE_TAIL_CHARACTERS.includes(
+        String.fromCharCode(bytes[contentLength - 1] ?? 0),
+      ))
+  ) {
+    return false;
+  }
+  return true;
+}
+
+function decodeBase64BytePrefix(
+  bytes: Uint8Array,
+  maximumBytes: number,
+): Uint8Array | null {
+  const wholeGroups = Math.min(
+    bytes.byteLength / 4,
+    Math.ceil(maximumBytes / 3),
+  );
+  try {
+    const prefix = new TextDecoder("utf-8", { fatal: true }).decode(
+      bytes.subarray(0, wholeGroups * 4),
+    );
+    const decoded = atob(prefix);
+    const output = new Uint8Array(Math.min(decoded.length, maximumBytes));
+    for (let index = 0; index < output.byteLength; index += 1) {
+      output[index] = decoded.charCodeAt(index);
+    }
+    return output;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -1451,9 +1580,14 @@ async function healthResponse(
     : JSON.stringify({
         ok: healthy,
         service: "rettohighlight-gemini",
-        version: 3,
+        version: 4,
         routingPolicyVersion: AI_PROVIDER_ROUTING_POLICY_VERSION,
         contextModelRevision: QWEN_CONTEXT_MODEL_REVISION,
+        transcriptTransport: {
+          version: 1,
+          primaryMediaType: BROADCAST_TRANSCRIPT_BASE64_CONTENT_TYPE,
+          legacyMediaTypes: ["application/json", "audio/wav"],
+        },
         quota: {
           mode: quotaMode,
           coordinatorReady: quotaCoordinatorReady,
@@ -2210,11 +2344,16 @@ async function attemptBroadcastTranscriptProvider(
             connection.provider,
             audio.wavBytes,
           )
-        : JSON.stringify(
+        : audio.kind === "base64-bytes"
+          ? buildBroadcastTranscriptUpstreamBase64Bytes(
+              connection.provider,
+              audio.audioBase64Bytes,
+            )
+          : JSON.stringify(
             connection.provider === "gemini"
               ? buildBroadcastTranscriptGeminiRequestBody(audio.audioBase64)
               : buildBroadcastTranscriptQwenOmniRequestBody(audio.audioBase64),
-          );
+            );
   } catch {
     return { ok: false, kind: "invalid-argument" };
   }
@@ -2308,6 +2447,7 @@ async function attemptBroadcastTranscriptProvider(
     };
   } finally {
     clearTimeout(timeout);
+    if (upstreamBody instanceof Uint8Array) upstreamBody.fill(0);
   }
   return result === null
     ? { ok: false, kind: "invalid-response" }
@@ -2377,7 +2517,8 @@ export async function handleBroadcastTranscriptRequest(
   const requestMediaType = mediaType(request);
   if (
     requestMediaType !== "application/json" &&
-    requestMediaType !== "audio/wav"
+    requestMediaType !== "audio/wav" &&
+    requestMediaType !== BROADCAST_TRANSCRIPT_BASE64_CONTENT_TYPE
   ) {
     return jsonResponse(
       415,
@@ -2442,7 +2583,10 @@ export async function handleBroadcastTranscriptRequest(
   };
   let transcriptAudio: BroadcastTranscriptAudioPayload;
   let quotaLease: AiQuotaLeaseHeaders | null;
-  if (requestMediaType === "audio/wav") {
+  if (
+    requestMediaType === "audio/wav" ||
+    requestMediaType === BROADCAST_TRANSCRIPT_BASE64_CONTENT_TYPE
+  ) {
     const requestUrl = new URL(request.url);
     const startRaw = requestUrl.searchParams.get("startMs");
     const durationRaw = requestUrl.searchParams.get("durationMs");
@@ -2454,14 +2598,21 @@ export async function handleBroadcastTranscriptRequest(
       durationRaw !== null && /^\d{1,7}$/u.test(durationRaw)
         ? Number(durationRaw)
         : null;
+    const queryKeys = [...requestUrl.searchParams.keys()];
     if (
-      [...requestUrl.searchParams.keys()].some(
+      queryKeys.length !== 2 ||
+      queryKeys.some(
         (key) => key !== "startMs" && key !== "durationMs",
       ) ||
+      requestUrl.searchParams.getAll("startMs").length !== 1 ||
+      requestUrl.searchParams.getAll("durationMs").length !== 1 ||
       sourceStartMs === null ||
       durationMs === null ||
       durationMs <= 0 ||
-      durationMs > MAX_BROADCAST_TRANSCRIPT_QWEN_DURATION_MS
+      durationMs > MAX_BROADCAST_TRANSCRIPT_QWEN_DURATION_MS ||
+      (requestMediaType === BROADCAST_TRANSCRIPT_BASE64_CONTENT_TYPE &&
+        durationMs > MAX_BROADCAST_TRANSCRIPT_DIRECT_DURATION_MS) ||
+      sourceStartMs + durationMs > MAX_BROADCAST_TRANSCRIPT_SOURCE_DURATION_MS
     ) {
       return jsonResponse(
         400,
@@ -2476,11 +2627,15 @@ export async function handleBroadcastTranscriptRequest(
         (durationMs / 1_000) * CANDIDATE_PASS_B_SAMPLE_RATE_HZ,
       ) *
         PCM_BYTES_PER_SAMPLE;
+    const expectedRequestBytes =
+      requestMediaType === "audio/wav"
+        ? expectedWavBytes
+        : 4 * Math.ceil(expectedWavBytes / 3);
     const declaredLength = request.headers.get("Content-Length");
     if (
       declaredLength !== null &&
       (!/^\d+$/u.test(declaredLength) ||
-        Number(declaredLength) > expectedWavBytes)
+        Number(declaredLength) > expectedRequestBytes)
     ) {
       return jsonResponse(
         413,
@@ -2497,11 +2652,11 @@ export async function handleBroadcastTranscriptRequest(
     );
     if (!quotaGuard.ok) return quotaGuard.response;
     quotaLease = quotaGuard.lease;
-    let wavBytes: Uint8Array;
+    let audioBytes: Uint8Array;
     try {
-      wavBytes = await readBodyWithExactMaximum(
+      audioBytes = await readBodyWithExactMaximum(
         request.body,
-        expectedWavBytes,
+        expectedRequestBytes,
         dependencies.requestBodyTimeoutMs ?? REQUEST_BODY_TIMEOUT_MS,
       );
     } catch (error) {
@@ -2530,8 +2685,8 @@ export async function handleBroadcastTranscriptRequest(
               ),
       );
     }
-    if (!(await quotaPayloadMatches(quotaLease, wavBytes))) {
-      wavBytes.fill(0);
+    if (!(await quotaPayloadMatches(quotaLease, audioBytes))) {
+      audioBytes.fill(0);
       return rejectUnusedQuotaLease(
         environment,
         quotaLease,
@@ -2543,15 +2698,25 @@ export async function handleBroadcastTranscriptRequest(
         ),
       );
     }
+    const hasExpectedBodyLength =
+      audioBytes.byteLength === expectedRequestBytes;
+    const wavHeader = !hasExpectedBodyLength
+      ? null
+      : requestMediaType === "audio/wav"
+        ? audioBytes.subarray(0, WAV_HEADER_BYTES)
+        : isStrictBase64Bytes(audioBytes, expectedWavBytes)
+          ? decodeBase64BytePrefix(audioBytes, WAV_HEADER_BYTES)
+          : null;
     if (
-      wavBytes.byteLength < WAV_HEADER_BYTES ||
+      wavHeader === null ||
       !isCanonicalBroadcastTranscriptWav(
-        wavBytes.subarray(0, WAV_HEADER_BYTES),
-        wavBytes.byteLength,
+        wavHeader,
+        expectedWavBytes,
         durationMs,
       )
     ) {
-      wavBytes.fill(0);
+      if (requestMediaType !== "audio/wav") wavHeader?.fill(0);
+      audioBytes.fill(0);
       return rejectUnusedQuotaLease(
         environment,
         quotaLease,
@@ -2563,8 +2728,12 @@ export async function handleBroadcastTranscriptRequest(
         ),
       );
     }
+    if (requestMediaType !== "audio/wav") wavHeader.fill(0);
     transcriptTimes = { sourceStartMs, durationMs };
-    transcriptAudio = { kind: "wav-bytes", wavBytes };
+    transcriptAudio =
+      requestMediaType === "audio/wav"
+        ? { kind: "wav-bytes", wavBytes: audioBytes }
+        : { kind: "base64-bytes", audioBase64Bytes: audioBytes };
   } else {
     const declaredLength = request.headers.get("Content-Length");
     if (
@@ -2709,6 +2878,7 @@ export async function handleBroadcastTranscriptRequest(
       key: scopedClientRateLimitKey(request, BROADCAST_TRANSCRIPT_RATE_LIMIT_KEY),
     });
     if (!clientLimit.success) {
+      clearBroadcastTranscriptAudio(transcriptAudio);
       return rejectUnusedQuotaLease(
         environment,
         quotaLease,
@@ -2725,6 +2895,7 @@ export async function handleBroadcastTranscriptRequest(
       key: BROADCAST_TRANSCRIPT_RATE_LIMIT_KEY,
     });
     if (!globalLimit.success) {
+      clearBroadcastTranscriptAudio(transcriptAudio);
       return rejectUnusedQuotaLease(
         environment,
         quotaLease,
@@ -2738,6 +2909,7 @@ export async function handleBroadcastTranscriptRequest(
       );
     }
   } catch {
+    clearBroadcastTranscriptAudio(transcriptAudio);
     return rejectUnusedQuotaLease(
       environment,
       quotaLease,
@@ -2789,9 +2961,7 @@ export async function handleBroadcastTranscriptRequest(
       );
     }
   }
-  if (transcriptAudio.kind === "wav-bytes") {
-    transcriptAudio.wavBytes.fill(0);
-  }
+  clearBroadcastTranscriptAudio(transcriptAudio);
   if (!finalAttempt.ok) {
     return broadcastTranscriptProviderFailureResponse(
       finalAttempt.kind,

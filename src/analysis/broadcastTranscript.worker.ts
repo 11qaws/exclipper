@@ -27,6 +27,7 @@ import {
   AdaptiveConcurrency,
   requestSpacingMs,
   startAfterRequestSpacing,
+  waitForAdaptiveConcurrencyCapacity,
 } from "./adaptiveConcurrency";
 import {
   isAiQuotaOpaqueId,
@@ -434,8 +435,6 @@ async function runAnalyze(
       const audioBase64 = encodeCandidatePassBBase64(wav);
       wav.fill(0);
 
-      const controller = new AbortController();
-      task.fetchControllers.add(controller);
       const chunkId = chunk.chunkId;
       // Reserve the public request start time before creating the async
       // request. An async IIFE runs immediately until its first await, so
@@ -443,10 +442,14 @@ async function runAnalyze(
       const pacedStart = await startAfterRequestSpacing(
         nextSendAtMs,
         spacingMs,
-        () =>
-          task.cancelled
-            ? Promise.resolve()
-            : (async (): Promise<void> => {
+        () => {
+          if (task.cancelled || fatalProxyFailure !== null) {
+            return Promise.resolve();
+          }
+          const controller = new AbortController();
+          task.fetchControllers.add(controller);
+          const requestStamp = concurrency.captureRequestWave();
+          return (async (): Promise<void> => {
             try {
               const result = await requestBroadcastTranscriptQwenChunk(
                 audioBase64,
@@ -489,10 +492,10 @@ async function runAnalyze(
                   ),
                 ];
               }
-              concurrency.onSuccess();
+              concurrency.onSuccess(requestStamp);
             } catch (error) {
               if (task.cancelled) return;
-              concurrency.onFailure();
+              concurrency.onFailure(requestStamp);
               if (
                 error instanceof BroadcastTranscriptQwenClientError &&
                 (error.code === "RATE_LIMITED" ||
@@ -516,10 +519,16 @@ async function runAnalyze(
               task.fetchControllers.delete(controller);
               processedCount += 1;
             }
-              })(),
+          })();
+        },
+        undefined,
+        async () => {
+          await waitForAdaptiveConcurrencyCapacity(inFlight, concurrency);
+          if (task.cancelled) return;
+          throwFatalProxyFailure(fatalProxyFailure);
+        },
       );
       if (task.cancelled) {
-        controller.abort();
         return;
       }
       nextSendAtMs = pacedStart.nextStartAtMs;
@@ -533,11 +542,13 @@ async function runAnalyze(
        * 한도를 **매번 다시 읽는다.** 실패로 내려간 값이 다음 판단에 곧바로
        * 반영되지 않으면, 이미 벽에 부딪힌 뒤에도 같은 수를 계속 밀어 넣는다.
        */
-      if (inFlight.size >= concurrency.limit) {
-        await Promise.race(inFlight);
-        if (task.cancelled) return;
-        throwFatalProxyFailure(fatalProxyFailure);
-      }
+      // A failure can lower the limit below the number already in flight. Drain
+      // the old wave to the new limit before starting another request; a single
+      // wait would keep replacing each settled request and never actually apply
+      // the reduction.
+      await waitForAdaptiveConcurrencyCapacity(inFlight, concurrency);
+      if (task.cancelled) return;
+      throwFatalProxyFailure(fatalProxyFailure);
     }
 
     await Promise.all(inFlight);

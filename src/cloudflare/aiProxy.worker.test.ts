@@ -1053,10 +1053,15 @@ describe("aiProxy.worker", () => {
     expect(payload).toMatchObject({
       ok: true,
       service: "rettohighlight-gemini",
-      version: 3,
+      version: 4,
       routingPolicyVersion: "1.11.0",
       contextModelRevision:
         "qwen3.7-plus-context-editorial-jury-topic-balanced-2026-07-22",
+      transcriptTransport: {
+        version: 1,
+        primaryMediaType: "application/vnd.exclipper.transcript-base64",
+        legacyMediaTypes: ["application/json", "audio/wav"],
+      },
       providers: {
         schemaVersion: "1.2.0",
         geminiRoutes: {

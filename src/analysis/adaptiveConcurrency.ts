@@ -46,11 +46,24 @@ export const DEFAULT_ADAPTIVE_CONCURRENCY: AdaptiveConcurrencyOptions = {
   raiseAfterSuccesses: 4,
 };
 
+export interface AdaptiveConcurrencyRequestStamp {
+  readonly wave: number;
+  readonly limitAtStart: number;
+}
+
 export class AdaptiveConcurrency {
   private current: number;
   private consecutiveSuccesses = 0;
   /** 실패를 본 적이 있으면 그 아래에서만 논다. */
   private observedCeiling: number | null = null;
+  /**
+   * 요청을 시작한 시점의 failure wave.
+   *
+   * 한 번의 과부하가 이미 진행 중인 요청 여러 개를 함께 실패시킬 수 있다. 첫
+   * 실패만 감속에 반영하고, 같은 wave에서 늦게 도착한 성공·실패는 다음 상태를
+   * 오염시키지 않는다.
+   */
+  private requestWave = 0;
 
   public constructor(
     private readonly options: AdaptiveConcurrencyOptions = DEFAULT_ADAPTIVE_CONCURRENCY,
@@ -62,7 +75,21 @@ export class AdaptiveConcurrency {
     return this.current;
   }
 
-  public onSuccess(): void {
+  /**
+   * 실제 요청을 시작하는 순간 포착한다.
+   *
+   * spacing 대기 전에 포착하면 대기 중 발생한 감속을 놓치므로, 호출자는 provider
+   * 요청을 시작하는 callback 안에서 이 값을 받아야 한다.
+   */
+  public captureRequestWave(): AdaptiveConcurrencyRequestStamp {
+    return {
+      wave: this.requestWave,
+      limitAtStart: this.current,
+    };
+  }
+
+  public onSuccess(request: AdaptiveConcurrencyRequestStamp): void {
+    if (request.wave !== this.requestWave) return;
     this.consecutiveSuccesses += 1;
     if (this.consecutiveSuccesses < this.options.raiseAfterSuccesses) return;
     this.consecutiveSuccesses = 0;
@@ -83,17 +110,24 @@ export class AdaptiveConcurrency {
    * 보이고, 상류가 조이면 429 로 보이며, 시간이 넘으면 abort 로 보인다. 원인은
    * 다르지만 대응은 같다 — 덜 보낸다. 종류를 구분하려 들면 그 구분이 또 틀린다.
    */
-  public onFailure(): void {
+  public onFailure(request: AdaptiveConcurrencyRequestStamp): void {
+    if (request.wave !== this.requestWave) return;
     this.consecutiveSuccesses = 0;
-    this.observedCeiling =
-      this.observedCeiling === null
-        ? this.current
-        : Math.min(this.observedCeiling, this.current);
-    this.current = clamp(
-      Math.floor(this.current / 2),
+    const failedLimit = clamp(
+      request.limitAtStart,
       this.options.minimum,
       this.options.maximum,
     );
+    this.observedCeiling =
+      this.observedCeiling === null
+        ? failedLimit
+        : Math.min(this.observedCeiling, failedLimit);
+    this.current = clamp(
+      Math.floor(Math.min(this.current, failedLimit) / 2),
+      this.options.minimum,
+      this.options.maximum,
+    );
+    this.requestWave += 1;
   }
 
   /** 진단용. 어디까지 올라갔고 무엇에 막혔는지. */
@@ -141,6 +175,32 @@ const DEFAULT_REQUEST_START_TIMING: RequestStartTiming = {
 };
 
 /**
+ * Waits until a new request can start under the limiter's current value.
+ *
+ * The limit is read again after every settlement because another request may
+ * have reduced it while this caller was decoding audio or waiting for its
+ * public request slot.
+ */
+export async function waitForAdaptiveConcurrencyCapacity(
+  inFlight: Set<Promise<void>>,
+  concurrency: Pick<AdaptiveConcurrency, "limit">,
+): Promise<void> {
+  while (inFlight.size >= concurrency.limit) {
+    const pending = [...inFlight];
+    if (pending.length === 0) return;
+    const settled = await Promise.race(
+      pending.map((request) =>
+        request.then(
+          () => ({ request }),
+          () => ({ request }),
+        ),
+      ),
+    );
+    inFlight.delete(settled.request);
+  }
+}
+
+/**
  * Starts an operation only after its reserved clock slot.
  *
  * The started value is wrapped in an object so a returned Promise is not
@@ -152,6 +212,7 @@ export async function startAfterRequestSpacing<T>(
   spacingMs: number,
   start: () => T,
   timing: RequestStartTiming = DEFAULT_REQUEST_START_TIMING,
+  beforeStart?: () => Promise<void>,
 ): Promise<{ readonly nextStartAtMs: number; readonly started: T }> {
   if (
     !Number.isFinite(nextStartAtMs) ||
@@ -162,6 +223,7 @@ export async function startAfterRequestSpacing<T>(
   }
   const waitMs = nextStartAtMs - timing.now();
   if (waitMs > 0) await timing.wait(waitMs);
+  if (beforeStart !== undefined) await beforeStart();
   const startedAtMs = timing.now();
   return {
     nextStartAtMs: startedAtMs + spacingMs,

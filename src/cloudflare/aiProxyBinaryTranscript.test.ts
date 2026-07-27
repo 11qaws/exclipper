@@ -52,6 +52,21 @@ function binaryRequest(
   });
 }
 
+function base64Request(
+  body: string,
+  query: string,
+): Request {
+  return new Request(`${ENDPOINT}${query}`, {
+    method: "POST",
+    headers: {
+      Origin: PRODUCTION_ORIGIN,
+      "Content-Type": "application/vnd.exclipper.transcript-base64",
+      "CF-Connecting-IP": "203.0.113.42",
+    },
+    body,
+  });
+}
+
 function fragmentedBinaryRequest(
   wav: Uint8Array,
   query: string,
@@ -99,6 +114,110 @@ function capturedBodyText(init: RequestInit | undefined): string {
 }
 
 describe("binary transcript ingress", () => {
+  it("passes browser-prepared Base64 through without changing provider bytes", async () => {
+    const wav = silentWav(30_000);
+    const audioBase64 = encodeCandidatePassBBase64(wav);
+    const expected = JSON.stringify(
+      buildBroadcastTranscriptQwenOmniRequestBody(audioBase64),
+    );
+    let capturedBody = "";
+    let capturedUint8Array = false;
+    const response = await handleBroadcastTranscriptRequest(
+      base64Request(audioBase64, "?startMs=600000&durationMs=30000"),
+      createEnvironment(),
+      {
+        fetchImplementation: (_input, init) => {
+          capturedBody = capturedBodyText(init);
+          capturedUint8Array = init?.body instanceof Uint8Array;
+          return Promise.resolve(qwenSseSuccess("브라우저 직접 경로입니다."));
+        },
+      },
+    );
+
+    expect(response.status).toBe(200);
+    expect(capturedUint8Array).toBe(true);
+    expect(capturedBody).toBe(expected);
+  });
+
+  it.each([
+    ["quote", "\""],
+    ["backslash", "\\"],
+    ["newline", "\n"],
+    ["NUL", "\0"],
+    ["non-ASCII", "가"],
+    ["internal padding", "="],
+  ])("rejects %s in a direct Base64 body", async (_label, replacement) => {
+    const wav = silentWav(2_000);
+    const valid = encodeCandidatePassBBase64(wav);
+    const offset = Math.floor(valid.length / 2);
+    const invalid = `${valid.slice(0, offset)}${replacement}${valid.slice(offset + 1)}`;
+    const upstreamFetch = vi.fn();
+    const response = await handleBroadcastTranscriptRequest(
+      base64Request(invalid, "?startMs=0&durationMs=2000"),
+      createEnvironment(),
+      { fetchImplementation: upstreamFetch },
+    );
+
+    expect([400, 413]).toContain(response.status);
+    const payload = await response.json() as { error: { code: string } };
+    expect(["INVALID_AUDIO", "PAYLOAD_TOO_LARGE"]).toContain(
+      payload.error.code,
+    );
+    expect(upstreamFetch).not.toHaveBeenCalled();
+  });
+
+  it("rejects non-canonical unused Base64 pad bits", async () => {
+    const valid = encodeCandidatePassBBase64(silentWav(3));
+    expect(valid.endsWith("=")).toBe(true);
+    const invalid = `${valid.slice(0, -2)}B=`;
+    const upstreamFetch = vi.fn();
+    const response = await handleBroadcastTranscriptRequest(
+      base64Request(invalid, "?startMs=0&durationMs=3"),
+      createEnvironment(),
+      { fetchImplementation: upstreamFetch },
+    );
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({
+      error: { code: "INVALID_AUDIO" },
+    });
+    expect(upstreamFetch).not.toHaveBeenCalled();
+  });
+
+  it("limits the direct Base64 transport to the production 30-second chunk", async () => {
+    const upstreamFetch = vi.fn();
+    const response = await handleBroadcastTranscriptRequest(
+      base64Request(
+        encodeCandidatePassBBase64(silentWav(90_000)),
+        "?startMs=0&durationMs=90000",
+      ),
+      createEnvironment(),
+      { fetchImplementation: upstreamFetch },
+    );
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({
+      error: { code: "INVALID_REQUEST" },
+    });
+    expect(upstreamFetch).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["duplicate start", "?startMs=0&startMs=1&durationMs=2000"],
+    ["duplicate duration", "?startMs=0&durationMs=2000&durationMs=2000"],
+    ["past 12 hours", "?startMs=43199001&durationMs=2000"],
+  ])("rejects direct Base64 query with %s", async (_label, query) => {
+    const response = await handleBroadcastTranscriptRequest(
+      base64Request(encodeCandidatePassBBase64(silentWav(2_000)), query),
+      createEnvironment(),
+      { fetchImplementation: vi.fn() },
+    );
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({
+      error: { code: "INVALID_REQUEST" },
+    });
+  });
+
   /**
    * The whole point of the transport change: the upstream provider must not
    * be able to tell the difference. The raw-WAV path has to assemble a body
@@ -112,10 +231,10 @@ describe("binary transcript ingress", () => {
       ),
     );
 
-    let captured: RequestInit | undefined;
+    let capturedBody = "";
     const upstreamFetch = vi.fn(
       (_input: RequestInfo | URL, init?: RequestInit) => {
-        captured = init;
+        capturedBody = capturedBodyText(init);
         return Promise.resolve(qwenSseSuccess("조용한 구간이다."));
       },
     );
@@ -132,7 +251,7 @@ describe("binary transcript ingress", () => {
       sourceEndMs: 690_000,
       textKo: "조용한 구간이다.",
     });
-    expect(capturedBodyText(captured)).toBe(expected);
+    expect(capturedBody).toBe(expected);
   });
 
   it("assembles fragmented ingress into the same bounded upstream body", async () => {
@@ -143,21 +262,23 @@ describe("binary transcript ingress", () => {
       ),
     );
     expect(JSON.parse(expected)).toMatchObject({ max_tokens: 1_024 });
-    let captured: RequestInit | undefined;
+    let capturedBody = "";
+    let capturedUint8Array = false;
     const response = await handleBroadcastTranscriptRequest(
       fragmentedBinaryRequest(wav, "?startMs=0&durationMs=2000"),
       createEnvironment(),
       {
         fetchImplementation: (_input, init) => {
-          captured = init;
+          capturedBody = capturedBodyText(init);
+          capturedUint8Array = init?.body instanceof Uint8Array;
           return Promise.resolve(qwenSseSuccess("조각난 요청이다."));
         },
       },
     );
 
     expect(response.status).toBe(200);
-    expect(captured?.body).toBeInstanceOf(Uint8Array);
-    expect(capturedBodyText(captured)).toBe(expected);
+    expect(capturedUint8Array).toBe(true);
+    expect(capturedBody).toBe(expected);
   });
 
   it("rejects a payload that is not a canonical WAV without calling upstream", async () => {
@@ -186,6 +307,22 @@ describe("binary transcript ingress", () => {
     expect(await response.json()).toMatchObject({
       error: { code: "INVALID_AUDIO" },
     });
+  });
+
+  it("rejects a truncated raw WAV even when its header declares the full duration", async () => {
+    const wav = silentWav(2_000);
+    const upstreamFetch = vi.fn();
+    const response = await handleBroadcastTranscriptRequest(
+      binaryRequest(wav.slice(0, -2), "?startMs=0&durationMs=2000"),
+      createEnvironment(),
+      { fetchImplementation: upstreamFetch },
+    );
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({
+      error: { code: "INVALID_AUDIO" },
+    });
+    expect(upstreamFetch).not.toHaveBeenCalled();
   });
 
   it.each([

@@ -1,11 +1,20 @@
 # ExClipper 개인용 운영·배포·복구 계획
 
+## 2026-07-27 `0.8.5` 전사 CPU 초과 제거
+
+- 2026-07-27 18:13:55~18:17:29 KST 운영 tail에서 `/v1/broadcast-transcript` 15건 중 6건이 HTTP 503, `outcome=exceededCpu`, `Worker exceeded CPU time limit`로 종료됐다. 요청은 모두 약 1,280,121 bytes였고 quota는 모두 200이었다. 브라우저의 CORS 오류는 Cloudflare가 대신 만든 503에 CORS 헤더가 없어서 생긴 2차 증상이다.
+- 기본 ingress는 Base64-only 전용 media type이다. Worker는 약 1.28MB envelope의 UTF-8 decode·`JSON.parse`, Base64 중복 grouped regex, provider용 대형 `JSON.stringify`를 제거하고 검증된 원본 Base64 bytes를 서버 고정 JSON prefix/suffix 사이에 넣는다.
+- 직접 Base64 ingress는 30초를 초과하면 본문을 읽거나 quota를 consume하기 전에 400으로 거부한다. 90초 raw/JSON은 구버전 호환 계약일 뿐 Free CPU 안전 경로가 아니며 운영 smoke의 기본값으로 쓰지 않는다.
+- 배포 순서는 ① protocol 4 Worker 배포 ② health의 `transcriptTransport.primaryMediaType`, OPTIONS·quota·직접 Base64 30초 smoke 확인 ③ Pages `0.8.5` 배포 ④ 공개 번들의 전용 media type 확인 ⑤ 음식 토크 missing-only 또는 전체 271구간 검증이다. `AI_QUOTA_MODE=required`는 낮추지 않는다.
+- 롤백은 Pages를 `0.8.4`로 되돌리기 전에 Worker의 JSON/raw 호환 경로가 살아 있는지 확인한다. 호환 기간에는 오래 열린 구버전 탭이 JSON 경로를 사용할 수 있으므로 운영 tail에서 transport별 CPU를 구분한다.
+- 완료 기준은 CORS 메시지가 잠시 사라지는 것이 아니라 전체 계획에서 `exceededCpu=0`, gap 0, quota 409/429 비정상 연쇄 0, provider body byte identity 유지다. 실제 tail p95/p99가 Free CPU를 계속 넘으면 동시성 숫자를 더 낮추는 것으로 숨기지 않고 Workers Paid 또는 URL 기반 ASR 전환을 승인받는다.
+
 ## 2026-07-27 `0.8.4` 최대 5개 독립 편집 세션
 
 - 프로젝트·원본·후보·편집 판단은 계속 각 브라우저에만 남는다. 한 배포의 AI 공급자 용량만 신뢰된 편집자 세션 최대 5개가 공유하며, `AiQuotaCoordinator`가 participant별 FIFO와 participant 간 round-robin을 적용한다.
 - `transcript`와 `candidate`는 Singapore `qwen3.5-omni-flash`의 1초 start clock, shared in-flight 6, 100k TPM과 429 backoff를 공유한다. `context`는 독립 250ms·5M TPM 앱 gate다.
-- 현재 브라우저 계획기는 30초 청크를 사용하고 한 실행 안에서 `AdaptiveConcurrency`를 조정한다. 전용 브라우저 Web Worker가 약 0.96MB WAV를 약 1.28MB Base64 JSON으로 준비하며, Cloudflare Worker는 전체 오디오를 다시 변환하지 않는다. Worker는 구버전 탭을 위해 최대 90초 raw WAV도 수용하지만 운영 처리량과 Worker 상한 760개는 30초 기준으로 계산한다. 아래 과거 release note의 90초·240개·91청크 수치는 현재 운영값이 아니다.
-- 배포는 무중단 호환 순서로 진행한다: ① Worker 배포 ② quota client가 포함된 Pages 배포·공개 버전 확인 ③ health, Origin preflight, quota lease, 30초 Base64 JSON transcript smoke 확인. 현재 운영이 이미 `AI_QUOTA_MODE=required`이면 이를 낮추지 않는다.
+- `0.8.4` 브라우저 계획기는 30초 청크와 실행별 `AdaptiveConcurrency`를 사용했다. 전용 브라우저 Web Worker가 약 0.96MB WAV를 약 1.28MB Base64 JSON으로 준비했고 Worker는 구버전 탭을 위해 최대 90초 raw WAV도 수용했다. 운영 처리량과 Worker 상한 760개는 30초 기준이다.
+- `0.8.4` 배포 검증 순서는 Worker → Pages → health·Origin preflight·quota lease·30초 Base64 JSON smoke였다. `0.8.5`의 현재 순서는 위 직접 Base64 transport 절을 따른다.
 - Free Worker 10ms CPU 안전성은 live smoke로 확인한다. 주 경로는 byte-to-Base64 변환을 브라우저 Web Worker로 옮겼지만, 중계에는 여전히 약 1.28MB JSON 수신·digest·파싱·검증·공급자 본문 직렬화가 남는다. 1102/CPU 초과가 재현되면 Workers Paid 또는 R2+ASR transport로 전환한다.
 - 전사 브라우저 Worker는 1초 요청 슬롯을 먼저 기다린 뒤 quota lease와 POST를 시작하며 로컬 in-flight 상한은 6이다. 슬롯 대기 전에 fetch/IIFE를 만들면 실제 전송은 이미 시작되므로 배포 검토에서 호출 시점을 확인한다.
 - `/v1/broadcast-context`의 502는 응답 JSON의 allowlist 오류 코드와 제한된 진단 헤더로 구분한다. non-2xx paid 응답 뒤에는 cancel하지 않으며, 이미 끝난 작업의 cancel은 200 멱등 정리, 같은 ID의 새 lease만 409다.
@@ -64,7 +73,7 @@
 - Candidate result persistence schema is `1.3.0`. Rollback readers must continue accepting 1.0–1.2 records without `modelByCandidateId`; forward readers reject mismatched model/revision pairs.
 - Routing policy `1.3.0` adds compact, grounded topic chapters to the Qwen whole-context response. A new run must not reuse an older context result that reports no topic support under the earlier policy.
 - Candidate frame sampling waits for decoded data on temporarily attached, invisible media elements and limits the capture pool to two decoders. If the request still contains zero frames, both client and Worker reduce the result to audio-only evidence and discard provider-authored screen, game, participant, and causal claims.
-- Broadcast transcript preflight reports the exact violated invariant. The 02:15:14.817 food-talk source is a valid 91-chunk plan under the verified 90-second transport; if it fails before fetch, investigate the newly reported invariant instead of rotating API keys.
+- Historical `0.3.31` contract only: broadcast transcript preflight reported the exact violated invariant, and the 02:15:14.817 food-talk source used a 91-chunk plan under the then-current 90-second transport. This is not the `0.8.5` operating plan; new runs use the 30-second direct Base64 path and 271 chunks.
 - Timeline release smoke at a maximized width must verify 30-minute ticks, numbered/staggered candidates, topic bands, semantic-lead markers, the score landscape, and a wider independently scrolling evidence pane.
 
 - Desktop-first workspace: verify the source summary and the primary analysis action are visible in the first viewport at a maximized browser width. At widths below 840px the columns collapse to one column.

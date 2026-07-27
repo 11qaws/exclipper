@@ -1,5 +1,34 @@
 # Development Log
 
+## 2026-07-27 `0.8.5` 전사 CORS의 실제 원인·직접 Base64 transport
+
+### 운영 증거와 원인
+
+- 실제 음식 토크 분석이 약 93/271에서 진행 중일 때 운영 Worker tail을 관찰했다. 15건 중 9건은 HTTP 200, 6건은 HTTP 503 `exceededCpu`였고 모두 약 1.28MB로 크기가 같았다. quota admission은 전부 200이었으며 429·1101·공급자 거부는 관찰되지 않았다.
+- 실패 요청의 예외는 `Worker exceeded CPU time limit`였다. 플랫폼이 Worker 대신 만든 503에는 `Access-Control-Allow-Origin`이 없으므로 Edge가 CORS 위반으로 표시했다. 따라서 CORS 설정이나 5인 coordinator가 1차 원인이 아니었다.
+- `0.8.4`는 Base64 생성을 브라우저로 옮겼지만 Worker에 대용량 본문 결합, SHA-256, UTF-8 decode, `JSON.parse`, Base64 전체 검사 두 번, provider JSON 재직렬화를 남겼다. 동일 payload의 로컬 상대 계측에서 grouped Base64 정규식만 p95 22ms를 넘었고 전체 중앙값도 Free CPU 10ms에 닿았다.
+
+### 구현
+
+- 브라우저 기본 요청을 `application/vnd.exclipper.transcript-base64`로 변경했다. 본문은 Base64 ASCII만, source fence는 `startMs`와 `durationMs` 쿼리로 전달한다.
+- Worker protocol 4는 두 쿼리의 중복·미지 값을 거부하고 12시간 source fence, exact encoded length·padding·문자 집합, PCM16 mono 16kHz WAV header와 duration을 검증한다. quota digest가 실제 본문과 일치하기 전에는 rate limiter와 유료 fetch를 시작하지 않는다.
+- provider 본문은 작은 서버 소유 sentinel template에서 만든 prefix/suffix와 검증된 Base64 bytes를 한 번 결합한다. 모델·prompt·endpoint·max token은 클라이언트가 바꿀 수 없다. Qwen→Gemini bounded fallback도 각 provider의 고정 template을 사용한다.
+- 직접 Base64 경로는 실제 계획기와 같은 최대 30초로 제한했다. 90초 Base64는 SHA·검증·provider copy만으로도 로컬 p95가 Free 10ms를 넘으므로 주 경로에서 닫았다. raw 호환 경로는 실제 body가 선언된 WAV 길이와 정확히 같아야 하며, 잘린 본문을 유료 호출로 보내지 않는다. provider용 임시 byte buffer도 fetch 종료 뒤 즉시 지운다.
+- JSON과 raw WAV ingress는 Worker-first 배포 및 구버전 탭 호환용으로 유지했다. 운영 smoke script의 기본 transport는 새 `base64`이며 `--transport json|raw`를 진단용으로 선택할 수 있다.
+- 적응형 동시성의 maximum 6은 유지했다. 요청 시작 시 failure-wave ID와 실제 시작 상한을 함께 캡처해 같은 파동의 여러 실패가 6→3→1로 연속 반감하지 않고, 오래 걸린 요청의 실패 상한도 나중에 오른 값으로 왜곡되지 않게 했다. 오디오 decode나 1초 pacing 도중 상한이 내려갈 수 있으므로 요청을 만드는 직전에 capacity를 다시 확인하며, 이미 진행 중인 요청이 새 상한 아래로 drain된 뒤에만 보충한다.
+
+### 로컬 검증
+
+- 직접 Base64와 기존 builder의 provider 요청이 byte-for-byte 동일함을 확인했다.
+- quote, backslash, newline, NUL, 비ASCII, 내부 padding·비정규 pad bit, 30초 직접 상한, 중복 쿼리, 12시간 초과, 잘린 raw WAV, quota digest mismatch를 유료 fetch 전에 거부하는 테스트를 추가했다.
+- 직접 Base64 lease의 `inspect -> consume -> paid fetch -> complete` 순서와 mismatch의 `inspect -> release-upload` 순서를 확인했다.
+- 전사·quota·media·scheduler 회귀를 포함해 106개 파일·1,194개 전체 테스트, TypeScript typecheck, ESLint warning 0, production Vite build, Wrangler dry-run을 통과했다. 운영 271구간 tail 검증은 Worker-first 배포 승인 뒤 실제 protocol 4 경로에서 수행한다.
+
+### Worker-first 운영 검증
+
+- Worker version `a3cbf5c5-f7aa-43e5-b552-1c3912fbb851`를 먼저 배포했다. `/healthz`는 protocol 4, quota `required`, coordinator ready, 최대 5명, 직접 전사 media type `application/vnd.exclipper.transcript-base64`를 보고했고 Pages origin의 transcript OPTIONS는 HTTP 204와 정확한 허용 헤더를 반환했다.
+- 음식 토크 21:00부터 30초를 새 직접 경로로 전송했다. 본문은 1,280,060바이트였고 HTTP 200, 올바른 한국어 전사, Worker `outcome=ok`, 예외 0건이었다. 관찰된 stateless Worker CPU는 36ms였으나 강제 종료나 헤더 없는 503은 없었다. 단일 성공만으로 장시간 안정성을 단정하지 않고 Pages 배포 뒤 271구간 tail을 최종 gate로 사용한다.
+
 ## 2026-07-27 `0.8.4` 맥락 502 복구 · 누락 구간 이어하기
 
 ### 실제 장애 원인

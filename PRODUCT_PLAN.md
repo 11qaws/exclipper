@@ -1,10 +1,19 @@
 # ExClipper 제품·UX·기술 계획서
 
+## `0.8.5` 전사 직접 전송·CPU 초과 복구 계약
+
+- 브라우저의 30초 전사 청크는 더 이상 약 1.28MB의 JSON 객체로 Worker에 전달하지 않는다. 전용 media type의 본문에는 브라우저 Web Worker가 준비한 Base64 ASCII만 두고, `startMs`와 `durationMs`는 정확히 한 번씩 URL 매개변수로 전달한다. Free Worker CPU 여유를 지키기 위해 이 직접 경로 자체도 최대 30초로 닫는다.
+- Worker는 quota lease와 본문 SHA-256을 먼저 대조한 뒤 실제 길이·패딩·Base64 문자 집합과 선행 WAV 헤더만 검증한다. 모델·endpoint·prompt·출력 상한은 계속 서버가 소유한다. 검증을 통과한 Base64 바이트는 서버 고정 provider JSON prefix와 suffix 사이에 직접 복사하며, 대용량 `JSON.parse`, 중복 정규식, 대용량 `JSON.stringify`를 하지 않는다.
+- `application/json`과 `audio/wav`는 Worker-first 배포와 구버전 탭을 위한 한시적 호환 경로다. 새 Pages가 공개된 뒤 기본 분석은 직접 Base64 경로만 사용한다.
+- 최대 활성 편집자 5명과 Qwen 전역 in-flight 6은 서로 다른 제한이다. 브라우저 로컬 상한은 6을 유지하고 coordinator가 1명 6개, 2명 3개, 3~5명 2개의 공정한 실행 슬롯을 배분한다.
+- 같은 시점에 시작한 요청 여러 개가 하나의 장애로 함께 실패해도 적응형 동시성은 그 failure wave에서 한 번만 감소한다. 감속 뒤에는 기존 요청 수가 새 상한 아래로 빠질 때까지 새 요청을 보충하지 않는다.
+- 출시 판정은 짧은 순차 스모크만으로 끝내지 않는다. 음식 토크 271개 전체, 1·2·5 participant, Worker tail의 `exceededCpu` 0건과 CORS 포함 응답, 누락 구간 0개를 확인한다. Free Worker CPU p99가 안정 범위에 들지 않으면 유료 CPU 한도 또는 URL 기반 ASR transport를 별도 승인 대상으로 올린다.
+
 ## `0.8.4` 최대 5개 독립 편집 세션의 AI 용량·복구 계약
 
 - 제품 데이터는 계속 브라우저별 개인 작업으로 유지한다. 배포 전체가 공유하는 것은 AI 공급자 용량뿐이며 `AiQuotaCoordinator`가 최대 5개 participant를 FIFO round-robin으로 분배한다. 계정·팀·공동 편집·원격 프로젝트 저장은 추가하지 않는다.
 - `transcript`와 `candidate`는 같은 Singapore `qwen3.5-omni-flash`의 60 RPM·100k TPM gate를 공유한다. `context`는 별도 250ms·5M TPM 앱 gate를 사용한다. upload ticket은 본문 검증 전의 임시 허가이고, 유료 호출은 JIT consume 뒤에만 시작한다.
-- 현재 브라우저 전사는 30초 청크를 사용한다. 전용 브라우저 Web Worker가 WAV를 Base64 JSON으로 준비하므로 UI thread를 막지 않고 Cloudflare Free Worker의 가장 비싼 byte-to-Base64 변환도 제거한다. 약 0.96MB WAV가 wire에서 약 1.28MB로 커지는 대신 중계는 길이·문자 집합·44바이트 헤더만 확인하고 이미 준비된 문자열을 공급자 요청에 넣는다. raw WAV 경로는 구버전 탭과 진단용 호환 경로로만 유지한다.
+- `0.8.4` 브라우저 전사는 30초 청크를 사용했다. 전용 브라우저 Web Worker가 WAV를 Base64 JSON으로 준비해 UI thread와 Worker의 byte-to-Base64 변환을 피했지만, 중계의 대용량 JSON 처리까지 제거하지는 못했다. raw WAV 경로는 구버전 탭과 진단용 호환 경로로 유지했다.
 - 실행 안의 `AdaptiveConcurrency`와 배포 전체 시작 간격 1초, shared in-flight 6, participant별 6/3/2 상한이 최종 속도와 공정성을 결정한다. 90초는 중계가 수용하는 호환 transport 상한이지 현재 계획기의 청크 길이가 아니다.
 - 맥락 요청 실패는 제한된 오류 코드로 `응답 형식`, `공급자 거절`, `일시 연결`, `결과 불명`, `종료된 operation`을 구분한다. 본 유료 요청의 non-2xx 뒤에 별도 cancel을 보내지 않아 502 뒤 409가 연쇄되지 않는다.
 - 누락 전사 재시도는 이미 확보한 대사 구간을 보존하고 실패한 30초 범위만 다시 처리한다. 맥락이 바뀌면 후보 상세 receipt의 context 콘텐츠 지문도 달라지므로 과거 불완전 맥락의 판정이 최종 후보로 재사용되지 않는다.
@@ -12,7 +21,7 @@
 
 ## `0.4.0` 전사 전송 계약의 과거 기준
 
-- 이 절은 raw WAV가 주 경로였던 과거 계약이다. `0.8.4`부터 주 경로는 전용 브라우저 Web Worker가 만든 Base64 JSON이며, Cloudflare 중계는 전체 오디오를 다시 디코드하거나 인코드하지 않는다.
+- 이 절은 raw WAV가 주 경로였던 과거 계약이다. `0.8.4`에서는 전용 브라우저 Web Worker가 만든 Base64 JSON이 주 경로였고, `0.8.5`부터는 JSON envelope가 없는 직접 Base64 본문이 주 경로다.
 - raw WAV 전송은 제거하지 않고 병행 수용한다. 배포 순서(Worker 먼저, Pages 다음)와 사용자 캐시의 구버전 번들이 깨지지 않으며, raw 경로의 업스트림 본문 등가성 회귀도 유지한다.
 - 이 절의 고정 동시성 4는 과거 계약이다. 현재는 30초 청크의 `AdaptiveConcurrency`와 배포 전체 60회/60초 quota gate를 함께 사용한다.
 

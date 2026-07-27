@@ -1,10 +1,18 @@
 # ExClipper 상태·생애주기 명세
 
-- 문서 버전: 0.8.4
+- 문서 버전: 0.8.5
 - 기준 제품 계획: PRODUCT_PLAN.md 현재 revision
 - 기준일: 2026-07-27 (Asia/Seoul)
 - 적용 범위: GitHub Pages에서 실행되는 개인 편집 어시스턴트와 선택형 CHZZK 동반 수집기
 - 문서 지위: 구현·회귀 테스트의 canonical 상태 문서
+
+## `0.8.5` 전사 transport와 failure-wave 상태
+
+- 전사 청크의 운영 ingress는 `application/vnd.exclipper.transcript-base64`다. 본문은 Base64 ASCII 하나이며 `startMs`·`durationMs`가 있는 정확한 source fence를 사용한다. 직접 경로의 duration 상한은 30초다. JSON과 최대 90초 raw WAV는 호환 상태이며 새 실행의 기본값이 아니다.
+- ingress는 `lease-inspected -> body-bounded -> digest-matched -> media-validated -> execution-waiting -> in-flight -> complete | gap` 순서다. digest·문자 집합·WAV·시간 fence 중 하나라도 실패하면 `execution-waiting`으로 가지 않고 token-bound upload lease를 반납한다.
+- 직접 Base64 bytes는 provider 요청이 terminal이 될 때까지 한 번만 보유하고 Qwen 또는 bounded Gemini fallback의 서버 고정 prefix/suffix 사이에 넣는다. 완료·거부·rate-limit 뒤에는 해당 버퍼를 지운다.
+- `AdaptiveConcurrency`의 각 원격 요청은 시작 순간의 failure-wave ID를 가진다. 첫 실패가 wave를 전진시키며 같은 wave의 뒤늦은 성공·실패는 동시성 추정에 다시 반영하지 않는다. 새 wave에서 다시 실패하면 별도의 감속으로 처리한다.
+- 최대 5 participant는 세션 admission 상태이고, local/provider 동시성 값이 아니다. local maximum과 전역 provider in-flight는 6을 유지하며 participant 수에 따른 coordinator share가 실제 시작 가능 수를 결정한다.
 
 ## `0.8.4` 배포 전체 AI quota·복구 상태
 
@@ -14,7 +22,7 @@
 - `transcript`와 `candidate`는 동일한 `qwen-omni` provider gate를 공유한다. 실제 시작 간격 1초, shared in-flight 6, candidate in-flight 4, rolling 100k TPM을 함께 지킨다. `context`는 독립 gate다.
 - 본문 검증에 실패한 미사용 ticket은 동일 lease token의 `lease-issued` 상태에서만 `release-upload -> cancelled`가 된다. 늦은 중복 요청은 `execution-waiting | in-flight`인 정상 요청을 취소할 수 없다.
 - 명시적 HTTP 408/5xx는 새 operation과 새 token 예약으로 제한 재시도할 수 있다. network timeout, fetch 결과 불명, 200 response body stall은 `outcome-unknown`이며 자동 재전송하지 않는다.
-- 현재 계획기는 30초 전사 청크를 만들며 Worker 상한은 760개다. 전용 브라우저 Web Worker가 WAV를 Base64 JSON으로 바꾼 뒤 요청하므로 화면 UI를 막지 않고 Cloudflare Worker의 byte-to-Base64 변환도 피한다. 90초 raw WAV는 중계가 구버전 탭에 대해 거부하지 않는 compatibility ceiling일 뿐 현재 계획기의 기본 청크나 주 전송 경로가 아니다.
+- `0.8.4` 계획기는 30초 전사 청크와 최대 760개 Worker 계약을 사용했다. 전용 브라우저 Web Worker가 WAV를 Base64 JSON으로 바꿔 UI thread와 Cloudflare Worker의 byte-to-Base64 변환을 피했으나 대용량 JSON transform은 남겼다. 90초 raw WAV는 compatibility ceiling이다.
 - `completedWithGaps`는 성공으로 닫힌 상태가 아니다. 편집자의 명시적 재시도는 저장된 chapter 범위를 보존하고 처리 실패로 비어 있는 sampling range만 새 attempt operation ID로 다시 연다. 맥락 overview가 실패해도 완료된 discovery slice는 같은 탭의 checkpoint로 유지한다.
 - paid endpoint가 HTTP 응답을 낸 뒤에는 브라우저가 별도 cancel을 보내지 않는다. terminal operation의 cancel은 멱등 HTTP 200이고, terminal ID로 새 lease를 요청할 때만 409다. 따라서 본 요청의 502와 정리 요청의 409가 연쇄되는 상태는 없다.
 - 맥락 재시도는 이전 semantic candidate와 Pass B projection을 먼저 무효화한다. verification receipt `1.1.0`은 실제로 검토한 context packet의 콘텐츠 지문을 가지며, 현재 packet과 지문이 다르면 기존 insight가 저장돼 있어도 `evidence-incomplete`다. 구형 `1.0.0` receipt는 저장 자료를 읽기 위한 호환 입력일 뿐 최종 publication을 통과하지 않는다.

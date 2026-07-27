@@ -117,6 +117,25 @@ function binaryTranscriptRequest(
   );
 }
 
+function base64TranscriptRequest(
+  audioBase64: string,
+  headers: Record<string, string> = {},
+): Request {
+  return new Request(
+    `${TRANSCRIPT_ENDPOINT}?startMs=0&durationMs=2000`,
+    {
+      method: "POST",
+      headers: {
+        Origin: PRODUCTION_ORIGIN,
+        "Content-Type": "application/vnd.exclipper.transcript-base64",
+        "CF-Connecting-IP": "203.0.113.42",
+        ...headers,
+      },
+      body: audioBase64,
+    },
+  );
+}
+
 function jsonQuotaRequest(
   endpoint: string,
   serializedBody: string,
@@ -524,6 +543,70 @@ describe("AI quota integration at the paid Worker boundary", () => {
       leaseToken: PUBLIC_LEASE_TOKEN,
       outcome: "succeeded",
     });
+  });
+
+  it("binds the direct Base64 body to its lease before the paid fetch", async () => {
+    const audioBase64 = encodeCandidatePassBBase64(silentWav(2_000));
+    const bodyBytes = new TextEncoder().encode(audioBase64);
+    const lease = quotaLease(await payloadDigest(bodyBytes));
+    bodyBytes.fill(0);
+    const events: string[] = [];
+    const coordinator = createCoordinator((request) => {
+      events.push(request.action);
+      return jsonResponse({
+        ok: true,
+        status:
+          request.action === "inspect"
+            ? "valid"
+            : request.action === "consume"
+              ? "consumed"
+              : "completed",
+      });
+    });
+    const { environment } = createEnvironment(coordinator);
+    const upstreamFetch = vi.fn(() => {
+      events.push("paid-fetch");
+      return Promise.resolve(qwenSseSuccess("직접 전송 경로입니다."));
+    });
+
+    const response = await handleBroadcastTranscriptRequest(
+      base64TranscriptRequest(audioBase64, quotaHeaders(lease)),
+      environment,
+      { fetchImplementation: upstreamFetch },
+    );
+
+    expect(response.status).toBe(200);
+    expect(events).toEqual([
+      "inspect",
+      "consume",
+      "paid-fetch",
+      "complete",
+    ]);
+  });
+
+  it("releases a direct Base64 upload ticket when the body digest differs", async () => {
+    const audioBase64 = encodeCandidatePassBBase64(silentWav(2_000));
+    const lease = quotaLease(`sha256:${"f".repeat(64)}`);
+    const coordinator = createCoordinator();
+    const { environment, clientLimiter, globalLimiter } =
+      createEnvironment(coordinator);
+    const upstreamFetch = vi.fn();
+
+    const response = await handleBroadcastTranscriptRequest(
+      base64TranscriptRequest(audioBase64, quotaHeaders(lease)),
+      environment,
+      { fetchImplementation: upstreamFetch },
+    );
+
+    expect(response.status).toBe(409);
+    expect(await responseErrorCode(response)).toBe("QUOTA_PAYLOAD_MISMATCH");
+    expect(coordinator.requests.map(({ action }) => action)).toEqual([
+      "inspect",
+      "release-upload",
+    ]);
+    expect(clientLimiter).not.toHaveBeenCalled();
+    expect(globalLimiter).not.toHaveBeenCalled();
+    expect(upstreamFetch).not.toHaveBeenCalled();
   });
 
   it("waits for coordinator execution readiness before starting the paid fetch exactly once", async () => {

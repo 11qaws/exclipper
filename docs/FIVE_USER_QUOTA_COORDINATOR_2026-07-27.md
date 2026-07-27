@@ -1,6 +1,6 @@
 # ExClipper 최대 5인 AI 처리 설계 — 2026-07-27
 
-상태: **v0.8.4 통합·배포 검증 중**
+상태: **v0.8.5 직접 Base64 transport 통합·배포 검증 중**
 
 ## 1. 결론
 
@@ -138,7 +138,8 @@ DeepSeek 호환 경로까지 포함한 안전 상한 8,192를 예약한다.
 | 경로 | 앱 wire 상한 | 근거 |
 |---|---:|---|
 | 후보 JSON | 4,257,596 bytes | 60초 WAV Base64 + JPEG 4장 + context 8필드 worst escape + 64KiB |
-| 전사 Base64 JSON | 4,008,192 bytes | 현재 주 경로. 30초 WAV는 약 1.28MB, 방어 상한은 90초 WAV + JSON 여유 |
+| 전사 Base64 직접 본문 | 1,280,060 bytes | 현재 주 경로. PCM16 mono 16kHz 30초 WAV의 exact Base64 |
+| 전사 Base64 JSON | 4,008,192 bytes | 구버전 탭 호환 경로. 90초 WAV + JSON 여유 |
 | 전사 raw WAV 호환 상한 | 2,880,044 bytes | 구버전 탭·진단용 PCM16 mono 16kHz, 최대 90초 |
 | 현재 계획기의 WAV 원본 | 960,044 bytes | 브라우저 Web Worker가 Base64로 바꾸는 30초 PCM |
 | 전체 맥락 JSON | 8MiB | 144 chapter + 32 candidate의 모든 유효 필드 수용 |
@@ -155,7 +156,7 @@ quota header는 participant 96자, run/operation 160자, digest 71자, lease 128
 제한되어 전체 128KB header 한도에 비해 매우 작다.
 
 모든 ingress body는 60초 안에 끝나야 한다. 최대 후보 본문 기준 약 0.57Mbps,
-현재 주 경로의 30초 Base64 JSON 기준 약 0.17Mbps가 필요하다. 호환 경로에서 90초
+현재 주 경로의 30초 Base64 직접 본문 기준 약 0.17Mbps가 필요하다. 호환 경로에서 90초
 raw WAV를 직접 보낼 때는 약 0.38Mbps가 필요하다. deadline은
 2분 upload-ticket TTL보다 짧다. timeout은 413이 아니라 408
 `REQUEST_BODY_TIMEOUT`으로 구분하고, 아직 consume되지 않은 같은 lease token의
@@ -261,30 +262,33 @@ cell 안의 분산 표본 경계 때문에 단순히 `200분 ÷ 30초 = 400`으�
 432개가 된다. 사건 피크의 위치·겹침에 따라 실제 개수는 달라지며 760은 계획값이
 아니라 비정상 조각화도 거부하지 않기 위한 protocol 방어 상한이다.
 
-## 9. 현재 전사 경로와 남은 Worker Free CPU 검증
+## 9. 현재 전사 경로와 Worker Free CPU 검증
 
-현재 주 경로는 전용 브라우저 Web Worker가 약 0.96MB의 30초 WAV를 Base64로
-인코드하고 약 1.28MB JSON을 만든다. Cloudflare Worker는 quota digest와 JSON 계약,
-Base64 문자·길이, 선행 44바이트 WAV 헤더를 확인한 뒤 이미 준비된 문자열로 공급자
-본문을 만든다. UI thread와 Cloudflare Worker 어느 쪽에도 WAV 전체를 순회하는
-JavaScript byte-to-Base64 loop가 없다. 호환 transport는 최대 2.88MB의 90초 raw
-WAV도 수용하지만, 그 경로에서는 Cloudflare Worker가 변환을 수행한다.
+현재 주 경로는 전용 브라우저 Web Worker가 약 0.96MB의 30초 WAV를 1,280,060-byte
+Base64 ASCII 본문으로 준비한다. source fence는 URL의 `startMs`·`durationMs`로
+전달하고 Worker는 exact bounded body, quota digest, 64KiB 단위 문자 집합,
+패딩과 선행 44바이트 WAV header를 확인한다. 검증된 bytes는 서버 고정 provider
+JSON prefix/suffix 사이에 직접 들어간다. 대용량 UTF-8 decode·`JSON.parse`,
+중복 grouped regex, 대용량 `JSON.stringify`는 주 경로에 없다.
+직접 경로는 30초를 초과하면 본문을 읽기 전에 거부한다. 90초 raw/JSON은 호환
+ceiling이며 Free CPU 안전 경로로 취급하지 않는다.
 
-Cloudflare Free의 요청당 CPU 안전성은 아직 production smoke로 확인해야 한다.
-기존 1102의 가장 큰 원인이던 byte-to-Base64 변환은 제거했지만, 약 1.28MB 요청의
-수신·SHA-256·JSON parse·선형 Base64 검사·공급자 본문 직렬화는 남아 있다.
+2026-07-27 운영 관찰에서 구 Base64 JSON 경로는 동일 크기 요청 15건 중 6건이
+`exceededCpu`로 종료됐다. 성공 요청도 CPU 71~152ms를 사용했다. Cloudflare의
+플랫폼 503에는 CORS header가 없어 브라우저에는 CORS 오류로 보였다. 따라서 짧은
+순차 10건 스모크는 Free CPU 안전성의 근거로 사용하지 않는다.
 
 ### 즉시 운영 가능한 경로
 
 - Workers Paid로 전환하면 월 최소 $5이며 기본 CPU 30초다.
-- 현재 배포는 30초 Base64 JSON 경로와 본 문서의 gate를 사용한다. Paid 전환과
-  90초 복원은 각각 실제 CPU p99와 live transcript 결과를 확인한 뒤 별도 결정한다.
+- `0.8.5`는 30초 Base64 직접 경로와 본 문서의 gate를 사용한다. Paid 전환과
+  90초 복원은 각각 직접 경로의 실제 CPU p99와 live transcript 결과를 확인한 뒤 별도 결정한다.
 - 1명 → 2명 → 5명 smoke에서 `wrangler tail` CPU, wall time, 429, 1102를 측정한다.
 - 측정 뒤 `limits.cpu_ms`를 실제 p99에 여유를 둔 값으로 고정한다.
 
-### Free를 유지할 때의 근본 경로
+### 직접 경로 뒤에도 Free p99가 불안정할 때의 다음 경로
 
-Worker가 오디오를 변환하거나 전체 hash를 계산하지 않게 해야 한다.
+Worker가 오디오를 변환하거나 큰 provider 본문을 소유하지 않게 해야 한다.
 
 ```text
 브라우저가 WAV + SHA-256 준비
@@ -326,9 +330,11 @@ paid endpoint가 HTTP 응답을 반환한 뒤에는 client가 cancel을 보내�
 attempt ordinal을 올린 새 operation ID를 사용한다.
 
 상태 schema는 `1.4.0`이다. 최초 v0.8.3 배포에서는 이전 coordinator state가 없어
-migration이 필요 없다. 한 번 배포한 뒤에는 `providerGates.tokenReservations`가 없는 옛 코드로
-즉시 롤백할 수 없으므로, 롤백은 먼저 Worker quota mode를 `optional`로 낮추고
-호환 reader를 배포하는 순서로 해야 한다.
+migration이 필요 없었다. `optional`로 낮추는 절차는 최초 전환 당시의 과거 기록이며
+`0.8.5` 현행 롤백 절차가 아니다. 현행 운영은 `AI_QUOTA_MODE=required`를 유지한 채
+protocol 4와 schema 1.4.0을 읽는 직전 호환 Worker version으로 되돌린다. 더 오래된
+schema로 내려가야 한다면 먼저 `required` 경계를 유지하는 forward-compatible reader를
+배포한 뒤 코드 version을 전환한다.
 
 ## 11. 보안 경계
 
@@ -361,6 +367,6 @@ migration이 필요 없다. 한 번 배포한 뒤에는 `providerGates.tokenRese
   duplicate ID·잘못된 evidence mode·coverage는 upstream 전에 거절
 - 새 전체 맥락과 context 콘텐츠 지문이 다른 Pass B receipt는 최종 후보에서 제외
 - full test, strict TypeScript, ESLint warning 0, build, Wrangler dry-run
-- 30초 Base64 JSON live smoke에서 1102·CPU 초과가 없음을 확인. 실패하면 required
-  전환을 중단하고 Workers Paid 또는 R2+ASR 경로를 선택
+- 30초 Base64 직접 경로의 음식 토크 271구간 live smoke에서 1102·CPU 초과가 없음을 확인. 실패하면
+  배포를 중단하고 Workers Paid 또는 R2+ASR 경로를 선택
 - 승인 전 commit·push·deploy 금지

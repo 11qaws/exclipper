@@ -2,12 +2,30 @@ import { describe, expect, it } from "vitest";
 
 import {
   AdaptiveConcurrency,
+  type AdaptiveConcurrencyRequestStamp,
   DEFAULT_ADAPTIVE_CONCURRENCY,
   startAfterRequestSpacing,
+  waitForAdaptiveConcurrencyCapacity,
 } from "./adaptiveConcurrency";
 
 function succeed(limiter: AdaptiveConcurrency, times: number): void {
-  for (let i = 0; i < times; i += 1) limiter.onSuccess();
+  for (let i = 0; i < times; i += 1) {
+    limiter.onSuccess(limiter.captureRequestWave());
+  }
+}
+
+function succeedFromWave(
+  limiter: AdaptiveConcurrency,
+  requestWave: AdaptiveConcurrencyRequestStamp,
+  times: number,
+): void {
+  for (let i = 0; i < times; i += 1) {
+    limiter.onSuccess(requestWave);
+  }
+}
+
+function fail(limiter: AdaptiveConcurrency): void {
+  limiter.onFailure(limiter.captureRequestWave());
 }
 
 describe("adaptive concurrency", () => {
@@ -21,7 +39,7 @@ describe("adaptive concurrency", () => {
     const limiter = new AdaptiveConcurrency();
     succeed(limiter, DEFAULT_ADAPTIVE_CONCURRENCY.raiseAfterSuccesses - 1);
     expect(limiter.limit).toBe(4);
-    limiter.onSuccess();
+    limiter.onSuccess(limiter.captureRequestWave());
     expect(limiter.limit).toBe(5);
   });
 
@@ -33,7 +51,40 @@ describe("adaptive concurrency", () => {
       maximum: 10,
       start: 8,
     });
-    limiter.onFailure();
+    fail(limiter);
+    expect(limiter.limit).toBe(4);
+  });
+
+  it("reduces only once for failures from the same in-flight wave", () => {
+    const limiter = new AdaptiveConcurrency({
+      ...DEFAULT_ADAPTIVE_CONCURRENCY,
+      start: 6,
+    });
+    const failedWave = limiter.captureRequestWave();
+
+    limiter.onFailure(failedWave);
+    expect(limiter.limit).toBe(3);
+    for (let i = 0; i < 5; i += 1) limiter.onFailure(failedWave);
+
+    expect(limiter.limit).toBe(3);
+  });
+
+  it("recovers only from requests started after the failed wave", () => {
+    const limiter = new AdaptiveConcurrency({
+      ...DEFAULT_ADAPTIVE_CONCURRENCY,
+      start: 6,
+    });
+    const failedWave = limiter.captureRequestWave();
+
+    limiter.onFailure(failedWave);
+    succeedFromWave(
+      limiter,
+      failedWave,
+      DEFAULT_ADAPTIVE_CONCURRENCY.raiseAfterSuccesses,
+    );
+    expect(limiter.limit).toBe(3);
+
+    succeed(limiter, DEFAULT_ADAPTIVE_CONCURRENCY.raiseAfterSuccesses);
     expect(limiter.limit).toBe(4);
   });
 
@@ -43,15 +94,31 @@ describe("adaptive concurrency", () => {
       maximum: 10,
       start: 8,
     });
-    limiter.onFailure();
-    for (let i = 0; i < 200; i += 1) limiter.onSuccess();
+    fail(limiter);
+    succeed(limiter, 200);
     expect(limiter.limit).toBeLessThan(8);
+  });
+
+  it("remembers the limit at which an older request actually failed", () => {
+    const limiter = new AdaptiveConcurrency({
+      ...DEFAULT_ADAPTIVE_CONCURRENCY,
+      maximum: 6,
+      start: 4,
+    });
+    const requestStartedAtFour = limiter.captureRequestWave();
+    succeed(limiter, DEFAULT_ADAPTIVE_CONCURRENCY.raiseAfterSuccesses);
+    expect(limiter.limit).toBe(5);
+
+    limiter.onFailure(requestStartedAtFour);
+    expect(limiter.limit).toBe(2);
+    succeed(limiter, 200);
+    expect(limiter.limit).toBe(3);
   });
 
   it("settles just below the ceiling it found", () => {
     const limiter = new AdaptiveConcurrency({ ...DEFAULT_ADAPTIVE_CONCURRENCY, start: 6 });
-    limiter.onFailure();
-    for (let i = 0; i < 200; i += 1) limiter.onSuccess();
+    fail(limiter);
+    succeed(limiter, 200);
     expect(limiter.limit).toBe(5);
   });
 
@@ -62,15 +129,15 @@ describe("adaptive concurrency", () => {
       maximum: 10,
       start: 8,
     });
-    limiter.onFailure();
-    limiter.onFailure();
-    for (let i = 0; i < 200; i += 1) limiter.onSuccess();
+    fail(limiter);
+    fail(limiter);
+    succeed(limiter, 200);
     expect(limiter.limit).toBe(3);
   });
 
   it("never drops below one, so the run still finishes", () => {
     const limiter = new AdaptiveConcurrency();
-    for (let i = 0; i < 20; i += 1) limiter.onFailure();
+    for (let i = 0; i < 20; i += 1) fail(limiter);
     expect(limiter.limit).toBe(1);
   });
 
@@ -78,14 +145,14 @@ describe("adaptive concurrency", () => {
     // 상류가 실패 대신 조용히 느려지는 구간이 있으면 이 알고리즘은 계속 오른다.
     // 관측되지 않은 영역까지 올라가지 않는다.
     const limiter = new AdaptiveConcurrency();
-    for (let i = 0; i < 500; i += 1) limiter.onSuccess();
+    succeed(limiter, 500);
     expect(limiter.limit).toBe(DEFAULT_ADAPTIVE_CONCURRENCY.maximum);
   });
 
   it("resets the success streak when a failure interrupts it", () => {
     const limiter = new AdaptiveConcurrency({ ...DEFAULT_ADAPTIVE_CONCURRENCY, start: 2 });
     succeed(limiter, 3);
-    limiter.onFailure();
+    fail(limiter);
     succeed(limiter, 3);
     // 실패가 연속을 끊었으므로 아직 올라가지 않는다.
     expect(limiter.limit).toBe(1);
@@ -94,7 +161,7 @@ describe("adaptive concurrency", () => {
   it("says what it found, for diagnosis", () => {
     const fresh = new AdaptiveConcurrency();
     expect(fresh.describe()).toContain("상한 미확인");
-    fresh.onFailure();
+    fail(fresh);
     expect(fresh.describe()).toContain("에서 실패");
   });
 
@@ -126,5 +193,79 @@ describe("adaptive concurrency", () => {
     expect(starts).toEqual([11_000]);
     expect(paced.nextStartAtMs).toBe(12_000);
     await expect(paced.started).resolves.toBe("started");
+  });
+
+  it("rechecks a reduced limit after spacing before starting another request", async () => {
+    const limiter = new AdaptiveConcurrency({
+      ...DEFAULT_ADAPTIVE_CONCURRENCY,
+      start: 6,
+    });
+    const failedRequest = limiter.captureRequestWave();
+    const createDeferred = () => {
+      let resolve!: () => void;
+      const promise = new Promise<void>((done) => {
+        resolve = done;
+      });
+      return { promise, resolve };
+    };
+    const deferred = [
+      createDeferred(),
+      createDeferred(),
+      createDeferred(),
+      createDeferred(),
+      createDeferred(),
+    ] as const;
+    const inFlight = new Set(deferred.map(({ promise }) => promise));
+    for (const request of inFlight) {
+      void request.then(() => inFlight.delete(request));
+    }
+
+    let nowMs = 0;
+    let enteredCapacityGate!: () => void;
+    const capacityGateEntered = new Promise<void>((resolve) => {
+      enteredCapacityGate = resolve;
+    });
+    const starts: number[] = [];
+    const pacedPromise = startAfterRequestSpacing(
+      1_000,
+      1_000,
+      () => {
+        starts.push(inFlight.size);
+        return Promise.resolve();
+      },
+      {
+        now: () => nowMs,
+        wait: async (delayMs) => {
+          nowMs += delayMs;
+          limiter.onFailure(failedRequest);
+          deferred[0].resolve();
+          await deferred[0].promise;
+        },
+      },
+      async () => {
+        enteredCapacityGate();
+        await waitForAdaptiveConcurrencyCapacity(inFlight, limiter);
+      },
+    );
+
+    await capacityGateEntered;
+    expect(limiter.limit).toBe(3);
+    expect(inFlight.size).toBe(4);
+    expect(starts).toEqual([]);
+
+    deferred[1].resolve();
+    await deferred[1].promise;
+    await Promise.resolve();
+    expect(inFlight.size).toBe(3);
+    expect(starts).toEqual([]);
+
+    deferred[2].resolve();
+    const paced = await pacedPromise;
+    expect(inFlight.size).toBe(2);
+    expect(starts).toEqual([2]);
+    await paced.started;
+
+    deferred[3].resolve();
+    deferred[4].resolve();
   });
 });
