@@ -33,6 +33,14 @@
 - candidate/context의 HTTP 200 응답 본문이 끝나지 않으면 quota 정산은 `succeeded`가 아니라 `outcome-unknown`을 선점한다. 유료 요청을 자동으로 다시 보내거나 fallback으로 이중 결제하지 않는다.
 - 릴리스 게이트는 strict TypeScript, ESLint warning 0, **106개 테스트 파일 / 1,174개 테스트**, production Vite build, Wrangler dry-run을 통과했다. 빌드는 main JS 739.96kB(gzip 215.62kB), CSS 185.95kB(gzip 32.52kB), Worker 323.08KiB(gzip 62.12KiB)다.
 
+### 실서비스 배포 검증
+
+- Worker `c9b27938-80e6-4dc6-b6cb-d2a05d4a495a`를 quota `required`, coordinator 준비 완료, 최대 활성 참가자 5명 상태로 배포했다. Pages origin에서 quota·전사·맥락·후보 해석 경로의 OPTIONS 204와 CORS 허용 헤더를 확인했다.
+- 음식 토크 원본의 서로 다른 30초 구간 10개를 새 브라우저 경로와 같은 Base64 JSON·quota digest 계약으로 전송했다. **10/10 HTTP 200**, 응답 시간은 4.14~6.37초였고 error-only Worker tail에는 CPU 1102, 408, 409, 413, provider 429, 헤더 없는 CORS 종료가 한 건도 없었다.
+- 진단 스크립트가 매번 새 참가자 ID를 만든 상태에서 여섯 번째 입장이 한 번 `capacity-full` 429가 된 것은 최대 5명 정책의 정상 동작이다. 2분 유휴 만료 뒤 같은 전사 구간은 HTTP 200으로 처리됐다.
+- 음식 토크 길이와 같은 8,114,817ms를 144개 연속 chapter와 후보 6개로 구성한 대표 맥락 요청은 42.979초에 HTTP 200으로 완료됐다. 결과는 schema 1.6.0, 후보 주석 6개, 의미 구간 6개, 발견 단서 7개, coverage `complete`였으며 모델은 Qwen 3.7 Plus였다.
+- 위 맥락 요청이 끝난 직후 동일 terminal operation에 구버전 방식의 `cancel`을 보내도 HTTP 200과 `OPERATION_ALREADY_FINISHED` 상태를 반환했다. 과거의 맥락 502 뒤 후속 quota 409 연쇄는 재현되지 않았다.
+
 ## 2026-07-27 `0.8.3` 5인 AI 용량 조정 · 30초 전사 경로 확정
 
 ### 기준선과 병합 범위
