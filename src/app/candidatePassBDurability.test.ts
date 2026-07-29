@@ -6,8 +6,11 @@ import {
 import {
   CANDIDATE_PASS_B_QWEN_MODEL_ID,
   CANDIDATE_PASS_B_QWEN_MODEL_REVISION,
+  CANDIDATE_PASS_B_ROUTING_MODEL_REVISION,
+  type CandidatePassBVerificationSourceFence,
   type CandidatePassBVideoFrame,
 } from "../analysis/candidatePassBWorkerProtocol";
+import { AMORETTO_CHANNEL_CAST_ROSTER_ID } from "../analysis/participantRoster";
 import {
   CANDIDATE_PASS_B_INSIGHT_SCHEMA_VERSION,
   type CandidatePassBInsightsRecord,
@@ -41,7 +44,22 @@ const frames: readonly CandidatePassBVideoFrame[] = [0, 1, 2, 3].map(
     dataBase64: "AQID",
   }),
 );
-const receipt = createCandidatePassBVerificationReceipt(context, frames, 1_000)!;
+const sourceFence = {
+  candidateId: "candidate",
+  sourceStartMs: 10_000,
+  sourceEndMs: 50_000,
+  routingModelRevision: CANDIDATE_PASS_B_ROUTING_MODEL_REVISION,
+  refinementEvidenceProjectionFingerprint: null,
+  outputLanguage: "ko",
+  castRosterId: null,
+} as const satisfies CandidatePassBVerificationSourceFence;
+const sourceFenceByCandidateId = { candidate: sourceFence };
+const receipt = createCandidatePassBVerificationReceipt(
+  context,
+  frames,
+  1_000,
+  sourceFence,
+)!;
 
 function insight(
   overrides: Partial<StoredCandidatePassBInsight> = {},
@@ -109,14 +127,182 @@ function record(
 
 describe("candidate Pass B durable artifacts", () => {
   it("accepts only a complete read-back artifact set bound to current context", () => {
-    expect(candidatePassBArtifactIsDurable(record(), "candidate", context)).toBe(true);
+    expect(candidatePassBArtifactIsDurable(record(), sourceFence, context)).toBe(true);
     expect(
       selectCandidatePassBDurabilityOutstandingIds({
         candidateIds: ["candidate"],
         record: record(),
         contextByCandidateId: { candidate: context },
+        sourceFenceByCandidateId,
       }),
     ).toEqual([]);
+  });
+
+  it("reruns analysis and durability when the current candidate range moved", () => {
+    const movedFence = {
+      ...sourceFence,
+      sourceStartMs: sourceFence.sourceStartMs + 1_000,
+      sourceEndMs: sourceFence.sourceEndMs + 1_000,
+    };
+    expect(candidatePassBArtifactIsDurable(record(), movedFence, context)).toBe(
+      false,
+    );
+    expect(
+      selectCandidatePassBAnalysisOutstandingIds({
+        candidateIds: ["candidate"],
+        insightByCandidateId: record().insightById,
+        receiptByCandidateId: { candidate: receipt },
+        contextByCandidateId: { candidate: context },
+        sourceFenceByCandidateId: { candidate: movedFence },
+      }),
+    ).toEqual(["candidate"]);
+    expect(
+      selectCandidatePassBDurabilityOutstandingIds({
+        candidateIds: ["candidate"],
+        record: record(),
+        contextByCandidateId: { candidate: context },
+        sourceFenceByCandidateId: { candidate: movedFence },
+      }),
+    ).toEqual(["candidate"]);
+  });
+
+  it("reruns only the affected candidate when the active refinement projection changed", () => {
+    const changedRefinementFence = {
+      ...sourceFence,
+      refinementEvidenceProjectionFingerprint: `sha256:${"c".repeat(64)}`,
+    };
+
+    expect(
+      candidatePassBArtifactIsDurable(
+        record(),
+        changedRefinementFence,
+        context,
+      ),
+    ).toBe(false);
+    expect(
+      selectCandidatePassBAnalysisOutstandingIds({
+        candidateIds: ["candidate"],
+        insightByCandidateId: record().insightById,
+        receiptByCandidateId: { candidate: receipt },
+        contextByCandidateId: { candidate: context },
+        sourceFenceByCandidateId: { candidate: changedRefinementFence },
+      }),
+    ).toEqual(["candidate"]);
+  });
+
+  it.each([
+    ["output language", { ...sourceFence, outputLanguage: "en" as const }],
+    [
+      "cast roster",
+      {
+        ...sourceFence,
+        castRosterId: AMORETTO_CHANNEL_CAST_ROSTER_ID,
+      },
+    ],
+  ])("reruns when the current %s differs from the paid receipt", (_label, changedFence) => {
+    expect(
+      candidatePassBArtifactIsDurable(record(), changedFence, context),
+    ).toBe(false);
+    expect(
+      selectCandidatePassBAnalysisOutstandingIds({
+        candidateIds: ["candidate"],
+        insightByCandidateId: record().insightById,
+        receiptByCandidateId: { candidate: receipt },
+        contextByCandidateId: { candidate: context },
+        sourceFenceByCandidateId: { candidate: changedFence },
+      }),
+    ).toEqual(["candidate"]);
+  });
+
+  it("fails closed when the caller cannot reconstruct the current source fence", () => {
+    expect(
+      selectCandidatePassBAnalysisOutstandingIds({
+        candidateIds: ["candidate"],
+        insightByCandidateId: record().insightById,
+        receiptByCandidateId: { candidate: receipt },
+        contextByCandidateId: { candidate: context },
+        sourceFenceByCandidateId: {},
+      }),
+    ).toEqual(["candidate"]);
+    expect(
+      selectCandidatePassBDurabilityOutstandingIds({
+        candidateIds: ["candidate"],
+        record: record(),
+        contextByCandidateId: { candidate: context },
+        sourceFenceByCandidateId: {},
+      }),
+    ).toEqual(["candidate"]);
+  });
+
+  it("keeps a readable 1.1 receipt outstanding because it has no source fence", () => {
+    const legacyReceipt = {
+      schemaVersion: "1.1.0" as const,
+      contextSchemaVersion: context.schemaVersion,
+      transcriptSource: context.transcriptSource,
+      contextFingerprint: receipt.contextFingerprint,
+      audioReviewed: true as const,
+      videoFrameCount: 4 as const,
+      thumbnailPrepared: true as const,
+      thumbnailTimestampMs: 1_000,
+      referenceTranscriptReviewed: true as const,
+      broadcastContextReviewed: true as const,
+    };
+    expect(
+      selectCandidatePassBAnalysisOutstandingIds({
+        candidateIds: ["candidate"],
+        insightByCandidateId: record().insightById,
+        receiptByCandidateId: { candidate: legacyReceipt },
+        contextByCandidateId: { candidate: context },
+        sourceFenceByCandidateId,
+      }),
+    ).toEqual(["candidate"]);
+    expect(
+      candidatePassBArtifactIsDurable(
+        record({
+          verificationReceiptById: { candidate: legacyReceipt },
+        }),
+        sourceFence,
+        context,
+      ),
+    ).toBe(false);
+  });
+
+  it("keeps a readable 1.2 receipt outstanding because it has no refinement projection fence", () => {
+    const legacyReceipt = {
+      schemaVersion: "1.2.0" as const,
+      contextSchemaVersion: receipt.contextSchemaVersion,
+      transcriptSource: receipt.transcriptSource,
+      contextFingerprint: receipt.contextFingerprint,
+      candidateId: receipt.candidateId,
+      sourceStartMs: receipt.sourceStartMs,
+      sourceEndMs: receipt.sourceEndMs,
+      routingModelRevision: receipt.routingModelRevision,
+      audioReviewed: receipt.audioReviewed,
+      videoFrameCount: receipt.videoFrameCount,
+      thumbnailPrepared: receipt.thumbnailPrepared,
+      thumbnailTimestampMs: receipt.thumbnailTimestampMs,
+      referenceTranscriptReviewed: receipt.referenceTranscriptReviewed,
+      broadcastContextReviewed: receipt.broadcastContextReviewed,
+    };
+
+    expect(
+      selectCandidatePassBAnalysisOutstandingIds({
+        candidateIds: ["candidate"],
+        insightByCandidateId: record().insightById,
+        receiptByCandidateId: { candidate: legacyReceipt },
+        contextByCandidateId: { candidate: context },
+        sourceFenceByCandidateId,
+      }),
+    ).toEqual(["candidate"]);
+    expect(
+      candidatePassBArtifactIsDurable(
+        record({
+          verificationReceiptById: { candidate: legacyReceipt },
+        }),
+        sourceFence,
+        context,
+      ),
+    ).toBe(false);
   });
 
   it.each([
@@ -131,6 +317,7 @@ describe("candidate Pass B durable artifacts", () => {
         candidateIds: ["candidate"],
         record: record(overrides),
         contextByCandidateId: { candidate: context },
+        sourceFenceByCandidateId,
       }),
     ).toEqual(["candidate"]);
   });
@@ -143,7 +330,7 @@ describe("candidate Pass B durable artifacts", () => {
             candidate: { ...frames[1]!, timestampMs: 2_000 },
           },
         }),
-        "candidate",
+        sourceFence,
         context,
       ),
     ).toBe(false);
@@ -159,7 +346,7 @@ describe("candidate Pass B durable artifacts", () => {
     expect(
       candidatePassBArtifactIsDurable(
         record({ insightById: { candidate: incomplete } }),
-        "candidate",
+        sourceFence,
         context,
       ),
     ).toBe(false);
@@ -180,7 +367,7 @@ describe("candidate Pass B durable artifacts", () => {
     expect(
       candidatePassBArtifactIsDurable(
         record({ insightById: { candidate: incomplete } }),
-        "candidate",
+        sourceFence,
         context,
       ),
     ).toBe(false);
@@ -228,6 +415,7 @@ describe("candidate Pass B durable artifacts", () => {
       insightByCandidateId: { candidate: legacyInsight },
       receiptByCandidateId: { candidate: receipt },
       contextByCandidateId: { candidate: context },
+      sourceFenceByCandidateId,
     });
 
     expect(outstandingIds).toEqual(["candidate"]);

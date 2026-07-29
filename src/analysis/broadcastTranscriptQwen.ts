@@ -7,6 +7,10 @@ export const BROADCAST_TRANSCRIPT_GEMINI_MODEL_REVISION =
   "gemini-3.6-flash-audio-transcript-reviewed-2026-07-22" as const;
 export const BROADCAST_TRANSCRIPT_QWEN_OMNI_MODEL_ID =
   "qwen3.5-omni-flash" as const;
+export const BROADCAST_TRANSCRIPT_GROQ_MODEL_ID =
+  "whisper-large-v3-turbo" as const;
+export const BROADCAST_TRANSCRIPT_GROQ_MODEL_REVISION =
+  "groq-whisper-large-v3-turbo-ko-segment-v1-2026-07-29" as const;
 export const BROADCAST_TRANSCRIPT_BASE64_CONTENT_TYPE =
   "application/vnd.exclipper.transcript-base64" as const;
 export const BROADCAST_TRANSCRIPT_QWEN_MAX_OUTPUT_TOKENS = 1_024;
@@ -18,11 +22,24 @@ export const BROADCAST_TRANSCRIPT_QWEN_OMNI_MODEL_REVISION =
   "qwen3.5-omni-flash-audio-transcript-90s-reviewed-2026-07-22" as const;
 export const BROADCAST_TRANSCRIPT_ACTIVE_MODEL_REVISION =
   BROADCAST_TRANSCRIPT_QWEN_OMNI_MODEL_REVISION;
+export const BROADCAST_TRANSCRIPT_CHECKPOINT_MIXED_REVISION_PREFIX =
+  "broadcast-transcript-mixed-v1:" as const;
 export const MAX_BROADCAST_TRANSCRIPT_QWEN_DURATION_MS = 90_000;
 export const MAX_BROADCAST_TRANSCRIPT_DIRECT_DURATION_MS = 30_000;
 export const MAX_BROADCAST_TRANSCRIPT_QWEN_BASE64_LENGTH = 4_000_000;
 export const MAX_BROADCAST_TRANSCRIPT_QWEN_TEXT_LENGTH = 20_000;
 export const MAX_BROADCAST_TRANSCRIPT_QWEN_RESPONSE_BYTES = 128 * 1024;
+/** ExClipper's 90-second canonical 16 kHz mono PCM16 WAV ceiling. */
+export const MAX_BROADCAST_TRANSCRIPT_GROQ_WAV_BYTES = 2_880_044;
+/** Stricter than Groq's current 25 MiB free-tier file limit. */
+export const MAX_BROADCAST_TRANSCRIPT_GROQ_SEGMENTS = 512;
+export const MAX_BROADCAST_TRANSCRIPT_GROQ_MEDIA_URL_LENGTH = 2_048;
+
+export type BroadcastTranscriptProviderId = "gemini" | "qwen" | "groq";
+export type BroadcastTranscriptLiveModelId =
+  | typeof BROADCAST_TRANSCRIPT_GEMINI_MODEL_ID
+  | typeof BROADCAST_TRANSCRIPT_QWEN_OMNI_MODEL_ID
+  | typeof BROADCAST_TRANSCRIPT_GROQ_MODEL_ID;
 
 export interface BroadcastTranscriptQwenProxyRequest {
   readonly audioBase64: string;
@@ -35,7 +52,14 @@ export interface BroadcastTranscriptQwenResult {
   readonly modelId:
     | typeof BROADCAST_TRANSCRIPT_QWEN_MODEL_ID
     | typeof BROADCAST_TRANSCRIPT_GEMINI_MODEL_ID
-    | typeof BROADCAST_TRANSCRIPT_QWEN_OMNI_MODEL_ID;
+    | typeof BROADCAST_TRANSCRIPT_QWEN_OMNI_MODEL_ID
+    | typeof BROADCAST_TRANSCRIPT_GROQ_MODEL_ID;
+  /**
+   * Exact server-selected model revision. Older persisted fixtures can omit
+   * this field, but live proxy responses attach and validate it from the
+   * exposed response header before the result enters a checkpoint.
+   */
+  readonly modelRevision?: string;
   readonly sourceStartMs: number;
   readonly sourceEndMs: number;
   readonly textKo: string;
@@ -50,9 +74,135 @@ export function isBroadcastTranscriptModelId(
   return (
     value === BROADCAST_TRANSCRIPT_QWEN_MODEL_ID ||
     value === BROADCAST_TRANSCRIPT_GEMINI_MODEL_ID ||
-    value === BROADCAST_TRANSCRIPT_QWEN_OMNI_MODEL_ID
+    value === BROADCAST_TRANSCRIPT_QWEN_OMNI_MODEL_ID ||
+    value === BROADCAST_TRANSCRIPT_GROQ_MODEL_ID
   );
 }
+
+export function broadcastTranscriptModelRevisionForId(
+  modelId: BroadcastTranscriptQwenResult["modelId"],
+): string {
+  switch (modelId) {
+    case BROADCAST_TRANSCRIPT_QWEN_MODEL_ID:
+      return BROADCAST_TRANSCRIPT_QWEN_MODEL_REVISION;
+    case BROADCAST_TRANSCRIPT_GEMINI_MODEL_ID:
+      return BROADCAST_TRANSCRIPT_GEMINI_MODEL_REVISION;
+    case BROADCAST_TRANSCRIPT_QWEN_OMNI_MODEL_ID:
+      return BROADCAST_TRANSCRIPT_QWEN_OMNI_MODEL_REVISION;
+    case BROADCAST_TRANSCRIPT_GROQ_MODEL_ID:
+      return BROADCAST_TRANSCRIPT_GROQ_MODEL_REVISION;
+  }
+}
+
+export function broadcastTranscriptProviderForModelId(
+  modelId: BroadcastTranscriptQwenResult["modelId"],
+): BroadcastTranscriptProviderId {
+  switch (modelId) {
+    case BROADCAST_TRANSCRIPT_GEMINI_MODEL_ID:
+      return "gemini";
+    case BROADCAST_TRANSCRIPT_QWEN_MODEL_ID:
+    case BROADCAST_TRANSCRIPT_QWEN_OMNI_MODEL_ID:
+      return "qwen";
+    case BROADCAST_TRANSCRIPT_GROQ_MODEL_ID:
+      return "groq";
+  }
+}
+
+const CURRENT_BROADCAST_TRANSCRIPT_MODEL_REVISIONS = Object.freeze([
+  BROADCAST_TRANSCRIPT_QWEN_MODEL_REVISION,
+  BROADCAST_TRANSCRIPT_GEMINI_MODEL_REVISION,
+  BROADCAST_TRANSCRIPT_QWEN_OMNI_MODEL_REVISION,
+  BROADCAST_TRANSCRIPT_GROQ_MODEL_REVISION,
+] as const);
+
+function transcriptCheckpointRevisionMembers(
+  value: string,
+): readonly string[] | null {
+  if (
+    CURRENT_BROADCAST_TRANSCRIPT_MODEL_REVISIONS.some(
+      (revision) => revision === value,
+    )
+  ) {
+    return [value];
+  }
+  if (
+    value === BROADCAST_TRANSCRIPT_PREVIOUS_ACTIVE_MODEL_REVISION ||
+    value === BROADCAST_TRANSCRIPT_MIXED_CHECKPOINT_MODEL_REVISION
+  ) {
+    return [value];
+  }
+  if (!value.startsWith(BROADCAST_TRANSCRIPT_CHECKPOINT_MIXED_REVISION_PREFIX)) {
+    return null;
+  }
+  const members = value
+    .slice(BROADCAST_TRANSCRIPT_CHECKPOINT_MIXED_REVISION_PREFIX.length)
+    .split("|");
+  if (
+    members.length < 2 ||
+    new Set(members).size !== members.length ||
+    members.some(
+      (member) =>
+        !CURRENT_BROADCAST_TRANSCRIPT_MODEL_REVISIONS.some(
+          (revision) => revision === member,
+        ),
+    ) ||
+    [...members].sort().some((member, index) => member !== members[index])
+  ) {
+    return null;
+  }
+  return members;
+}
+
+export function isCompatibleBroadcastTranscriptCheckpointModelRevision(
+  value: unknown,
+): value is string {
+  return (
+    typeof value === "string" &&
+    transcriptCheckpointRevisionMembers(value) !== null
+  );
+}
+
+export function resolveBroadcastTranscriptCheckpointModelRevision(
+  transcripts: readonly BroadcastTranscriptQwenResult[],
+  fallbackRevision: string | null,
+): string {
+  const revisions = new Set<string>();
+  if (fallbackRevision !== null) {
+    const fallbackMembers =
+      transcriptCheckpointRevisionMembers(fallbackRevision);
+    if (fallbackMembers === null) {
+      throw new RangeError(
+        "Broadcast transcript checkpoint fallback revision is unknown.",
+      );
+    }
+    for (const member of fallbackMembers) revisions.add(member);
+  }
+  for (const transcript of transcripts) {
+    revisions.add(
+      transcript.modelRevision ??
+        broadcastTranscriptModelRevisionForId(transcript.modelId),
+    );
+  }
+  if (revisions.size === 0) {
+    throw new RangeError(
+      "Broadcast transcript checkpoint requires a known model revision.",
+    );
+  }
+  const ordered = [...revisions].sort();
+  return ordered.length === 1
+    ? ordered[0]!
+    : `${BROADCAST_TRANSCRIPT_CHECKPOINT_MIXED_REVISION_PREFIX}${ordered.join("|")}`;
+}
+
+export type BroadcastTranscriptGroqAudioSource =
+  | {
+      readonly kind: "audio-url";
+      readonly audioUrl: string;
+    }
+  | {
+      readonly kind: "wav-bytes";
+      readonly wavBytes: Uint8Array;
+    };
 
 interface QwenAsrAnnotation {
   readonly language: string | null;
@@ -248,6 +398,146 @@ export function buildBroadcastTranscriptQwenOmniRequestBody(audioBase64: string)
     stream_options: { include_usage: true },
     modalities: ["text"],
     max_tokens: BROADCAST_TRANSCRIPT_QWEN_MAX_OUTPUT_TOKENS,
+  };
+}
+
+function normalizedGroqLanguage(value: unknown): "ko" | null {
+  if (typeof value !== "string") return null;
+  const normalized = value.trim().toLowerCase();
+  return normalized === "ko" || normalized === "korean" ? "ko" : null;
+}
+
+function isBoundedHttpsMediaUrl(value: unknown): value is string {
+  if (
+    typeof value !== "string" ||
+    value.length === 0 ||
+    value.length > MAX_BROADCAST_TRANSCRIPT_GROQ_MEDIA_URL_LENGTH
+  ) {
+    return false;
+  }
+  try {
+    const parsed = new URL(value);
+    return (
+      parsed.protocol === "https:" &&
+      parsed.username === "" &&
+      parsed.password === "" &&
+      parsed.hash === ""
+    );
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Builds Groq's multipart speech-to-text request entirely on the server.
+ *
+ * The caller controls only already-validated audio bytes or a server-created
+ * short-lived HTTPS media capability. Model, Korean language, timestamps and
+ * decoding behavior remain fixed here and never cross the Pages boundary.
+ */
+export function buildBroadcastTranscriptGroqRequestBody(
+  source: BroadcastTranscriptGroqAudioSource,
+): FormData {
+  const body = new FormData();
+  if (source.kind === "audio-url") {
+    if (!isBoundedHttpsMediaUrl(source.audioUrl)) {
+      throw new RangeError("Groq transcript media URL must be bounded HTTPS.");
+    }
+    body.append("url", source.audioUrl);
+  } else {
+    if (
+      !(source.wavBytes instanceof Uint8Array) ||
+      source.wavBytes.byteLength < 44 ||
+      source.wavBytes.byteLength > MAX_BROADCAST_TRANSCRIPT_GROQ_WAV_BYTES
+    ) {
+      throw new RangeError("Groq transcript audio must be a bounded WAV payload.");
+    }
+    const copy = new Uint8Array(source.wavBytes.byteLength);
+    copy.set(source.wavBytes);
+    body.append(
+      "file",
+      new Blob([copy.buffer], { type: "audio/wav" }),
+      "broadcast-chunk.wav",
+    );
+  }
+  body.append("model", BROADCAST_TRANSCRIPT_GROQ_MODEL_ID);
+  body.append("language", "ko");
+  body.append("response_format", "verbose_json");
+  body.append("timestamp_granularities[]", "segment");
+  body.append("temperature", "0");
+  return body;
+}
+
+/**
+ * Validates Groq's verbose JSON response and its segment timestamps before
+ * projecting it onto the provider-neutral transcript result contract.
+ */
+export function extractBroadcastTranscriptGroqResponse(
+  value: unknown,
+  request: Pick<
+    BroadcastTranscriptQwenProxyRequest,
+    "sourceStartMs" | "durationMs"
+  >,
+): BroadcastTranscriptQwenResult | null {
+  if (
+    !isRecord(value) ||
+    normalizedGroqLanguage(value.language) === null ||
+    typeof value.duration !== "number" ||
+    !Number.isFinite(value.duration) ||
+    value.duration <= 0 ||
+    value.duration > request.durationMs / 1_000 + 1 ||
+    !Array.isArray(value.segments) ||
+    value.segments.length > MAX_BROADCAST_TRANSCRIPT_GROQ_SEGMENTS
+  ) {
+    return null;
+  }
+
+  const segmentTexts: string[] = [];
+  let previousStartSeconds = -1;
+  for (const segment of value.segments) {
+    if (
+      !isRecord(segment) ||
+      typeof segment.start !== "number" ||
+      !Number.isFinite(segment.start) ||
+      typeof segment.end !== "number" ||
+      !Number.isFinite(segment.end) ||
+      segment.start < 0 ||
+      segment.start < previousStartSeconds ||
+      segment.end < segment.start ||
+      segment.end > request.durationMs / 1_000 + 1
+    ) {
+      return null;
+    }
+    const text = normalizedTranscript(segment.text);
+    if (text === null) return null;
+    segmentTexts.push(text);
+    previousStartSeconds = segment.start;
+  }
+
+  const rawTopLevelText =
+    typeof value.text === "string" ? value.text.trim() : null;
+  const text =
+    rawTopLevelText === ""
+      ? segmentTexts.length === 0
+        ? "[대사 없음]"
+        : normalizedTranscript(segmentTexts.join(" "))
+      : normalizedTranscript(rawTopLevelText);
+  if (
+    text === null ||
+    (text !== "[대사 없음]" && !/\p{Script=Hangul}/u.test(text)) ||
+    (text !== "[대사 없음]" && segmentTexts.length === 0)
+  ) {
+    return null;
+  }
+  return {
+    schemaVersion: BROADCAST_TRANSCRIPT_QWEN_SCHEMA_VERSION,
+    modelId: BROADCAST_TRANSCRIPT_GROQ_MODEL_ID,
+    sourceStartMs: request.sourceStartMs,
+    sourceEndMs: request.sourceStartMs + request.durationMs,
+    textKo: text,
+    detectedLanguage: text === "[대사 없음]" ? null : "ko",
+    emotion: null,
+    billedSeconds: value.duration,
   };
 }
 

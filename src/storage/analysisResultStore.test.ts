@@ -3,8 +3,14 @@ import { describe, expect, it } from "vitest";
 import {
   ANALYSIS_RESULT_OBJECT_STORES,
   AnalysisResultStoreError,
+  checkpointBroadcastContextSessionRefinementEvidenceLedgerWithReadback,
+  checkpointBroadcastContextSessionTranscriptIfUnchanged,
+  checkpointBroadcastContextSessionPhaseLedgerIfUnchanged,
+  checkpointBroadcastContextSessionRefinementTranscriptIfUnchanged,
+  commitBroadcastContextSessionContextIfUnchanged,
   InMemoryAnalysisResultStore,
   IndexedDbAnalysisResultStore,
+  invalidateBroadcastContextSessionContextIfUnchanged,
   type AnalysisFailureRecord,
   type AnalysisJobRecord,
   type AnalysisManifestRecord,
@@ -18,10 +24,222 @@ import type {
   DurableFinalResultPayload,
   DurableHighlightCandidate,
 } from "./durableAnalysisPayload";
+import {
+  BROADCAST_CONTEXT_SESSION_SCHEMA_VERSION,
+  createBroadcastParticipantGroundingInputSignature,
+  type BroadcastContextSessionRecord,
+} from "./broadcastContextSessionStore";
+import {
+  CANDIDATE_PASS_B_INSIGHT_SCHEMA_VERSION,
+  type CandidatePassBInsightsRecord,
+} from "./candidatePassBInsightStore";
+import { createBroadcastParticipantGrounding } from "../analysis/broadcastParticipantGrounding";
+import {
+  createBroadcastContextPhaseLedger,
+  serializeBroadcastContextPhaseLedger,
+} from "../analysis/broadcastContextPhaseLedger";
+import {
+  createBroadcastRefinementTranscriptCheckpoint,
+  recordBroadcastRefinementTranscriptAbstention,
+  serializeBroadcastRefinementTranscriptCheckpoint,
+} from "../analysis/broadcastRefinementTranscriptCheckpoint";
+import { createVerifiedNoSpeechRunReceiptForTest } from "../testSupport/broadcastSpeechActivityTestReceipt";
+import {
+  createBroadcastTranscriptResolvedEvidenceCheckpoint,
+  recordBroadcastTranscriptResolvedEvidence,
+  serializeBroadcastTranscriptResolvedEvidenceCheckpoint,
+} from "../analysis/broadcastTranscriptResolvedEvidence";
+import {
+  createBroadcastRefinementEvidenceLedger,
+  serializeBroadcastRefinementEvidenceLedger,
+} from "../analysis/broadcastRefinementEvidenceLedger";
+import { DISCOVERED_LEAD_REFINEMENT_VERSION } from "../analysis/discoveredLeadRefinement";
 
 const RECORDED_AT = "2026-07-19T12:34:56.000Z";
 const INPUT_SIGNATURE = `sha256:${"a".repeat(64)}`;
 const SOURCE_FINGERPRINT = `local-file-sampled-sha256-v1:${"b".repeat(64)}`;
+
+function makeCandidatePassBInsights(
+  recordedAt = RECORDED_AT,
+): CandidatePassBInsightsRecord {
+  return {
+    kind: "candidatePassBInsights",
+    runId: "run-candidate-pass-b-cas",
+    schemaVersion: CANDIDATE_PASS_B_INSIGHT_SCHEMA_VERSION,
+    inputSignature: INPUT_SIGNATURE,
+    modelManifestHash: "candidate-pass-b-cas-model",
+    evidenceById: {},
+    insightById: {},
+    recordedAt,
+  };
+}
+
+function makeBroadcastContextSession(
+  recordedAt = RECORDED_AT,
+): BroadcastContextSessionRecord {
+  return {
+    kind: "broadcastContextSession",
+    runId: "run-context-cas",
+    schemaVersion: BROADCAST_CONTEXT_SESSION_SCHEMA_VERSION,
+    inputSignature: INPUT_SIGNATURE,
+    sourceDurationMs: 60_000,
+    completeAudioCoverage: true,
+    chapters: [
+      {
+        chapterId: "chapter-1",
+        startMs: 0,
+        endMs: 60_000,
+        evidenceMode: "complete-transcript",
+        evidenceCoverageRatio: 1,
+        summaryKo: "방송 대사 지도",
+      },
+    ],
+    gapChunkIds: [],
+    fragmentGaps: [],
+    transcriptEvidenceInputSignature: null,
+    transcriptEvidenceCheckpointJson: null,
+    transcriptProviderReceiptInputSignature: null,
+    transcriptProviderReceiptCheckpointJson: null,
+    modelRevision: "qwen3-asr-test",
+    sourceCastRosterId: null,
+    transcriptSealOperationKey: "run-context-cas:source:event-boost:attempt-0",
+    participantGroundingInputSignature: null,
+    participantGroundingPlanFingerprint: null,
+    participantGroundingCheckpointJson: null,
+    contextInputSignature: null,
+    contextInputCheckpointJson: null,
+    contextPhaseLedgerJson: null,
+    contextResultJson: null,
+    refinementTranscriptInputSignature: null,
+    refinementTranscriptCheckpointJson: null,
+    refinementEvidenceLedgerJson: null,
+    refinementInputSignature: null,
+    refinementCandidatesJson: null,
+    recordedAt,
+  };
+}
+
+function makeRefinementTranscriptCheckpointJson(
+  refinementInputSignature = "refinement-transcript-signature-v1",
+): string {
+  let checkpoint = createBroadcastRefinementTranscriptCheckpoint({
+    refinementInputSignature,
+    plannedChunks: [
+      {
+        chunkId: "refine-001",
+        sourceStartMs: 0,
+        sourceEndMs: 60_000,
+        kind: "event",
+      },
+    ],
+  });
+  checkpoint = recordBroadcastRefinementTranscriptAbstention(
+    checkpoint,
+    "refine-001",
+    "no-speech",
+    createVerifiedNoSpeechRunReceiptForTest(60_000, 0, 60_000),
+  );
+  return serializeBroadcastRefinementTranscriptCheckpoint(checkpoint);
+}
+
+function makeTranscriptEvidenceCheckpointJson(
+  transcriptInputSignature = "transcript-plan-signature-v1",
+): string {
+  let checkpoint =
+    createBroadcastTranscriptResolvedEvidenceCheckpoint({
+      sourceFingerprint: INPUT_SIGNATURE,
+      sourceDurationMs: 60_000,
+      transcriptInputSignature,
+      modelRevision: "qwen3-asr-test",
+      plannedCells: [
+        {
+          chunkId: "asr-001",
+          sourceStartMs: 0,
+          sourceEndMs: 60_000,
+        },
+      ],
+    });
+  checkpoint = recordBroadcastTranscriptResolvedEvidence(
+    checkpoint,
+    "asr-001",
+    "no-speech",
+    createVerifiedNoSpeechRunReceiptForTest(60_000, 0, 60_000),
+  );
+  return serializeBroadcastTranscriptResolvedEvidenceCheckpoint(checkpoint);
+}
+
+function makeCompletedBroadcastContextSession(): BroadcastContextSessionRecord {
+  const session = makeBroadcastContextSession();
+  const participantGrounding = createBroadcastParticipantGrounding({
+    sourceDurationMs: session.sourceDurationMs,
+    castRosterId: session.sourceCastRosterId,
+    chapters: session.chapters,
+  });
+  return {
+    ...session,
+    participantGroundingInputSignature: "participant-signature",
+    participantGroundingPlanFingerprint: "participant-plan-fingerprint-v1",
+    participantGroundingCheckpointJson: JSON.stringify(participantGrounding),
+    contextInputSignature: "context-signature-v1",
+    contextInputCheckpointJson: JSON.stringify({
+      sourceDurationMs: session.sourceDurationMs,
+      chapters: session.chapters,
+      candidates: [],
+      participantGrounding,
+      outputLanguage: "ko",
+    }),
+    contextResultJson: JSON.stringify({ schemaVersion: "1.7.0" }),
+    refinementInputSignature: "refinement-signature-v1",
+    refinementCandidatesJson: "[]",
+  };
+}
+
+async function makeRefinementEvidenceLedgerJson(
+  session: BroadcastContextSessionRecord,
+): Promise<string> {
+  const ledger = await createBroadcastRefinementEvidenceLedger({
+    sourceFingerprint: session.inputSignature,
+    sourceDurationMs: session.sourceDurationMs,
+    selectedLeadPlan: {
+      version: DISCOVERED_LEAD_REFINEMENT_VERSION,
+      selectedLeadIds: [],
+      segments: [],
+      estimatedAsrCostUsd: 0,
+    },
+  });
+  return serializeBroadcastRefinementEvidenceLedger(ledger);
+}
+
+function makeContextPhaseLedgerJson(
+  session: BroadcastContextSessionRecord,
+  contextInputSignature: string,
+): string {
+  if (
+    session.transcriptSealOperationKey === null ||
+    session.participantGroundingInputSignature === null
+  ) {
+    throw new TypeError("The test session must have complete ledger fences.");
+  }
+  return serializeBroadcastContextPhaseLedger(
+    createBroadcastContextPhaseLedger({
+      fence: {
+        parentContextSignature: contextInputSignature,
+        transcriptSignature: session.transcriptSealOperationKey,
+        groundingSignature: session.participantGroundingInputSignature,
+      },
+      units: [
+        {
+          phase: "discovery",
+          unitId: "chapter-1",
+          inputDigest: "digest-1",
+          operationId: `operation:${contextInputSignature}`,
+          attemptOrdinal: 0,
+          required: true,
+        },
+      ],
+    }),
+  );
+}
 
 const VISUAL_CANDIDATE: DurableHighlightCandidate = {
   id: "highlight-visual-1234abcd",
@@ -138,7 +356,8 @@ function makeManifest(runId = "run-1"): AnalysisManifestRecord {
       chatGapPolicy: {
         policyId: "local-chat-worker-degradation-v1",
         disclosedBeforeStart: true,
-        behavior: "preserve-visual-result-and-complete-with-documented-chat-gap",
+        behavior:
+          "preserve-visual-result-and-complete-with-documented-chat-gap",
       },
     },
     recordedAt: RECORDED_AT,
@@ -216,7 +435,8 @@ function makeReactionManifest(): AnalysisManifestRecord {
       signalGapPolicy: {
         policyId: "local-available-signal-degradation-v2",
         disclosedBeforeStart: true,
-        behavior: "complete-with-available-reaction-signals-and-documented-gaps",
+        behavior:
+          "complete-with-available-reaction-signals-and-documented-gaps",
       },
     },
     recordedAt: RECORDED_AT,
@@ -301,7 +521,10 @@ function makeSourceSnapshot(
   };
 }
 
-function expectStoreError(error: unknown, code: AnalysisResultStoreError["code"]): void {
+function expectStoreError(
+  error: unknown,
+  code: AnalysisResultStoreError["code"],
+): void {
   expect(error).toBeInstanceOf(AnalysisResultStoreError);
   expect(error).toMatchObject({ code });
 }
@@ -309,23 +532,37 @@ function expectStoreError(error: unknown, code: AnalysisResultStoreError["code"]
 describe("InMemoryAnalysisResultStore contract", () => {
   it("keeps exact legacy 0.2.x records readable", async () => {
     const store = new InMemoryAnalysisResultStore();
-    const manifest = { ...makeManifest("run-legacy-patch"), schemaVersion: "0.2.9" };
+    const manifest = {
+      ...makeManifest("run-legacy-patch"),
+      schemaVersion: "0.2.9",
+    };
     const final = { ...makeFinal("run-legacy-patch"), schemaVersion: "0.2.9" };
-    const terminal = { ...makeTerminal("run-legacy-patch"), schemaVersion: "0.2.9" };
+    const terminal = {
+      ...makeTerminal("run-legacy-patch"),
+      schemaVersion: "0.2.9",
+    };
 
     await expect(store.putManifest(manifest)).resolves.toBeUndefined();
     await expect(store.putFinalResult(final)).resolves.toBeUndefined();
     await expect(store.putTerminalRecord(terminal)).resolves.toBeUndefined();
-    await expect(store.getFinalResult("run-legacy-patch")).resolves.toEqual(final);
+    await expect(store.getFinalResult("run-legacy-patch")).resolves.toEqual(
+      final,
+    );
   });
 
   it("accepts reaction-first audio evidence and documented audio unavailability", async () => {
     const store = new InMemoryAnalysisResultStore();
 
-    await expect(store.putManifest(makeReactionManifest())).resolves.toBeUndefined();
-    await expect(store.putFinalResult(makeReactionFinal())).resolves.toBeUndefined();
     await expect(
-      store.putFinalResult(makeReactionFinal(makeReactionPayload("NO_AUDIO_TRACK"))),
+      store.putManifest(makeReactionManifest()),
+    ).resolves.toBeUndefined();
+    await expect(
+      store.putFinalResult(makeReactionFinal()),
+    ).resolves.toBeUndefined();
+    await expect(
+      store.putFinalResult(
+        makeReactionFinal(makeReactionPayload("NO_AUDIO_TRACK")),
+      ),
     ).resolves.toBeUndefined();
   });
 
@@ -338,12 +575,17 @@ describe("InMemoryAnalysisResultStore contract", () => {
         ...candidate,
         evidence: {
           ...candidate.evidence,
-          audio: { ...candidate.evidence.audio, transcript: "SECRET SPOKEN WORDS" },
+          audio: {
+            ...candidate.evidence.audio,
+            transcript: "SECRET SPOKEN WORDS",
+          },
         },
       })),
     } as unknown as DurableFinalResultPayload;
 
-    await expect(store.putFinalResult(makeReactionFinal(unsafe))).rejects.toMatchObject({
+    await expect(
+      store.putFinalResult(makeReactionFinal(unsafe)),
+    ).rejects.toMatchObject({
       code: "INVALID_PAYLOAD",
     });
   });
@@ -365,7 +607,9 @@ describe("InMemoryAnalysisResultStore contract", () => {
       modelManifestHash: "visual-chat-fast-pass-v1",
       result: { summary: { candidateCount: 1 } },
     });
-    await expect(store.getTerminalRecord("run-1")).resolves.toEqual(makeTerminal());
+    await expect(store.getTerminalRecord("run-1")).resolves.toEqual(
+      makeTerminal(),
+    );
   });
 
   it("uses one terminal disposition as the recovery authority even when artifacts coexist", async () => {
@@ -419,16 +663,24 @@ describe("InMemoryAnalysisResultStore contract", () => {
       schemaVersion: "0.2.1",
     };
 
-    await expect(store.putManifest(legacyManifestWithReactionVersion)).rejects.toMatchObject({
+    await expect(
+      store.putManifest(legacyManifestWithReactionVersion),
+    ).rejects.toMatchObject({
       code: "INVALID_PAYLOAD",
     });
-    await expect(store.putManifest(reactionManifestWithLegacyVersion)).rejects.toMatchObject({
+    await expect(
+      store.putManifest(reactionManifestWithLegacyVersion),
+    ).rejects.toMatchObject({
       code: "INVALID_PAYLOAD",
     });
-    await expect(store.putFinalResult(legacyFinalWithReactionVersion)).rejects.toMatchObject({
+    await expect(
+      store.putFinalResult(legacyFinalWithReactionVersion),
+    ).rejects.toMatchObject({
       code: "INVALID_PAYLOAD",
     });
-    await expect(store.putFinalResult(reactionFinalWithLegacyVersion)).rejects.toMatchObject({
+    await expect(
+      store.putFinalResult(reactionFinalWithLegacyVersion),
+    ).rejects.toMatchObject({
       code: "INVALID_PAYLOAD",
     });
   });
@@ -443,7 +695,10 @@ describe("InMemoryAnalysisResultStore contract", () => {
       store.putFinalResult({ ...makeReactionFinal(), schemaVersion: "0.4.0" }),
     ).rejects.toMatchObject({ code: "INVALID_PAYLOAD" });
     await expect(
-      store.putTerminalRecord({ ...makeTerminal("run-future"), schemaVersion: "0.4.0" }),
+      store.putTerminalRecord({
+        ...makeTerminal("run-future"),
+        schemaVersion: "0.4.0",
+      }),
     ).rejects.toMatchObject({ code: "INVALID_PAYLOAD" });
   });
 
@@ -480,23 +735,31 @@ describe("InMemoryAnalysisResultStore contract", () => {
   });
 
   it.each([
-    ["temporary Object URL", { previewUrl: "blob:https://example.test/temporary" }],
+    [
+      "temporary Object URL",
+      { previewUrl: "blob:https://example.test/temporary" },
+    ],
     ["raw chat", { rawChat: [{ text: "original chat line" }] }],
     ["nickname", { nickname: "viewer-name" }],
     ["message collection", { messages: ["original chat line"] }],
     ["blacklist bypass", { entries: [{ speaker: "nick", body: "raw line" }] }],
-  ])("rejects %s in durable analysis payloads", async (_label, unsafeResult) => {
-    const store = new InMemoryAnalysisResultStore();
-    await expect(store.putFinalResult(makeFinal(
-      "run-unsafe",
-      unsafeResult as unknown as DurableFinalResultPayload,
-    ))).rejects.toSatisfy(
-      (error: unknown) => {
+  ])(
+    "rejects %s in durable analysis payloads",
+    async (_label, unsafeResult) => {
+      const store = new InMemoryAnalysisResultStore();
+      await expect(
+        store.putFinalResult(
+          makeFinal(
+            "run-unsafe",
+            unsafeResult as unknown as DurableFinalResultPayload,
+          ),
+        ),
+      ).rejects.toSatisfy((error: unknown) => {
         expectStoreError(error, "INVALID_PAYLOAD");
         return true;
-      },
-    );
-  });
+      });
+    },
+  );
 
   it("rejects raw chat aliases hidden inside otherwise valid allowlisted payloads", async () => {
     const valid = makeFinalPayload();
@@ -531,7 +794,10 @@ describe("InMemoryAnalysisResultStore contract", () => {
       const store = new InMemoryAnalysisResultStore();
       await expect(
         store.putFinalResult(
-          makeFinal(`run-hidden-${index}`, payload as unknown as DurableFinalResultPayload),
+          makeFinal(
+            `run-hidden-${index}`,
+            payload as unknown as DurableFinalResultPayload,
+          ),
         ),
       ).rejects.toMatchObject({ code: "INVALID_PAYLOAD" });
     }
@@ -546,7 +812,9 @@ describe("InMemoryAnalysisResultStore contract", () => {
         mimeType: "raw line",
       },
     } as unknown as SourceCapabilitySnapshotRecord;
-    await expect(store.putSourceSnapshot(sourceWithRawMime)).rejects.toMatchObject({
+    await expect(
+      store.putSourceSnapshot(sourceWithRawMime),
+    ).rejects.toMatchObject({
       code: "INVALID_PAYLOAD",
     });
 
@@ -554,18 +822,26 @@ describe("InMemoryAnalysisResultStore contract", () => {
       ...makeTerminal("run-terminal-extra"),
       body: "raw line",
     } as unknown as AnalysisTerminalRecord;
-    await expect(store.putTerminalRecord(terminalWithExtra)).rejects.toMatchObject({
+    await expect(
+      store.putTerminalRecord(terminalWithExtra),
+    ).rejects.toMatchObject({
       code: "INVALID_PAYLOAD",
     });
 
-    const accessorPayload = makeFinalPayload() as unknown as Record<string, unknown>;
+    const accessorPayload = makeFinalPayload() as unknown as Record<
+      string,
+      unknown
+    >;
     Object.defineProperty(accessorPayload, "entries", {
       enumerable: true,
       get: () => [{ speaker: "nick", body: "raw line" }],
     });
     await expect(
       store.putFinalResult(
-        makeFinal("run-accessor", accessorPayload as unknown as DurableFinalResultPayload),
+        makeFinal(
+          "run-accessor",
+          accessorPayload as unknown as DurableFinalResultPayload,
+        ),
       ),
     ).rejects.toMatchObject({ code: "INVALID_PAYLOAD" });
   });
@@ -588,7 +864,9 @@ describe("InMemoryAnalysisResultStore contract", () => {
       },
       {
         ...valid,
-        candidates: [{ ...candidate, endMs: valid.input.source.durationMs + 1 }],
+        candidates: [
+          { ...candidate, endMs: valid.input.source.durationMs + 1 },
+        ],
       },
       {
         ...valid,
@@ -604,9 +882,7 @@ describe("InMemoryAnalysisResultStore contract", () => {
     for (const [index, payload] of invalidPayloads.entries()) {
       const store = new InMemoryAnalysisResultStore();
       await expect(
-        store.putFinalResult(
-          makeFinal(`run-invariant-${index}`, payload),
-        ),
+        store.putFinalResult(makeFinal(`run-invariant-${index}`, payload)),
       ).rejects.toMatchObject({ code: "INVALID_PAYLOAD" });
     }
   });
@@ -616,10 +892,14 @@ describe("InMemoryAnalysisResultStore contract", () => {
 
     const store = new InMemoryAnalysisResultStore();
     const unsafeObject = new FakeFileSystemHandle();
-    await expect(store.putFinalResult(makeFinal(
-      "run-handle",
-      unsafeObject as unknown as DurableFinalResultPayload,
-    ))).rejects.toMatchObject({
+    await expect(
+      store.putFinalResult(
+        makeFinal(
+          "run-handle",
+          unsafeObject as unknown as DurableFinalResultPayload,
+        ),
+      ),
+    ).rejects.toMatchObject({
       code: "INVALID_PAYLOAD",
     });
 
@@ -661,7 +941,396 @@ describe("InMemoryAnalysisResultStore contract", () => {
 
     const catalog = await store.listTerminalRecords();
     expect(catalog.rejectedRecordCount).toBe(0);
-    expect(catalog.records.map(({ runId }) => runId)).toEqual(["run-new", "run-old"]);
+    expect(catalog.records.map(({ runId }) => runId)).toEqual([
+      "run-new",
+      "run-old",
+    ]);
+  });
+
+  it("atomically replaces a broadcast context session only from the exact snapshot", async () => {
+    const store = new InMemoryAnalysisResultStore();
+    const original = makeBroadcastContextSession();
+    const replacement = {
+      ...original,
+      recordedAt: "2026-07-19T12:35:00.000Z",
+    };
+    await store.putBroadcastContextSession(original);
+
+    await expect(
+      store.replaceBroadcastContextSessionIfUnchanged(
+        { ...original, modelRevision: "stale-revision" },
+        replacement,
+      ),
+    ).resolves.toBe(false);
+    await expect(
+      store.replaceBroadcastContextSessionIfUnchanged(original, replacement),
+    ).resolves.toBe(true);
+    await expect(
+      store.getBroadcastContextSession(original.runId),
+    ).resolves.toEqual(replacement);
+  });
+
+  it("reloads a participant grounding fence with the exact persisted plan fingerprint", async () => {
+    const store = new InMemoryAnalysisResultStore();
+    const completed = makeCompletedBroadcastContextSession();
+    if (
+      completed.transcriptSealOperationKey === null ||
+      completed.participantGroundingPlanFingerprint === null ||
+      completed.participantGroundingCheckpointJson === null
+    ) {
+      throw new TypeError("The completed test session must be fully grounded.");
+    }
+    const participantGroundingInputSignature =
+      await createBroadcastParticipantGroundingInputSignature(
+        {
+          inputSignature: completed.inputSignature,
+          transcriptSealOperationKey:
+            completed.transcriptSealOperationKey,
+          participantGroundingPlanFingerprint:
+            completed.participantGroundingPlanFingerprint,
+          participantGroundingCheckpointJson:
+            completed.participantGroundingCheckpointJson,
+        },
+        null,
+      );
+    await store.putBroadcastContextSession({
+      ...completed,
+      participantGroundingInputSignature,
+    });
+
+    const reopened = await store.getBroadcastContextSession(completed.runId);
+    expect(reopened).not.toBeNull();
+    if (
+      reopened === null ||
+      reopened.transcriptSealOperationKey === null ||
+      reopened.participantGroundingPlanFingerprint === null ||
+      reopened.participantGroundingCheckpointJson === null
+    ) {
+      throw new TypeError("The reloaded test session must be fully grounded.");
+    }
+    await expect(
+      createBroadcastParticipantGroundingInputSignature(
+        {
+          inputSignature: reopened.inputSignature,
+          transcriptSealOperationKey:
+            reopened.transcriptSealOperationKey,
+          participantGroundingPlanFingerprint:
+            reopened.participantGroundingPlanFingerprint,
+          participantGroundingCheckpointJson:
+            reopened.participantGroundingCheckpointJson,
+        },
+        null,
+      ),
+    ).resolves.toBe(reopened.participantGroundingInputSignature);
+  });
+
+  it("atomically checkpoints transcript chapters and resolved abstention evidence together", async () => {
+    const store = new InMemoryAnalysisResultStore();
+    const original = makeBroadcastContextSession();
+    const transcriptInputSignature = "transcript-plan-signature-v1";
+    const checkpoint = {
+      completeAudioCoverage: true,
+      chapters: [],
+      gapChunkIds: [],
+      fragmentGaps: [],
+      transcriptEvidenceInputSignature: transcriptInputSignature,
+      transcriptEvidenceCheckpointJson:
+        makeTranscriptEvidenceCheckpointJson(transcriptInputSignature),
+      transcriptProviderReceiptInputSignature: null,
+      transcriptProviderReceiptCheckpointJson: null,
+      modelRevision: original.modelRevision,
+      transcriptSealOperationKey: transcriptInputSignature,
+      recordedAt: "2026-07-19T12:35:00.000Z",
+    };
+    await store.putBroadcastContextSession(original);
+
+    await expect(
+      checkpointBroadcastContextSessionTranscriptIfUnchanged(
+        store,
+        original,
+        checkpoint,
+      ),
+    ).resolves.toBe(true);
+    await expect(
+      checkpointBroadcastContextSessionTranscriptIfUnchanged(
+        store,
+        original,
+        checkpoint,
+      ),
+    ).resolves.toBe(false);
+    await expect(
+      store.getBroadcastContextSession(original.runId),
+    ).resolves.toMatchObject({
+      chapters: [],
+      gapChunkIds: [],
+      transcriptEvidenceInputSignature: transcriptInputSignature,
+      transcriptEvidenceCheckpointJson:
+        checkpoint.transcriptEvidenceCheckpointJson,
+      transcriptProviderReceiptInputSignature: null,
+      transcriptProviderReceiptCheckpointJson: null,
+      transcriptSealOperationKey: transcriptInputSignature,
+    });
+  });
+
+  it("atomically checkpoints an exact-fence phase ledger and rejects a stale writer", async () => {
+    const store = new InMemoryAnalysisResultStore();
+    const completed = makeCompletedBroadcastContextSession();
+    const grounded = {
+      ...completed,
+      contextInputSignature: null,
+      contextInputCheckpointJson: null,
+      contextPhaseLedgerJson: null,
+      contextResultJson: null,
+      refinementInputSignature: null,
+      refinementCandidatesJson: null,
+    };
+    const checkpoint = {
+      contextInputSignature: "context-signature-v1",
+      contextInputCheckpointJson:
+        completed.contextInputCheckpointJson as string,
+      contextPhaseLedgerJson: makeContextPhaseLedgerJson(
+        grounded,
+        "context-signature-v1",
+      ),
+      recordedAt: "2026-07-19T12:35:00.000Z",
+    };
+    await store.putBroadcastContextSession(grounded);
+
+    await expect(
+      checkpointBroadcastContextSessionPhaseLedgerIfUnchanged(
+        store,
+        grounded,
+        checkpoint,
+      ),
+    ).resolves.toBe(true);
+    await expect(
+      checkpointBroadcastContextSessionPhaseLedgerIfUnchanged(
+        store,
+        grounded,
+        checkpoint,
+      ),
+    ).resolves.toBe(false);
+    await expect(
+      store.getBroadcastContextSession(grounded.runId),
+    ).resolves.toMatchObject({
+      contextInputSignature: "context-signature-v1",
+      contextPhaseLedgerJson: checkpoint.contextPhaseLedgerJson,
+      contextResultJson: null,
+    });
+  });
+
+  it("atomically checkpoints refinement transcript evidence and rejects a stale writer", async () => {
+    const store = new InMemoryAnalysisResultStore();
+    const original = makeCompletedBroadcastContextSession();
+    const checkpoint = {
+      refinementTranscriptInputSignature:
+        "refinement-transcript-signature-v1",
+      refinementTranscriptCheckpointJson:
+        makeRefinementTranscriptCheckpointJson(),
+      recordedAt: "2026-07-19T12:35:00.000Z",
+    };
+    await store.putBroadcastContextSession(original);
+
+    await expect(
+      checkpointBroadcastContextSessionRefinementTranscriptIfUnchanged(
+        store,
+        original,
+        checkpoint,
+      ),
+    ).resolves.toBe(true);
+    await expect(
+      checkpointBroadcastContextSessionRefinementTranscriptIfUnchanged(
+        store,
+        original,
+        checkpoint,
+      ),
+    ).resolves.toBe(false);
+    await expect(
+      store.getBroadcastContextSession(original.runId),
+    ).resolves.toMatchObject({
+      contextInputSignature: original.contextInputSignature,
+      contextResultJson: original.contextResultJson,
+      refinementTranscriptInputSignature:
+        checkpoint.refinementTranscriptInputSignature,
+      refinementTranscriptCheckpointJson:
+        checkpoint.refinementTranscriptCheckpointJson,
+      refinementInputSignature: null,
+      refinementCandidatesJson: null,
+    });
+  });
+
+  it("checkpoints a canonical refinement evidence ledger and returns its exact durable readback", async () => {
+    const store = new InMemoryAnalysisResultStore();
+    const original = makeCompletedBroadcastContextSession();
+    const refinementEvidenceLedgerJson =
+      await makeRefinementEvidenceLedgerJson(original);
+    await store.putBroadcastContextSession(original);
+
+    const readback =
+      await checkpointBroadcastContextSessionRefinementEvidenceLedgerWithReadback(
+        store,
+        original,
+        {
+          refinementEvidenceLedgerJson,
+          recordedAt: "2026-07-19T12:35:00.000Z",
+        },
+      );
+
+    expect(readback).toMatchObject({
+      refinementEvidenceLedgerJson,
+      refinementInputSignature: null,
+      refinementCandidatesJson: null,
+      recordedAt: "2026-07-19T12:35:00.000Z",
+    });
+    expect(readback).not.toBe(original);
+    await expect(
+      store.getBroadcastContextSession(original.runId),
+    ).resolves.toEqual(readback);
+  });
+
+  it("rejects a stale refinement evidence ledger writer before readback", async () => {
+    const store = new InMemoryAnalysisResultStore();
+    const original = makeCompletedBroadcastContextSession();
+    await store.putBroadcastContextSession(original);
+    const newer = {
+      ...original,
+      recordedAt: "2026-07-19T12:34:59.000Z",
+    };
+    await expect(
+      store.replaceBroadcastContextSessionIfUnchanged(original, newer),
+    ).resolves.toBe(true);
+
+    await expect(
+      checkpointBroadcastContextSessionRefinementEvidenceLedgerWithReadback(
+        store,
+        original,
+        {
+          refinementEvidenceLedgerJson:
+            await makeRefinementEvidenceLedgerJson(original),
+          recordedAt: "2026-07-19T12:35:00.000Z",
+        },
+      ),
+    ).rejects.toThrow(/durable session changed/u);
+    await expect(
+      store.getBroadcastContextSession(original.runId),
+    ).resolves.toEqual(newer);
+  });
+
+  it("rejects a committed refinement evidence checkpoint whose readback is missing", async () => {
+    const original = makeCompletedBroadcastContextSession();
+    await expect(
+      checkpointBroadcastContextSessionRefinementEvidenceLedgerWithReadback(
+        {
+          replaceBroadcastContextSessionIfUnchanged() {
+            return Promise.resolve(true);
+          },
+          getBroadcastContextSession() {
+            return Promise.resolve(null);
+          },
+        },
+        original,
+        {
+          refinementEvidenceLedgerJson:
+            await makeRefinementEvidenceLedgerJson(original),
+          recordedAt: "2026-07-19T12:35:00.000Z",
+        },
+      ),
+    ).rejects.toThrow(/readback is missing/u);
+  });
+
+  it("rejects a committed refinement evidence checkpoint whose readback is non-canonical", async () => {
+    const original = makeCompletedBroadcastContextSession();
+    const refinementEvidenceLedgerJson =
+      await makeRefinementEvidenceLedgerJson(original);
+    let written: BroadcastContextSessionRecord | null = null;
+    await expect(
+      checkpointBroadcastContextSessionRefinementEvidenceLedgerWithReadback(
+        {
+          replaceBroadcastContextSessionIfUnchanged(_expected, replacement) {
+            written = replacement;
+            return Promise.resolve(true);
+          },
+          getBroadcastContextSession() {
+            return Promise.resolve(
+              written === null
+                ? null
+                : {
+                    ...written,
+                    refinementEvidenceLedgerJson: ` ${refinementEvidenceLedgerJson}`,
+                  },
+            );
+          },
+        },
+        original,
+        {
+          refinementEvidenceLedgerJson,
+          recordedAt: "2026-07-19T12:35:00.000Z",
+        },
+      ),
+    ).rejects.toThrow(/readback is invalid/u);
+  });
+
+  it("rejects a stale safe writer without erasing the newer context", async () => {
+    const store = new InMemoryAnalysisResultStore();
+    const original = makeCompletedBroadcastContextSession();
+    await store.putBroadcastContextSession(original);
+
+    await expect(
+      commitBroadcastContextSessionContextIfUnchanged(store, original, {
+        contextInputSignature: "context-signature-v2",
+        contextInputCheckpointJson:
+          original.contextInputCheckpointJson as string,
+        contextResultJson: JSON.stringify({
+          schemaVersion: "1.7.0",
+          broadcastSummaryKo: "new context",
+        }),
+        recordedAt: "2026-07-19T12:35:00.000Z",
+      }),
+    ).resolves.toBe(true);
+    const committed = await store.getBroadcastContextSession(original.runId);
+    expect(committed).toMatchObject({
+      contextInputSignature: "context-signature-v2",
+      refinementInputSignature: null,
+      refinementCandidatesJson: null,
+    });
+
+    await expect(
+      invalidateBroadcastContextSessionContextIfUnchanged(
+        store,
+        original,
+        "2026-07-19T12:36:00.000Z",
+      ),
+    ).resolves.toBe(false);
+    await expect(
+      store.getBroadcastContextSession(original.runId),
+    ).resolves.toEqual(committed);
+  });
+
+  it("atomically invalidates the context and refinement for retry", async () => {
+    const store = new InMemoryAnalysisResultStore();
+    const original = makeCompletedBroadcastContextSession();
+    await store.putBroadcastContextSession(original);
+
+    await expect(
+      invalidateBroadcastContextSessionContextIfUnchanged(
+        store,
+        original,
+        "2026-07-19T12:35:00.000Z",
+      ),
+    ).resolves.toBe(true);
+    await expect(
+      store.getBroadcastContextSession(original.runId),
+    ).resolves.toMatchObject({
+      contextInputSignature: null,
+      contextInputCheckpointJson: null,
+      contextPhaseLedgerJson: null,
+      contextResultJson: null,
+      refinementTranscriptInputSignature: null,
+      refinementTranscriptCheckpointJson: null,
+      refinementInputSignature: null,
+      refinementCandidatesJson: null,
+      recordedAt: "2026-07-19T12:35:00.000Z",
+    });
   });
 });
 
@@ -776,7 +1445,9 @@ class FakeIndexedDbHarness {
   public closeCount = 0;
   private readonly keyPaths = new Map<string, string>();
   private readonly queuedTransactions: ControlledTransaction[] = [];
-  private readonly transactionWaiters: Array<(transaction: ControlledTransaction) => void> = [];
+  private readonly transactionWaiters: Array<
+    (transaction: ControlledTransaction) => void
+  > = [];
 
   public constructor(initialKeyPaths: Readonly<Record<string, string>> = {}) {
     this.createdStores = new Set(Object.keys(initialKeyPaths));
@@ -817,7 +1488,9 @@ class FakeIndexedDbHarness {
         request.result = database;
         request.transaction = {
           objectStore: (storeName: string) =>
-            ({ keyPath: this.keyPaths.get(storeName) ?? null }) as IDBObjectStore,
+            ({
+              keyPath: this.keyPaths.get(storeName) ?? null,
+            }) as IDBObjectStore,
           abort: () => {
             request.fail();
           },
@@ -893,7 +1566,9 @@ describe("IndexedDbAnalysisResultStore transaction contract", () => {
       const transaction = await harness.takeTransaction();
 
       transaction.fail(outcome);
-      await expect(operation).rejects.toMatchObject({ code: "TRANSACTION_FAILED" });
+      await expect(operation).rejects.toMatchObject({
+        code: "TRANSACTION_FAILED",
+      });
     },
   );
 
@@ -936,9 +1611,11 @@ describe("IndexedDbAnalysisResultStore transaction contract", () => {
     const conflictOperation = store.putTerminalRecord(
       makeTerminal("run-terminal-conflict", "failed"),
     );
-    const conflictExpectation = expect(conflictOperation).rejects.toMatchObject({
-      code: "TRANSACTION_FAILED",
-    });
+    const conflictExpectation = expect(conflictOperation).rejects.toMatchObject(
+      {
+        code: "TRANSACTION_FAILED",
+      },
+    );
     const transaction = await harness.takeTransaction();
 
     transaction.request?.succeed(completed);
@@ -998,6 +1675,136 @@ describe("IndexedDbAnalysisResultStore transaction contract", () => {
     readTransaction.complete();
     await expect(getOperation).resolves.toEqual(snapshot);
     expect(getResolved).toBe(true);
+  });
+
+  it("performs broadcast context compare-and-swap in one readwrite transaction", async () => {
+    const harness = new FakeIndexedDbHarness();
+    const store = new IndexedDbAnalysisResultStore({
+      dbName: "broadcast-context-cas-test",
+      factory: harness.factory,
+    });
+    const original = makeBroadcastContextSession();
+    const replacement = {
+      ...original,
+      recordedAt: "2026-07-19T12:35:00.000Z",
+    };
+    const operation = store.replaceBroadcastContextSessionIfUnchanged(
+      original,
+      replacement,
+    );
+    const transaction = await harness.takeTransaction();
+    expect(transaction.mode).toBe("readwrite");
+    const readRequest = transaction.request;
+    readRequest?.succeed(original);
+    expect(transaction.writeOperation).toBe("put");
+    expect(transaction.written).toEqual(replacement);
+    transaction.request?.succeed(original.runId);
+    transaction.complete();
+
+    await expect(operation).resolves.toBe(true);
+  });
+
+  it("performs Candidate Pass B compare-and-swap in one readwrite transaction", async () => {
+    const harness = new FakeIndexedDbHarness();
+    const store = new IndexedDbAnalysisResultStore({
+      dbName: "candidate-pass-b-cas-test",
+      factory: harness.factory,
+    });
+    const original = makeCandidatePassBInsights();
+    const replacement = makeCandidatePassBInsights(
+      "2026-07-19T12:35:00.000Z",
+    );
+    const operation = store.replaceCandidatePassBInsightsIfUnchanged(
+      original,
+      replacement,
+    );
+    const transaction = await harness.takeTransaction();
+    expect(transaction.mode).toBe("readwrite");
+    transaction.request?.succeed(original);
+    expect(transaction.writeOperation).toBe("put");
+    expect(transaction.written).toEqual(replacement);
+    transaction.request?.succeed(original.runId);
+    transaction.complete();
+
+    await expect(operation).resolves.toBe(true);
+  });
+
+  it("does not let a stale Candidate Pass B writer replace a newer snapshot", async () => {
+    const harness = new FakeIndexedDbHarness();
+    const store = new IndexedDbAnalysisResultStore({
+      dbName: "candidate-pass-b-cas-conflict-test",
+      factory: harness.factory,
+    });
+    const original = makeCandidatePassBInsights();
+    const operation = store.replaceCandidatePassBInsightsIfUnchanged(
+      original,
+      makeCandidatePassBInsights("2026-07-19T12:35:00.000Z"),
+    );
+    const transaction = await harness.takeTransaction();
+    transaction.request?.succeed(
+      makeCandidatePassBInsights("2026-07-19T12:34:59.000Z"),
+    );
+    expect(transaction.writeOperation).toBeNull();
+    expect(transaction.written).toBeUndefined();
+    transaction.complete();
+
+    await expect(operation).resolves.toBe(false);
+  });
+
+  it("writes retry invalidation as one IndexedDB replacement", async () => {
+    const harness = new FakeIndexedDbHarness();
+    const store = new IndexedDbAnalysisResultStore({
+      dbName: "broadcast-context-retry-invalidation-test",
+      factory: harness.factory,
+    });
+    const original = makeCompletedBroadcastContextSession();
+    const operation = invalidateBroadcastContextSessionContextIfUnchanged(
+      store,
+      original,
+      "2026-07-19T12:35:00.000Z",
+    );
+    const transaction = await harness.takeTransaction();
+    transaction.request?.succeed(original);
+
+    expect(transaction.writeOperation).toBe("put");
+    expect(transaction.written).toMatchObject({
+      contextInputSignature: null,
+      contextInputCheckpointJson: null,
+      contextPhaseLedgerJson: null,
+      contextResultJson: null,
+      refinementInputSignature: null,
+      refinementCandidatesJson: null,
+      recordedAt: "2026-07-19T12:35:00.000Z",
+    });
+    transaction.request?.succeed(original.runId);
+    transaction.complete();
+
+    await expect(operation).resolves.toBe(true);
+  });
+
+  it("does not write when the durable broadcast context snapshot changed", async () => {
+    const harness = new FakeIndexedDbHarness();
+    const store = new IndexedDbAnalysisResultStore({
+      dbName: "broadcast-context-cas-conflict-test",
+      factory: harness.factory,
+    });
+    const original = makeBroadcastContextSession();
+    const operation = store.replaceBroadcastContextSessionIfUnchanged(
+      original,
+      {
+        ...original,
+        recordedAt: "2026-07-19T12:35:00.000Z",
+      },
+    );
+    const transaction = await harness.takeTransaction();
+    transaction.request?.succeed({
+      ...original,
+      recordedAt: "2026-07-19T12:34:59.000Z",
+    });
+    expect(transaction.writeOperation).toBeNull();
+    transaction.complete();
+
+    await expect(operation).resolves.toBe(false);
   });
 
   it("waits for the read transaction to complete even when the request returned no record", async () => {
@@ -1081,7 +1888,10 @@ describe("job records", () => {
       job: {
         ...createAnalysisJob({
           jobId,
-          identity: { scheme: "local-file-sampled-sha256-v1", key: `key-${jobId}` },
+          identity: {
+            scheme: "local-file-sampled-sha256-v1",
+            key: `key-${jobId}`,
+          },
         }),
         runIds,
       },
@@ -1149,7 +1959,9 @@ describe("job records", () => {
     // 조회는 되는데 잘못된 작업을 지우게 된다.
     const store = new InMemoryAnalysisResultStore();
     const mismatched = { ...makeJobRecord("job-1"), jobId: "job-2" };
-    await expect(store.putJob(mismatched)).rejects.toMatchObject({ code: "INVALID_PAYLOAD" });
+    await expect(store.putJob(mismatched)).rejects.toMatchObject({
+      code: "INVALID_PAYLOAD",
+    });
   });
 
   it("refuses a job that does not say which runs it made", async () => {
@@ -1159,7 +1971,9 @@ describe("job records", () => {
       ...record,
       job: { ...record.job, runIds: undefined as unknown as readonly string[] },
     };
-    await expect(store.putJob(broken)).rejects.toMatchObject({ code: "INVALID_PAYLOAD" });
+    await expect(store.putJob(broken)).rejects.toMatchObject({
+      code: "INVALID_PAYLOAD",
+    });
   });
 
   it("hands back a copy rather than the stored object", async () => {

@@ -2,7 +2,7 @@ import type {
   CandidatePassBParticipantRole,
 } from "./candidatePassBWorkerProtocol";
 
-export const CANDIDATE_PASS_B_CAST_ROSTER_VERSION = "1.2.0" as const;
+export const CANDIDATE_PASS_B_CAST_ROSTER_VERSION = "1.3.0" as const;
 export const DEFAULT_CANDIDATE_PASS_B_CAST_ROSTER_ID =
   "chzzk-video-13996057-v2" as const;
 export const LEGACY_CANDIDATE_PASS_B_CAST_ROSTER_ID =
@@ -30,7 +30,16 @@ export type CandidatePassBCastRosterId =
   | typeof TORORI_COCO_CHANNEL_CAST_ROSTER_ID
   | typeof MANGJING_CHANNEL_CAST_ROSTER_ID;
 
+export type CandidatePassBParticipantId =
+  | "sera-professor"
+  | "amoretto"
+  | "eureka"
+  | "sena-arbel"
+  | "torori-coco"
+  | "mangjing";
+
 export interface CandidatePassBCastReference {
+  readonly participantId: CandidatePassBParticipantId;
   readonly displayName: string;
   readonly role: CandidatePassBParticipantRole;
   readonly aliasesKo: readonly string[];
@@ -46,6 +55,7 @@ export interface CandidatePassBCastReference {
  */
 const EXCHANGE_STUDENT_CAST = Object.freeze([
   {
+    participantId: "sera-professor",
     displayName: "세라 교수님",
     role: "streamer",
     aliasesKo: ["세라", "교수님"],
@@ -54,6 +64,7 @@ const EXCHANGE_STUDENT_CAST = Object.freeze([
     referenceScopeKo: "교환학생 메인 채널 전용 진행자",
   },
   {
+    participantId: "amoretto",
     displayName: "아모레또",
     role: "guest",
     aliasesKo: ["레또"],
@@ -62,6 +73,7 @@ const EXCHANGE_STUDENT_CAST = Object.freeze([
     referenceScopeKo: "교환학생 합방 또는 아모레또 개인 채널",
   },
   {
+    participantId: "eureka",
     displayName: "유레카",
     role: "guest",
     aliasesKo: ["레카"],
@@ -70,6 +82,7 @@ const EXCHANGE_STUDENT_CAST = Object.freeze([
     referenceScopeKo: "교환학생 합방 또는 유레카 개인 채널",
   },
   {
+    participantId: "sena-arbel",
     displayName: "세나 아르벨",
     role: "guest",
     aliasesKo: ["세나"],
@@ -78,6 +91,7 @@ const EXCHANGE_STUDENT_CAST = Object.freeze([
     referenceScopeKo: "교환학생 합방 또는 세나 아르벨 개인 채널",
   },
   {
+    participantId: "torori-coco",
     displayName: "토로리 코코",
     role: "guest",
     aliasesKo: ["토로리", "코코"],
@@ -86,6 +100,7 @@ const EXCHANGE_STUDENT_CAST = Object.freeze([
     referenceScopeKo: "교환학생 합방 또는 토로리 코코 개인 채널",
   },
   {
+    participantId: "mangjing",
     displayName: "망징이",
     role: "guest",
     aliasesKo: ["망징"],
@@ -161,9 +176,32 @@ export function candidatePassBCastReferences(
   const owner = EXCHANGE_STUDENT_CAST.find(
     ({ displayName }) => displayName === ownerName,
   );
-  return owner === undefined
-    ? []
-    : [{ ...owner, role: "streamer" as const }];
+  if (owner === undefined) return [];
+  return EXCHANGE_STUDENT_CAST
+    .filter(({ participantId }) => participantId !== "sera-professor")
+    .map((reference) => ({
+      ...reference,
+      role:
+        reference.participantId === owner.participantId
+          ? "streamer" as const
+          : "guest" as const,
+    }));
+}
+
+/** The product-wide six-person catalog. This is not evidence of appearance. */
+export function candidatePassBKnownCastReferences(): readonly CandidatePassBCastReference[] {
+  return EXCHANGE_STUDENT_CAST;
+}
+
+/** Source ownership is a routing prior, never proof that the owner is present. */
+export function candidatePassBSourceHostReference(
+  rosterId: CandidatePassBCastRosterId | null,
+): CandidatePassBCastReference | null {
+  return (
+    candidatePassBCastReferences(rosterId).find(
+      ({ role }) => role === "streamer",
+    ) ?? null
+  );
 }
 
 /** Resolves only a server-known canonical name or one of its fixed aliases. */
@@ -174,6 +212,19 @@ export function candidatePassBCastReferenceForName(
   const normalized = normalizeCastName(value);
   if (normalized.length === 0) return null;
   return candidatePassBCastReferences(rosterId).find((reference) =>
+    [reference.displayName, ...reference.aliasesKo].some(
+      (name) => normalizeCastName(name) === normalized,
+    ),
+  ) ?? null;
+}
+
+/** Resolves a canonical name against the product-wide six-person catalog. */
+export function candidatePassBKnownCastReferenceForName(
+  value: string,
+): CandidatePassBCastReference | null {
+  const normalized = normalizeCastName(value);
+  if (normalized.length === 0) return null;
+  return candidatePassBKnownCastReferences().find((reference) =>
     [reference.displayName, ...reference.aliasesKo].some(
       (name) => normalizeCastName(name) === normalized,
     ),

@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { calculateCoverage } from "./broadcastContextProtocol";
 import {
+  broadcastResolvedAbstentionReasonForChapter,
   createBroadcastNoAudioChapters,
+  createBroadcastNoSpeechChapters,
   createBroadcastTranscriptChapters,
   mergeBroadcastTranscriptChapters,
 } from "./broadcastTranscriptChapters";
@@ -25,6 +27,41 @@ describe("broadcastTranscriptChapters", () => {
       evidenceMode: "sampled-audio-video",
     });
     expect(chapter?.summaryKo).toContain("발화나 소리");
+    expect(
+      broadcastResolvedAbstentionReasonForChapter(chapter!),
+    ).toBe("no-audio");
+  });
+
+  it("persists VAD-confirmed no-speech without claiming the video is empty", () => {
+    const [chapter] = createBroadcastNoSpeechChapters(
+      [
+        {
+          chunkId: "visual-only-range",
+          sourceStartMs: 60_000,
+          sourceEndMs: 90_000,
+          kind: "event",
+        },
+      ],
+      120_000,
+    );
+
+    expect(chapter).toMatchObject({
+      chapterId: "no-speech-001",
+      startMs: 60_000,
+      endMs: 90_000,
+      evidenceMode: "sampled-audio-video",
+    });
+    expect(chapter?.summaryKo).toContain("사람 발화");
+    expect(chapter?.summaryKo).toContain("화면 사건 분석 대상");
+    expect(chapter?.summaryKo).not.toContain("소리 없음");
+    expect(
+      broadcastResolvedAbstentionReasonForChapter(chapter!),
+    ).toBe("no-speech");
+    expect(
+      broadcastResolvedAbstentionReasonForChapter({
+        summaryKo: "스트리머가 조용히 게임 목표를 달성했다.",
+      }),
+    ).toBeNull();
   });
 
   it("preserves ASR source fences and reports true full coverage", () => {

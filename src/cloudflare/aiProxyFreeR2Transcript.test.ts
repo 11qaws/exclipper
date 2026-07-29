@@ -446,6 +446,7 @@ function createEnvironment(options: {
   readonly clientLimit?: ReturnType<typeof vi.fn>;
   readonly globalLimit?: ReturnType<typeof vi.fn>;
   readonly mode?: "free-r2";
+  readonly transcriptProvider?: "qwen" | "groq";
 } = {}): {
   readonly environment: AiProxyEnvironment;
   readonly clientLimit: ReturnType<typeof vi.fn>;
@@ -461,8 +462,10 @@ function createEnvironment(options: {
   const coordinator = createCoordinator();
   const environment: AiProxyEnvironment = {
     QWEN_API_KEY: "qwen-secret",
+    GROQ_API_KEY: "groq-secret",
     CANDIDATE_INSIGHT_PROVIDER: "qwen",
-    BROADCAST_TRANSCRIPT_PROVIDER: "qwen",
+    BROADCAST_TRANSCRIPT_PROVIDER:
+      options.transcriptProvider ?? "qwen",
     AI_PROVIDER_FALLBACK_MODE: "bounded",
     AI_QUOTA_MODE: "required",
     AI_QUOTA_COORDINATOR: coordinator.namespace,
@@ -541,6 +544,7 @@ function qwenSseSuccess(text: string): Response {
 async function stageFixture(options: {
   readonly clientLimit?: ReturnType<typeof vi.fn>;
   readonly globalLimit?: ReturnType<typeof vi.fn>;
+  readonly transcriptProvider?: "qwen" | "groq";
 } = {}): Promise<{
   readonly bucket: MemoryR2Bucket;
   readonly environment: AiProxyEnvironment;
@@ -562,6 +566,9 @@ async function stageFixture(options: {
     ...(options.globalLimit === undefined
       ? {}
       : { globalLimit: options.globalLimit }),
+    ...(options.transcriptProvider === undefined
+      ? {}
+      : { transcriptProvider: options.transcriptProvider }),
   });
   const response = await handleBroadcastTranscriptRequest(
     stageRequest(wav, lease),
@@ -796,6 +803,88 @@ describe("free R2 transcript Worker integration", () => {
       "consume",
       "complete",
     ]);
+  });
+
+  it("resolves a staged ticket as a bounded Groq URL multipart request", async () => {
+    const fixture = await stageFixture({ transcriptProvider: "groq" });
+    let providerUrl = "";
+    let providerInit: RequestInit | undefined;
+    const providerFetch = vi.fn(
+      (input: RequestInfo | URL, init?: RequestInit) => {
+        providerUrl =
+          typeof input === "string"
+            ? input
+            : input instanceof URL
+              ? input.href
+              : input.url;
+        providerInit = init;
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              task: "transcribe",
+              language: "korean",
+              duration: 2,
+              text: "화면을 보며 이야기합니다.",
+              segments: [
+                {
+                  id: 0,
+                  start: 0,
+                  end: 2,
+                  text: "화면을 보며 이야기합니다.",
+                },
+              ],
+              x_groq: { id: "not-forwarded" },
+            }),
+            {
+              status: 200,
+              headers: { "Content-Type": "application/json" },
+            },
+          ),
+        );
+      },
+    );
+
+    const response = await handleBroadcastTranscriptRequest(
+      resolveRequest(fixture.mediaTicket, fixture.lease),
+      fixture.environment,
+      { fetchImplementation: providerFetch },
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("X-ExClipper-Model-Id")).toBe(
+      "whisper-large-v3-turbo",
+    );
+    expect(response.headers.get("X-ExClipper-Model-Revision")).toBe(
+      "groq-whisper-large-v3-turbo-ko-segment-v1-2026-07-29",
+    );
+    expect(await response.json()).toMatchObject({
+      modelId: "whisper-large-v3-turbo",
+      sourceStartMs: 120_000,
+      sourceEndMs: 122_000,
+      textKo: "화면을 보며 이야기합니다.",
+      detectedLanguage: "ko",
+      billedSeconds: 2,
+    });
+    expect(providerUrl).toBe(
+      "https://api.groq.com/openai/v1/audio/transcriptions",
+    );
+    expect(providerInit?.body).toBeInstanceOf(FormData);
+    const form = providerInit?.body as FormData;
+    expect(form.get("model")).toBe("whisper-large-v3-turbo");
+    expect(form.get("language")).toBe("ko");
+    expect(form.get("response_format")).toBe("verbose_json");
+    expect(form.get("timestamp_granularities[]")).toBe("segment");
+    const audioUrl = form.get("url");
+    expect(typeof audioUrl).toBe("string");
+    expect(audioUrl).toMatch(
+      /^https:\/\/rettohighlight-gemini\.example\/v1\/broadcast-transcript-media\?mediaTicket=/u,
+    );
+    expect(form.get("file")).toBeNull();
+    const headers = new Headers(providerInit?.headers);
+    expect(headers.get("Content-Type")).toBeNull();
+    expect(headers.get("Authorization")).toBe("Bearer groq-secret");
+    expect(fixture.bucket.objects.size).toBe(0);
+    expect(fixture.bucket.deletedKeys).toHaveLength(1);
   });
 
   it.each(["local", "provider"] as const)(
@@ -1725,6 +1814,68 @@ describe("free R2 candidate media Worker integration", () => {
       candidateTransport: {
         mode: "free-r2",
         configured: false,
+      },
+    });
+  });
+
+  it("reports Groq transcript readiness without exposing its credential", async () => {
+    const bucket = new MemoryR2Bucket();
+    const { environment } = createEnvironment({
+      bucket,
+      mode: "free-r2",
+      transcriptProvider: "groq",
+    });
+    const healthy = await worker.fetch(
+      new Request("https://rettohighlight-gemini.example/healthz", {
+        headers: { Origin: PRODUCTION_ORIGIN },
+      }),
+      environment,
+    );
+    const healthyPayload: unknown = await healthy.json();
+
+    expect(healthy.status).toBe(200);
+    expect(healthyPayload).toMatchObject({
+      ok: true,
+      transcriptTransport: {
+        mode: "free-r2",
+        configured: true,
+      },
+      providers: {
+        schemaVersion: "1.3.0",
+        broadcastTranscript: {
+          selectedProvider: "groq",
+          modelId: "whisper-large-v3-turbo",
+          configured: true,
+          active: true,
+        },
+        groqRoutes: {
+          broadcastTranscriptConfigured: true,
+        },
+      },
+    });
+    expect(JSON.stringify(healthyPayload)).not.toContain("groq-secret");
+
+    const { GROQ_API_KEY: configuredGroqKey, ...missingSecret } = environment;
+    expect(configuredGroqKey).toBe("groq-secret");
+    const unavailable = await worker.fetch(
+      new Request("https://rettohighlight-gemini.example/healthz", {
+        headers: { Origin: PRODUCTION_ORIGIN },
+      }),
+      missingSecret,
+    );
+    expect(unavailable.status).toBe(503);
+    await expect(unavailable.json()).resolves.toMatchObject({
+      ok: false,
+      transcriptTransport: {
+        mode: "free-r2",
+        configured: true,
+      },
+      providers: {
+        broadcastTranscript: {
+          selectedProvider: "groq",
+          configured: false,
+          active: false,
+        },
       },
     });
   });

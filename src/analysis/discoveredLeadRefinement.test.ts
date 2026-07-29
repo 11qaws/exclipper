@@ -41,6 +41,69 @@ describe("discoveredLeadRefinement", () => {
     ).toBe(true);
   });
 
+  it("subtracts higher-priority coverage and emits globally non-overlapping ASR cells", () => {
+    const priorityLeads = [
+      { ...lead("primary", 100_000, 0.99), endMs: 310_000 },
+      { ...lead("fully-covered", 120_000, 0.98), endMs: 300_000 },
+      { ...lead("partial-overlap", 250_000, 0.97), endMs: 460_000 },
+      { ...lead("independent-one", 600_000, 0.96), endMs: 810_000 },
+      { ...lead("independent-two", 900_000, 0.95), endMs: 1_110_000 },
+    ];
+    const plan = createDiscoveredLeadRefinementPlan(priorityLeads);
+
+    expect(plan.selectedLeadIds).toEqual([
+      "primary",
+      "partial-overlap",
+      "independent-one",
+      "independent-two",
+    ]);
+    expect(
+      plan.segments.some((segment) => segment.leadId === "fully-covered"),
+    ).toBe(false);
+    expect(
+      plan.segments
+        .filter((segment) => segment.leadId === "partial-overlap")
+        .every((segment) => segment.sourceStartMs >= 310_000),
+    ).toBe(true);
+
+    const sourceOrderedSegments = [...plan.segments].sort(
+      (left, right) =>
+        left.sourceStartMs - right.sourceStartMs ||
+        left.sourceEndMs - right.sourceEndMs,
+    );
+    expect(
+      sourceOrderedSegments.every(
+        (segment, index) =>
+          index === 0 ||
+          (sourceOrderedSegments[index - 1]?.sourceEndMs ?? 0) <=
+            segment.sourceStartMs,
+      ),
+    ).toBe(true);
+    expect(plan.estimatedAsrCostUsd).toBeLessThanOrEqual(
+      DISCOVERED_LEAD_REFINEMENT_BUDGET_USD,
+    );
+  });
+
+  it("lets editorial jury order own shared ASR coverage", () => {
+    const juryFirst = {
+      ...lead("jury-first", 100_000, 0.71),
+      endMs: 310_000,
+    };
+    const higherInitialConfidence = {
+      ...lead("later-duplicate", 100_000, 0.99),
+      endMs: 310_000,
+    };
+    const plan = createDiscoveredLeadRefinementPlan(
+      [juryFirst, higherInitialConfidence],
+      { preserveInputOrder: true },
+    );
+
+    expect(plan.selectedLeadIds).toEqual(["jury-first"]);
+    expect(
+      new Set(plan.segments.map((segment) => segment.leadId)),
+    ).toEqual(new Set(["jury-first"]));
+  });
+
   it("covers the full lead with free thirty-second caption refinement", () => {
     const broadLead = { ...lead("caption", 600_000), endMs: 1_020_000 };
     const plan = createCaptionDiscoveredLeadRefinementPlan([broadLead]);

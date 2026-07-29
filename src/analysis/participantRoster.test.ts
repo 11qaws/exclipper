@@ -23,6 +23,14 @@ describe("participantRoster", () => {
       "토로리 코코",
       "망징이",
     ]);
+    expect(references.map(({ participantId }) => participantId)).toEqual([
+      "sera-professor",
+      "amoretto",
+      "eureka",
+      "sena-arbel",
+      "torori-coco",
+      "mangjing",
+    ]);
     expect(new Set(references.map(({ displayName }) => displayName)).size).toBe(
       references.length,
     );
@@ -65,7 +73,7 @@ describe("participantRoster", () => {
     ).toBeNull();
   });
 
-  it("uses a personal-channel owner roster without leaking 세라 교수님", () => {
+  it("keeps possible personal-channel guests without leaking 세라 교수님", () => {
     expect(
       candidatePassBCastRosterIdForSourceName(
         "https://chzzk.naver.com/33bc7a29b771728cf9378604973b620b",
@@ -78,11 +86,16 @@ describe("participantRoster", () => {
     const references = candidatePassBCastReferences(
       AMORETTO_CHANNEL_CAST_ROSTER_ID,
     );
-    expect(references).toHaveLength(1);
+    expect(references).toHaveLength(5);
     expect(references[0]).toMatchObject({
       displayName: "아모레또",
       role: "streamer",
     });
+    expect(
+      references
+        .slice(1)
+        .every(({ role }) => role === "guest"),
+    ).toBe(true);
     expect(references.some(({ displayName }) => displayName === "세라 교수님")).toBe(false);
   });
 });

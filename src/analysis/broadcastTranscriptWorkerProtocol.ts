@@ -1,7 +1,13 @@
 import type { BroadcastContextTranscriptionChunk } from "./broadcastContextSamplingPlan";
-import type { BroadcastTranscriptQwenResult } from "./broadcastTranscriptQwen";
+import type {
+  BroadcastTranscriptRouteSelection,
+  BroadcastTranscriptVerifiedResult,
+} from "./broadcastTranscriptRouteManifest";
+import type {
+  BroadcastSpeechActivityRunReceipt,
+} from "./broadcastSpeechActivity";
 
-export const BROADCAST_TRANSCRIPT_WORKER_VERSION = "1.6.0" as const;
+export const BROADCAST_TRANSCRIPT_WORKER_VERSION = "2.0.0" as const;
 /**
  * 한 실행이 보낼 수 있는 청크 수의 상한.
  *
@@ -39,19 +45,35 @@ export interface BroadcastTranscriptQuotaIdentity {
    * semantic refinement.
    */
   readonly operationNamespace: BroadcastTranscriptQuotaOperationNamespace;
+  /**
+   * Exact-input scope for a phase whose source-fenced chunk IDs can be reused
+   * after its model, context, caption source, or range plan changes.
+   */
+  readonly operationScope?: string;
   /** Disjoint generation for the editor attempt and its fragment-repair wave. */
   readonly attemptOrdinal?: number;
 }
 
+export function isBroadcastTranscriptQuotaOperationScope(
+  value: unknown,
+): value is string {
+  return (
+    typeof value === "string" &&
+    value.length >= 8 &&
+    value.length <= 32 &&
+    /^[A-Za-z0-9_-]+$/u.test(value)
+  );
+}
+
 /**
- * Why one requested transcript fragment did not produce a transcript.
- *
- * `no-audio` is resolved negative evidence. The other values represent work
- * that is either safe to retry or must remain explicitly blocked until its
- * billing outcome is known.
+ * Why one requested transcript fragment did not produce a transcript despite
+ * requiring ASR. Current 2.0 values are either safe to retry or must remain
+ * explicitly blocked until their billing outcome is known. `no-audio` remains
+ * only so a 1.6 response can be normalized into an abstention during rollout.
  */
 export type BroadcastTranscriptChunkGapReason =
   | "decode-failed"
+  /** Legacy 1.6 worker response; 2.0 emits a resolved abstention instead. */
   | "no-audio"
   | "transcription-failed"
   | "rate-limited"
@@ -62,11 +84,35 @@ export interface BroadcastTranscriptChunkGap {
   readonly reason: BroadcastTranscriptChunkGapReason;
 }
 
+/**
+ * A source-fenced fragment that was resolved without a paid ASR request.
+ *
+ * `no-audio` means decoding produced no audio frames. `no-speech` is stricter:
+ * every valid frame in every 10-second VAD cell confidently selected the pinned
+ * model's NO_SPEAKER class. Neither outcome belongs in the retry queue.
+ */
+export type BroadcastTranscriptChunkAbstentionReason =
+  | "no-audio"
+  | "no-speech";
+
+export type BroadcastTranscriptChunkAbstention =
+  | {
+      readonly chunkId: string;
+      readonly reason: "no-audio";
+      readonly speechActivityReceipt: null;
+    }
+  | {
+      readonly chunkId: string;
+      readonly reason: "no-speech";
+      readonly speechActivityReceipt: BroadcastSpeechActivityRunReceipt;
+    };
+
 export type BroadcastTranscriptWorkerRequest =
   | {
       readonly type: "broadcast-transcript-analyze";
       readonly identity: BroadcastTranscriptWorkerIdentity;
       readonly quota?: BroadcastTranscriptQuotaIdentity;
+      readonly route: BroadcastTranscriptRouteSelection;
       readonly file: File;
       readonly sourceDurationMs: number;
       readonly chunks: readonly BroadcastContextTranscriptionChunk[];
@@ -101,7 +147,7 @@ export type BroadcastTranscriptWorkerResponse =
       readonly type: "broadcast-transcript-partial";
       readonly identity: BroadcastTranscriptWorkerIdentity;
       readonly chunkId: string;
-      readonly result: BroadcastTranscriptQwenResult;
+      readonly result: BroadcastTranscriptVerifiedResult;
     }
   | {
       readonly type: "broadcast-transcript-gap";
@@ -109,11 +155,16 @@ export type BroadcastTranscriptWorkerResponse =
       readonly chunkId: string;
       readonly reason: BroadcastTranscriptChunkGapReason;
     }
+  | ({
+      readonly type: "broadcast-transcript-abstention";
+      readonly identity: BroadcastTranscriptWorkerIdentity;
+    } & BroadcastTranscriptChunkAbstention)
   | {
       readonly type: "broadcast-transcript-complete";
       readonly identity: BroadcastTranscriptWorkerIdentity;
       readonly requestedCount: number;
       readonly completedCount: number;
+      readonly abstentionCount: number;
       readonly gapCount: number;
       /**
        * 동시성이 **어디서 멈췄나.** 예: `동시 7 (8 에서 실패)`.

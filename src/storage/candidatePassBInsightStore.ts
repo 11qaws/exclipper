@@ -14,6 +14,7 @@ import {
   CANDIDATE_PASS_B_OLDER_QWEN_MODEL_REVISION,
   CANDIDATE_PASS_B_PREVIOUS_QWEN_MODEL_REVISION,
   CANDIDATE_PASS_B_PRIOR_QWEN_MODEL_REVISION,
+  CANDIDATE_PASS_B_VERIFICATION_RECEIPT_SCHEMA_VERSION,
   MAX_CANDIDATE_PASS_B_VIDEO_FRAME_BASE64_LENGTH,
   type CandidatePassBParticipantAttribution,
   type CandidatePassBParticipantPresence,
@@ -104,7 +105,10 @@ export interface CandidatePassBInsightsRecord {
  * create a circular dependency.
  */
 export interface CandidatePassBInsightStorePort {
-  putCandidatePassBInsights(record: CandidatePassBInsightsRecord): Promise<void>;
+  replaceCandidatePassBInsightsIfUnchanged(
+    expected: CandidatePassBInsightsRecord | null,
+    replacement: CandidatePassBInsightsRecord,
+  ): Promise<boolean>;
   getCandidatePassBInsights(
     runId: string,
   ): Promise<CandidatePassBInsightsRecord | null>;
@@ -314,7 +318,10 @@ export function assertCandidatePassBInsightsRecord(
     )) {
       if (
         !isNonEmptyBoundedString(candidateId, 256) ||
-        !isCandidatePassBVerificationReceipt(receipt)
+        !isCandidatePassBVerificationReceipt(receipt) ||
+        (receipt.schemaVersion ===
+          CANDIDATE_PASS_B_VERIFICATION_RECEIPT_SCHEMA_VERSION &&
+          receipt.candidateId !== candidateId)
       ) {
         throw new TypeError("Invalid Candidate Pass B verification receipt entry.");
       }
@@ -358,24 +365,53 @@ function jsonStructuresExactlyMatch(left: unknown, right: unknown): boolean {
   );
 }
 
+export function candidatePassBInsightSnapshotsExactlyMatch(
+  left: CandidatePassBInsightsRecord | null,
+  right: CandidatePassBInsightsRecord | null,
+): boolean {
+  if (left === null || right === null) {
+    return left === right;
+  }
+  const leftSnapshot = cloneCandidatePassBInsightsRecord(left);
+  const rightSnapshot = cloneCandidatePassBInsightsRecord(right);
+  return jsonStructuresExactlyMatch(leftSnapshot, rightSnapshot);
+}
+
 /**
- * Commits one complete snapshot and proves that the durable store can return
- * the exact same metadata and artifact maps before callers publish success.
+ * Replaces one complete snapshot only when the durable value is still the
+ * exact snapshot the caller observed, then proves the committed replacement
+ * can be read back before callers publish success.
  *
- * The write error is intentionally propagated unchanged. A successful write
- * followed by a missing, invalid, stale or partially persisted readback is a
- * failed commit and therefore rejects as well.
+ * `expected === null` is a create-only compare. It never means "overwrite
+ * whatever is there". This keeps a late callback or another tab from replacing
+ * newer evidence, thumbnails or receipts with its older full-map snapshot.
  */
 export async function persistCandidatePassBInsightsWithReadback(
   store: CandidatePassBInsightStorePort,
-  record: CandidatePassBInsightsRecord,
+  expectedRecord: CandidatePassBInsightsRecord | null,
+  replacementRecord: CandidatePassBInsightsRecord,
 ): Promise<CandidatePassBInsightsRecord> {
-  const expected = cloneCandidatePassBInsightsRecord(record);
-  await store.putCandidatePassBInsights(
-    cloneCandidatePassBInsightsRecord(expected),
+  const expected =
+    expectedRecord === null
+      ? null
+      : cloneCandidatePassBInsightsRecord(expectedRecord);
+  const replacement = cloneCandidatePassBInsightsRecord(replacementRecord);
+  if (expected !== null && expected.runId !== replacement.runId) {
+    throw new Error(
+      "Candidate Pass B insight compare-and-swap records must share one run id.",
+    );
+  }
+  const replaced = await store.replaceCandidatePassBInsightsIfUnchanged(
+    expected,
+    cloneCandidatePassBInsightsRecord(replacement),
   );
+  if (!replaced) {
+    throw new Error(
+      "Candidate Pass B insight commit was rejected because the durable snapshot changed.",
+    );
+  }
 
-  const readback = await store.getCandidatePassBInsights(expected.runId);
+  const readback = await store.getCandidatePassBInsights(replacement.runId);
   if (readback === null) {
     throw new Error(
       "Candidate Pass B insight commit could not be verified: readback is missing.",
@@ -391,7 +427,12 @@ export async function persistCandidatePassBInsightsWithReadback(
       { cause: error },
     );
   }
-  if (!jsonStructuresExactlyMatch(expected, verifiedReadback)) {
+  if (
+    !candidatePassBInsightSnapshotsExactlyMatch(
+      replacement,
+      verifiedReadback,
+    )
+  ) {
     throw new Error(
       "Candidate Pass B insight commit could not be verified: readback does not exactly match the written snapshot.",
     );

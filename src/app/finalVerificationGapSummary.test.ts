@@ -89,6 +89,9 @@ describe("summarizeFinalVerificationGaps", () => {
       insightByCandidateId: {},
       receiptByCandidateId: {},
       completeEvidenceCandidateIds: new Set(),
+      refinementEvidenceProjectionFingerprint: null,
+      outputLanguage: "ko",
+      castRosterId: null,
     });
     const summary = summarizeFinalVerificationGaps(
       verification.gapByCandidateId,

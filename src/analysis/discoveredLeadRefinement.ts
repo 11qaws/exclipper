@@ -5,7 +5,7 @@ import {
 } from "./broadcastContextProtocol";
 import { QWEN_ASR_FILETRANS_USD_PER_SECOND } from "./broadcastContextSamplingPlan";
 
-export const DISCOVERED_LEAD_REFINEMENT_VERSION = "1.2.0" as const;
+export const DISCOVERED_LEAD_REFINEMENT_VERSION = "1.3.0" as const;
 export const DISCOVERED_LEAD_REFINEMENT_BUDGET_USD = 0.03;
 export const MAX_DISCOVERED_LEADS_TO_REFINE = 4;
 export const MAX_CAPTION_DISCOVERED_LEADS_TO_REFINE = 20;
@@ -47,6 +47,11 @@ export interface RefinedDiscoveredLeadRange {
   readonly matchedSegmentId: string;
 }
 
+interface SourceRange {
+  readonly startMs: number;
+  readonly endMs: number;
+}
+
 const MAX_REFINEMENT_AUDIO_MS = Math.floor(
   (DISCOVERED_LEAD_REFINEMENT_BUDGET_USD /
     QWEN_ASR_FILETRANS_USD_PER_SECOND) *
@@ -66,25 +71,57 @@ function boundedInspectionRange(
   return { startMs, endMs: startMs + allocatedMs };
 }
 
+function subtractCoveredRanges(
+  range: SourceRange,
+  coveredRanges: readonly SourceRange[],
+): readonly SourceRange[] {
+  const uncoveredRanges: SourceRange[] = [];
+  let cursorMs = range.startMs;
+
+  for (const coveredRange of coveredRanges) {
+    if (coveredRange.endMs <= cursorMs) continue;
+    if (coveredRange.startMs >= range.endMs) break;
+
+    if (coveredRange.startMs > cursorMs) {
+      uncoveredRanges.push({
+        startMs: cursorMs,
+        endMs: Math.min(range.endMs, coveredRange.startMs),
+      });
+    }
+    cursorMs = Math.max(cursorMs, coveredRange.endMs);
+    if (cursorMs >= range.endMs) break;
+  }
+
+  if (cursorMs < range.endMs) {
+    uncoveredRanges.push({
+      startMs: cursorMs,
+      endMs: range.endMs,
+    });
+  }
+  return uncoveredRanges;
+}
+
 /**
  * Re-ASRs only a few context-discovered ranges in one-minute cells. This turns
  * a coarse chapter lead into a bounded location before multimodal AI sees
- * the final one-minute audio/video candidate.
+ * the final one-minute audio/video candidate. Higher-priority leads claim
+ * shared source time first, so the paid ASR plan never transcribes the same
+ * source interval twice.
  */
 export function createDiscoveredLeadRefinementPlan(
   leads: readonly BroadcastContextDiscoveredLead[],
   options: DiscoveredLeadRefinementPlanOptions = {},
 ): DiscoveredLeadRefinementPlan {
   const eligible = [...leads].filter(
-      (lead) =>
-        Number.isFinite(lead.confidence) &&
-        lead.confidence >= 0.55 &&
-        Number.isSafeInteger(lead.startMs) &&
-        Number.isSafeInteger(lead.endMs) &&
-        lead.startMs >= 0 &&
-        lead.endMs > lead.startMs,
-    );
-  const selected = (options.preserveInputOrder === true
+    (lead) =>
+      Number.isFinite(lead.confidence) &&
+      lead.confidence >= 0.55 &&
+      Number.isSafeInteger(lead.startMs) &&
+      Number.isSafeInteger(lead.endMs) &&
+      lead.startMs >= 0 &&
+      lead.endMs > lead.startMs,
+  );
+  const prioritized = (options.preserveInputOrder === true
     ? eligible
     : eligible.sort(
         (left, right) =>
@@ -92,29 +129,47 @@ export function createDiscoveredLeadRefinementPlan(
           left.startMs - right.startMs ||
           left.leadId.localeCompare(right.leadId),
       )
-  ).slice(0, MAX_DISCOVERED_LEADS_TO_REFINE);
+  );
+  const targetLeadCount = Math.min(
+    MAX_DISCOVERED_LEADS_TO_REFINE,
+    prioritized.length,
+  );
   const perLeadBudgetMs =
-    selected.length === 0
+    targetLeadCount === 0
       ? 0
-      : Math.floor(MAX_REFINEMENT_AUDIO_MS / selected.length);
+      : Math.floor(MAX_REFINEMENT_AUDIO_MS / targetLeadCount);
   const segments: DiscoveredLeadRefinementSegment[] = [];
+  const selectedLeadIds: string[] = [];
+  const coveredRanges: SourceRange[] = [];
 
-  for (const lead of selected) {
+  for (const lead of prioritized) {
+    if (selectedLeadIds.length >= MAX_DISCOVERED_LEADS_TO_REFINE) break;
     const range = boundedInspectionRange(lead, perLeadBudgetMs);
-    let sourceStartMs = range.startMs;
-    while (sourceStartMs < range.endMs) {
-      const sourceEndMs = Math.min(
-        range.endMs,
-        sourceStartMs + REFINEMENT_SEGMENT_DURATION_MS,
-      );
-      segments.push({
-        segmentId: `refine-${String(segments.length + 1).padStart(3, "0")}`,
-        leadId: lead.leadId,
-        sourceStartMs,
-        sourceEndMs,
-      });
-      sourceStartMs = sourceEndMs;
+    const uncoveredRanges = subtractCoveredRanges(range, coveredRanges);
+    if (uncoveredRanges.length === 0) continue;
+
+    selectedLeadIds.push(lead.leadId);
+    for (const uncoveredRange of uncoveredRanges) {
+      let sourceStartMs = uncoveredRange.startMs;
+      while (sourceStartMs < uncoveredRange.endMs) {
+        const sourceEndMs = Math.min(
+          uncoveredRange.endMs,
+          sourceStartMs + REFINEMENT_SEGMENT_DURATION_MS,
+        );
+        segments.push({
+          segmentId: `refine-${String(segments.length + 1).padStart(3, "0")}`,
+          leadId: lead.leadId,
+          sourceStartMs,
+          sourceEndMs,
+        });
+        sourceStartMs = sourceEndMs;
+      }
     }
+    coveredRanges.push(...uncoveredRanges);
+    coveredRanges.sort(
+      (left, right) =>
+        left.startMs - right.startMs || left.endMs - right.endMs,
+    );
   }
   const sampledMs = segments.reduce(
     (sum, segment) => sum + segment.sourceEndMs - segment.sourceStartMs,
@@ -122,7 +177,7 @@ export function createDiscoveredLeadRefinementPlan(
   );
   return {
     version: DISCOVERED_LEAD_REFINEMENT_VERSION,
-    selectedLeadIds: selected.map((lead) => lead.leadId),
+    selectedLeadIds,
     segments,
     estimatedAsrCostUsd:
       (sampledMs / 1_000) * QWEN_ASR_FILETRANS_USD_PER_SECOND,
@@ -140,14 +195,14 @@ export function createCaptionDiscoveredLeadRefinementPlan(
   options: DiscoveredLeadRefinementPlanOptions = {},
 ): DiscoveredLeadRefinementPlan {
   const eligible = [...leads].filter(
-      (lead) =>
-        Number.isFinite(lead.confidence) &&
-        lead.confidence >= 0.55 &&
-        Number.isSafeInteger(lead.startMs) &&
-        Number.isSafeInteger(lead.endMs) &&
-        lead.startMs >= 0 &&
-        lead.endMs > lead.startMs,
-    );
+    (lead) =>
+      Number.isFinite(lead.confidence) &&
+      lead.confidence >= 0.55 &&
+      Number.isSafeInteger(lead.startMs) &&
+      Number.isSafeInteger(lead.endMs) &&
+      lead.startMs >= 0 &&
+      lead.endMs > lead.startMs,
+  );
   const selected = (options.preserveInputOrder === true
     ? eligible
     : eligible.sort(

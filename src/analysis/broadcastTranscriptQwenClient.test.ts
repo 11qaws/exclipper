@@ -7,7 +7,19 @@ import {
 } from "./broadcastTranscriptQwenClient";
 import type { BroadcastTranscriptQwenClientError } from "./broadcastTranscriptQwenClient";
 import { encodeCandidatePassBPcm16Wav } from "./candidatePassBGemini";
-import { CANDIDATE_PASS_B_SAMPLE_RATE_HZ } from "./candidatePassBWorkerProtocol";
+import {
+  CANDIDATE_PASS_B_RESPONSE_FALLBACK_HEADER,
+  CANDIDATE_PASS_B_RESPONSE_MODEL_ID_HEADER,
+  CANDIDATE_PASS_B_RESPONSE_MODEL_REVISION_HEADER,
+  CANDIDATE_PASS_B_SAMPLE_RATE_HZ,
+} from "./candidatePassBWorkerProtocol";
+import {
+  BROADCAST_TRANSCRIPT_QWEN_OMNI_MODEL_REVISION,
+} from "./broadcastTranscriptQwen";
+import {
+  createBroadcastTranscriptRouteSelection,
+  type BroadcastTranscriptRouteManifest,
+} from "./broadcastTranscriptRouteManifest";
 import {
   AI_QUOTA_ENDPOINT_PATH,
   AI_QUOTA_SCHEMA_VERSION,
@@ -23,8 +35,41 @@ function silentWav(durationMs: number): Uint8Array {
   );
 }
 
+async function qwenRoute(
+  mode: "free-r2" | "paid-direct" = "paid-direct",
+) {
+  const manifest: BroadcastTranscriptRouteManifest = {
+    schemaVersion: "1.0.0",
+    serviceVersion: 5,
+    routingPolicyVersion: "1.11.0",
+    providerConfigurationVersion: "1.3.0",
+    transportVersion: 2,
+    transportMode: mode,
+    maximumChunkDurationMs: 90_000,
+    primaryMediaType: "audio/wav",
+    provider: "qwen",
+    modelId: "qwen3.5-omni-flash",
+    modelRevision: BROADCAST_TRANSCRIPT_QWEN_OMNI_MODEL_REVISION,
+  };
+  return createBroadcastTranscriptRouteSelection(manifest);
+}
+
+function transcriptResponseHeaders(
+  modelId = "qwen3.5-omni-flash",
+  modelRevision = BROADCAST_TRANSCRIPT_QWEN_OMNI_MODEL_REVISION,
+  fallbackUsed = false,
+): HeadersInit {
+  return {
+    [CANDIDATE_PASS_B_RESPONSE_MODEL_ID_HEADER]: modelId,
+    [CANDIDATE_PASS_B_RESPONSE_MODEL_REVISION_HEADER]: modelRevision,
+    [CANDIDATE_PASS_B_RESPONSE_FALLBACK_HEADER]:
+      fallbackUsed ? "true" : "false",
+  };
+}
+
 describe("broadcastTranscriptQwenClient", () => {
   it("sends only audio and source offsets and accepts a matching result", async () => {
+    const route = await qwenRoute();
     const fetchImplementation = vi.fn(
       (_input: RequestInfo | URL, init?: RequestInit) => {
         expect(_input).toBe(
@@ -39,7 +84,7 @@ describe("broadcastTranscriptQwenClient", () => {
           new Response(
             JSON.stringify({
               schemaVersion: "1.0.0",
-              modelId: "qwen3-asr-flash",
+              modelId: "qwen3.5-omni-flash",
               sourceStartMs: 10_000,
               sourceEndMs: 11_000,
               textKo: "조용히 성공했다고 말한다.",
@@ -47,25 +92,100 @@ describe("broadcastTranscriptQwenClient", () => {
               emotion: "happy",
               billedSeconds: 1,
             }),
-            { status: 200 },
+            {
+              status: 200,
+              headers: transcriptResponseHeaders(),
+            },
           ),
         );
       },
     );
     await expect(
       requestBroadcastTranscriptQwenChunk("UklGRg==", 10_000, 1_000, {
+        route,
         fetchImplementation,
       }),
-    ).resolves.toMatchObject({ textKo: "조용히 성공했다고 말한다." });
+    ).resolves.toMatchObject({
+      textKo: "조용히 성공했다고 말한다.",
+      modelRevision:
+        BROADCAST_TRANSCRIPT_QWEN_OMNI_MODEL_REVISION,
+      providerReceipt: {
+        provider: "qwen",
+        fallbackUsed: false,
+      },
+    });
   });
 
-  it("rejects a result whose source fence does not match the request", async () => {
+  it("rejects a proxy model revision that does not match its response model ID", async () => {
+    const route = await qwenRoute();
     const fetchImplementation = () =>
       Promise.resolve(
         new Response(
           JSON.stringify({
             schemaVersion: "1.0.0",
-            modelId: "qwen3-asr-flash",
+            modelId: "whisper-large-v3-turbo",
+            sourceStartMs: 0,
+            sourceEndMs: 1_000,
+            textKo: "안녕하세요.",
+            detectedLanguage: "ko",
+            emotion: null,
+            billedSeconds: 1,
+          }),
+          {
+            status: 200,
+            headers: transcriptResponseHeaders(
+              "whisper-large-v3-turbo",
+              BROADCAST_TRANSCRIPT_QWEN_OMNI_MODEL_REVISION,
+            ),
+          },
+        ),
+      );
+
+    await expect(
+      requestBroadcastTranscriptQwenChunk("UklGRg==", 0, 1_000, {
+        route,
+        fetchImplementation,
+      }),
+    ).rejects.toMatchObject({
+      code: "PROXY_INVALID_RESPONSE",
+    } satisfies Partial<BroadcastTranscriptQwenClientError>);
+  });
+
+  it("rejects a success body when the server omits its model receipt headers", async () => {
+    const route = await qwenRoute();
+    await expect(
+      requestBroadcastTranscriptQwenChunk("UklGRg==", 0, 1_000, {
+        route,
+        fetchImplementation: () =>
+          Promise.resolve(
+            new Response(
+              JSON.stringify({
+                schemaVersion: "1.0.0",
+                modelId: "qwen3.5-omni-flash",
+                sourceStartMs: 0,
+                sourceEndMs: 1_000,
+                textKo: "헤더가 없는 응답",
+                detectedLanguage: "ko",
+                emotion: null,
+                billedSeconds: 1,
+              }),
+              { status: 200 },
+            ),
+          ),
+      }),
+    ).rejects.toMatchObject({
+      code: "PROXY_INVALID_RESPONSE",
+    } satisfies Partial<BroadcastTranscriptQwenClientError>);
+  });
+
+  it("rejects a result whose source fence does not match the request", async () => {
+    const route = await qwenRoute();
+    const fetchImplementation = () =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({
+            schemaVersion: "1.0.0",
+            modelId: "qwen3.5-omni-flash",
             sourceStartMs: 0,
             sourceEndMs: 1_000,
             textKo: "다른 구간",
@@ -73,11 +193,12 @@ describe("broadcastTranscriptQwenClient", () => {
             emotion: null,
             billedSeconds: 1,
           }),
-          { status: 200 },
+          { status: 200, headers: transcriptResponseHeaders() },
         ),
       );
     await expect(
       requestBroadcastTranscriptQwenChunk("UklGRg==", 10_000, 1_000, {
+        route,
         fetchImplementation,
       }),
     ).rejects.toMatchObject({
@@ -86,9 +207,11 @@ describe("broadcastTranscriptQwenClient", () => {
   });
 
   it("rejects a direct chunk above the 30-second production ceiling locally", async () => {
+    const route = await qwenRoute();
     const fetchImplementation = vi.fn();
     await expect(
       requestBroadcastTranscriptQwenChunk("UklGRg==", 0, 30_001, {
+        route,
         fetchImplementation,
       }),
     ).rejects.toMatchObject({
@@ -98,6 +221,7 @@ describe("broadcastTranscriptQwenClient", () => {
   });
 
   it("uses one raw WAV request when the server selects paid-direct", async () => {
+    const route = await qwenRoute("paid-direct");
     const wav = silentWav(90_000);
     const fetchImplementation = vi.fn(
       (_input: RequestInfo | URL, init?: RequestInit) => {
@@ -118,7 +242,7 @@ describe("broadcastTranscriptQwenClient", () => {
               emotion: null,
               billedSeconds: 90,
             }),
-            { status: 200 },
+            { status: 200, headers: transcriptResponseHeaders() },
           ),
         );
       },
@@ -126,6 +250,7 @@ describe("broadcastTranscriptQwenClient", () => {
 
     await expect(
       requestBroadcastTranscriptChunkBinary(wav, 10_000, 90_000, {
+        route,
         fetchImplementation,
       }),
     ).resolves.toMatchObject({ textKo: "유료 직접 경로입니다." });
@@ -133,6 +258,7 @@ describe("broadcastTranscriptQwenClient", () => {
   });
 
   it("resolves a Free R2 staged ticket without uploading the WAV twice", async () => {
+    const route = await qwenRoute("free-r2");
     const wav = silentWav(90_000);
     const ticket = `v1.${"a".repeat(32)}.${Date.now() + 600_000}.${"b".repeat(43)}`;
     const fetchImplementation = vi.fn(
@@ -174,7 +300,7 @@ describe("broadcastTranscriptQwenClient", () => {
               emotion: null,
               billedSeconds: 90,
             }),
-            { status: 200 },
+            { status: 200, headers: transcriptResponseHeaders() },
           ),
         );
       },
@@ -182,6 +308,7 @@ describe("broadcastTranscriptQwenClient", () => {
 
     await expect(
       requestBroadcastTranscriptChunkBinary(wav, 10_000, 90_000, {
+        route,
         fetchImplementation,
       }),
     ).resolves.toMatchObject({ textKo: "R2 URL 경로입니다." });
@@ -189,6 +316,7 @@ describe("broadcastTranscriptQwenClient", () => {
   });
 
   it("preserves an ambiguous post-lease connection loss without resending it", async () => {
+    const route = await qwenRoute("paid-direct");
     const wav = silentWav(1_000);
     let paidRequestCount = 0;
     const fetchImplementation = vi.fn(
@@ -224,6 +352,7 @@ describe("broadcastTranscriptQwenClient", () => {
 
     await expect(
       requestBroadcastTranscriptChunkBinary(wav, 0, 1_000, {
+        route,
         fetchImplementation,
         quota: {
           participantId: "participant_11111111111111111111111111111111",
@@ -236,6 +365,7 @@ describe("broadcastTranscriptQwenClient", () => {
   });
 
   it("reuses one staged upload with a fresh quota operation after 429", async () => {
+    const route = await qwenRoute("free-r2");
     const wav = silentWav(90_000);
       const ticket =
         `v1.${"a".repeat(80)}.${"b".repeat(43)}`;
@@ -324,7 +454,7 @@ describe("broadcastTranscriptQwenClient", () => {
                 emotion: null,
                 billedSeconds: 90,
               }),
-              { status: 200 },
+              { status: 200, headers: transcriptResponseHeaders() },
             ),
           );
         },
@@ -335,6 +465,7 @@ describe("broadcastTranscriptQwenClient", () => {
         10_000,
         90_000,
         {
+          route,
           fetchImplementation,
           quota: {
             participantId:
@@ -355,13 +486,14 @@ describe("broadcastTranscriptQwenClient", () => {
   });
 
   it("rejects a raw WAV chunk above the shared 90-second ceiling", async () => {
+    const route = await qwenRoute();
     const fetchImplementation = vi.fn();
     await expect(
       requestBroadcastTranscriptChunkBinary(
         silentWav(1_000),
         0,
         90_001,
-        { fetchImplementation },
+        { route, fetchImplementation },
       ),
     ).rejects.toMatchObject({
       code: "INVALID_INPUT",

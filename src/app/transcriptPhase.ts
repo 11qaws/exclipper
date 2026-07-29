@@ -10,6 +10,11 @@
  * the first phase persisted and transcribes only the remainder.
  */
 
+import {
+  createContentFingerprint,
+  type ContentDigestAdapter,
+} from "../security/contentFingerprint";
+
 export type TranscriptPhase = "uniform" | "event-boost";
 
 export interface TranscriptStartInput {
@@ -36,11 +41,57 @@ export function transcriptOperationKey(
   contentFingerprint: string,
   phase: TranscriptPhase,
   attemptOrdinal = 0,
+  sourceIdentityFence?: string,
 ): string {
   if (!Number.isSafeInteger(attemptOrdinal) || attemptOrdinal < 0) {
     throw new RangeError("Transcript attempt ordinal must be a non-negative integer.");
   }
-  return `${runId}:${contentFingerprint}:${phase}:attempt-${attemptOrdinal}`;
+  if (sourceIdentityFence !== undefined) {
+    if (
+      sourceIdentityFence.length === 0 ||
+      sourceIdentityFence.length > 160 ||
+      /[\p{Cc}\p{Cf}]/u.test(sourceIdentityFence)
+    ) {
+      throw new TypeError("Transcript source identity fence is invalid.");
+    }
+  }
+  // The durable seal describes exact source input, not one retry wave. Retry
+  // identity belongs to each quota operation; including it here would make a
+  // completed generation impossible to restore after a reload.
+  const base = `${runId}:${contentFingerprint}:${phase}`;
+  return sourceIdentityFence === undefined
+    ? base
+    : `${base}:identity-${sourceIdentityFence}`;
+}
+
+/**
+ * Compacts descriptive source/provider identity material into the bounded
+ * fence accepted by `transcriptOperationKey`.
+ *
+ * Roster, ASR, worker, VAD and route revisions together are already longer
+ * than the operation contract for some broadcasts. Truncation would permit
+ * collisions, so the complete length-delimited material is hashed instead.
+ */
+export async function createTranscriptSourceIdentityFence(
+  parts: readonly string[],
+  adapter: ContentDigestAdapter | null = globalThis.crypto?.subtle ?? null,
+): Promise<string> {
+  if (
+    parts.length === 0 ||
+    parts.some(
+      (part) =>
+        typeof part !== "string" ||
+        part.length === 0 ||
+        part.length > 2_048 ||
+        /[\p{Cc}\p{Cf}]/u.test(part),
+    )
+  ) {
+    throw new TypeError("Transcript source identity material is invalid.");
+  }
+  return createContentFingerprint(
+    ["exclipper.transcript-source-identity-fence.v1", ...parts],
+    adapter,
+  );
 }
 
 export interface TranscriptContextSealInput {
@@ -50,6 +101,11 @@ export interface TranscriptContextSealInput {
   readonly requiredEventBoostOperationKey: string | null;
   readonly sealedOperationKey: string | null;
 }
+
+export type TranscriptContextReadiness =
+  | "not-ready"
+  | "ready"
+  | "visual-evidence-required";
 
 /**
  * Whether a transcript pass may start now.
@@ -79,7 +135,7 @@ export function transcriptNeedsExplicitRetry(
   return (
     status === "failed" ||
     status === "completedWithGaps" ||
-    chapterCount === 0
+    (status !== "completed" && chapterCount === 0)
   );
 }
 
@@ -109,11 +165,26 @@ export function transcriptGapRequiresExplicitBillingRetry(
 export function transcriptIsSealedForContext(
   input: TranscriptContextSealInput,
 ): boolean {
-  return (
+  return transcriptContextReadiness(input) === "ready";
+}
+
+/**
+ * Distinguishes an incomplete transcript from a complete transcript whose
+ * every source-fenced cell abstained. The latter must not be retranscribed:
+ * it requires the separate four-frame visual lane before context can publish.
+ */
+export function transcriptContextReadiness(
+  input: TranscriptContextSealInput,
+): TranscriptContextReadiness {
+  const exactFinalSeal =
     input.analysisComplete &&
     input.broadcastTranscriptStatus === "completed" &&
-    input.completedChapterCount > 0 &&
     input.requiredEventBoostOperationKey !== null &&
-    input.sealedOperationKey === input.requiredEventBoostOperationKey
+    input.sealedOperationKey === input.requiredEventBoostOperationKey;
+  if (!exactFinalSeal) return "not-ready";
+  return (
+    input.completedChapterCount > 0
+      ? "ready"
+      : "visual-evidence-required"
   );
 }

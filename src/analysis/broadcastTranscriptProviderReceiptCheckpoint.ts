@@ -1,0 +1,473 @@
+import { MAX_BROADCAST_CONTEXT_SOURCE_DURATION_MS } from "./broadcastContextProtocol";
+import {
+  resolveBroadcastTranscriptCheckpointModelRevision,
+  type BroadcastTranscriptQwenResult,
+} from "./broadcastTranscriptQwen";
+import {
+  MAX_BROADCAST_TRANSCRIPT_WORKER_CHUNKS,
+  isBroadcastTranscriptChunkId,
+} from "./broadcastTranscriptWorkerProtocol";
+import {
+  normalizeBroadcastTranscriptProviderReceipt,
+  type BroadcastTranscriptProviderReceipt,
+  type BroadcastTranscriptRouteSelection,
+  type BroadcastTranscriptVerifiedResult,
+} from "./broadcastTranscriptRouteManifest";
+
+export const BROADCAST_TRANSCRIPT_PROVIDER_RECEIPT_CHECKPOINT_SCHEMA_VERSION =
+  "1.0.0" as const;
+export const MAX_BROADCAST_TRANSCRIPT_PROVIDER_RECEIPT_CHECKPOINT_BYTES =
+  512 * 1024;
+
+export interface BroadcastTranscriptProviderReceiptPlanCell {
+  readonly chunkId: string;
+  readonly sourceStartMs: number;
+  readonly sourceEndMs: number;
+}
+
+export interface BroadcastTranscriptProviderReceiptEntry
+  extends BroadcastTranscriptProviderReceiptPlanCell {
+  readonly receipt: BroadcastTranscriptProviderReceipt;
+}
+
+export interface BroadcastTranscriptProviderReceiptCheckpoint {
+  readonly schemaVersion:
+    typeof BROADCAST_TRANSCRIPT_PROVIDER_RECEIPT_CHECKPOINT_SCHEMA_VERSION;
+  readonly sourceFingerprint: string;
+  readonly sourceDurationMs: number;
+  readonly routeManifestFingerprint: string;
+  readonly routeModelRevision: string;
+  readonly plannedCells: readonly BroadcastTranscriptProviderReceiptPlanCell[];
+  readonly receipts: readonly BroadcastTranscriptProviderReceiptEntry[];
+}
+
+export interface BroadcastTranscriptProviderReceiptSettlement {
+  readonly checkpoint: BroadcastTranscriptProviderReceiptCheckpoint;
+  readonly chapterRanges: readonly {
+    readonly startMs: number;
+    readonly endMs: number;
+  }[];
+  readonly resolvedChunkIds: readonly string[];
+  readonly gapChunkIds: readonly string[];
+}
+
+export interface BroadcastTranscriptProviderReceiptSettlementStatus {
+  readonly plannedCellCount: number;
+  readonly receiptCount: number;
+  readonly resolvedCount: number;
+  readonly gapCount: number;
+  readonly isPlanSettled: boolean;
+  readonly checkpointModelRevision: string;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function hasExactKeys(
+  value: Readonly<Record<string, unknown>>,
+  expectedKeys: readonly string[],
+): boolean {
+  const actual = Object.keys(value).sort();
+  const expected = [...expectedKeys].sort();
+  return (
+    actual.length === expected.length &&
+    actual.every((key, index) => key === expected[index])
+  );
+}
+
+function isBoundedFence(value: unknown, maximumLength = 2_048): value is string {
+  return (
+    typeof value === "string" &&
+    value.length > 0 &&
+    value.length <= maximumLength &&
+    value.trim() === value &&
+    !/[\p{Cc}\p{Cf}]/u.test(value)
+  );
+}
+
+function isRouteFingerprint(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    /^sha256:[a-f0-9]{64}$/u.test(value)
+  );
+}
+
+function compareCells(
+  left: BroadcastTranscriptProviderReceiptPlanCell,
+  right: BroadcastTranscriptProviderReceiptPlanCell,
+): number {
+  return (
+    left.sourceStartMs - right.sourceStartMs ||
+    left.sourceEndMs - right.sourceEndMs ||
+    left.chunkId.localeCompare(right.chunkId)
+  );
+}
+
+function normalizePlannedCells(
+  cells: readonly BroadcastTranscriptProviderReceiptPlanCell[],
+  sourceDurationMs: number,
+): readonly BroadcastTranscriptProviderReceiptPlanCell[] {
+  if (
+    cells.length === 0 ||
+    cells.length > MAX_BROADCAST_TRANSCRIPT_WORKER_CHUNKS
+  ) {
+    throw new RangeError(
+      `Broadcast transcript provider receipts require between 1 and ${MAX_BROADCAST_TRANSCRIPT_WORKER_CHUNKS} planned cells.`,
+    );
+  }
+  const normalized = cells.map((cell) => ({ ...cell })).sort(compareCells);
+  const ids = new Set<string>();
+  let previousEndMs = -1;
+  for (const cell of normalized) {
+    if (
+      !isBroadcastTranscriptChunkId(cell.chunkId) ||
+      ids.has(cell.chunkId) ||
+      !Number.isSafeInteger(cell.sourceStartMs) ||
+      !Number.isSafeInteger(cell.sourceEndMs) ||
+      cell.sourceStartMs < 0 ||
+      cell.sourceEndMs <= cell.sourceStartMs ||
+      cell.sourceEndMs > sourceDurationMs ||
+      cell.sourceStartMs < previousEndMs
+    ) {
+      throw new RangeError(
+        "Broadcast transcript provider receipt plan cells must be unique, bounded, and non-overlapping.",
+      );
+    }
+    ids.add(cell.chunkId);
+    previousEndMs = cell.sourceEndMs;
+  }
+  return normalized;
+}
+
+function normalizeReceipts(
+  entries: readonly BroadcastTranscriptProviderReceiptEntry[],
+  plannedCells: readonly BroadcastTranscriptProviderReceiptPlanCell[],
+  routeManifestFingerprint: string,
+): readonly BroadcastTranscriptProviderReceiptEntry[] {
+  if (entries.length > plannedCells.length) {
+    throw new RangeError(
+      "Broadcast transcript provider receipts cannot exceed their plan.",
+    );
+  }
+  const plannedById = new Map(
+    plannedCells.map((cell) => [cell.chunkId, cell]),
+  );
+  const ids = new Set<string>();
+  const normalized = entries
+    .map((entry) => ({
+      chunkId: entry.chunkId,
+      sourceStartMs: entry.sourceStartMs,
+      sourceEndMs: entry.sourceEndMs,
+      receipt: normalizeBroadcastTranscriptProviderReceipt(entry.receipt),
+    }))
+    .sort(compareCells);
+  for (const entry of normalized) {
+    const planned = plannedById.get(entry.chunkId);
+    if (
+      planned === undefined ||
+      ids.has(entry.chunkId) ||
+      entry.sourceStartMs !== planned.sourceStartMs ||
+      entry.sourceEndMs !== planned.sourceEndMs ||
+      entry.receipt.routeManifestFingerprint !== routeManifestFingerprint
+    ) {
+      throw new RangeError(
+        "Each transcript provider receipt must match one exact planned cell and route.",
+      );
+    }
+    ids.add(entry.chunkId);
+  }
+  return normalized;
+}
+
+function normalizedCheckpoint(
+  checkpoint: BroadcastTranscriptProviderReceiptCheckpoint,
+): BroadcastTranscriptProviderReceiptCheckpoint {
+  if (
+    checkpoint.schemaVersion !==
+      BROADCAST_TRANSCRIPT_PROVIDER_RECEIPT_CHECKPOINT_SCHEMA_VERSION ||
+    !isBoundedFence(checkpoint.sourceFingerprint) ||
+    !isRouteFingerprint(checkpoint.routeManifestFingerprint) ||
+    !isBoundedFence(checkpoint.routeModelRevision, 256) ||
+    !Array.isArray(checkpoint.plannedCells) ||
+    !Array.isArray(checkpoint.receipts) ||
+    !Number.isSafeInteger(checkpoint.sourceDurationMs) ||
+    checkpoint.sourceDurationMs <= 0 ||
+    checkpoint.sourceDurationMs > MAX_BROADCAST_CONTEXT_SOURCE_DURATION_MS
+  ) {
+    throw new TypeError(
+      "Broadcast transcript provider receipt checkpoint is invalid.",
+    );
+  }
+  const plannedCells = normalizePlannedCells(
+    checkpoint.plannedCells,
+    checkpoint.sourceDurationMs,
+  );
+  const receipts = normalizeReceipts(
+    checkpoint.receipts,
+    plannedCells,
+    checkpoint.routeManifestFingerprint,
+  );
+  return {
+    schemaVersion:
+      BROADCAST_TRANSCRIPT_PROVIDER_RECEIPT_CHECKPOINT_SCHEMA_VERSION,
+    sourceFingerprint: checkpoint.sourceFingerprint,
+    sourceDurationMs: checkpoint.sourceDurationMs,
+    routeManifestFingerprint: checkpoint.routeManifestFingerprint,
+    routeModelRevision: checkpoint.routeModelRevision,
+    plannedCells,
+    receipts,
+  };
+}
+
+export function assertBroadcastTranscriptProviderReceiptCheckpoint(
+  value: unknown,
+): asserts value is BroadcastTranscriptProviderReceiptCheckpoint {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, [
+      "schemaVersion",
+      "sourceFingerprint",
+      "sourceDurationMs",
+      "routeManifestFingerprint",
+      "routeModelRevision",
+      "plannedCells",
+      "receipts",
+    ]) ||
+    !Array.isArray(value.plannedCells) ||
+    !Array.isArray(value.receipts)
+  ) {
+    throw new TypeError(
+      "Broadcast transcript provider receipt checkpoint is invalid.",
+    );
+  }
+  for (const cell of value.plannedCells) {
+    if (
+      !isRecord(cell) ||
+      !hasExactKeys(cell, ["chunkId", "sourceStartMs", "sourceEndMs"])
+    ) {
+      throw new TypeError(
+        "Broadcast transcript provider receipt plan cell is invalid.",
+      );
+    }
+  }
+  for (const entry of value.receipts) {
+    if (
+      !isRecord(entry) ||
+      !hasExactKeys(entry, [
+        "chunkId",
+        "sourceStartMs",
+        "sourceEndMs",
+        "receipt",
+      ]) ||
+      !isRecord(entry.receipt) ||
+      !hasExactKeys(entry.receipt, [
+        "schemaVersion",
+        "routeManifestFingerprint",
+        "provider",
+        "modelId",
+        "modelRevision",
+        "fallbackUsed",
+      ])
+    ) {
+      throw new TypeError(
+        "Broadcast transcript provider receipt entry is invalid.",
+      );
+    }
+  }
+  normalizedCheckpoint(
+    value as unknown as BroadcastTranscriptProviderReceiptCheckpoint,
+  );
+}
+
+export function createBroadcastTranscriptProviderReceiptCheckpoint(input: {
+  readonly sourceFingerprint: string;
+  readonly sourceDurationMs: number;
+  readonly route: BroadcastTranscriptRouteSelection;
+  readonly plannedCells: readonly BroadcastTranscriptProviderReceiptPlanCell[];
+}): BroadcastTranscriptProviderReceiptCheckpoint {
+  return normalizedCheckpoint({
+    schemaVersion:
+      BROADCAST_TRANSCRIPT_PROVIDER_RECEIPT_CHECKPOINT_SCHEMA_VERSION,
+    sourceFingerprint: input.sourceFingerprint,
+    sourceDurationMs: input.sourceDurationMs,
+    routeManifestFingerprint: input.route.fingerprint,
+    routeModelRevision: input.route.manifest.modelRevision,
+    plannedCells: input.plannedCells,
+    receipts: [],
+  });
+}
+
+export function recordBroadcastTranscriptProviderReceipt(
+  checkpoint: BroadcastTranscriptProviderReceiptCheckpoint,
+  chunkId: string,
+  result: BroadcastTranscriptVerifiedResult,
+): BroadcastTranscriptProviderReceiptCheckpoint {
+  const current = normalizedCheckpoint(checkpoint);
+  const planned = current.plannedCells.find((cell) => cell.chunkId === chunkId);
+  if (
+    planned === undefined ||
+    result.sourceStartMs !== planned.sourceStartMs ||
+    result.sourceEndMs !== planned.sourceEndMs ||
+    result.modelId !== result.providerReceipt.modelId ||
+    result.modelRevision !== result.providerReceipt.modelRevision
+  ) {
+    throw new RangeError(
+      "Transcript result does not match its exact provider receipt cell.",
+    );
+  }
+  return normalizedCheckpoint({
+    ...current,
+    receipts: [
+      ...current.receipts.filter((entry) => entry.chunkId !== chunkId),
+      {
+        chunkId,
+        sourceStartMs: planned.sourceStartMs,
+        sourceEndMs: planned.sourceEndMs,
+        receipt: result.providerReceipt,
+      },
+    ],
+  });
+}
+
+export function serializeBroadcastTranscriptProviderReceiptCheckpoint(
+  checkpoint: BroadcastTranscriptProviderReceiptCheckpoint,
+): string {
+  const serialized = JSON.stringify(normalizedCheckpoint(checkpoint));
+  if (
+    new TextEncoder().encode(serialized).byteLength >
+    MAX_BROADCAST_TRANSCRIPT_PROVIDER_RECEIPT_CHECKPOINT_BYTES
+  ) {
+    throw new RangeError(
+      "Broadcast transcript provider receipt checkpoint is too large.",
+    );
+  }
+  return serialized;
+}
+
+export function parseBroadcastTranscriptProviderReceiptCheckpointJson(
+  serialized: string,
+): BroadcastTranscriptProviderReceiptCheckpoint | null {
+  if (
+    typeof serialized !== "string" ||
+    serialized.length === 0 ||
+    new TextEncoder().encode(serialized).byteLength >
+      MAX_BROADCAST_TRANSCRIPT_PROVIDER_RECEIPT_CHECKPOINT_BYTES
+  ) {
+    return null;
+  }
+  try {
+    const parsed: unknown = JSON.parse(serialized);
+    assertBroadcastTranscriptProviderReceiptCheckpoint(parsed);
+    return normalizedCheckpoint(parsed);
+  } catch {
+    return null;
+  }
+}
+
+export function broadcastTranscriptProviderReceiptCheckpointModelRevision(
+  checkpoint: BroadcastTranscriptProviderReceiptCheckpoint,
+): string {
+  const current = normalizedCheckpoint(checkpoint);
+  const results: BroadcastTranscriptQwenResult[] = current.receipts.map(
+    (entry) => ({
+      schemaVersion: "1.0.0",
+      modelId: entry.receipt.modelId,
+      modelRevision: entry.receipt.modelRevision,
+      sourceStartMs: entry.sourceStartMs,
+      sourceEndMs: entry.sourceEndMs,
+      textKo: "[provider-receipt]",
+      detectedLanguage: null,
+      emotion: null,
+      billedSeconds: null,
+    }),
+  );
+  return resolveBroadcastTranscriptCheckpointModelRevision(
+    results,
+    results.length === 0 ? current.routeModelRevision : null,
+  );
+}
+
+export function inspectBroadcastTranscriptProviderReceiptSettlement(
+  input: BroadcastTranscriptProviderReceiptSettlement,
+): BroadcastTranscriptProviderReceiptSettlementStatus {
+  const checkpoint = normalizedCheckpoint(input.checkpoint);
+  const indexByChunkId = new Map(
+    checkpoint.plannedCells.map((cell, index) => [cell.chunkId, index]),
+  );
+  const settlement = new Array<"receipt" | "resolved" | "gap" | null>(
+    checkpoint.plannedCells.length,
+  ).fill(null);
+  const chapterRangeKeys = new Set(
+    input.chapterRanges.map(({ startMs, endMs }) => `${startMs}:${endMs}`),
+  );
+  if (chapterRangeKeys.size !== input.chapterRanges.length) {
+    throw new RangeError("Transcript chapter ranges must be unique.");
+  }
+
+  for (const entry of checkpoint.receipts) {
+    const index = indexByChunkId.get(entry.chunkId);
+    if (
+      index === undefined ||
+      settlement[index] !== null ||
+      !chapterRangeKeys.delete(
+        `${entry.sourceStartMs}:${entry.sourceEndMs}`,
+      )
+    ) {
+      throw new RangeError(
+        "A provider receipt must match one exact transcript chapter.",
+      );
+    }
+    settlement[index] = "receipt";
+  }
+  const resolvedIds = new Set<string>();
+  for (const chunkId of input.resolvedChunkIds) {
+    const index = indexByChunkId.get(chunkId);
+    if (
+      index === undefined ||
+      resolvedIds.has(chunkId) ||
+      settlement[index] !== null
+    ) {
+      throw new RangeError(
+        "Resolved transcript evidence must match one exact provider receipt plan cell.",
+      );
+    }
+    resolvedIds.add(chunkId);
+    settlement[index] = "resolved";
+  }
+  if (chapterRangeKeys.size > 0) {
+    throw new RangeError(
+      "Every successful transcript chapter requires an exact provider receipt.",
+    );
+  }
+
+  const gapIds = new Set<string>();
+  for (const chunkId of input.gapChunkIds) {
+    const index = indexByChunkId.get(chunkId);
+    if (
+      index === undefined ||
+      gapIds.has(chunkId) ||
+      settlement[index] !== null
+    ) {
+      throw new RangeError(
+        "Transcript gaps must match otherwise-unsettled provider receipt cells.",
+      );
+    }
+    gapIds.add(chunkId);
+    settlement[index] = "gap";
+  }
+  if (settlement.some((value) => value === null)) {
+    throw new RangeError(
+      "Every provider receipt plan cell requires an exact settlement.",
+    );
+  }
+  return {
+    plannedCellCount: checkpoint.plannedCells.length,
+    receiptCount: checkpoint.receipts.length,
+    resolvedCount: resolvedIds.size,
+    gapCount: gapIds.size,
+    isPlanSettled: gapIds.size === 0,
+    checkpointModelRevision:
+      broadcastTranscriptProviderReceiptCheckpointModelRevision(checkpoint),
+  };
+}

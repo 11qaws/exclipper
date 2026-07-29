@@ -1,0 +1,22 @@
+{
+  "schemaVersion": "1.0.0",
+  "tool": "exclipper.voice-enrollment-candidate-extractor",
+  "safetyAcknowledgement": "candidate-ranges-are-unverified-and-require-human-voice-review",
+  "videoNo": "14423365",
+  "sourceLocator": "https://chzzk.naver.com/video/14423365",
+  "manifestRevision": "chzzk-video-14423365-sena-arbel-pending-candidates-v1",
+  "ranges": [
+    {
+      "participantId": "sena-arbel",
+      "start": "00:19:33",
+      "end": "00:20:03",
+      "reviewNote": "선곡 화면의 곡 사이 대화 후보입니다. 음악과 가창이 섞였으면 폐기합니다."
+    },
+    {
+      "participantId": "sena-arbel",
+      "start": "00:43:43",
+      "end": "00:44:13",
+      "reviewNote": "선곡 화면의 단독 발화 후보이며 실제 대화인지 사람 청취로 확인합니다."
+    }
+  ]
+}

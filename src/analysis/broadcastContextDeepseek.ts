@@ -19,8 +19,8 @@ import {
   type BroadcastContextSemanticChapterSalience,
 } from "./broadcastContextProtocol";
 import {
-  candidatePassBCastReferenceForName,
-  candidatePassBCastReferences,
+  candidatePassBKnownCastReferences,
+  candidatePassBKnownCastReferenceForName,
 } from "./participantRoster";
 
 export const BROADCAST_CONTEXT_DEEPSEEK_ENDPOINT =
@@ -108,7 +108,7 @@ const SYSTEM_PROMPT = `당신은 긴 인터넷 방송(라이브 스트리밍)의
 {
   "broadcastSummaryKo": "방송 전체의 시간 순서·주제 변화·반복 소재·주요 사건을 600~1000자로 충분히 서술",
   "hostStreamerProfile": {
-    "displayNameKo": "출연진 명단이나 방송 근거로 확인된 주 진행 스트리머 이름, 확인되지 않으면 null",
+    "displayNameKo": "화면 이름표·시각 참조 일치·발화자의 자기소개·음성 참조 일치 중 하나로 관찰 확인된 주 진행 스트리머 이름, 확인되지 않으면 null",
     "profileSummaryKo": "방송에서 관찰된 진행 역할·말투와 상호작용·반복 관심사·반응 방식·채팅 또는 게스트와의 관계를 300~500자로 서술",
     "evidenceKo": ["프로필 추정에 사용한 방송 속 구체적 단서 2~5개"],
     "uncertaintiesKo": ["방송 근거만으로 확정할 수 없는 점"]
@@ -168,7 +168,7 @@ const SYSTEM_PROMPT = `당신은 긴 인터넷 방송(라이브 스트리밍)의
 
 ## 최종 선택 원칙
 - 전체 서술을 몇 줄로 과도하게 줄이지 마세요. 입력에서 확인되는 방송의 시작·중간 변화·마무리, 반복 주제와 사건의 인과관계를 600~1000자로 보존하세요.
-- 주 진행 스트리머 프로필은 이 방송 안에서 직접 관찰할 수 있는 편집 관련 특성만 합리적으로 추정하세요. 정확한 이름은 닫힌 출연진 명단이나 대사·화면의 명시적 근거가 있을 때만 쓰고, 그렇지 않으면 null로 두세요. 나이·성별·국적·건강·사생활 같은 민감하거나 근거 없는 신상은 추정하지 마세요.
+- 주 진행 스트리머 프로필은 이 방송 안에서 직접 관찰할 수 있는 편집 관련 특성만 합리적으로 추정하세요. 닫힌 출연진 명단은 이름 표기 교정용일 뿐 실제 등장 증거가 아닙니다. 정확한 이름은 화면 이름표·시각 참조 일치·발화자의 자기소개·음성 참조 일치 중 하나가 근거 지도에 있을 때만 쓰고, 그렇지 않으면 null로 두세요. 나이·성별·국적·건강·사생활 같은 민감하거나 근거 없는 신상은 추정하지 마세요.
 - 후보 수를 채우지 마세요. 의미 있는 후보가 없으면 모든 후보를 reject로 판정하는 것이 정답입니다.
 - 큰 소리나 화면 전환만으로 select하지 마세요. 구체적인 사건과 스트리머의 반응 또는 의미 있는 행동이 있어야 합니다.
 - 노래·MV·음악만 있는 구간, 고정 오프닝·엔딩·대기·휴식은 그 안에 고유한 발화 사건이 없다면 반드시 reject입니다.
@@ -257,7 +257,7 @@ const QWEN_COMPACT_OVERVIEW_SYSTEM_PROMPT = `당신은 VTuber 인터넷 방송�
 
 방송의 주제가 바뀌는 경계도 chapters로 묶으세요. 실제 chapter ID만 사용해 시간순·비중첩으로 2~16개를 만들고, 같은 주제가 이어지면 한 구간으로 합치세요. 짧은 사건 하나를 주제 구간으로 부풀리지 마세요. 각 구간에서 실제로 무엇을 했고 어떤 흐름으로 다음 주제로 넘어갔는지 desc에 남기세요.
 
-summary는 몇 줄짜리 홍보 문구가 아닙니다. 방송 시작부터 마무리까지 시간 순서, 주제 변화, 반복 소재, 주요 사건과 반응의 인과관계를 600~1000자로 보존하세요. host는 이 방송을 주도한 스트리머에 관한 편집용 관찰입니다. 닫힌 출연진 명단이나 대사·화면에서 이름이 명시적으로 확인되면 name에 쓰고, 아니면 null로 두세요. profile에는 진행 역할, 말투와 채팅·게스트 상호작용, 반복 관심사, 특징적인 반응 방식을 300~500자로 서술하세요. evidence에는 방송 속 구체적 단서 2~5개, uncertainty에는 확정할 수 없는 점을 넣으세요. 나이·성별·국적·건강·사생활 등 민감하거나 근거 없는 신상은 추정하지 마세요.
+summary는 몇 줄짜리 홍보 문구가 아닙니다. 방송 시작부터 마무리까지 시간 순서, 주제 변화, 반복 소재, 주요 사건과 반응의 인과관계를 600~1000자로 보존하세요. host는 이 방송을 주도한 스트리머에 관한 편집용 관찰입니다. 닫힌 출연진 명단과 채널 주인 prior, 대사 속 이름 언급은 이름 표기 교정과 탐색 단서일 뿐 실제 등장·발화 증거가 아닙니다. 화면 이름표·시각 참조 일치·발화자의 자기소개·음성 참조 일치 중 하나가 근거 지도에 있을 때만 name에 쓰고, 아니면 null로 두세요. profile에는 진행 역할, 말투와 채팅·게스트 상호작용, 반복 관심사, 특징적인 반응 방식을 300~500자로 서술하세요. evidence에는 방송 속 구체적 단서 2~5개, uncertainty에는 확정할 수 없는 점을 넣으세요. 나이·성별·국적·건강·사생활 등 민감하거나 근거 없는 신상은 추정하지 마세요.
 
 반드시 다음 JSON만 출력하세요. 다른 키, 설명, 마크다운을 추가하지 마세요.
 {"summary":"방송 전체 흐름 600~1000자","host":{"name":null,"profile":"주 진행 스트리머 관찰 300~500자","evidence":["근거 단서"],"uncertainty":[]},"themes":["핵심 주제 최대 4개"],"chapters":[{"s":"실제 시작 chapterId","e":"실제 끝 chapterId","title":"주제 제목 24자 이내","desc":"이 구간의 실제 내용과 흐름 160자 이내","kind":"main-event | story-progress | setup-and-payoff | running-gag | quiet-achievement | reaction | context-shift | other","sal":"primary | secondary"}],"candidates":[{"id":"실제 candidateId","d":"select | review | reject","c":"reaction | quiet-achievement | setup-and-payoff | running-gag | context-dependent | apology-accountability | music-or-intermission | not-clip-worthy | uncertain","p":0.0,"reason":"판정 이유 50자 이내"}],"leads":[{"s":"실제 시작 chapterId","e":"실제 끝 chapterId","c":"reaction | quiet-achievement | setup-and-payoff | running-gag | context-dependent | apology-accountability","p":0.0,"event":"사건과 반응 60자 이내","cue":"근거 대사 30자 이내"}]}
@@ -282,16 +282,64 @@ function formatDuration(ms: number): string {
 function buildBroadcastContextCastRosterBlock(
   request: BroadcastContextRequest,
 ): string {
-  const references = candidatePassBCastReferences(request.castRosterId);
-  if (references.length === 0) return "";
-  const rosterLines = references.map((reference) => {
-    const aliases = reference.aliasesKo.length === 0
-      ? ""
-      : ` / 실제 호칭·ASR 변형: ${reference.aliasesKo.join(", ")}`;
-    const role = reference.role === "streamer" ? "진행 스트리머" : "게스트";
-    return `- ${reference.displayName} (${role}${aliases})`;
+  const grounding = request.participantGrounding;
+  const knownReferenceById = new Map(
+    candidatePassBKnownCastReferences().map((reference) => [
+      reference.participantId,
+      reference,
+    ]),
+  );
+  const rosterLines = grounding.participants.map((participant) => {
+    const reference = knownReferenceById.get(participant.participantId);
+    const aliases =
+      reference === undefined || reference.aliasesKo.length === 0
+        ? ""
+        : ` / 고정 호칭·ASR 변형: ${reference.aliasesKo.join(", ")}`;
+    const prior =
+      participant.sourceRolePrior === "likely-host"
+        ? "원본 채널상 주 진행자 후보"
+        : participant.sourceRolePrior === "possible-guest"
+          ? "출연 가능 멤버"
+          : "출처 prior 없음";
+    const mentions =
+      participant.mentionedChapterCount === 0
+        ? "대사 이름 언급 없음"
+        : `대사 이름 언급 챕터 ${participant.mentionedChapterCount}개`;
+    return `- ${participant.displayNameKo} (${prior} / ${mentions}${aliases})`;
   });
-  return `### 이 방송의 확인된 출연진(닫힌 명단)\n${rosterLines.join("\n")}\n이 명단은 입력 대사의 고유명사 표기와 이미 근거가 있는 관계 맥락을 교정하는 데만 사용하세요. 호칭·ASR 변형은 위 canonical 전체 이름으로 쓰되, 목소리 느낌만으로 발화자를 정하거나 해당 장면에 있었다고 추측하지 마세요. 챕터 대사·화면 이름·실제 호명·이미 근거화된 후보 설명이 뒷받침하지 않으면 주체를 특정하지 말고, 목록 밖 인물을 만들어내지 마세요.\n\n`;
+  const adapterLines = grounding.adapterReceipts.map((receipt) => {
+    const state =
+      receipt.status === "completed"
+        ? `완료 ${receipt.processedCount}/${receipt.inputCount}`
+        : "사용 불가(검증된 참조 자료 없음)";
+    return `- ${receipt.adapter}: ${state}`;
+  });
+  const observedEvidenceLines = grounding.evidence.flatMap((evidence) => {
+    if (
+      evidence.kind === "source-channel-prior" ||
+      evidence.kind === "transcript-name-mention"
+    ) {
+      return [];
+    }
+    const participant =
+      evidence.participantId === null
+        ? "인물 미확정"
+        : grounding.participants.find(
+            ({ participantId }) => participantId === evidence.participantId,
+          )?.displayNameKo ?? "인물 미확정";
+    const confidence =
+      evidence.confidence === null
+        ? "미산정"
+        : evidence.confidence.toFixed(2);
+    return [
+      `- ${formatDuration(evidence.startMs)}~${formatDuration(evidence.endMs)} / ${participant} / ${evidence.kind} / 신뢰도 ${confidence} / ${evidence.evidenceKo}`,
+    ];
+  });
+  const observedEvidenceBlock =
+    observedEvidenceLines.length === 0
+      ? "- 관찰 확인된 화면·목소리 인물 근거 없음"
+      : observedEvidenceLines.join("\n");
+  return `### 맥락 분석 전 인물 근거 지도 (${grounding.status})\n${rosterLines.join("\n")}\n\n인물 근거 어댑터:\n${adapterLines.join("\n")}\n\n관찰 근거:\n${observedEvidenceBlock}\n이 지도는 닫힌 6인 카탈로그와 원본 출처 prior, 대사 속 이름 언급, 실제 화면·목소리 관찰 근거를 분리해 기록합니다. 채널 주인 prior는 실제 출연 증거가 아니고, 이름 언급도 그 사람이 말했거나 화면에 있었다는 증거가 아닙니다. 현재 visual-identity 또는 voice-identity가 완료되지 않았다면 주 진행자 이름과 장면별 발화자를 확정하지 마세요. 호칭·ASR 변형은 위 canonical 전체 이름으로 쓰되, 목소리 느낌만으로 발화자를 정하거나 해당 장면에 있었다고 추측하지 말고 목록 밖 인물을 만들지 마세요.\n\n`;
 }
 
 export function buildBroadcastContextDeepseekRequestBody(
@@ -1000,10 +1048,29 @@ function groundHostStreamerProfile(
   const groundedNameReference =
     profile.displayNameKo === null
       ? null
-      : candidatePassBCastReferenceForName(
-          request.castRosterId,
-          profile.displayNameKo,
-        );
+      : candidatePassBKnownCastReferenceForName(profile.displayNameKo);
+  const hasObservedIdentityEvidence =
+    groundedNameReference !== null &&
+    request.participantGrounding.evidence.some(
+      (evidence) =>
+        evidence.participantId === groundedNameReference.participantId &&
+        new Set<string>([
+          "on-screen-name",
+          "visual-reference-match",
+          "spoken-self-identification",
+          "voice-reference-match",
+        ]).has(evidence.kind),
+    );
+  const groundedParticipant =
+    groundedNameReference === null
+      ? null
+      : request.participantGrounding.participants.find(
+          ({ participantId }) =>
+            participantId === groundedNameReference.participantId,
+        ) ?? null;
+  const matchesHostPrior =
+    request.castRosterId === null ||
+    groundedParticipant?.sourceRolePrior === "likely-host";
   const evidenceKo = profile.evidenceKo.filter(
     (item) => !SENSITIVE_HOST_PROFILE_SENTENCE.test(item),
   );
@@ -1012,7 +1079,9 @@ function groundHostStreamerProfile(
   );
   return {
     displayNameKo:
-      groundedNameReference?.role === "streamer"
+      groundedNameReference !== null &&
+      hasObservedIdentityEvidence &&
+      matchesHostPrior
         ? groundedNameReference.displayName
         : null,
     profileSummaryKo: safeSummary,

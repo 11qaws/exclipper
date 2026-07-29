@@ -4,11 +4,24 @@ import type {
   BroadcastTranscriptWorkerRunResult,
 } from "./broadcastTranscriptWorkerClient";
 import type {
+  BroadcastTranscriptChunkAbstention,
   BroadcastTranscriptChunkGap,
   BroadcastTranscriptChunkGapReason,
   BroadcastTranscriptQuotaOperationNamespace,
 } from "./broadcastTranscriptWorkerProtocol";
-import { isBroadcastTranscriptChunkId } from "./broadcastTranscriptWorkerProtocol";
+import {
+  isBroadcastTranscriptChunkId,
+  isBroadcastTranscriptQuotaOperationScope,
+} from "./broadcastTranscriptWorkerProtocol";
+
+type NoAudioBroadcastTranscriptAbstention = Extract<
+  BroadcastTranscriptChunkAbstention,
+  { readonly reason: "no-audio" }
+>;
+type NoSpeechBroadcastTranscriptAbstention = Extract<
+  BroadcastTranscriptChunkAbstention,
+  { readonly reason: "no-speech" }
+>;
 
 export const MAX_BROADCAST_TRANSCRIPT_FRAGMENT_ATTEMPTS = 3;
 const QUOTA_ATTEMPT_GENERATION_STRIDE =
@@ -26,8 +39,12 @@ export interface BroadcastTranscriptFragmentRecoveryProgress {
 
 export interface BroadcastTranscriptFragmentRecoveryResult {
   readonly fragments: readonly BroadcastTranscriptWorkerFragment[];
-  /** A successfully decoded fragment with no usable speech is resolved evidence. */
-  readonly noAudioGaps: readonly BroadcastTranscriptChunkGap[];
+  /** Source-fenced work resolved before a paid ASR request was issued. */
+  readonly resolvedAbstentions: readonly BroadcastTranscriptChunkAbstention[];
+  /** Backwards-compatible projection used by the existing no-audio chapter path. */
+  readonly noAudioGaps: readonly NoAudioBroadcastTranscriptAbstention[];
+  /** Confirmed no-speaker evidence, kept distinct from a missing audio track. */
+  readonly noSpeechAbstentions: readonly NoSpeechBroadcastTranscriptAbstention[];
   /** Safe retries that still failed after the bounded automatic recovery waves. */
   readonly unresolvedRetryableGaps: readonly BroadcastTranscriptChunkGap[];
   /** A request that may already have been billed; never blindly resent. */
@@ -49,6 +66,25 @@ export interface RecoverBroadcastTranscriptFragmentsOptions {
   readonly onProgress?: (
     progress: BroadcastTranscriptFragmentRecoveryProgress,
   ) => void;
+  /**
+   * Runs before a worker batch is dispatched. Durable callers use this hook to
+   * seal every requested chunk as in-flight before any paid operation starts.
+   */
+  readonly onAttemptStarting?: (
+    chunks: readonly BroadcastContextTranscriptionChunk[],
+    quotaAttemptOrdinal: number,
+    attemptIndex: number,
+  ) => void | Promise<void>;
+  /**
+   * Runs after a complete worker response has passed structural validation,
+   * but before another retry wave can start. Durable callers persist and read
+   * back every fragment, abstention and gap here.
+   */
+  readonly onAttemptSettled?: (
+    result: BroadcastTranscriptWorkerRunResult,
+    quotaAttemptOrdinal: number,
+    attemptIndex: number,
+  ) => void | Promise<void>;
 }
 
 function abortError(): DOMException {
@@ -142,16 +178,20 @@ export function transcriptFragmentQuotaOperationId(
   namespace: BroadcastTranscriptQuotaOperationNamespace,
   quotaAttemptOrdinal: number,
   chunkId: string,
+  operationScope?: string,
 ): string {
   if (
     !["uniform", "event-boost", "refinement"].includes(namespace) ||
     !Number.isSafeInteger(quotaAttemptOrdinal) ||
     quotaAttemptOrdinal < 0 ||
-    !isBroadcastTranscriptChunkId(chunkId)
+    !isBroadcastTranscriptChunkId(chunkId) ||
+    (operationScope !== undefined &&
+      !isBroadcastTranscriptQuotaOperationScope(operationScope))
   ) {
     throw new RangeError("Transcript fragment quota operation identity is invalid.");
   }
-  return `transcript-${namespace}-g${quotaAttemptOrdinal}-${chunkId}`;
+  const scope = operationScope === undefined ? "" : `-s${operationScope}`;
+  return `transcript-${namespace}${scope}-g${quotaAttemptOrdinal}-${chunkId}`;
 }
 
 function validateAttemptResult(
@@ -163,6 +203,14 @@ function validateAttemptResult(
   for (const { chunkId } of result.fragments) {
     if (!requestedIds.has(chunkId) || settledIds.has(chunkId)) {
       throw new Error("Transcript fragment recovery received an invalid result.");
+    }
+    settledIds.add(chunkId);
+  }
+  for (const { chunkId } of result.abstentions) {
+    if (!requestedIds.has(chunkId) || settledIds.has(chunkId)) {
+      throw new Error(
+        "Transcript fragment recovery received an invalid abstention.",
+      );
     }
     settledIds.add(chunkId);
   }
@@ -193,7 +241,9 @@ export async function recoverBroadcastTranscriptFragments(
   if (options.chunks.length === 0) {
     return {
       fragments: [],
+      resolvedAbstentions: [],
       noAudioGaps: [],
+      noSpeechAbstentions: [],
       unresolvedRetryableGaps: [],
       outcomeUnknownGaps: [],
       attemptedCount: 0,
@@ -208,7 +258,7 @@ export async function recoverBroadcastTranscriptFragments(
   }
 
   const successful = new Map<string, BroadcastTranscriptWorkerFragment>();
-  const noAudio = new Map<string, BroadcastTranscriptChunkGap>();
+  const abstentions = new Map<string, BroadcastTranscriptChunkAbstention>();
   const outcomeUnknown = new Map<string, BroadcastTranscriptChunkGap>();
   let pending = [...options.chunks];
   let unresolvedRetryable = new Map<string, BroadcastTranscriptChunkGap>();
@@ -227,20 +277,31 @@ export async function recoverBroadcastTranscriptFragments(
       attemptNumber: attemptedCount,
       maximumAttemptCount: MAX_BROADCAST_TRANSCRIPT_FRAGMENT_ATTEMPTS,
       requestedCount: pending.length,
-      recoveredCount: successful.size,
+      recoveredCount: successful.size + abstentions.size,
       remainingCount: pending.length,
       waitingBeforeRetryMs: null,
     });
 
+    const quotaAttemptOrdinal = transcriptFragmentQuotaAttemptOrdinal(
+      options.manualAttemptGeneration,
+      attemptIndex,
+    );
+    await options.onAttemptStarting?.(
+      Object.freeze([...pending]),
+      quotaAttemptOrdinal,
+      attemptIndex,
+    );
     const attemptResult = await options.runAttempt(
       pending,
-      transcriptFragmentQuotaAttemptOrdinal(
-        options.manualAttemptGeneration,
-        attemptIndex,
-      ),
+      quotaAttemptOrdinal,
       attemptIndex,
     );
     validateAttemptResult(pending, attemptResult);
+    await options.onAttemptSettled?.(
+      attemptResult,
+      quotaAttemptOrdinal,
+      attemptIndex,
+    );
     concurrencyOutcomes.push(attemptResult.concurrencyOutcome);
 
     for (const fragment of attemptResult.fragments) {
@@ -248,10 +309,19 @@ export async function recoverBroadcastTranscriptFragments(
       unresolvedRetryable.delete(fragment.chunkId);
     }
 
+    for (const abstention of attemptResult.abstentions) {
+      abstentions.set(abstention.chunkId, abstention);
+      unresolvedRetryable.delete(abstention.chunkId);
+    }
+
     const nextRetryable = new Map<string, BroadcastTranscriptChunkGap>();
     for (const gap of attemptResult.gaps) {
       if (gap.reason === "no-audio") {
-        noAudio.set(gap.chunkId, gap);
+        abstentions.set(gap.chunkId, {
+          chunkId: gap.chunkId,
+          reason: "no-audio",
+          speechActivityReceipt: null,
+        });
       } else if (gap.reason === "outcome-unknown") {
         outcomeUnknown.set(gap.chunkId, gap);
       } else if (isAutomaticallyRetryableTranscriptGap(gap.reason)) {
@@ -272,7 +342,7 @@ export async function recoverBroadcastTranscriptFragments(
         attemptNumber: attemptedCount,
         maximumAttemptCount: MAX_BROADCAST_TRANSCRIPT_FRAGMENT_ATTEMPTS,
         requestedCount: pending.length,
-        recoveredCount: successful.size,
+        recoveredCount: successful.size + abstentions.size,
         remainingCount: pending.length,
         waitingBeforeRetryMs: retryDelayMs,
       });
@@ -291,7 +361,23 @@ export async function recoverBroadcastTranscriptFragments(
 
   return {
     fragments: byOriginalOrder(successful.values()),
-    noAudioGaps: byOriginalOrder(noAudio.values()),
+    resolvedAbstentions: byOriginalOrder(abstentions.values()),
+    noAudioGaps: byOriginalOrder(
+      [...abstentions.values()].filter(
+        (
+          abstention,
+        ): abstention is NoAudioBroadcastTranscriptAbstention =>
+          abstention.reason === "no-audio",
+      ),
+    ),
+    noSpeechAbstentions: byOriginalOrder(
+      [...abstentions.values()].filter(
+        (
+          abstention,
+        ): abstention is NoSpeechBroadcastTranscriptAbstention =>
+          abstention.reason === "no-speech",
+      ),
+    ),
     unresolvedRetryableGaps: byOriginalOrder(unresolvedRetryable.values()),
     outcomeUnknownGaps: byOriginalOrder(outcomeUnknown.values()),
     attemptedCount,

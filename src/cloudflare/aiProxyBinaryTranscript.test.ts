@@ -15,13 +15,16 @@ const ENDPOINT =
   "https://rettohighlight-gemini.example/v1/broadcast-transcript";
 const PRODUCTION_ORIGIN = "https://11qaws.github.io";
 
-function createEnvironment(): AiProxyEnvironment {
+function createEnvironment(
+  transcriptProvider: "qwen" | "groq" = "qwen",
+): AiProxyEnvironment {
   return {
     GEMINI_API_KEY: "gemini-secret",
     QWEN_API_KEY: "qwen-secret",
+    GROQ_API_KEY: "groq-secret",
     AI_QUOTA_MODE: "disabled",
     BROADCAST_TRANSCRIPT_TRANSPORT_MODE: "paid-direct",
-    BROADCAST_TRANSCRIPT_PROVIDER: "qwen",
+    BROADCAST_TRANSCRIPT_PROVIDER: transcriptProvider,
     AI_PROVIDER_FALLBACK_MODE: "bounded",
     RATE_LIMITER: { limit: vi.fn().mockResolvedValue({ success: true }) },
     IP_RATE_LIMITER: { limit: vi.fn().mockResolvedValue({ success: true }) },
@@ -308,6 +311,95 @@ describe("binary transcript ingress", () => {
     expect(await response.json()).toMatchObject({
       error: { code: "INVALID_AUDIO" },
     });
+  });
+
+  it("sends paid-direct WAV to explicitly selected Groq without exposing its key", async () => {
+    const wav = silentWav(2_000);
+    let providerInit: RequestInit | undefined;
+    const response = await handleBroadcastTranscriptRequest(
+      binaryRequest(wav, "?startMs=5000&durationMs=2000"),
+      createEnvironment("groq"),
+      {
+        fetchImplementation: (_input, init) => {
+          providerInit = init;
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                language: "ko",
+                duration: 2,
+                text: "직접 전송 경로입니다.",
+                segments: [
+                  {
+                    start: 0,
+                    end: 2,
+                    text: "직접 전송 경로입니다.",
+                  },
+                ],
+              }),
+              { status: 200 },
+            ),
+          );
+        },
+      },
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("X-ExClipper-Model-Id")).toBe(
+      "whisper-large-v3-turbo",
+    );
+    expect(response.headers.get("X-ExClipper-Model-Revision")).toBe(
+      "groq-whisper-large-v3-turbo-ko-segment-v1-2026-07-29",
+    );
+    const payload: unknown = await response.json();
+    expect(payload).toMatchObject({
+      modelId: "whisper-large-v3-turbo",
+      sourceStartMs: 5_000,
+      sourceEndMs: 7_000,
+      textKo: "직접 전송 경로입니다.",
+    });
+    expect(providerInit?.body).toBeInstanceOf(FormData);
+    const form = providerInit?.body as FormData;
+    const file = form.get("file");
+    expect(file).toBeInstanceOf(Blob);
+    expect((file as Blob).size).toBe(wav.byteLength);
+    expect(form.get("url")).toBeNull();
+    expect(new Headers(providerInit?.headers).get("Authorization")).toBe(
+      "Bearer groq-secret",
+    );
+    expect(JSON.stringify(payload)).not.toContain("groq-secret");
+  });
+
+  it("redacts Groq authentication errors from the browser response", async () => {
+    const upstreamSecret = "gsk_fixture_never_return";
+    const response = await handleBroadcastTranscriptRequest(
+      binaryRequest(silentWav(2_000), "?startMs=0&durationMs=2000"),
+      {
+        ...createEnvironment("groq"),
+        AI_PROVIDER_FALLBACK_MODE: "disabled",
+      },
+      {
+        fetchImplementation: () =>
+          Promise.resolve(
+            new Response(
+              JSON.stringify({
+                error: {
+                  code: "invalid_api_key",
+                  message: `Invalid API Key: ${upstreamSecret}`,
+                },
+              }),
+              { status: 401 },
+            ),
+          ),
+      },
+    );
+    const payloadText = await response.text();
+
+    expect(response.status).toBe(503);
+    expect(JSON.parse(payloadText)).toMatchObject({
+      error: { code: "PROXY_NOT_CONFIGURED" },
+    });
+    expect(payloadText).not.toContain(upstreamSecret);
+    expect(payloadText).not.toContain("invalid_api_key");
   });
 
   it("rejects a truncated raw WAV even when its header declares the full duration", async () => {

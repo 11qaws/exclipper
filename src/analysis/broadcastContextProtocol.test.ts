@@ -5,6 +5,7 @@ import {
   createBroadcastContextRequest,
 } from "./broadcastContextProtocol";
 import type { BroadcastContextInputError } from "./broadcastContextProtocol";
+import { createBroadcastParticipantGrounding } from "./broadcastParticipantGrounding";
 import { DEFAULT_CANDIDATE_PASS_B_CAST_ROSTER_ID } from "./participantRoster";
 
 function validInput() {
@@ -47,8 +48,12 @@ describe("broadcastContextProtocol", () => {
     const input = validInput();
     const request = createBroadcastContextRequest(input);
 
-    expect(request.schemaVersion).toBe("1.6.0");
+    expect(request.schemaVersion).toBe("1.7.0");
     expect(request.castRosterId).toBeNull();
+    expect(request.participantGrounding).toMatchObject({
+      status: "sealed",
+      resolutionStatus: "no-source-roster",
+    });
     expect(request.chapters).not.toBe(input.chapters);
     expect(request.candidates).not.toBe(input.candidates);
     expect(Object.keys(request.candidates[0] ?? {})).toEqual([
@@ -82,6 +87,85 @@ describe("broadcastContextProtocol", () => {
     ).toThrowError(
       expect.objectContaining<Partial<BroadcastContextInputError>>({
         code: "INVALID_CAST_ROSTER",
+      }),
+    );
+  });
+
+  it("accepts only the deterministic sealed participant packet for the exact map", () => {
+    const input = validInput();
+    const canonical = createBroadcastContextRequest({
+      ...input,
+      castRosterId: DEFAULT_CANDIDATE_PASS_B_CAST_ROSTER_ID,
+    });
+    expect(
+      createBroadcastContextRequest({
+        ...input,
+        castRosterId: DEFAULT_CANDIDATE_PASS_B_CAST_ROSTER_ID,
+        participantGrounding: canonical.participantGrounding,
+      }).participantGrounding,
+    ).toEqual(canonical.participantGrounding);
+    expect(() =>
+      createBroadcastContextRequest({
+        ...input,
+        castRosterId: DEFAULT_CANDIDATE_PASS_B_CAST_ROSTER_ID,
+        participantGrounding: {
+          ...canonical.participantGrounding,
+          resolutionStatus: "no-source-roster",
+        },
+      }),
+    ).toThrowError(
+      expect.objectContaining<Partial<BroadcastContextInputError>>({
+        code: "INVALID_PARTICIPANT_GROUNDING",
+      }),
+    );
+  });
+
+  it("preserves canonical visual evidence supplied by a completed pre-context adapter", () => {
+    const input = validInput();
+    const participantGrounding = createBroadcastParticipantGrounding(
+      {
+        sourceDurationMs: input.sourceDurationMs,
+        castRosterId: DEFAULT_CANDIDATE_PASS_B_CAST_ROSTER_ID,
+        chapters: input.chapters,
+      },
+      {
+        visualIdentity: {
+          receipt: {
+            adapter: "visual-identity",
+            revision: "visual-reference-v1",
+            status: "completed",
+            inputCount: 4,
+            processedCount: 4,
+            unavailableReason: null,
+          },
+          evidence: [
+            {
+              evidenceId: "visual:candidate-1:amoretto",
+              participantId: "amoretto",
+              kind: "visual-reference-match",
+              supports: "visible-identity",
+              adapter: "visual-identity",
+              startMs: 10 * 60_000,
+              endMs: 10 * 60_000 + 45_000,
+              chapterId: "chapter-1",
+              confidence: 0.92,
+              evidenceKo: "네 장의 대표 화면에서 같은 아바타를 확인했습니다.",
+            },
+          ],
+        },
+      },
+    );
+    const request = createBroadcastContextRequest({
+      ...input,
+      castRosterId: DEFAULT_CANDIDATE_PASS_B_CAST_ROSTER_ID,
+      participantGrounding,
+    });
+
+    expect(request.participantGrounding).toEqual(participantGrounding);
+    expect(request.participantGrounding.evidence).toContainEqual(
+      expect.objectContaining({
+        kind: "visual-reference-match",
+        participantId: "amoretto",
       }),
     );
   });

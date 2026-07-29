@@ -11,6 +11,17 @@ import {
 } from "./aiProviderConfiguration";
 
 describe("aiProviderConfiguration", () => {
+  it("does not select Groq merely because its secret exists", () => {
+    expect(
+      resolveBroadcastTranscriptConnection({
+        GROQ_API_KEY: "groq-secret",
+      }),
+    ).toEqual({
+      ok: true,
+      connection: { provider: "disabled" },
+    });
+  });
+
   it("keeps Gemini as the configured candidate default", () => {
     const resolution = resolveCandidateInsightConnection({
       GEMINI_API_KEY: "gemini-secret",
@@ -199,6 +210,33 @@ describe("aiProviderConfiguration", () => {
     });
   });
 
+  it("activates Groq Whisper only when it is explicitly selected and configured", () => {
+    const environment = {
+      BROADCAST_TRANSCRIPT_PROVIDER: "groq",
+      GROQ_API_KEY: "groq-secret",
+    } as const;
+
+    expect(resolveBroadcastTranscriptConnection(environment)).toEqual({
+      ok: true,
+      connection: {
+        provider: "groq",
+        descriptor: AI_PROVIDER_CATALOG.broadcastTranscript.groq,
+        endpoint: "https://api.groq.com/openai/v1/audio/transcriptions",
+        apiKey: "groq-secret",
+      },
+    });
+    expect(createAiProviderReadinessManifest(environment).broadcastTranscript)
+      .toEqual({
+        selectedProvider: "groq",
+        modelId: "whisper-large-v3-turbo",
+        modelRevision:
+          "groq-whisper-large-v3-turbo-ko-segment-v1-2026-07-29",
+        implementationStatus: "active",
+        configured: true,
+        active: true,
+      });
+  });
+
   it("resolves one alternate transcript provider only in bounded mode", () => {
     const environment = {
       BROADCAST_TRANSCRIPT_PROVIDER: "qwen",
@@ -219,6 +257,30 @@ describe("aiProviderConfiguration", () => {
         "qwen",
       ),
     ).toBeNull();
+    expect(
+      resolveBroadcastTranscriptFallbackConnection(
+        {
+          ...environment,
+          BROADCAST_TRANSCRIPT_PROVIDER: "groq",
+          GROQ_API_KEY: "groq-secret",
+        },
+        "groq",
+      ),
+    ).toMatchObject({
+      provider: "qwen",
+      descriptor: AI_PROVIDER_CATALOG.broadcastTranscript.qwen,
+    });
+    expect(
+      resolveBroadcastTranscriptFallbackConnection(
+        {
+          ...environment,
+          GROQ_API_KEY: "groq-secret",
+        },
+        "qwen",
+      ),
+    ).toMatchObject({
+      provider: "gemini",
+    });
   });
 
   it("never includes credentials or workspace IDs in the readiness manifest", () => {
@@ -230,12 +292,14 @@ describe("aiProviderConfiguration", () => {
         BROADCAST_CONTEXT_PROVIDER: "deepseek",
         DEEPSEEK_API_KEY: "deepseek-secret-never-return",
         GEMINI_API_KEY: "gemini-secret-never-return",
+        GROQ_API_KEY: "groq-secret-never-return",
       }),
     );
 
     expect(serialized).not.toContain("qwen-secret-never-return");
     expect(serialized).not.toContain("deepseek-secret-never-return");
     expect(serialized).not.toContain("gemini-secret-never-return");
+    expect(serialized).not.toContain("groq-secret-never-return");
     expect(serialized).not.toContain("private-workspace");
     expect(serialized).not.toContain("endpoint");
   });
@@ -247,10 +311,13 @@ describe("aiProviderConfiguration", () => {
       QWEN_API_KEY: "qwen-secret",
       GEMINI_API_KEY: "shared-gemini-secret",
     });
-    expect(manifest.schemaVersion).toBe("1.2.0");
+    expect(manifest.schemaVersion).toBe("1.3.0");
     expect(manifest.geminiRoutes).toEqual({
       candidateInsightConfigured: true,
       broadcastTranscriptConfigured: true,
+    });
+    expect(manifest.groqRoutes).toEqual({
+      broadcastTranscriptConfigured: false,
     });
   });
 });

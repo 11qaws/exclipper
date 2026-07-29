@@ -1,0 +1,431 @@
+import { describe, expect, it } from "vitest";
+
+import {
+  createBroadcastRefinementEvidenceLedger,
+  appendBroadcastRefinementEvidenceRouteEntry,
+  activateBroadcastRefinementEvidenceRoute,
+  getBroadcastRefinementActiveEvidencePayload,
+  type BroadcastRefinementCaptionSpeechActivityEvidence,
+} from "../analysis/broadcastRefinementEvidenceLedger";
+import {
+  BROADCAST_SPEECH_ACTIVITY_NO_SPEAKER_CLASS_ID,
+  BROADCAST_SPEECH_ACTIVITY_OUTPUT_CLASS_COUNT,
+  createBroadcastSpeechActivityPlan,
+  createBroadcastSpeechActivityRunReceipt,
+  postprocessBroadcastSpeechActivityLogits,
+} from "../analysis/broadcastSpeechActivity";
+import {
+  activeRefinementEvidenceTranscripts,
+  createSemanticRefinementAiInputSignature,
+  createSemanticRefinementLeadInputs,
+  semanticRefinementPhaseReceiptsMatchActiveProjection,
+} from "./semanticRefinementEvidence";
+import { createBroadcastParticipantGrounding } from "../analysis/broadcastParticipantGrounding";
+import { AMORETTO_CHANNEL_CAST_ROSTER_ID } from "../analysis/participantRoster";
+import type { AnalysisLanguage } from "../domain/analysisLanguage";
+
+const digest = globalThis.crypto.subtle;
+
+const plan = {
+  version: "1.3.0",
+  selectedLeadIds: ["lead-1"],
+  segments: [{
+    segmentId: "refine-001",
+    leadId: "lead-1",
+    sourceStartMs: 10_000,
+    sourceEndMs: 40_000,
+  }],
+  estimatedAsrCostUsd: 0.001,
+} as const;
+
+const wholeBroadcastChapters = [
+  {
+    chapterId: "whole-1",
+    startMs: 0,
+    endMs: 60_000,
+    evidenceMode: "complete-transcript",
+    evidenceCoverageRatio: 1,
+    summaryKo: "아모레또가 방송을 열고 유레카를 소개한다.",
+  },
+  {
+    chapterId: "whole-2",
+    startMs: 60_000,
+    endMs: 120_000,
+    evidenceMode: "complete-transcript",
+    evidenceCoverageRatio: 1,
+    summaryKo: "아모레또가 다음 순서를 정리한다.",
+  },
+] as const;
+
+const discoveredLeads = [{
+  leadId: "lead-1",
+  startChapterId: "whole-1",
+  endChapterId: "whole-1",
+  category: "reaction",
+  confidence: 0.92,
+  eventSummaryKo: "예상하지 못한 답변이 나온 사건",
+  whyThisMomentKo: "답변 직후 반응이 이어진다.",
+  evidenceCueKo: "답변을 듣고 크게 당황한다.",
+  uncertaintiesKo: [],
+  startMs: 10_000,
+  endMs: 40_000,
+}] as const;
+
+function leadInputFixture(
+  outputLanguage: AnalysisLanguage,
+  transcriptText = "유레카가 계획을 밝히자 예상하지 못한 반응이 이어진다.",
+) {
+  const participantGrounding = createBroadcastParticipantGrounding({
+    sourceDurationMs: 120_000,
+    castRosterId: AMORETTO_CHANNEL_CAST_ROSTER_ID,
+    chapters: wholeBroadcastChapters,
+  });
+  return {
+    plan,
+    transcripts: [{
+      sourceStartMs: 10_000,
+      sourceEndMs: 40_000,
+      textKo: transcriptText,
+    }],
+    discoveredLeads,
+    fastRefinementLeadIds: ["lead-1"],
+    sourceDurationMs: 120_000,
+    castRosterId: AMORETTO_CHANNEL_CAST_ROSTER_ID,
+    wholeBroadcastChapters,
+    participantGrounding,
+    outputLanguage,
+  } as const;
+}
+
+function verifiedNoSpeechEvidenceForPlan(): BroadcastRefinementCaptionSpeechActivityEvidence {
+  const segment = plan.segments[0];
+  const speechActivityPlan = createBroadcastSpeechActivityPlan(120_000, {
+    sourceStartMs: segment.sourceStartMs,
+    sourceEndMs: segment.sourceEndMs,
+  });
+  const winnerProbability = 0.95;
+  const otherProbability =
+    (1 - winnerProbability) /
+    (BROADCAST_SPEECH_ACTIVITY_OUTPUT_CLASS_COUNT - 1);
+  const noSpeakerLogits = Array.from(
+    { length: BROADCAST_SPEECH_ACTIVITY_OUTPUT_CLASS_COUNT },
+    (_, classId) =>
+      Math.log(
+        classId === BROADCAST_SPEECH_ACTIVITY_NO_SPEAKER_CLASS_ID
+          ? winnerProbability
+          : otherProbability,
+      ),
+  );
+  const receipts = speechActivityPlan.cells.map((cell) =>
+    postprocessBroadcastSpeechActivityLogits({
+      operationId: `vad:${segment.segmentId}:${cell.ordinal}`,
+      attemptOrdinal: 0,
+      runtime: "wasm",
+      cell,
+      logits: [
+        noSpeakerLogits,
+        noSpeakerLogits,
+        noSpeakerLogits,
+        noSpeakerLogits,
+      ],
+    }),
+  );
+  return {
+    segmentId: segment.segmentId,
+    receipt: createBroadcastSpeechActivityRunReceipt(
+      speechActivityPlan,
+      receipts,
+    ),
+  };
+}
+
+describe("semantic refinement active evidence", () => {
+  it("projects only publication-eligible active caption cells", async () => {
+    let ledger = await createBroadcastRefinementEvidenceLedger(
+      {
+        sourceFingerprint: "sha256:source",
+        sourceDurationMs: 120_000,
+        selectedLeadPlan: plan,
+      },
+      digest,
+    );
+    const appended = await appendBroadcastRefinementEvidenceRouteEntry(
+      ledger,
+      ledger.ledgerFingerprint,
+      {
+        sourceFingerprint: ledger.sourceFingerprint,
+        sourceDurationMs: ledger.sourceDurationMs,
+        selectedLeadPlan: plan,
+        routeKind: "youtube-caption",
+        captionRevision: "caption-v1",
+        captionTrack: {
+          videoId: "abc123def45",
+          languageCode: "ko",
+          isAutoGenerated: false,
+          events: [{
+            startMs: 10_000,
+            durationMs: 30_000,
+            text: "정확한 대사",
+          }],
+        },
+        verifiedNoSpeechEvidence: [],
+      },
+      digest,
+    );
+    ledger = await activateBroadcastRefinementEvidenceRoute(
+      appended.ledger,
+      appended.ledger.ledgerFingerprint,
+      appended.routeEntryFingerprint,
+      digest,
+    );
+    const active = getBroadcastRefinementActiveEvidencePayload(ledger);
+    expect(active).not.toBeNull();
+    expect(activeRefinementEvidenceTranscripts(active!)).toEqual([{
+      sourceStartMs: 10_000,
+      sourceEndMs: 40_000,
+      textKo: "정확한 대사",
+    }]);
+  });
+
+  it("settles a fully verified no-speech caption route as empty semantic evidence", async () => {
+    let ledger = await createBroadcastRefinementEvidenceLedger(
+      {
+        sourceFingerprint: "sha256:source",
+        sourceDurationMs: 120_000,
+        selectedLeadPlan: plan,
+      },
+      digest,
+    );
+    const appended = await appendBroadcastRefinementEvidenceRouteEntry(
+      ledger,
+      ledger.ledgerFingerprint,
+      {
+        sourceFingerprint: ledger.sourceFingerprint,
+        sourceDurationMs: ledger.sourceDurationMs,
+        selectedLeadPlan: plan,
+        routeKind: "youtube-caption",
+        captionRevision: "caption-v1",
+        captionTrack: {
+          videoId: "abc123def45",
+          languageCode: "ko",
+          isAutoGenerated: false,
+          events: [{
+            startMs: 80_000,
+            durationMs: 5_000,
+            text: "검증 대상 밖의 자막",
+          }],
+        },
+        verifiedNoSpeechEvidence: [verifiedNoSpeechEvidenceForPlan()],
+      },
+      digest,
+    );
+    ledger = await activateBroadcastRefinementEvidenceRoute(
+      appended.ledger,
+      appended.ledger.ledgerFingerprint,
+      appended.routeEntryFingerprint,
+      digest,
+    );
+    const active = getBroadcastRefinementActiveEvidencePayload(ledger);
+    expect(active).not.toBeNull();
+    expect(active?.settlement).toMatchObject({
+      successCellCount: 0,
+      resolvedCellCount: 1,
+      gapCellCount: 0,
+      publicationEligible: true,
+    });
+
+    const transcripts = activeRefinementEvidenceTranscripts(active!);
+    expect(transcripts).toEqual([]);
+    const leadInputs = createSemanticRefinementLeadInputs({
+      ...leadInputFixture("ko"),
+      transcripts,
+    });
+    expect(leadInputs).toHaveLength(plan.selectedLeadIds.length);
+    expect(
+      leadInputs.map(({ requestInput }) => requestInput.chapters),
+    ).toEqual([[]]);
+  });
+
+  it("binds the semantic signature to the active route projection", async () => {
+    const base = {
+      routingManifestSignature: "routing-v1",
+      leadInputs: [],
+    } as const;
+    const first = await createSemanticRefinementAiInputSignature(
+      {
+        ...base,
+        activeEvidenceProjectionFingerprint: `sha256:${"a".repeat(64)}`,
+      },
+      digest,
+    );
+    const second = await createSemanticRefinementAiInputSignature(
+      {
+        ...base,
+        activeEvidenceProjectionFingerprint: `sha256:${"b".repeat(64)}`,
+      },
+      digest,
+    );
+    expect(first).not.toBe(second);
+  });
+
+  it("builds the same runtime and reload lead inputs with rebased participant evidence", () => {
+    const runtimeLeadInputs = createSemanticRefinementLeadInputs(
+      leadInputFixture("ko"),
+    );
+    const reloadLeadInputs = createSemanticRefinementLeadInputs(
+      leadInputFixture("ko"),
+    );
+
+    expect(reloadLeadInputs).toEqual(runtimeLeadInputs);
+    expect(runtimeLeadInputs).toHaveLength(1);
+    expect(runtimeLeadInputs[0]).toMatchObject({
+      leadId: "lead-1",
+      analysisMode: "refinement-fast",
+      requestInput: {
+        sourceDurationMs: 120_000,
+        castRosterId: AMORETTO_CHANNEL_CAST_ROSTER_ID,
+        outputLanguage: "ko",
+        chapters: [{
+          chapterId: "refine-001",
+          startMs: 10_000,
+          endMs: 40_000,
+          evidenceMode: "complete-transcript",
+          evidenceCoverageRatio: 1,
+        }],
+      },
+    });
+
+    const projectedGrounding =
+      runtimeLeadInputs[0]?.requestInput.participantGrounding;
+    expect(projectedGrounding).toBeDefined();
+    expect(
+      projectedGrounding?.adapterReceipts.find(
+        ({ adapter }) => adapter === "transcript-names",
+      ),
+    ).toMatchObject({
+      status: "completed",
+      inputCount: 1,
+      processedCount: 1,
+    });
+    expect(
+      projectedGrounding?.participants.find(
+        ({ participantId }) => participantId === "eureka",
+      ),
+    ).toMatchObject({
+      mentionedChapterCount: 1,
+      sourceRolePrior: "possible-guest",
+    });
+    expect(
+      projectedGrounding?.participants.find(
+        ({ participantId }) => participantId === "amoretto",
+      ),
+    ).toMatchObject({
+      mentionedChapterCount: 0,
+      sourceRolePrior: "likely-host",
+    });
+    expect(
+      projectedGrounding?.evidence.filter(
+        ({ kind }) => kind === "transcript-name-mention",
+      ),
+    ).toEqual([
+      expect.objectContaining({
+        participantId: "eureka",
+        chapterId: "refine-001",
+        matchedNameKo: "유레카",
+      }),
+    ]);
+  });
+
+  it("binds output language and every lead-input change into a stable AI signature", async () => {
+    const runtimeLeadInputs = createSemanticRefinementLeadInputs(
+      leadInputFixture("ko"),
+    );
+    const reloadLeadInputs = createSemanticRefinementLeadInputs(
+      leadInputFixture("ko"),
+    );
+    const englishLeadInputs = createSemanticRefinementLeadInputs(
+      leadInputFixture("en"),
+    );
+    const changedLeadInputs = createSemanticRefinementLeadInputs(
+      leadInputFixture(
+        "ko",
+        "유레카가 전혀 다른 결론을 말하자 차분한 반응이 이어진다.",
+      ),
+    );
+    const signatureInput = {
+      activeEvidenceProjectionFingerprint: `sha256:${"c".repeat(64)}`,
+      routingManifestSignature: "routing-v1",
+    } as const;
+
+    expect(englishLeadInputs[0]?.requestInput.outputLanguage).toBe("en");
+    const runtimeSignature = await createSemanticRefinementAiInputSignature(
+      { ...signatureInput, leadInputs: runtimeLeadInputs },
+      digest,
+    );
+    const reloadSignature = await createSemanticRefinementAiInputSignature(
+      { ...signatureInput, leadInputs: reloadLeadInputs },
+      digest,
+    );
+    const englishSignature = await createSemanticRefinementAiInputSignature(
+      { ...signatureInput, leadInputs: englishLeadInputs },
+      digest,
+    );
+    const changedLeadSignature = await createSemanticRefinementAiInputSignature(
+      { ...signatureInput, leadInputs: changedLeadInputs },
+      digest,
+    );
+
+    expect(reloadSignature).toBe(runtimeSignature);
+    expect(englishSignature).not.toBe(runtimeSignature);
+    expect(changedLeadSignature).not.toBe(runtimeSignature);
+  });
+
+  it("accepts reload receipts only for the exact active projection and saved language", () => {
+    const leadInputs = createSemanticRefinementLeadInputs(
+      leadInputFixture("ko"),
+    );
+    const projectionFingerprint = `sha256:${"d".repeat(64)}`;
+    const routingManifestSignature = "routing-v1";
+    const units = [{
+      phase: "refinement",
+      unitId: "lead:lead-1",
+      inputDigest: `sha256:${"e".repeat(64)}`,
+      operationId: "context-refinement-0",
+      attemptOrdinal: 0,
+      required: true,
+      status: "succeeded",
+      result: { kind: "fixture" },
+      modelReceipt: {
+        routingManifestSignature,
+        evidenceManifestSignature: projectionFingerprint,
+        outputLanguage: "ko",
+        analysisMode: "refinement-fast",
+        providerDispatch: true,
+      },
+    }] as const;
+    const exactInput = {
+      units,
+      leadInputs,
+      activeEvidenceProjectionFingerprint: projectionFingerprint,
+      routingManifestSignature,
+      outputLanguage: "ko",
+    } as const;
+
+    expect(
+      semanticRefinementPhaseReceiptsMatchActiveProjection(exactInput),
+    ).toBe(true);
+    expect(
+      semanticRefinementPhaseReceiptsMatchActiveProjection({
+        ...exactInput,
+        activeEvidenceProjectionFingerprint:
+          `sha256:${"f".repeat(64)}`,
+      }),
+    ).toBe(false);
+    expect(
+      semanticRefinementPhaseReceiptsMatchActiveProjection({
+        ...exactInput,
+        outputLanguage: "en",
+      }),
+    ).toBe(false);
+  });
+});

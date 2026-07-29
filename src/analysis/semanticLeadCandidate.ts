@@ -2,14 +2,33 @@ import type { BroadcastContextDiscoveredLead } from "./broadcastContextProtocol"
 import type { UnifiedHighlightCandidate } from "./highlightFusion";
 import type { RefinedDiscoveredLeadRange } from "./discoveredLeadRefinement";
 
+function semanticLeadPairFingerprint(parentLeadId: string, childLeadId: string): string {
+  const serialized = JSON.stringify([parentLeadId, childLeadId]);
+  let hash = 0xcbf29ce484222325n;
+  const prime = 0x100000001b3n;
+  for (let index = 0; index < serialized.length; index += 1) {
+    hash ^= BigInt(serialized.charCodeAt(index));
+    hash = BigInt.asUintN(64, hash * prime);
+  }
+  return `pair-${hash.toString(16).padStart(16, "0")}`;
+}
+
 export function createSemanticLeadCandidate(
   lead: BroadcastContextDiscoveredLead,
   range: RefinedDiscoveredLeadRange,
   transcriptKo: string,
+  parentLeadId?: string,
 ): UnifiedHighlightCandidate {
+  const candidateLeadId =
+    parentLeadId === undefined
+      ? lead.leadId
+      : semanticLeadPairFingerprint(parentLeadId, lead.leadId);
   if (
     range.leadId !== lead.leadId ||
     transcriptKo.trim().length === 0 ||
+    candidateLeadId.length === 0 ||
+    candidateLeadId.length > 300 ||
+    /[\p{Cc}\p{Cf}]/u.test(candidateLeadId) ||
     !Number.isFinite(lead.confidence) ||
     lead.confidence < 0 ||
     lead.confidence > 1
@@ -18,7 +37,7 @@ export function createSemanticLeadCandidate(
   }
   const normalizedScore = Math.round(lead.confidence * 1_000_000) / 1_000_000;
   return {
-    id: `semantic-${lead.leadId}`,
+    id: `semantic-${candidateLeadId}`,
     startMs: range.startMs,
     peakMs: range.peakMs,
     endMs: range.endMs,

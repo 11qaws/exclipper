@@ -4,6 +4,7 @@ import {
   type BroadcastContextResult,
 } from "./broadcastContextProtocol";
 import { compactBroadcastContextChapters } from "./broadcastContextChapterCompaction";
+import { rebaseBroadcastParticipantGrounding } from "./broadcastParticipantGrounding";
 import {
   extractBroadcastContextDeepseekResponse,
   MAX_BROADCAST_CONTEXT_DEEPSEEK_RESPONSE_BYTES,
@@ -65,6 +66,8 @@ export class BroadcastContextDeepseekClientError extends Error {
   public constructor(
     public readonly code:
       | "INVALID_INPUT"
+      | "ABORTED"
+      | "OUTCOME_UNKNOWN"
       | "PROXY_UNAVAILABLE"
       | "PROXY_REJECTED"
       | "PROXY_INVALID_RESPONSE",
@@ -79,6 +82,59 @@ export class BroadcastContextDeepseekClientError extends Error {
       ...(details.diagnosticHeaders ?? {}),
     });
   }
+}
+
+export type BroadcastContextFailureDisposition =
+  | "aborted"
+  | "retryable"
+  | "outcome-unknown"
+  | "fatal";
+
+/**
+ * Classifies a failed context unit without guessing whether a paid request can
+ * safely be repeated. An ambiguous post-dispatch failure is never an automatic
+ * retry; only failures known to happen before dispatch, explicit rate limits,
+ * and terminal upstream unavailability enter the repair queue.
+ */
+export function broadcastContextFailureDisposition(
+  error: unknown,
+): BroadcastContextFailureDisposition {
+  if (
+    (error instanceof DOMException && error.name === "AbortError") ||
+    (error instanceof BroadcastContextDeepseekClientError &&
+      error.code === "ABORTED")
+  ) {
+    return "aborted";
+  }
+  if (!(error instanceof BroadcastContextDeepseekClientError)) {
+    return "outcome-unknown";
+  }
+  if (
+    error.code === "OUTCOME_UNKNOWN" ||
+    error.code === "PROXY_INVALID_RESPONSE" ||
+    error.proxyErrorCode === "UPSTREAM_OUTCOME_UNKNOWN" ||
+    error.proxyErrorCode === "OPERATION_ALREADY_FINISHED"
+  ) {
+    return "outcome-unknown";
+  }
+  if (
+    error.proxyErrorCode === "QUOTA_COORDINATOR_UNAVAILABLE" ||
+    error.status === 429 ||
+    [
+      "QUOTA_QUEUE_FULL",
+      "UPSTREAM_RATE_LIMITED",
+      "UPSTREAM_REJECTED",
+      "UPSTREAM_UNAVAILABLE",
+      "UPSTREAM_TIMEOUT",
+    ].includes(error.proxyErrorCode ?? "")
+  ) {
+    return "retryable";
+  }
+  if (error.code === "PROXY_UNAVAILABLE") {
+    // A generic transport loss may have happened after dispatch.
+    return "outcome-unknown";
+  }
+  return "fatal";
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -209,9 +265,38 @@ function proxyFailureMessage(
 function createBoundedBroadcastContextInput(
   input: BroadcastContextRequestInput,
 ): BroadcastContextRequestInput {
+  const chapters = compactBroadcastContextChapters(input.chapters);
+  if (chapters !== input.chapters && input.participantGrounding !== undefined) {
+    const participantGrounding = rebaseBroadcastParticipantGrounding(
+      input.participantGrounding,
+      {
+        sourceDurationMs: input.sourceDurationMs,
+        castRosterId: input.castRosterId ?? null,
+        chapters: input.chapters,
+      },
+      {
+        sourceDurationMs: input.sourceDurationMs,
+        castRosterId: input.castRosterId ?? null,
+        chapters,
+      },
+    );
+    return {
+      sourceDurationMs: input.sourceDurationMs,
+      chapters,
+      candidates: input.candidates,
+      participantGrounding:
+        participantGrounding ?? input.participantGrounding,
+      ...(input.castRosterId === undefined
+        ? {}
+        : { castRosterId: input.castRosterId }),
+      ...(input.outputLanguage === undefined
+        ? {}
+        : { outputLanguage: input.outputLanguage }),
+    };
+  }
   return {
     ...input,
-    chapters: compactBroadcastContextChapters(input.chapters),
+    chapters,
   };
 }
 
@@ -260,6 +345,7 @@ export async function requestBroadcastContextDeepseek(
     sourceDurationMs: request.sourceDurationMs,
     chapters: request.chapters,
     candidates: request.candidates,
+    participantGrounding: request.participantGrounding,
     outputLanguage: request.outputLanguage,
     ...(request.castRosterId === null
       ? {}
@@ -297,28 +383,47 @@ export async function requestBroadcastContextDeepseek(
             },
           );
   } catch (error) {
-    if (
-      error instanceof AiQuotaClientError &&
-      error.code === "COORDINATOR_REJECTED"
-    ) {
-      const terminal = error.coordinatorStatus === "terminal";
-      const queueFull = error.coordinatorStatus === "queue-full";
-      throw new BroadcastContextDeepseekClientError(
-        "PROXY_REJECTED",
-        terminal
-          ? "이 맥락 요청 번호는 이미 종료됐어요. 다시 시도하면 새 요청 번호로 이어갑니다."
-          : queueFull
-            ? "AI 분석 대기열이 잠시 가득 찼어요. 저장된 근거는 유지했으니 잠시 뒤 다시 시도해 주세요."
-            : "현재 AI 분석 작업과 요청 순서가 일치하지 않아요. 새 요청 번호로 다시 시도해 주세요.",
-        {
-          status: queueFull ? 429 : 409,
-          proxyErrorCode: terminal
-            ? "OPERATION_ALREADY_FINISHED"
+    if (error instanceof AiQuotaClientError) {
+      if (error.code === "ABORTED") {
+        throw new BroadcastContextDeepseekClientError(
+          "ABORTED",
+          "방송 전체 맥락 분석을 멈췄어요.",
+        );
+      }
+      if (error.code === "OUTCOME_UNKNOWN") {
+        throw new BroadcastContextDeepseekClientError(
+          "OUTCOME_UNKNOWN",
+          "AI 요청이 전달된 뒤 응답 연결이 끊겨 처리 결과를 확인하지 못했어요. 같은 작업을 자동으로 다시 결제하지 않았습니다.",
+          { proxyErrorCode: "UPSTREAM_OUTCOME_UNKNOWN" },
+        );
+      }
+      if (error.code === "COORDINATOR_UNAVAILABLE") {
+        throw new BroadcastContextDeepseekClientError(
+          "PROXY_UNAVAILABLE",
+          "AI 분석 순서 서버에 연결하지 못했어요. 공급자 요청은 시작하지 않았습니다.",
+          { proxyErrorCode: "QUOTA_COORDINATOR_UNAVAILABLE" },
+        );
+      }
+      if (error.code === "COORDINATOR_REJECTED") {
+        const terminal = error.coordinatorStatus === "terminal";
+        const queueFull = error.coordinatorStatus === "queue-full";
+        throw new BroadcastContextDeepseekClientError(
+          "PROXY_REJECTED",
+          terminal
+            ? "이 맥락 요청 번호는 이미 종료됐어요. 다시 시도하면 새 요청 번호로 이어갑니다."
             : queueFull
-              ? "QUOTA_QUEUE_FULL"
-              : "QUOTA_OPERATION_REJECTED",
-        },
-      );
+              ? "AI 분석 대기열이 잠시 가득 찼어요. 저장된 근거는 유지했으니 잠시 뒤 다시 시도해 주세요."
+              : "현재 AI 분석 작업과 요청 순서가 일치하지 않아요. 새 요청 번호로 다시 시도해 주세요.",
+          {
+            status: queueFull ? 429 : 409,
+            proxyErrorCode: terminal
+              ? "OPERATION_ALREADY_FINISHED"
+              : queueFull
+                ? "QUOTA_QUEUE_FULL"
+                : "QUOTA_OPERATION_REJECTED",
+          },
+        );
+      }
     }
     throw new BroadcastContextDeepseekClientError(
       "PROXY_UNAVAILABLE",

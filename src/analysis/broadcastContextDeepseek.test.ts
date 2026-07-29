@@ -9,15 +9,17 @@ import {
   extractBroadcastContextQwenOverviewResponse,
 } from "./broadcastContextDeepseek";
 import {
-  BROADCAST_CONTEXT_SCHEMA_VERSION,
+  createBroadcastContextRequest,
   type BroadcastContextRequest,
 } from "./broadcastContextProtocol";
-import { DEFAULT_CANDIDATE_PASS_B_CAST_ROSTER_ID } from "./participantRoster";
+import { createBroadcastParticipantGrounding } from "./broadcastParticipantGrounding";
+import {
+  AMORETTO_CHANNEL_CAST_ROSTER_ID,
+  DEFAULT_CANDIDATE_PASS_B_CAST_ROSTER_ID,
+} from "./participantRoster";
 
-const dummyRequest: BroadcastContextRequest = {
-  schemaVersion: BROADCAST_CONTEXT_SCHEMA_VERSION,
+const dummyRequest: BroadcastContextRequest = createBroadcastContextRequest({
   sourceDurationMs: 3600000,
-  castRosterId: null,
   outputLanguage: "ko",
   chapters: [
     {
@@ -48,7 +50,7 @@ const dummyRequest: BroadcastContextRequest = {
       chatReactionSummaryKo: null,
     },
   ],
-};
+});
 
 const EXCHANGE_CAST_NAMES = [
   "세라 교수님",
@@ -73,11 +75,98 @@ describe("broadcastContextDeepseek", () => {
       for (const name of EXCHANGE_CAST_NAMES) expect(prompt).toContain(name);
       expect(prompt).toContain("목소리 느낌만으로 발화자를 정하거나");
       expect(prompt).toContain("canonical 전체 이름");
+      expect(prompt).toContain("visual-identity");
+      expect(prompt).toContain("검증된 참조 자료 없음");
       expect(prompt).not.toContain("은분홍색");
     }
     expect(
       buildBroadcastContextQwenRequestBody(dummyRequest).messages[1].content,
-    ).not.toContain("세라 교수님");
+    ).toContain("출처 prior 없음");
+    expect(
+      buildBroadcastContextDeepseekRequestBody(dummyRequest).messages[0].content,
+    ).toContain("명단은 이름 표기 교정용일 뿐 실제 등장 증거가 아닙니다");
+  });
+
+  it("keeps a host name only when a completed media adapter supplied observed identity evidence", () => {
+    const participantInput = {
+      sourceDurationMs: dummyRequest.sourceDurationMs,
+      castRosterId: AMORETTO_CHANNEL_CAST_ROSTER_ID,
+      chapters: dummyRequest.chapters,
+    } as const;
+    const participantGrounding = createBroadcastParticipantGrounding(
+      participantInput,
+      {
+        visualIdentity: {
+          receipt: {
+            adapter: "visual-identity",
+            revision: "visual-reference-v1",
+            status: "completed",
+            inputCount: 4,
+            processedCount: 4,
+            unavailableReason: null,
+          },
+          evidence: [
+            {
+              evidenceId: "visual:c1:amoretto",
+              participantId: "amoretto",
+              kind: "visual-reference-match",
+              supports: "visible-identity",
+              adapter: "visual-identity",
+              startMs: 60_000,
+              endMs: 90_000,
+              chapterId: "c1",
+              confidence: 0.95,
+              evidenceKo: "네 장의 대표 화면에서 아모레또 아바타를 확인했습니다.",
+            },
+          ],
+        },
+      },
+    );
+    const request = createBroadcastContextRequest({
+      sourceDurationMs: dummyRequest.sourceDurationMs,
+      chapters: dummyRequest.chapters,
+      candidates: dummyRequest.candidates,
+      castRosterId: AMORETTO_CHANNEL_CAST_ROSTER_ID,
+      participantGrounding,
+    });
+    const payload = {
+      choices: [{
+        message: {
+          content: JSON.stringify({
+            summary: "음식 토크를 진행하며 채팅과 의견을 주고받았다.",
+            host: {
+              name: "아모레또",
+              profile: "채팅의 반응을 받아 음식 취향을 설명하고 자신의 실수를 바로 인정하는 진행을 보였다.",
+              evidence: ["화면 참조와 채널 진행 역할이 일치함"],
+              uncertainty: [],
+            },
+            themes: ["음식 토크"],
+            chapters: [{
+              s: "c1",
+              e: "c2",
+              title: "음식 토크",
+              desc: "음식 취향을 두고 채팅과 대화한다.",
+              kind: "main-event",
+              sal: "primary",
+            }],
+            candidates: [{
+              id: "can1",
+              d: "select",
+              c: "reaction",
+              p: 0.9,
+              reason: "채팅과의 반응이 완결된다.",
+            }],
+            leads: [],
+          }),
+        },
+      }],
+    };
+
+    const parsed = extractBroadcastContextQwenOverviewResponse(payload, request);
+    expect(parsed.ok).toBe(true);
+    if (parsed.ok) {
+      expect(parsed.result.hostStreamerProfile?.displayNameKo).toBe("아모레또");
+    }
   });
 
   describe("buildBroadcastContextDeepseekRequestBody", () => {

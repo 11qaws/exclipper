@@ -1,5 +1,17 @@
 # ExClipper 개인용 운영·배포·복구 계획
 
+## 2026-07-29 Groq Whisper 준비 경로 — 기본 Qwen 유지
+
+- production 기본 전사 provider는 계속 `qwen`이다. `GROQ_API_KEY`가 존재한다는 이유만으로 Groq를 선택하거나 Qwen 실패를 Groq 과금으로 넘기지 않는다. Groq를 쓰려면 운영자가 Worker secret을 별도로 등록하고 `BROADCAST_TRANSCRIPT_PROVIDER=groq`를 명시해 Worker를 배포해야 한다.
+- 현재 production Worker에는 `GROQ_API_KEY` secret 이름이 등록되어 있다. 값은 조회·복사하지 않으며 `wrangler secret list`의 이름과 `secret_text` 유형만 운영 확인 근거로 사용한다. 현재 `wrangler.jsonc`의 선택값은 계속 `qwen`이므로 secret 등록만으로 Groq 요청은 발생하지 않는다.
+- 키는 Pages, 브라우저 저장소, Git, `wrangler.jsonc`의 평문 변수, 오류 본문에 넣지 않는다. 등록 명령은 `npx wrangler secret put GROQ_API_KEY`이며 값은 대화·운영 기록에 다시 복사하지 않는다. `/healthz.providers.groqRoutes.broadcastTranscriptConfigured`와 선택 provider의 `configured/active`만 공개한다.
+- Groq 경로는 공식 `POST https://api.groq.com/openai/v1/audio/transcriptions`, 모델 `whisper-large-v3-turbo`, `language=ko`, `response_format=verbose_json`, segment timestamp, temperature 0으로 고정한다. 브라우저가 모델·언어·endpoint·credential을 정하지 않는다.
+- `free-r2`에서는 Worker가 WAV를 다시 읽거나 Base64로 만들지 않는다. 짧은 private R2 capability URL만 multipart `url` 필드로 Groq에 넘긴다. `paid-direct` 호환 경로만 검증된 WAV를 multipart `file`로 전송한다. 현재 canonical 90초·16kHz·mono·PCM16 WAV 상한은 2,880,044 bytes로 Groq 무료 계정의 공식 25MB file 제한보다 작다.
+- 응답은 최대 128KiB, transcript 20,000자, segment 512개로 제한한다. 한국어 언어 표식, source chunk 길이 안의 유한·정방향 segment timestamp, 한국어 본문을 모두 검증하고 빈 segment 응답만 기존 `[대사 없음]`으로 정규화한다. provider의 request ID, 원문 오류 메시지, credential은 브라우저에 전달하지 않는다.
+- Qwen 기본 route의 bounded fallback은 계속 Gemini이며 Groq secret 때문에 달라지지 않는다. 명시적 Groq `paid-direct` route는 기존 정책상 안전하게 분류된 실패에만 Qwen으로 한 번 fallback할 수 있다. `free-r2` resolve는 staged media 계약을 보존하기 위해 provider 간 자동 fallback을 하지 않는다.
+- 무료 운영에서는 기존 전사 quota gate와 최대 동시 참여자 5명 정책을 공유한다. 공식 무료 계정의 실제 rate limit은 계정별 콘솔 값과 응답 header를 smoke에서 확인해야 하며, 코드가 임의로 더 높은 처리량을 가정하지 않는다. 활성화 전 2초·30초·90초 한국어 WAV, 무발화, 401/429/5xx, R2 object cleanup, 모델 ID/revision header를 검증한다.
+- 현재 Pages의 전사 캐시 revision도 선택된 서버 모델 revision과 함께 fence되어야 한다. 해당 client release가 반영되기 전에는 준비된 Groq route를 production 기본값으로 바꾸지 않는다. 키 등록과 실제 provider smoke·비용 발생은 별도 운영 승인 뒤 수행한다.
+
 ## 다음 배포 후보 · 후보 파이프라인 전환·복구 계획
 
 - 전사 Worker가 일부 조각을 실패로 반환해도 성공 조각을 버리거나 전체 계획을 처음부터 다시 보내지 않는다. `decode-failed | transcription-failed | rate-limited` 조각만 1초·2초 backoff로 최대 3회 시도하고, 각 성공은 IndexedDB write/readback 뒤 다음 조각 상태에 반영한다. 다음 wave를 시작하기 전 실패 event 자체도 정확한 범위·reason·quota ordinal로 readback되어야 한다.
@@ -12,7 +24,7 @@
 - 후보 media stage는 private `TRANSCRIPT_MEDIA` bucket의 `transcript/candidate/` prefix를 사용한다. public R2 access는 열지 않는다. 정상 실행 후 object 0개를 확인하고, 실패 smoke에서는 capability 만료 뒤 GET 404와 1일 lifecycle 범위를 확인한다.
 - 배포 순서는 호환 Worker → health/OPTIONS/R2 candidate smoke → Pages → cache 최대 10분과 진행 중 구 탭 정리 → 필요 시 호환 경로 축소 순서다. 새 Worker는 배포 전후 구 Pages JSON을 받아야 하고, 새 Pages는 구 Worker에서 `legacy` direct 경로로 동작해야 한다.
 - Free R2 candidate smoke는 실제 후보 WAV와 서로 다른 JPEG 4장을 사용해 stage 202, resolve 200, Qwen model identity, 한국어 event/reaction/context 결과와 object cleanup을 확인한다. byte-counting transform 뒤에는 반드시 `FixedLengthStream(expectedByteLength)`을 두어 R2에 known length를 보존한다. 같은 payload retry는 object·ticket 하나를 재사용하고 재전송 body pump를 abort/cancel해 제한 시간 안에 202를 반환해야 한다. candidate manifest가 달라지면 기존 object를 보존한 채 provider 호출 전에 거부돼야 한다.
-- 합법적인 최대 candidate context도 provider 호출 전에 48KiB canonical packet으로 정리되어 Qwen shared prompt 80KiB와 최대 예약 94,180 token 안에 들어가야 한다. 필드가 줄면 `[중간 생략 / middle omitted]`과 앞·뒤가 남고, 원본 session artifact는 불변이어야 한다. Qwen·Gemini direct/proxy·quota fingerprint·verification receipt의 packet과 fingerprint가 byte-for-byte 같아야 한다. 정상 입력이 크기 때문에 중단되거나 413 `TOKEN_BUDGET_TOO_LARGE`로 끝나면 배포하지 않는다. Free R2에서 Gemini fallback이 없다는 사실은 장애가 아니라 명시적 transport 제한으로 health에 유지한다.
+- 합법적인 최대 candidate context도 provider 호출 전에 48KiB canonical packet으로 정리되어 Qwen shared prompt 80KiB와 최대 예약 94,180 token 안에 들어가야 한다. 필드가 줄면 `[중간 생략 / middle omitted]`과 앞·뒤가 남고, 원본 session artifact는 불변이어야 한다. Qwen·Gemini direct/proxy·quota fingerprint·verification receipt의 packet과 fingerprint가 byte-for-byte 같아야 하며, receipt의 candidate ID·source start/end·routing revision도 실제 provider 요청과 정확히 같아야 한다. 정상 입력이 크기 때문에 중단되거나 413 `TOKEN_BUDGET_TOO_LARGE`로 끝나면 배포하지 않는다. Free R2에서 Gemini fallback이 없다는 사실은 장애가 아니라 명시적 transport 제한으로 health에 유지한다.
 - candidate bundle smoke는 `Content-Length`가 있는 정상·초과·미달 입력뿐 아니라 헤더 없는 정상·초과 입력도 포함한다. 헤더 없는 초과 stream은 signed exact byte length 직후 413 `PAYLOAD_TOO_LARGE`로 끊기고 R2 object가 남지 않아야 한다.
 - conditional R2 put의 loser는 R2가 본문을 소비한다고 가정하지 않는다. `put() == null` 뒤 강한 일관성의 `head`로 winner metadata·checksum·signature를 재검증하고, 성공하면 `reused`, 실패하면 bounded 오류로 닫되 두 경우 모두 loser pump를 terminal abort한다. Qwen 200 응답이 candidate schema를 어기면 fresh internal quota operation으로 최대 두 번만 복구하고, 모두 실패하면 staged object를 ticket 만료까지 보존해 missing-only 재시도가 재업로드 없이 이어지게 한다.
 - 복구 버튼은 pipeline gap 종류에 따라 작동한다. context 누락은 whole-context checkpoint에서, detail/receipt/frame 누락은 해당 candidate ID만 다시 실행한다. 이미 저장된 insight·receipt·thumbnail이 현재 context fingerprint와 맞으면 failed/cancelled run envelope만으로 다시 결제하지 않는다.

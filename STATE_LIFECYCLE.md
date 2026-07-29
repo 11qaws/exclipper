@@ -1,6 +1,20 @@
 # ExClipper 상태·생애주기 명세
 
-- 문서 버전: 0.8.7
+## 방송 등장인물 근거화
+
+- canonical 순서는 `transcript sealed → participant grounding sealed/readback → broadcast context`다. context는 grounding 저장 확인보다 먼저 시작하지 않는다.
+- 실제 실행에서는 전사와 방송 단위 visual/voice 자료 준비를 병렬로 시작할 수 있지만 완료 barrier는 바뀌지 않는다. pre-context adapter cell은 source/model/reference manifest fence와 immutable media bundle key를 가지며, transcript/visual/voice의 누락·retryable·outcome-unknown이 모두 0일 때만 하나의 grounding snapshot을 seal한다. post-context 후보 confirmation은 정확히 같은 bundle key만 재사용하고 별도 receipt를 만든다.
+- participant grounding의 terminal은 `sealed` 하나이고 그 안의 adapter receipt가 `completed | unavailable`을 가진다. `unavailable`은 검증된 reference manifest가 없는 현재의 정상 상태이며 실패가 아니다.
+- source prior와 `transcript-name-mention`은 실제 presence/speaker 상태를 만들지 않는다. visual/voice adapter의 `on-screen-name | visual-reference-match | spoken-self-identification | voice-reference-match`가 관측 근거를 반환하기 전에는 진행자 이름과 발화자를 `unknown`으로 유지한다.
+- session schema `1.11.0`의 `participantGroundingInputSignature`, sampling-plan fingerprint와 `participantGroundingCheckpointJson`은 source roster·transcript seal에 묶인 원자적인 집합이다. whole-context exact input JSON과 활성 refinement evidence ledger도 결과와 함께 저장한다. 대사 지도 재생성은 이 집합과 context/refinement 결과를 null로 되돌린다.
+- 자막 없는 의미 refinement의 전사 checkpoint는 `refinementTranscriptInputSignature`와 canonical `refinementTranscriptCheckpointJson`의 원자적인 쌍이다. checkpoint가 고정한 모든 chunk ID·source range·kind와 실제 성공 결과 범위가 정확히 일치해야 하며, `no-speech`는 exact source range·고정 VAD 모델·정책·완전 coverage를 가진 run receipt가 있을 때만 해결된 abstention이다. `no-audio`는 receipt가 없는 별도 decoder abstention이며, `in-flight | decode-failed | transcription-failed | rate-limited | outcome-unknown`은 attempt count를 가진 미해결 gap으로 보존한다. parent context invalidate/commit은 이 쌍과 active evidence ledger를 지우고, 같은 context input의 phase-ledger checkpoint만 그대로 보존한다.
+- Candidate Pass B receipt schema `1.4.0`은 후보 ID·원본 범위·routing revision·활성 refinement projection에 더해 `outputLanguage`와 nullable `castRosterId`를 source fence로 고정한다. 1.3 이하 영수증은 진단을 위해 읽을 수 있지만 현재 내구 결과나 최종 후보 근거로는 인정하지 않는다.
+- grounding 교체는 과거 context/refinement를 같은 record에서 무효화한다. context/refinement commit은 직전 durable snapshot과 exact match할 때만 성공하는 compare-and-swap이며, 늦은 operation은 새 transcript/session을 덮어쓰지 못한다.
+- 복구는 저장 당시 exact input, transcript seal, catalog version, grounding JSON으로 fingerprint를 다시 계산한다. legacy session의 grounding 또는 exact input이 없으면 저장된 유료 결과를 삭제하지 않지만 grounded whole-context 완료 상태로 복원하지 않는다.
+- 실제 visual/voice adapter가 연결된 뒤에는 모든 계획 cell이 modality에 맞는 정상 terminal이고 retryable gap이 0일 때만 `sealed`로 전이한다. transcript-name은 `identified | none`, visual은 `identified | none | unidentified`, voice는 `identified | unidentified | no-speech`만 허용한다.
+- voice runtime은 `clean speech turn receipt → source/PCM fingerprint → pinned WavLM Worker → normalized embedding → verified prototype score → open-set decision` 순서다. PCM과 embedding은 영속 상태가 아니며 receipt와 coverage만 남는다. 현재 18개 추출 파일은 모두 pending이고 전원 방송 30초 표본의 교차검증이 일부 불일치했으므로 production voice adapter는 계속 `unavailable`; runtime 존재만으로 `identified`로 전이하지 않는다.
+
+- 문서 버전: 0.8.8
 - 기준 제품 계획: PRODUCT_PLAN.md 현재 revision
 - 기준일: 2026-07-28 (Asia/Seoul)
 - 적용 범위: GitHub Pages에서 실행되는 개인 편집 어시스턴트와 선택형 CHZZK 동반 수집기
@@ -11,7 +25,7 @@
 - `candidate ledger`는 fast/semantic discovery가 만든 canonical 원장이다. `context cohort`는 이 원장에서 최대 32개를 골라 whole-context AI에 보낸 집합이고, `detail cohort`는 context가 준비된 항목 중 최대 12개를 골라 화면·오디오 AI에 보내는 집합이다. 세 집합의 상한과 membership을 하나의 `candidateCount`로 추정하지 않는다.
 - context 실행은 exact `contextCandidateIds`와 함께 commit한다. 복구 시 candidate ID·순서·source duration·input signature가 모두 맞아야 현재 context로 사용할 수 있다. detail cohort 밖의 context-qualified 후보는 reservoir에 남지만 `detail-result-missing`이 아니다.
 - detail candidate의 중심 전이는 `pending -> frame-preparing -> four-frames-ready -> media-staged -> remote-review -> receipt-issued | gap`이다. 네 화면이 모두 준비되기 전에는 remote-review를 시작하지 않는다. 후보 하나의 `gap`은 형제 후보를 실패시키지 않으며 run은 모든 candidate가 terminal일 때만 `completed | completedWithGaps`가 된다.
-- `receipt-issued`는 현재 context fingerprint, 오디오 검토, 서로 다른 화면 4장, 그중 하나인 thumbnail timestamp와 provider insight가 모두 같은 candidate operation에 연결됐다는 뜻이다. Qwen·Gemini·quota·receipt는 provider 호출 전에 생성된 동일 canonical packet을 사용하며, receipt와 실제 provider prompt가 다른 silent compaction은 금지한다.
+- `receipt-issued`는 현재 candidate ID·source start/end, context fingerprint, routing model revision, 오디오 검토, 서로 다른 화면 4장, 그중 하나인 thumbnail timestamp와 provider insight가 모두 같은 candidate operation에 연결됐다는 뜻이다. Qwen·Gemini·quota·receipt는 provider 호출 전에 생성된 동일 canonical packet과 source range를 사용하며, receipt와 실제 provider prompt가 다른 silent compaction은 금지한다.
 - candidate context는 전체 방송 원본을 바꾸지 않고 provider 호출 전에 48KiB canonical packet으로 만든다. aggregate 예산 때문에 줄어든 필드는 bilingual omission marker와 앞·뒤를 함께 보존하며, 이 canonical packet 자체를 fingerprint한다. 따라서 합법적인 최대 protocol 입력은 80KiB prompt 제한으로 후보 실패가 되지 않는다. 크기를 이유로 candidate를 gap으로 만드는 전이는 존재하지 않는다.
 - `receipt-issued` 뒤에도 `artifact-write-pending -> artifact-readback-verified | artifact-readback-failed`가 남는다. exact readback 전의 insight는 UI의 임시 검토 자료일 뿐 final projection의 입력이 아니다. 실패하면 stage cursor와 job terminal을 유지하고, 같은 메모리 snapshot의 저장만 다시 시도한다.
 - final projection의 판단 완료 제외는 `context-excluded | program-material-excluded | context-conflict | detail-not-recommended`다. pipeline 미완료는 `context-missing | detail-result-missing | verification-receipt-missing | evidence-incomplete`다. 사건·반응·클립 가치 설명, 등장인물 상태·근거, 최종 판정, 맥락 일치, 프로그램성 판정 중 하나가 비거나 모순인 insight도 `evidence-incomplete`이며, run envelope가 `completed`여도 해당 candidate ID는 AI outstanding/action 목록에 남는다. 전자는 정상 0개가 될 수 있고 후자는 publication과 job completion을 막는다.
@@ -55,7 +69,7 @@
 - `0.8.4` 계획기는 30초 전사 청크와 최대 760개 Worker 계약을 사용했다. 전용 브라우저 Web Worker가 WAV를 Base64 JSON으로 바꿔 UI thread와 Cloudflare Worker의 byte-to-Base64 변환을 피했으나 대용량 JSON transform은 남겼다. 90초 raw WAV는 compatibility ceiling이다.
 - `completedWithGaps`는 성공으로 닫힌 상태가 아니다. 편집자의 명시적 재시도는 저장된 chapter 범위를 보존하고 처리 실패로 비어 있는 sampling range만 새 attempt operation ID로 다시 연다. 맥락 overview가 실패해도 완료된 discovery slice는 같은 탭의 checkpoint로 유지한다.
 - paid endpoint가 HTTP 응답을 낸 뒤에는 브라우저가 별도 cancel을 보내지 않는다. terminal operation의 cancel은 멱등 HTTP 200이고, terminal ID로 새 lease를 요청할 때만 409다. 따라서 본 요청의 502와 정리 요청의 409가 연쇄되는 상태는 없다.
-- 맥락 재시도는 이전 semantic candidate와 Pass B projection을 먼저 무효화한다. verification receipt `1.1.0`은 실제로 검토한 context packet의 콘텐츠 지문을 가지며, 현재 packet과 지문이 다르면 기존 insight가 저장돼 있어도 `evidence-incomplete`다. 구형 `1.0.0` receipt는 저장 자료를 읽기 위한 호환 입력일 뿐 최종 publication을 통과하지 않는다.
+- 맥락 재시도는 이전 semantic candidate와 Pass B projection을 먼저 무효화한다. verification receipt `1.2.0`은 실제로 검토한 candidate ID·source start/end·현재 routing revision과 canonical context packet의 콘텐츠 지문을 함께 가진다. 이 중 하나라도 현재 candidate와 다르면 기존 insight가 저장돼 있어도 `evidence-incomplete`다. 구형 `1.0.0 | 1.1.0` receipt는 저장 자료를 읽기 위한 호환 입력일 뿐 최종 publication을 통과하지 않는다.
 - stale client의 145~760개 context chapter는 원본 schema 전체를 먼저 검증한 뒤에만 144개로 압축한다. 중복 ID, 잘못된 evidence mode·coverage·시간 범위가 압축 과정에서 정상화되어 검증을 우회하는 전이는 금지한다.
 
 ## `0.3.45` 완전 검증·양방향 맥락 연결 상태
@@ -63,10 +77,10 @@
 - `candidate reservoir`와 `final candidate projection`은 서로 다른 상태다. fast/semantic discovery는 reservoir membership만 추가한다. 편집자 카드, 번호, 승인·제외, 클립 다운로드가 참조하는 projection은 `finalizeFullyVerifiedCandidates`의 결과만 사용한다.
 - 후보별 맥락 상태는 `context-missing | context-ready`다. `context-ready`는 전체 방송 요약, 주제 구간, 직전·직후 흐름, 참고 대사와 출처, 후보 상황 판정, 빠른 근거가 모두 비어 있지 않은 bounded packet이 commit된 상태다. 전체 맥락 또는 의미 refinement가 실패한 상태를 ready로 간주하지 않는다.
 - 후보 화면·AI 상태는 `context-ready -> frame-preparing -> four-frames-ready + thumbnail-ready -> remote-review -> receipt-issued | gap`이다. AI 요청은 정확히 네 화면이 준비된 뒤에만 시작하고, receipt는 같은 request의 오디오 결과와 네 화면 중 하나인 대표 썸네일 timestamp를 확인한 뒤 발급한다.
-- `receipt-issued`는 데이터 객체가 존재한다는 뜻이 아니다. receipt에는 context schema, 참고 대사 출처, 오디오 확인, 화면 수 4, 대표 썸네일 준비와 timestamp, 전체 방송 맥락 확인이 기록되어야 한다. 과거 insight, 일부 frame, 별도 실행의 thumbnail을 합쳐 receipt를 사후 생성하는 전이는 금지한다.
+- `receipt-issued`는 데이터 객체가 존재한다는 뜻이 아니다. receipt에는 candidate ID·source start/end·routing revision, context schema와 fingerprint, 참고 대사 출처, 오디오 확인, 화면 수 4, 대표 썸네일 준비와 timestamp, 전체 방송 맥락 확인이 기록되어야 한다. 과거 insight, 일부 frame, 다른 구간 또는 별도 실행의 thumbnail을 합쳐 receipt를 사후 생성하는 전이는 금지한다.
 - 최종 후보 guard는 `receipt-issued && clipDecision == recommend && contextConsistency == consistent && programMaterial == streamer-event`다. 하나라도 만족하지 않으면 gap 사유를 보존하고 final projection에서 제외한다. 사람의 과거 승인이나 빠른 점수도 이 guard를 우회하지 않는다.
 - 방송 요약 주석은 final projection의 presentation state다. 각 굵은 문장 조각은 candidate ID 목록을 가지며 렌더 시 현재 final 순서의 1-based 번호로 변환한다. 주석 클릭은 해당 후보를 `ready-paused` 검토 위치로 이동할 뿐 재생·승인·경계·후보 membership을 바꾸지 않는다.
-- 저장 schema `1.5.0`은 insight, provider identity, 대표 thumbnail과 함께 verification receipt map을 보존한다. 복구 시 receipt와 candidate ID를 다시 검증하며, context packet을 현재 저장된 방송 맥락·대사 지도에서 재구성할 수 없는 후보는 final projection에 들어가지 않는다.
+- 저장 schema `1.5.0`은 insight, provider identity, 대표 thumbnail과 함께 verification receipt map을 보존한다. 복구 시 receipt의 candidate ID가 map key와 같은지, 현재 source range·routing revision·context fingerprint가 모두 일치하는지 다시 검증하며, 하나라도 재구성할 수 없는 후보는 final projection에 들어가지 않는다.
 
 ## `0.3.43` 맥락 입력·탐색 공개·검토 재생 상태
 

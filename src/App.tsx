@@ -50,7 +50,6 @@ import {
 import { buildCandidatePassBPresentation } from "./analysis/candidatePassBPresentation";
 import {
   mapSettledWithConcurrency,
-  mapWithConcurrency,
 } from "./analysis/boundedAsyncMap";
 import {
   estimateCandidatePassBCost,
@@ -59,12 +58,20 @@ import {
 import { AI_BROADCAST_CONTEXT_ROUTING_REVISION } from "./analysis/aiModelRoutingPolicy";
 import { getOrCreateAiQuotaParticipantId } from "./analysis/aiQuotaClient";
 import {
-  createCaptionDiscoveredLeadRefinementPlan,
-  createDiscoveredLeadRefinementChapters,
   createDiscoveredLeadRefinementPlan,
   materializeRefinedDiscoveredLeadEvidence,
-  refineDiscoveredLeadRange,
 } from "./analysis/discoveredLeadRefinement";
+import {
+  activateBroadcastRefinementEvidenceRoute,
+  appendBroadcastRefinementEvidenceRouteEntry,
+  broadcastRefinementEvidenceLedgerCanPublish,
+  createBroadcastRefinementEvidenceLedger,
+  getBroadcastRefinementActiveEvidencePayload,
+  projectBroadcastRefinementActiveEvidenceRoute,
+  serializeBroadcastRefinementEvidenceLedger,
+  type BroadcastRefinementActiveRouteProjection,
+  type BroadcastRefinementEvidenceLedger,
+} from "./analysis/broadcastRefinementEvidenceLedger";
 import {
   createBroadcastContextSamplingPlan,
   createBroadcastContextTranscriptionChunks,
@@ -76,12 +83,44 @@ import {
   createDistributedTranscriptExplorationOrder,
 } from "./analysis/broadcastContextExploration";
 import {
-  createBroadcastNoAudioChapters,
   createBroadcastTranscriptChapters,
   mergeBroadcastTranscriptChapters,
 } from "./analysis/broadcastTranscriptChapters";
+import {
+  inspectBroadcastTranscriptEvidenceSettlement,
+  parseBroadcastTranscriptResolvedEvidenceCheckpointJson,
+  rebaseBroadcastTranscriptResolvedEvidenceModelRevision,
+  recordBroadcastTranscriptResolvedEvidence,
+  serializeBroadcastTranscriptResolvedEvidenceCheckpoint,
+  type BroadcastTranscriptResolvedEvidenceCheckpoint,
+} from "./analysis/broadcastTranscriptResolvedEvidence";
+import {
+  prepareBroadcastTranscriptEvidenceProjection,
+} from "./analysis/broadcastTranscriptEvidenceProjection";
+import {
+  broadcastTranscriptProviderReceiptCheckpointModelRevision,
+  createBroadcastTranscriptProviderReceiptCheckpoint,
+  inspectBroadcastTranscriptProviderReceiptSettlement,
+  parseBroadcastTranscriptProviderReceiptCheckpointJson,
+  recordBroadcastTranscriptProviderReceipt,
+  serializeBroadcastTranscriptProviderReceiptCheckpoint,
+  type BroadcastTranscriptProviderReceiptCheckpoint,
+} from "./analysis/broadcastTranscriptProviderReceiptCheckpoint";
+import {
+  requestBroadcastTranscriptRouteSelection,
+  type BroadcastTranscriptVerifiedResult,
+} from "./analysis/broadcastTranscriptRouteManifest";
+import {
+  BROADCAST_TRANSCRIPT_PROXY_ENDPOINT,
+} from "./analysis/broadcastTranscriptQwenClient";
 import { compactBroadcastContextChapters } from "./analysis/broadcastContextChapterCompaction";
-import { requestBroadcastContextDeepseek } from "./analysis/broadcastContextDeepseekClient";
+import {
+  broadcastContextPhaseLedgerMatchesFence,
+  parseBroadcastContextPhaseLedgerJson,
+  replanBroadcastContextPhaseLedgerAfterEditorRetry,
+  serializeBroadcastContextPhaseLedger,
+  type BroadcastContextPhaseLedgerFence,
+} from "./analysis/broadcastContextPhaseLedger";
 import {
   parsePersistedBroadcastContextResult,
   unpackPersistedBroadcastContext,
@@ -103,17 +142,28 @@ import {
   type BroadcastTranscriptFragmentRecoveryProgress,
   type BroadcastTranscriptFragmentRecoveryResult,
 } from "./analysis/broadcastTranscriptFragmentRecovery";
-import type { BroadcastTranscriptWorkerProgress } from "./analysis/broadcastTranscriptWorkerProtocol";
+import { runDurableBroadcastContextPipeline } from "./app/durableBroadcastContextPipeline";
+import {
+  runDurableBroadcastRefinementPipeline,
+  type DurableBroadcastRefinementLeadInput,
+} from "./app/durableBroadcastRefinementPipeline";
+import { runDurableBroadcastRefinementTranscriptPipeline } from "./app/durableBroadcastRefinementTranscriptPipeline";
+import {
+  BROADCAST_TRANSCRIPT_WORKER_VERSION,
+  type BroadcastTranscriptWorkerProgress,
+} from "./analysis/broadcastTranscriptWorkerProtocol";
+import {
+  BROADCAST_SPEECH_ACTIVITY_MODEL_REVISION,
+  BROADCAST_SPEECH_ACTIVITY_POLICY_REVISION,
+  type BroadcastSpeechActivityRunReceipt,
+} from "./analysis/broadcastSpeechActivity";
 import {
   BROADCAST_TRANSCRIPT_ACTIVE_MODEL_REVISION,
-  BROADCAST_TRANSCRIPT_MIXED_CHECKPOINT_MODEL_REVISION,
-  BROADCAST_TRANSCRIPT_PREVIOUS_ACTIVE_MODEL_REVISION,
   type BroadcastTranscriptQwenResult,
 } from "./analysis/broadcastTranscriptQwen";
 import {
   YOUTUBE_CAPTION_MODEL_REVISION,
   createYouTubeCaptionChapters,
-  createYouTubeCaptionRefinementTranscripts,
   type YouTubeCaptionTrackResult,
   youtubeVideoIdFromSourceName,
   youtubeVideoIdFromUserInput,
@@ -137,6 +187,14 @@ import {
   candidatePassBCastRosterIdForSourceName,
   canonicalCandidatePassBCastDisplayName,
 } from "./analysis/participantRoster";
+import {
+  createBroadcastParticipantGrounding,
+  participantContextForBroadcastRange,
+} from "./analysis/broadcastParticipantGrounding";
+import {
+  orchestrateBroadcastParticipantPreContext,
+  type BroadcastParticipantPreContextResult,
+} from "./analysis/broadcastParticipantPreContextOrchestration";
 import { activeAccentCssVars } from "./app/streamerPaletteForRoster";
 import {
   mergeCandidatePassBEvidence,
@@ -153,7 +211,10 @@ import {
   type CandidatePassBTranscriptResult,
   type CandidatePassBWorkerIdentity,
 } from "./analysis/candidatePassBWorkerClient";
-import { isCompatibleCandidatePassBRoutingModelRevision } from "./analysis/candidatePassBWorkerProtocol";
+import {
+  isCompatibleCandidatePassBRoutingModelRevision,
+  type CandidatePassBVerificationSourceFence,
+} from "./analysis/candidatePassBWorkerProtocol";
 import {
   fuseReactionHighlightCandidates,
   type UnifiedHighlightCandidate,
@@ -175,22 +236,19 @@ import {
   finalizeFullyVerifiedCandidates,
 } from "./analysis/candidateFinalVerification";
 import { buildBroadcastSummaryCitationPresentation } from "./analysis/broadcastSummaryCitations";
-import type {
-  BroadcastContextCandidateInput,
-  BroadcastContextChapterInput,
-  BroadcastContextResult,
-  BroadcastContextSemanticChapter,
+import {
+  createBroadcastContextRequest,
+  type BroadcastContextCandidateInput,
+  type BroadcastContextChapterInput,
+  type BroadcastContextRequestInput,
+  type BroadcastContextResult,
+  type BroadcastContextSemanticChapter,
 } from "./analysis/broadcastContextProtocol";
 import { buildHighlightNarrative } from "./analysis/highlightNarrative";
 import {
   BROADCAST_TOPICAL_DISCOVERY_VERSION,
   MAX_TOPICAL_REFINEMENT_CONCURRENCY,
   MAX_TOPICAL_REFINEMENT_LEADS,
-  createBroadcastTopicalLeadJuryPlan,
-  createParallelBroadcastTopicalDiscoverySlices,
-  mergeBroadcastTopicalDiscoveryLeads,
-  selectBroadcastTopicalJuryApprovedLeadIds,
-  selectBroadcastTopicalRefinementLeadIds,
 } from "./analysis/broadcastTopicalDiscovery";
 import {
   createSemanticLeadCandidate,
@@ -285,11 +343,18 @@ import {
 import {
   AnalysisResultStoreError,
   IndexedDbAnalysisResultStore,
+  checkpointBroadcastContextSessionTranscriptIfUnchanged,
+  checkpointBroadcastContextSessionPhaseLedgerIfUnchanged,
+  checkpointBroadcastContextSessionRefinementEvidenceLedgerWithReadback,
+  commitBroadcastContextSessionContextIfUnchanged,
+  invalidateBroadcastContextSessionContextIfUnchanged,
   type AnalysisResultStore,
   type SourceCapabilitySnapshotRecord,
 } from "./storage/analysisResultStore";
 import {
   BROADCAST_CONTEXT_SESSION_SCHEMA_VERSION,
+  createBroadcastParticipantGroundingInputSignature,
+  parseBroadcastContextSessionRefinementEvidenceLedger,
   type StoredBroadcastTranscriptGap,
 } from "./storage/broadcastContextSessionStore";
 import {
@@ -406,9 +471,16 @@ import {
   selectCandidatePassBDurabilityOutstandingIds,
 } from "./app/candidatePassBDurability";
 import {
+  activeRefinementEvidenceTranscripts,
+  createSemanticRefinementAiInputSignature,
+  createSemanticRefinementLeadInputs,
+  semanticRefinementPhaseReceiptsMatchActiveProjection,
+} from "./app/semanticRefinementEvidence";
+import {
   canStartTranscriptRun,
+  createTranscriptSourceIdentityFence,
+  transcriptContextReadiness,
   transcriptGapRequiresExplicitBillingRetry,
-  transcriptIsSealedForContext,
   transcriptNeedsExplicitRetry,
   transcriptOperationKey,
   transcriptPhaseFor,
@@ -454,7 +526,7 @@ type AnalysisSelectionSummary = DurableAnalysisSelectionSummary;
 type AnalysisCoverageSummary = DurableAnalysisCoverageSummary;
 type AnalysisGapApprovalEvidence = DurableAnalysisGapApprovalEvidence;
 
-const APP_VERSION = "0.8.7";
+const APP_VERSION = "0.8.8";
 const PERSISTENCE_SCHEMA_VERSION = "0.3.0";
 const SIGNAL_ENGINE_VERSION =
   "streamer-reaction-fast-pass-v5-chat-fallback-music-confirmation";
@@ -494,14 +566,26 @@ function App() {
   const [pendingFileName, setPendingFileName] = useState<string | null>(null);
   const [sourceFile, setSourceFile] = useState<File | null>(null);
   const [sourceUrl, setSourceUrl] = useState("");
-  const [resolvedSourceChannelId, setResolvedSourceChannelId] = useState<
-    string | null
-  >(null);
   const sourceDescriptor = `${sourceFile?.name ?? pendingFileName ?? ""} ${sourceUrl}`;
   const sourceChzzkVideoNo = useMemo(
     () => chzzkVideoNoFromSourceName(sourceDescriptor),
     [sourceDescriptor],
   );
+  const [sourceChannelResolution, setSourceChannelResolution] = useState<{
+    readonly videoNo: string;
+    readonly status: "resolving" | "resolved" | "failed";
+    readonly channelId: string | null;
+  } | null>(null);
+  const sourceChannelResolutionIsCurrent =
+    sourceChzzkVideoNo === null ||
+    (sourceChannelResolution?.videoNo === sourceChzzkVideoNo &&
+      sourceChannelResolution.status !== "resolving");
+  const resolvedSourceChannelId =
+    sourceChzzkVideoNo !== null &&
+    sourceChannelResolution?.videoNo === sourceChzzkVideoNo &&
+    sourceChannelResolution.status === "resolved"
+      ? sourceChannelResolution.channelId
+      : null;
   const sourceCastRosterId = useMemo(
     () => sourceFile === null && pendingFileName === null
       ? null
@@ -510,6 +594,12 @@ function App() {
       ),
     [pendingFileName, resolvedSourceChannelId, sourceDescriptor, sourceFile],
   );
+  const transcriptSourceIdentityFence =
+    `cast-${sourceCastRosterId ?? "none"}` +
+    `:model-${BROADCAST_TRANSCRIPT_ACTIVE_MODEL_REVISION}` +
+    `:worker-${BROADCAST_TRANSCRIPT_WORKER_VERSION}` +
+    `:vad-${BROADCAST_SPEECH_ACTIVITY_MODEL_REVISION}` +
+    `:policy-${BROADCAST_SPEECH_ACTIVITY_POLICY_REVISION}`;
   const [sourcePreviewUrl, setSourcePreviewUrl] = useState<string | null>(null);
   const [sourceCheck, setSourceCheck] = useState<SourceCheckState | null>(null);
   const [preflight, setPreflight] = useState<LocalMediaPreflightResult | null>(null);
@@ -579,7 +669,7 @@ function App() {
     "idle" | "running" | "completed" | "completedWithGaps" | "failed"
   >("idle");
   const [broadcastTranscriptAttemptOrdinal, setBroadcastTranscriptAttemptOrdinal] =
-    useState(initialAiAttemptOrdinal);
+    useState(0);
   const [broadcastTranscriptProgress, setBroadcastTranscriptProgress] =
     useState<BroadcastTranscriptWorkerProgress | null>(null);
   const [
@@ -616,6 +706,13 @@ function App() {
   const youtubeCaptionTrackRef = useRef<YouTubeCaptionTrackResult | null>(null);
   const [youtubeCaptionTrack, setYouTubeCaptionTrack] =
     useState<YouTubeCaptionTrackResult | null>(null);
+  const youtubeCaptionTrackExactJson = useMemo(
+    () =>
+      youtubeCaptionTrack === null
+        ? null
+        : JSON.stringify(youtubeCaptionTrack),
+    [youtubeCaptionTrack],
+  );
   const [broadcastTranscriptError, setBroadcastTranscriptError] =
     useState<string | null>(null);
   const [broadcastContextStatus, setBroadcastContextStatus] =
@@ -624,6 +721,10 @@ function App() {
     useState(initialAiAttemptOrdinal);
   const [broadcastContextResult, setBroadcastContextResult] =
     useState<BroadcastContextResult | null>(null);
+  const [
+    broadcastParticipantPreContext,
+    setBroadcastParticipantPreContext,
+  ] = useState<BroadcastParticipantPreContextResult | null>(null);
   const [candidateAiProjectionById, setCandidateAiProjectionById] =
     useState<CandidateAiProjectionById>({});
   const [broadcastContextRefinementLeadIds, setBroadcastContextRefinementLeadIds] =
@@ -631,19 +732,19 @@ function App() {
   const [broadcastContextFastRefinementLeadIds, setBroadcastContextFastRefinementLeadIds] =
     useState<readonly string[] | null>(null);
   const [broadcastContextError, setBroadcastContextError] = useState<string | null>(null);
-  const broadcastContextDiscoveryCheckpointRef = useRef<{
-    readonly contextInputSignature: string;
-    readonly resultBySlice: ReadonlyMap<number, BroadcastContextResult>;
-  } | null>(null);
   const [semanticLeadRefinementStatus, setSemanticLeadRefinementStatus] = useState<
     "idle" | "running" | "completed" | "failed"
   >("idle");
   const [
     semanticLeadRefinementAttemptOrdinal,
     setSemanticLeadRefinementAttemptOrdinal,
-  ] = useState(initialAiAttemptOrdinal);
+  ] = useState(0);
   const [semanticLeadRefinementError, setSemanticLeadRefinementError] =
     useState<string | null>(null);
+  const [
+    activeRefinementEvidenceProjection,
+    setActiveRefinementEvidenceProjection,
+  ] = useState<BroadcastRefinementActiveRouteProjection | null>(null);
   const candidatePassBEvidenceRef = useRef<CandidatePassBEvidenceById>({});
   const candidateGeminiInsightRef = useRef<CandidateGeminiInsightById>({});
   const candidatePassBModelByIdRef = useRef<CandidatePassBModelById>({});
@@ -654,6 +755,14 @@ function App() {
   const candidatePassBInsightWriteEpochRef = useRef(0);
   const [candidatePassBDurableInsights, setCandidatePassBDurableInsights] =
     useState<CandidatePassBInsightsRecord | null>(null);
+  /*
+   * The visible state can be cleared while a same-run context retry replaces
+   * its old Candidate Pass B snapshot with an empty one. Keep the last exact
+   * durable readback separately so that replacement remains a CAS instead of
+   * accidentally becoming an unconditional create/overwrite.
+   */
+  const candidatePassBDurableInsightsRef =
+    useRef<CandidatePassBInsightsRecord | null>(null);
   const [
     candidatePassBInsightPersistenceStatus,
     setCandidatePassBInsightPersistenceStatus,
@@ -757,6 +866,7 @@ function App() {
   const allowAmbiguousTranscriptRetryRef = useRef(false);
   const autoBroadcastContextSourceRef = useRef<string | null>(null);
   const autoSemanticLeadRefinementSourceRef = useRef<string | null>(null);
+  const allowAmbiguousSemanticRefinementRetryRef = useRef(false);
   const wholeContextRetryPendingRef = useRef(false);
   const recoveredContextRestoreEpoch = useRef(0);
   const runCandidatePassBRef = useRef<
@@ -824,18 +934,36 @@ function App() {
   }, [analysisLanguage]);
 
   useEffect(() => {
-    setResolvedSourceChannelId(null);
-    if (sourceChzzkVideoNo === null) return undefined;
+    if (sourceChzzkVideoNo === null) {
+      setSourceChannelResolution(null);
+      return undefined;
+    }
+    setSourceChannelResolution({
+      videoNo: sourceChzzkVideoNo,
+      status: "resolving",
+      channelId: null,
+    });
     const controller = new AbortController();
     void requestChzzkVideoChannel(sourceChzzkVideoNo, {
       signal: controller.signal,
     })
       .then((channelId) => {
-        if (!controller.signal.aborted) setResolvedSourceChannelId(channelId);
+        if (!controller.signal.aborted) {
+          setSourceChannelResolution({
+            videoNo: sourceChzzkVideoNo,
+            status: "resolved",
+            channelId,
+          });
+        }
       })
       .catch(() => {
-        // Channel grounding improves identity precision but must never block a
-        // local analysis when CHZZK metadata is temporarily unavailable.
+        if (!controller.signal.aborted) {
+          setSourceChannelResolution({
+            videoNo: sourceChzzkVideoNo,
+            status: "failed",
+            channelId: null,
+          });
+        }
       });
     return () => controller.abort();
   }, [sourceChzzkVideoNo]);
@@ -1234,6 +1362,34 @@ function App() {
       ),
     [candidates, youtubeCaptionTrack],
   );
+  const semanticRefinementPlan = useMemo(() => {
+    if (
+      broadcastContextResult === null ||
+      broadcastContextRefinementLeadIds === null
+    ) {
+      return null;
+    }
+    const leadById = new Map(
+      broadcastContextResult.discoveredLeads.map((lead) => [
+        lead.leadId,
+        lead,
+      ]),
+    );
+    const refinementLeads =
+      broadcastContextRefinementLeadIds.flatMap((leadId) => {
+        const lead = leadById.get(leadId);
+        return lead === undefined ? [] : [lead];
+      });
+    return createDiscoveredLeadRefinementPlan(refinementLeads, {
+      preserveInputOrder: true,
+    });
+  }, [broadcastContextRefinementLeadIds, broadcastContextResult]);
+  const semanticRefinementEvidenceRequired =
+    (semanticRefinementPlan?.selectedLeadIds.length ?? 0) > 0;
+  const semanticRefinementEvidenceProjectionFingerprint =
+    activeRefinementEvidenceProjection?.projectionFingerprint ?? null;
+  const semanticRefinementEvidencePublicationEligible =
+    activeRefinementEvidenceProjection?.publicationEligible === true;
   const contextExcludedCandidateIds = useMemo(
     () =>
       new Set(
@@ -1304,17 +1460,45 @@ function App() {
     () => new Set(candidateDetailCandidateIds),
     [candidateDetailCandidateIds],
   );
+  const candidatePassBSourceFenceById: Readonly<
+    Record<string, CandidatePassBVerificationSourceFence>
+  > = useMemo(
+    () =>
+      Object.fromEntries(
+        candidates.map(({ id, startMs, endMs }) => [
+          id,
+          {
+            candidateId: id,
+            sourceStartMs: startMs,
+            sourceEndMs: endMs,
+            routingModelRevision: CANDIDATE_PASS_B_ROUTING_MODEL_REVISION,
+            refinementEvidenceProjectionFingerprint:
+              semanticRefinementEvidenceProjectionFingerprint,
+            outputLanguage: analysisLanguage,
+            castRosterId: sourceCastRosterId,
+          },
+        ]),
+      ),
+    [
+      analysisLanguage,
+      candidates,
+      semanticRefinementEvidenceProjectionFingerprint,
+      sourceCastRosterId,
+    ],
+  );
   const automaticCandidateDetailIds = useMemo(() => {
     return selectCandidatePassBAnalysisOutstandingIds({
       candidateIds: candidateDetailCandidateIds,
       insightByCandidateId: candidateGeminiInsightById,
       receiptByCandidateId: candidatePassBVerificationReceiptById,
       contextByCandidateId: candidatePassBContextById,
+      sourceFenceByCandidateId: candidatePassBSourceFenceById,
     });
   }, [
     candidateDetailCandidateIds,
     candidateGeminiInsightById,
     candidatePassBContextById,
+    candidatePassBSourceFenceById,
     candidatePassBVerificationReceiptById,
   ]);
   const candidatePassBDurabilityOutstandingIds = useMemo(
@@ -1323,11 +1507,13 @@ function App() {
         candidateIds: candidateDetailCandidateIds,
         record: candidatePassBDurableInsights,
         contextByCandidateId: candidatePassBContextById,
+        sourceFenceByCandidateId: candidatePassBSourceFenceById,
       }),
     [
       candidateDetailCandidateIds,
       candidatePassBContextById,
       candidatePassBDurableInsights,
+      candidatePassBSourceFenceById,
     ],
   );
   const candidatePassBDurableIds = useMemo(
@@ -1336,11 +1522,13 @@ function App() {
         candidateIds: candidateDetailCandidateIds,
         record: candidatePassBDurableInsights,
         contextByCandidateId: candidatePassBContextById,
+        sourceFenceByCandidateId: candidatePassBSourceFenceById,
       }),
     [
       candidateDetailCandidateIds,
       candidatePassBContextById,
       candidatePassBDurableInsights,
+      candidatePassBSourceFenceById,
     ],
   );
   const candidateDetailPipelineOutstandingIds = useMemo(
@@ -1391,6 +1579,10 @@ function App() {
         receiptByCandidateId:
           candidatePassBDurableInsights?.verificationReceiptById ?? {},
         completeEvidenceCandidateIds: candidatePassBDurableIds,
+        refinementEvidenceProjectionFingerprint:
+          semanticRefinementEvidenceProjectionFingerprint,
+        outputLanguage: analysisLanguage,
+        castRosterId: sourceCastRosterId,
       }),
     [
       candidatePassBContextById,
@@ -1398,6 +1590,9 @@ function App() {
       candidatePassBDurableInsights,
       contextExcludedCandidateIds,
       finalVerificationCandidates,
+      analysisLanguage,
+      semanticRefinementEvidenceProjectionFingerprint,
+      sourceCastRosterId,
     ],
   );
   const orderedCandidates = useMemo(
@@ -1662,6 +1857,98 @@ function App() {
       return null;
     }
   }, [boundarySourceDurationMs, candidates]);
+  const boundedBroadcastContextChapters = useMemo(
+    () => compactBroadcastContextChapters(broadcastTranscriptChapters),
+    [broadcastTranscriptChapters],
+  );
+  const baselineBroadcastParticipantGrounding = useMemo(
+    () =>
+      createBroadcastParticipantGrounding({
+        sourceDurationMs: boundarySourceDurationMs,
+        castRosterId: sourceCastRosterId,
+        chapters: boundedBroadcastContextChapters,
+      }),
+    [
+      boundarySourceDurationMs,
+      boundedBroadcastContextChapters,
+      sourceCastRosterId,
+    ],
+  );
+  useEffect(() => {
+    const transcriptSeal = sealedBroadcastTranscriptSourceRef.current;
+    if (
+      broadcastTranscriptStatus !== "completed" ||
+      transcriptSeal === null ||
+      currentAnalysisRunId === null ||
+      sourceContentFingerprint === null ||
+      boundarySourceDurationMs <= 0
+    ) {
+      setBroadcastParticipantPreContext(null);
+      return;
+    }
+
+    let active = true;
+    setBroadcastParticipantPreContext(null);
+    void (async () => {
+      const session = await getResultStore().getBroadcastContextSession(
+        currentAnalysisRunId,
+      );
+      if (
+        session === null ||
+        session.transcriptSealOperationKey !== transcriptSeal ||
+        session.sourceDurationMs !== boundarySourceDurationMs ||
+        session.inputSignature !==
+          (openedRecoveredResult?.terminal.inputSignature ??
+            analysisRun?.inputSignature ??
+            sourceContentFingerprint)
+      ) {
+        throw new Error(
+          analysisLanguage === "ko"
+            ? "등장인물 맥락에 연결할 전사 결과를 다시 확인하지 못했어요."
+            : "The transcript result for participant context could not be verified.",
+        );
+      }
+      return orchestrateBroadcastParticipantPreContext({
+        sourceContentFingerprint,
+        sourceDurationMs: boundarySourceDurationMs,
+        transcriptSeal,
+        castRosterId: sourceCastRosterId,
+        dialogueChapters: boundedBroadcastContextChapters,
+        transcriptModelRevision: session.modelRevision,
+      });
+    })()
+      .then((result) => {
+        if (active) setBroadcastParticipantPreContext(result);
+      })
+      .catch((error: unknown) => {
+        if (!active) return;
+        setBroadcastContextStatus("failed");
+        setBroadcastContextError(
+          error instanceof Error && error.message.trim().length > 0
+            ? error.message
+            : analysisLanguage === "ko"
+              ? "방송 맥락 분석 전에 등장인물 근거를 준비하지 못했어요."
+              : "Participant evidence could not be prepared before broadcast context analysis.",
+        );
+      });
+    return () => {
+      active = false;
+    };
+  }, [
+    boundarySourceDurationMs,
+    boundedBroadcastContextChapters,
+    broadcastTranscriptStatus,
+    currentAnalysisRunId,
+    getResultStore,
+    openedRecoveredResult,
+    analysisRun?.inputSignature,
+    sourceCastRosterId,
+    sourceContentFingerprint,
+    analysisLanguage,
+  ]);
+  const broadcastParticipantGrounding =
+    broadcastParticipantPreContext?.grounding ??
+    baselineBroadcastParticipantGrounding;
   const broadcastContextCandidateInputs = useMemo<
     readonly BroadcastContextCandidateInput[]
   >(
@@ -1698,7 +1985,11 @@ function App() {
             insight?.reactionSummaryKo.trim() || narrative.streamerReaction,
           participantContextKo:
             insight?.participantSummaryKo?.trim() ||
-            "이 후보의 대표 화면 등장인물은 아직 확인하지 못했습니다.",
+            participantContextForBroadcastRange(
+              broadcastParticipantGrounding,
+              Math.round(candidate.startMs),
+              Math.round(candidate.endMs),
+            ),
           chatReactionSummaryKo:
             chat === undefined
               ? null
@@ -1710,12 +2001,9 @@ function App() {
       candidateGeminiInsightById,
       candidatePassBEvidenceById,
       broadcastContextCandidateCohort,
+      broadcastParticipantGrounding,
       youtubeCaptionTrack,
     ],
-  );
-  const boundedBroadcastContextChapters = useMemo(
-    () => compactBroadcastContextChapters(broadcastTranscriptChapters),
-    [broadcastTranscriptChapters],
   );
   const candidateDetailCostEstimate = useMemo(() => {
     const detailIds = new Set(candidateDetailCandidateIds.slice(0, 12));
@@ -1838,6 +2126,11 @@ function App() {
       candidatePassBStatus: candidatePassBRun?.status ?? null,
       candidatePassBBusy,
       semanticLeadRefinementStatus,
+      refinementEvidenceRequired: semanticRefinementEvidenceRequired,
+      refinementEvidenceProjectionFingerprint:
+        semanticRefinementEvidenceProjectionFingerprint,
+      refinementEvidencePublicationEligible:
+        semanticRefinementEvidencePublicationEligible,
       wholeContextComplete: wholeContextPhaseComplete,
       wholeContextFailed: wholeContextPhaseFailed,
     });
@@ -2301,6 +2594,8 @@ function App() {
     setCandidateGeminiInsightById({});
     setCandidatePassBVerificationReceiptById({});
     setCandidateTimelineFramesById({});
+    // Keep the last committed ref: a same-run context reset must CAS the
+    // durable snapshot to empty. A new run ignores it by runId.
     setCandidatePassBDurableInsights(null);
     setCandidatePassBInsightPersistenceStatus("idle");
     setCandidatePassBStartPending(false);
@@ -2392,6 +2687,7 @@ function App() {
     allowAmbiguousTranscriptRetryRef.current = false;
     autoBroadcastContextSourceRef.current = null;
     autoSemanticLeadRefinementSourceRef.current = null;
+    allowAmbiguousSemanticRefinementRetryRef.current = false;
     setBroadcastTranscriptStatus("idle");
     setBroadcastTranscriptProgress(null);
     setBroadcastTranscriptRecoveryProgress(null);
@@ -2408,6 +2704,7 @@ function App() {
     setBroadcastContextError(null);
     setSemanticLeadRefinementStatus("idle");
     setSemanticLeadRefinementError(null);
+    setActiveRefinementEvidenceProjection(null);
     resetCandidateRanking();
     resetBoundarySession();
     resetCandidatePassB();
@@ -3664,15 +3961,21 @@ function App() {
         if (candidatePassBInsightWriteEpochRef.current !== writeEpoch) {
           return;
         }
+        const expectedSnapshot =
+          candidatePassBDurableInsightsRef.current?.runId === runId
+            ? candidatePassBDurableInsightsRef.current
+            : null;
         const restored = await persistCandidatePassBInsightsWithReadback(
           getResultStore(),
+          expectedSnapshot,
           record,
         );
-        if (
-          candidatePassBInsightWriteEpochRef.current === writeEpoch &&
-          candidatePassBIdentity.current?.analysisRunId === runId
-        ) {
-          if (isMounted.current) {
+        if (candidatePassBInsightWriteEpochRef.current === writeEpoch) {
+          candidatePassBDurableInsightsRef.current = restored;
+          if (
+            isMounted.current &&
+            candidatePassBIdentity.current?.analysisRunId === runId
+          ) {
             setCandidatePassBDurableInsights(restored);
             setCandidatePassBInsightPersistenceStatus("verified");
           }
@@ -3856,7 +4159,6 @@ function App() {
       operationEpoch === candidatePassBOperationEpoch.current &&
       candidatePassBIdentity.current?.passBRunId === identity.passBRunId;
     const targetById = new Map(targets.map((target) => [target.candidateId, target]));
-    const castRosterId = sourceCastRosterId;
     const applyCurrentWorkerEvent = (
       event: CandidatePassBWorkerEventPayload,
     ): boolean => {
@@ -3980,6 +4282,17 @@ function App() {
                 },
               };
             }
+            const sourceFence =
+              candidatePassBSourceFenceById[target.candidateId];
+            if (
+              sourceFence === undefined ||
+              sourceFence.sourceStartMs !== target.decodeStartMs ||
+              sourceFence.sourceEndMs !== target.decodeEndMs
+            ) {
+              throw new Error(
+                "The candidate source fence no longer matches its decode target.",
+              );
+            }
             /*
              * 후보 하나당 한 번. `addSpan` 이 같은 이름을 합산하므로 결과는
              * 후보 전체의 총합이 된다 — 한 번의 시간이 아니라 총합이 궁금하다.
@@ -3999,8 +4312,10 @@ function App() {
           endMs: target.decodeEndMs,
           videoFrames: videoFramesByCandidateId.get(target.candidateId) ?? [],
           context: candidatePassBContextById[target.candidateId]!,
-          outputLanguage: analysisLanguage,
-          ...(castRosterId === null ? {} : { castRosterId }),
+          outputLanguage: sourceFence.outputLanguage,
+          ...(sourceFence.castRosterId === null
+            ? {}
+            : { castRosterId: sourceFence.castRosterId }),
         }],
         signal: controller.signal,
         onModelProgress: (progress) => {
@@ -4042,13 +4357,20 @@ function App() {
           const frames = videoFramesByCandidateId.get(result.candidateId) ?? [];
           const thumbnail =
             candidateTimelineFramesRef.current[result.candidateId]?.[0];
+          const resultMatchesSourceFence =
+            result.candidateId === sourceFence.candidateId &&
+            result.sourceStartMs === sourceFence.sourceStartMs &&
+            result.sourceEndMs === sourceFence.sourceEndMs;
           const receipt =
-            context === undefined || thumbnail === undefined
+            context === undefined ||
+            thumbnail === undefined ||
+            !resultMatchesSourceFence
               ? null
               : createCandidatePassBVerificationReceipt(
                   context,
                   frames,
                   thumbnail.timestampMs,
+                  sourceFence,
                 );
           if (receipt === null) {
             candidateFailureReasonById.set(
@@ -5362,14 +5684,99 @@ function App() {
             const store = getResultStore();
             const savedSession = await store.getBroadcastContextSession(runId);
             if (savedSession !== null) {
-              await store.putBroadcastContextSession({
-                ...savedSession,
-                contextInputSignature: null,
-                contextResultJson: null,
-                refinementInputSignature: null,
-                refinementCandidatesJson: null,
-                recordedAt: new Date().toISOString(),
-              });
+              const storedLedger =
+                savedSession.contextPhaseLedgerJson === null
+                  ? null
+                  : parseBroadcastContextPhaseLedgerJson(
+                      savedSession.contextPhaseLedgerJson,
+                    );
+              const canResumeExactContext =
+                !transcriptNeedsRetry &&
+                savedSession.contextInputSignature !== null &&
+                savedSession.contextInputCheckpointJson !== null &&
+                savedSession.contextResultJson === null &&
+                storedLedger !== null;
+
+              if (canResumeExactContext) {
+                const retryNonce =
+                  globalThis.crypto?.randomUUID?.() ??
+                  `${Date.now()}-${broadcastContextAttemptOrdinal + 1}`;
+                const confirmationId = `editor-context-retry:${retryNonce}`;
+                const replanned =
+                  replanBroadcastContextPhaseLedgerAfterEditorRetry(
+                    storedLedger,
+                    {
+                      confirmationId,
+                      nextOperationId: (unit) =>
+                        `context-${unit.phase}-${unit.unitId}` +
+                        `-manual-${unit.attemptOrdinal + 1}-${retryNonce}`,
+                    },
+                  );
+                const replannedJson =
+                  serializeBroadcastContextPhaseLedger(replanned);
+                const checkpointed =
+                  await checkpointBroadcastContextSessionPhaseLedgerIfUnchanged(
+                    store,
+                    savedSession,
+                    {
+                      contextInputSignature:
+                        savedSession.contextInputSignature,
+                      contextInputCheckpointJson:
+                        savedSession.contextInputCheckpointJson,
+                      contextPhaseLedgerJson: replannedJson,
+                      recordedAt: new Date().toISOString(),
+                    },
+                  );
+                if (!checkpointed) {
+                  throw new Error(
+                    "다른 탭에서 방송 맥락이 갱신되어 오래된 재시도를 중단했습니다.",
+                  );
+                }
+                const reopened =
+                  await store.getBroadcastContextSession(runId);
+                if (
+                  reopened === null ||
+                  reopened.contextInputSignature !==
+                    savedSession.contextInputSignature ||
+                  reopened.contextInputCheckpointJson !==
+                    savedSession.contextInputCheckpointJson ||
+                  reopened.contextPhaseLedgerJson !== replannedJson ||
+                  reopened.contextResultJson !== null ||
+                  reopened.refinementInputSignature !== null ||
+                  reopened.refinementCandidatesJson !== null
+                ) {
+                  throw new Error(
+                    "완료된 맥락 조각을 보존한 재시도 상태를 다시 확인하지 못했습니다.",
+                  );
+                }
+              } else {
+                const invalidated =
+                  await invalidateBroadcastContextSessionContextIfUnchanged(
+                    store,
+                    savedSession,
+                    new Date().toISOString(),
+                  );
+                if (!invalidated) {
+                  throw new Error(
+                    "다른 탭에서 방송 맥락이 갱신되어 오래된 재시도를 중단했습니다.",
+                  );
+                }
+                const reopened =
+                  await store.getBroadcastContextSession(runId);
+                if (
+                  reopened === null ||
+                  reopened.contextInputSignature !== null ||
+                  reopened.contextInputCheckpointJson !== null ||
+                  reopened.contextPhaseLedgerJson !== null ||
+                  reopened.contextResultJson !== null ||
+                  reopened.refinementInputSignature !== null ||
+                  reopened.refinementCandidatesJson !== null
+                ) {
+                  throw new Error(
+                    "방송 맥락 재시도 상태를 저장한 뒤 다시 확인하지 못했습니다.",
+                  );
+                }
+              }
             }
           }
         } catch {
@@ -5381,6 +5788,7 @@ function App() {
         }
 
         autoSemanticLeadRefinementSourceRef.current = null;
+        allowAmbiguousSemanticRefinementRetryRef.current = false;
         setSemanticLeadRefinementAttemptOrdinal((current) => current + 1);
         autoBroadcastContextSourceRef.current = null;
         setBroadcastContextAttemptOrdinal((current) => current + 1);
@@ -5465,6 +5873,7 @@ function App() {
     allowAmbiguousTranscriptRetryRef.current = false;
     autoBroadcastContextSourceRef.current = null;
     autoSemanticLeadRefinementSourceRef.current = null;
+    allowAmbiguousSemanticRefinementRetryRef.current = false;
     setBroadcastTranscriptStatus("idle");
     setBroadcastTranscriptProgress(null);
     setBroadcastTranscriptRecoveryProgress(null);
@@ -5480,6 +5889,7 @@ function App() {
     setBroadcastContextError(null);
     setSemanticLeadRefinementStatus("idle");
     setSemanticLeadRefinementError(null);
+    setActiveRefinementEvidenceProjection(null);
     sourceSelectionEpoch.current += 1;
     sourceAbortController.current?.abort();
     sourceAbortController.current = null;
@@ -5503,13 +5913,25 @@ function App() {
     setChatError(null);
     setChatImportStatus("idle");
     setChatOffsetSeconds(recovered.finalResult.result.input.chat.offsetMs / 1_000);
-    const recoveredCandidates: ReviewedCandidate[] =
+    const recoveredPublishedCandidates: ReviewedCandidate[] =
       recovered.finalResult.result.candidates.map((candidate) => ({
         ...hydrateDurableCandidate(candidate),
         reviewState: "unreviewed" as const,
         approvedBoundaryRevision: null,
       }));
-    setSelectionResult(recovered.finalResult.result.summary);
+    /*
+     * Semantic candidates are reconstructed only from the canonical active
+     * refinement ledger below. A legacy terminal result may contain one
+     * without the projection receipt that now proves it, so never expose that
+     * copy during the asynchronous restore window.
+     */
+    const recoveredCandidates = recoveredPublishedCandidates.filter(
+      (candidate) => !isContextDiscoveredCandidate(candidate),
+    );
+    setSelectionResult({
+      ...recovered.finalResult.result.summary,
+      candidateCount: recoveredCandidates.length,
+    });
     setCandidates(recoveredCandidates);
     setCandidateTimelineScorePoints(
       buildCandidateTimelineScorePoints([
@@ -5557,6 +5979,7 @@ function App() {
     candidatePassBModelByIdRef.current = recoveredModels;
     candidateTimelineFramesRef.current = recoveredTimelineFrames;
     candidatePassBVerificationReceiptRef.current = recoveredVerificationReceipts;
+    candidatePassBDurableInsightsRef.current = recoveredPassBInsights;
     setCandidatePassBEvidenceById(recoveredEvidence);
     setCandidateGeminiInsightById(recoveredGeminiInsights);
     setCandidateTimelineFramesById(recoveredTimelineFrames);
@@ -5601,12 +6024,89 @@ function App() {
         setBroadcastContextStatus("idle");
         return;
       }
+      if (
+        savedSession.participantGroundingInputSignature === null ||
+        savedSession.participantGroundingPlanFingerprint === null ||
+        savedSession.participantGroundingCheckpointJson === null ||
+        savedSession.transcriptSealOperationKey === null ||
+        savedSession.contextInputSignature === null ||
+        savedSession.contextInputCheckpointJson === null ||
+        savedSession.contextPhaseLedgerJson === null
+      ) {
+        // Legacy paid context remains stored, but it predates the participant
+        // grounding contract and must not be presented as a grounded result.
+        setBroadcastTranscriptStatus("completed");
+        setBroadcastContextStatus("idle");
+        return;
+      }
 
       let storedPayload: unknown;
+      let storedContextInputPayload: unknown;
       try {
         storedPayload = JSON.parse(savedSession.contextResultJson);
+        storedContextInputPayload = JSON.parse(
+          savedSession.contextInputCheckpointJson,
+        );
       } catch {
         throw new Error("저장된 전체 맥락 결과 형식을 확인하지 못했어요.");
+      }
+      const storedContextInput = createBroadcastContextRequest(
+        storedContextInputPayload as BroadcastContextRequestInput,
+      );
+      const expectedParticipantGroundingInputSignature =
+        await createBroadcastParticipantGroundingInputSignature({
+          inputSignature: savedSession.inputSignature,
+          transcriptSealOperationKey:
+            savedSession.transcriptSealOperationKey,
+          participantGroundingPlanFingerprint:
+            savedSession.participantGroundingPlanFingerprint,
+          participantGroundingCheckpointJson:
+            savedSession.participantGroundingCheckpointJson,
+        });
+      const expectedContextInputSignature = await createContentFingerprint([
+        savedSession.inputSignature,
+        savedSession.contextInputCheckpointJson,
+        `broadcast-context-routing:${AI_BROADCAST_CONTEXT_ROUTING_REVISION}`,
+        `topical-discovery:${BROADCAST_TOPICAL_DISCOVERY_VERSION}`,
+      ]);
+      if (
+        savedSession.participantGroundingInputSignature !==
+          expectedParticipantGroundingInputSignature ||
+        savedSession.contextInputSignature !== expectedContextInputSignature ||
+        storedContextInput.sourceDurationMs !== savedSession.sourceDurationMs ||
+        storedContextInput.castRosterId !== savedSession.sourceCastRosterId ||
+        JSON.stringify(storedContextInput.participantGrounding) !==
+          savedSession.participantGroundingCheckpointJson ||
+        JSON.stringify(storedContextInput.chapters) !==
+          JSON.stringify(compactBroadcastContextChapters(savedSession.chapters))
+      ) {
+        setBroadcastTranscriptStatus("completed");
+        setBroadcastContextStatus("idle");
+        return;
+      }
+      const restoredContextLedger =
+        parseBroadcastContextPhaseLedgerJson(
+          savedSession.contextPhaseLedgerJson,
+        );
+      if (
+        restoredContextLedger === null ||
+        !broadcastContextPhaseLedgerMatchesFence(restoredContextLedger, {
+          parentContextSignature: savedSession.contextInputSignature,
+          transcriptSignature: savedSession.transcriptSealOperationKey,
+          groundingSignature:
+            savedSession.participantGroundingInputSignature,
+        }) ||
+        restoredContextLedger.units
+          .filter(
+            (unit) =>
+              unit.required &&
+              (unit.phase === "discovery" || unit.phase === "jury"),
+          )
+          .some((unit) => unit.status !== "succeeded")
+      ) {
+        setBroadcastTranscriptStatus("completed");
+        setBroadcastContextStatus("idle");
+        return;
       }
       const storedEnvelope = unpackPersistedBroadcastContext(storedPayload);
       const recoveredCandidateById = new Map(
@@ -5614,7 +6114,7 @@ function App() {
       );
       const restoreCandidateIds =
         storedEnvelope.contextCandidateIds ??
-        recoveredCandidates.slice(0, 12).map(({ id }) => id);
+        storedContextInput.candidates.map(({ candidateId }) => candidateId);
       const restoreCandidates = restoreCandidateIds.flatMap((candidateId) => {
         const candidate = recoveredCandidateById.get(candidateId);
         return candidate === undefined ? [] : [candidate];
@@ -5623,26 +6123,36 @@ function App() {
         setBroadcastContextStatus("idle");
         return;
       }
-      const restoreCandidateInputs: readonly BroadcastContextCandidateInput[] =
-        restoreCandidates.map((candidate) => ({
-          candidateId: candidate.id,
-          startMs: Math.round(candidate.startMs),
-          endMs: Math.round(candidate.endMs),
-          transcriptKo: "",
-          eventSummaryKo: "저장된 후보 사건",
-          reactionSummaryKo: "저장된 스트리머 반응",
-          chatReactionSummaryKo: null,
-          }));
+      if (
+        restoreCandidateIds.length !== storedContextInput.candidates.length ||
+        restoreCandidateIds.some(
+          (candidateId, index) =>
+            candidateId !==
+            storedContextInput.candidates[index]?.candidateId,
+        )
+      ) {
+        setBroadcastContextStatus("idle");
+        return;
+      }
       const restoredContext = parsePersistedBroadcastContextResult(
         storedEnvelope.resultPayload,
         {
-          sourceDurationMs: savedSession.sourceDurationMs,
-          chapters: savedSession.chapters,
-          candidates: restoreCandidateInputs,
+          sourceDurationMs: storedContextInput.sourceDurationMs,
+          chapters: storedContextInput.chapters,
+          candidates: storedContextInput.candidates,
+          participantGrounding: storedContextInput.participantGrounding,
+          outputLanguage: storedContextInput.outputLanguage,
+          ...(storedContextInput.castRosterId === null
+            ? {}
+            : { castRosterId: storedContextInput.castRosterId }),
         },
       );
       if (restoredContext === null) {
         throw new Error("저장된 전체 맥락 결과를 현재 영상 기록과 연결하지 못했어요.");
+      }
+      const restoredOutputLanguage = storedContextInput.outputLanguage;
+      if (analysisLanguage !== restoredOutputLanguage) {
+        setAnalysisLanguage(restoredOutputLanguage);
       }
 
       const availableLeadIds = new Set(
@@ -5663,23 +6173,153 @@ function App() {
           ),
         ),
       ];
-      let nextCandidates = recoveredCandidates;
-      if (savedSession.refinementCandidatesJson !== null) {
-        let refinementPayload: unknown;
-        try {
-          refinementPayload = JSON.parse(savedSession.refinementCandidatesJson);
-        } catch {
-          refinementPayload = null;
-        }
-        const restoredSemanticCandidates = parseSemanticLeadCandidates(
-          refinementPayload,
+      const restoredRefinementPlanIsAuthoritative =
+        storedEnvelope.refinementLeadIds !== null &&
+        storedEnvelope.fastRefinementLeadIds !== null &&
+        storedEnvelope.refinementLeadIds.length ===
+          restoredRefinementLeadIds.length &&
+        storedEnvelope.refinementLeadIds.every(
+          (leadId, index) =>
+            leadId === restoredRefinementLeadIds[index],
+        ) &&
+        storedEnvelope.fastRefinementLeadIds.length ===
+          restoredFastRefinementLeadIds.length &&
+        storedEnvelope.fastRefinementLeadIds.every(
+          (leadId, index) =>
+            leadId === restoredFastRefinementLeadIds[index],
         );
-        if (restoredSemanticCandidates === null) {
+      let nextCandidates = recoveredCandidates;
+      const restoredLeadById = new Map(
+        restoredContext.discoveredLeads.map((lead) => [lead.leadId, lead]),
+      );
+      const restoredRefinementPlan = createDiscoveredLeadRefinementPlan(
+        restoredRefinementLeadIds.flatMap((leadId) => {
+          const lead = restoredLeadById.get(leadId);
+          return lead === undefined ? [] : [lead];
+        }),
+        { preserveInputOrder: true },
+      );
+      const durableRefinementUnits = restoredContextLedger.units.filter(
+        (unit) => unit.phase === "refinement" && unit.required,
+      );
+      const currentRefinementRoutingSignature =
+        `broadcast-context-routing:${AI_BROADCAST_CONTEXT_ROUTING_REVISION}`;
+      if (!restoreIsCurrent()) return;
+      if (!restoredRefinementPlanIsAuthoritative) {
+        setActiveRefinementEvidenceProjection(null);
+        setSemanticLeadRefinementStatus("failed");
+        setSemanticLeadRefinementError(
+          "저장된 전체 맥락에는 현재 후보 정제 계획이 없어요. 전체 맥락과 기존 후보는 유지했으며, 원본을 다시 연결하면 이 단계만 재실행할 수 있어요.",
+        );
+      } else if (restoredRefinementPlan.selectedLeadIds.length === 0) {
+        setActiveRefinementEvidenceProjection(null);
+        setSemanticLeadRefinementStatus("completed");
+      } else {
+        let restoredSemanticCandidates:
+          | readonly UnifiedHighlightCandidate[]
+          | null = null;
+        let restoredActiveProjection:
+          BroadcastRefinementActiveRouteProjection | null = null;
+        try {
+          const restoredEvidenceLedger =
+            await parseBroadcastContextSessionRefinementEvidenceLedger(
+              savedSession,
+            );
+          if (
+            restoredEvidenceLedger === null ||
+            JSON.stringify(restoredEvidenceLedger.selectedLeadPlan) !==
+              JSON.stringify(restoredRefinementPlan) ||
+            !broadcastRefinementEvidenceLedgerCanPublish(
+              restoredEvidenceLedger,
+            )
+          ) {
+            throw new Error(
+              "저장된 활성 후보 근거가 현재 후보 구간 계획을 완전히 증명하지 못해요.",
+            );
+          }
+          const activeProjection =
+            projectBroadcastRefinementActiveEvidenceRoute(
+              restoredEvidenceLedger,
+            );
+          const activeEvidence =
+            getBroadcastRefinementActiveEvidencePayload(
+              restoredEvidenceLedger,
+            );
+          if (
+            activeProjection === null ||
+            !activeProjection.publicationEligible ||
+            activeEvidence === null
+          ) {
+            throw new Error(
+              "저장된 후보 근거 원장에 게시 가능한 활성 경로가 없어요.",
+            );
+          }
+          const restoredRefinementLeadInputs =
+            createSemanticRefinementLeadInputs({
+              plan: restoredRefinementPlan,
+              transcripts:
+                activeRefinementEvidenceTranscripts(activeEvidence),
+              discoveredLeads: restoredContext.discoveredLeads,
+              fastRefinementLeadIds: restoredFastRefinementLeadIds,
+              sourceDurationMs: storedContextInput.sourceDurationMs,
+              castRosterId: storedContextInput.castRosterId,
+              wholeBroadcastChapters: storedContextInput.chapters,
+              participantGrounding:
+                storedContextInput.participantGrounding,
+              outputLanguage: restoredOutputLanguage,
+            });
+          const expectedRefinementInputSignature =
+            await createSemanticRefinementAiInputSignature({
+              activeEvidenceProjectionFingerprint:
+                activeProjection.projectionFingerprint,
+              routingManifestSignature:
+                currentRefinementRoutingSignature,
+              leadInputs: restoredRefinementLeadInputs,
+            });
+          const durableRefinementReceiptsAreCurrent =
+            semanticRefinementPhaseReceiptsMatchActiveProjection({
+              units: durableRefinementUnits,
+              leadInputs: restoredRefinementLeadInputs,
+              activeEvidenceProjectionFingerprint:
+                activeProjection.projectionFingerprint,
+              routingManifestSignature:
+                currentRefinementRoutingSignature,
+              outputLanguage: restoredOutputLanguage,
+            });
+          if (
+            savedSession.refinementInputSignature !==
+              expectedRefinementInputSignature ||
+            savedSession.refinementCandidatesJson === null ||
+            !durableRefinementReceiptsAreCurrent
+          ) {
+            throw new Error(
+              "저장된 의미 후보가 현재 활성 근거·언어·AI 요청과 정확히 일치하지 않아요.",
+            );
+          }
+          const parsedPayload: unknown = JSON.parse(
+            savedSession.refinementCandidatesJson,
+          );
+          restoredSemanticCandidates =
+            parseSemanticLeadCandidates(parsedPayload);
+          if (restoredSemanticCandidates === null) {
+            throw new Error(
+              "저장된 의미 후보 위치의 형식을 확인하지 못했어요.",
+            );
+          }
+          restoredActiveProjection = activeProjection;
+        } catch (error) {
+          setActiveRefinementEvidenceProjection(null);
           setSemanticLeadRefinementStatus("failed");
           setSemanticLeadRefinementError(
-            "저장된 의미 후보 위치는 형식을 확인하지 못해 제외했어요. 전체 맥락 결과와 기존 후보는 유지했습니다.",
+            error instanceof Error && error.message.trim().length > 0
+              ? `${error.message} 전체 맥락과 기존 후보는 유지했으며, 원본을 다시 연결하면 이 단계만 재실행할 수 있어요.`
+              : "저장된 의미 후보 근거를 정확히 복원하지 못했어요.",
           );
-        } else {
+        }
+        if (
+          restoredSemanticCandidates !== null &&
+          restoredActiveProjection !== null
+        ) {
           const appendedSemanticCandidates: ReviewedCandidate[] = [];
           for (const proposal of restoredSemanticCandidates) {
             const duplicate = recoveredCandidates.some((candidate) => {
@@ -5709,14 +6349,18 @@ function App() {
             (left, right) =>
               left.peakMs - right.peakMs || left.id.localeCompare(right.id),
           );
+          setActiveRefinementEvidenceProjection(
+            restoredActiveProjection,
+          );
           setSemanticLeadRefinementStatus("completed");
         }
-      } else if (restoredRefinementLeadIds.length === 0) {
-        setSemanticLeadRefinementStatus("completed");
       }
       if (!restoreIsCurrent()) return;
 
-      autoBroadcastContextSourceRef.current = `${recovered.terminal.runId}:${recovered.terminal.inputSignature}`;
+      autoBroadcastTranscriptSourceRef.current =
+        savedSession.transcriptSealOperationKey;
+      sealedBroadcastTranscriptSourceRef.current =
+        savedSession.transcriptSealOperationKey;
       setBroadcastTranscriptStatus("completed");
       setBroadcastContextResult(restoredContext);
       setBroadcastContextRefinementLeadIds(restoredRefinementLeadIds);
@@ -6089,7 +6733,15 @@ function App() {
     const operationKey =
       sourceContentFingerprint === null
         ? null
-        : `${sourceContentFingerprint}:${candidateDetailCandidateIds.join("|")}`;
+        : JSON.stringify([
+            "exclipper.candidate-pass-b-auto.v3",
+            sourceContentFingerprint,
+            automaticCandidateDetailIds.map((candidateId) => [
+              candidateId,
+              candidatePassBSourceFenceById[candidateId] ?? null,
+              candidatePassBContextById[candidateId] ?? null,
+            ]),
+          ]);
     if (
       !analysisComplete ||
       automaticCandidateDetailIds.length === 0 ||
@@ -6127,6 +6779,8 @@ function App() {
     automaticCandidateDetailIds,
     broadcastContextStatus,
     broadcastTranscriptStatus,
+    candidatePassBContextById,
+    candidatePassBSourceFenceById,
     candidateDetailCandidateIds,
     candidatePassBBusy,
     semanticLeadRefinementStatus,
@@ -6140,15 +6794,31 @@ function App() {
       openedRecoveredResult?.terminal.inputSignature ??
       analysisRun?.inputSignature ??
       sourceContentFingerprint;
-    const requiredTranscriptSeal =
+    const activeTranscriptSeal =
+      broadcastTranscriptStatus === "completed"
+        ? sealedBroadcastTranscriptSourceRef.current
+        : null;
+    const requiredTranscriptSealPrefix =
       runId === null || sourceContentFingerprint === null
         ? null
-        : transcriptOperationKey(
+        : `${transcriptOperationKey(
             runId,
             sourceContentFingerprint,
             "event-boost",
-            broadcastTranscriptAttemptOrdinal,
-          );
+          )}:identity-`;
+    const requiredTranscriptSeal =
+      activeTranscriptSeal !== null &&
+      requiredTranscriptSealPrefix !== null &&
+      activeTranscriptSeal.startsWith(requiredTranscriptSealPrefix)
+        ? activeTranscriptSeal
+        : null;
+    const contextTranscriptReadiness = transcriptContextReadiness({
+      analysisComplete,
+      broadcastTranscriptStatus,
+      completedChapterCount: boundedBroadcastContextChapters.length,
+      requiredEventBoostOperationKey: requiredTranscriptSeal,
+      sealedOperationKey: sealedBroadcastTranscriptSourceRef.current,
+    });
     if (
       // Whole-context reasoning is billed once per map. During the parallel
       // prelude the transcript map is uniform-only and candidates are absent,
@@ -6159,20 +6829,46 @@ function App() {
       inputSignature === null ||
       requiredTranscriptSeal === null ||
       boundarySourceDurationMs <= 0 ||
-      boundedBroadcastContextChapters.length === 0 ||
-      !transcriptIsSealedForContext({
-        analysisComplete,
-        broadcastTranscriptStatus,
-        completedChapterCount: boundedBroadcastContextChapters.length,
-        requiredEventBoostOperationKey: requiredTranscriptSeal,
-        sealedOperationKey: sealedBroadcastTranscriptSourceRef.current,
-      })
+      broadcastParticipantPreContext === null ||
+      broadcastParticipantPreContext.sourceFence.transcriptSeal !==
+        requiredTranscriptSeal ||
+      broadcastParticipantGrounding.status !== "sealed" ||
+      contextTranscriptReadiness === "not-ready"
     ) {
       return;
     }
+    if (contextTranscriptReadiness === "visual-evidence-required") {
+      const visualGapOperationKey =
+        `visual-evidence-required:${requiredTranscriptSeal}`;
+      if (
+        autoBroadcastContextSourceRef.current !== visualGapOperationKey
+      ) {
+        autoBroadcastContextSourceRef.current = visualGapOperationKey;
+        broadcastContextAbortController.current?.abort();
+        broadcastContextAbortController.current = null;
+        setBroadcastContextStatus("failed");
+        setBroadcastContextError(
+          analysisLanguage === "ko"
+            ? "대사가 없는 구간의 화면 검토가 아직 완료되지 않았어요. 조용한 성공이나 화면 사건을 놓치지 않도록 4장 화면 근거 분석이 연결될 때까지 최종 후보 게시를 중단합니다."
+            : "Visual review of the no-dialogue ranges is not complete. Publication is blocked until the four-frame evidence lane can rule in quiet successes and visual events.",
+        );
+      }
+      return;
+    }
 
+    const contextInput = {
+      sourceDurationMs: boundarySourceDurationMs,
+      chapters: boundedBroadcastContextChapters,
+      candidates: broadcastContextCandidateInputs,
+      participantGrounding: broadcastParticipantGrounding,
+      outputLanguage: analysisLanguage,
+      ...(sourceCastRosterId === null ? {} : { castRosterId: sourceCastRosterId }),
+    };
+    const contextInputSnapshotJson = JSON.stringify(contextInput);
     const operationKey =
-      `${runId}:${inputSignature}:${requiredTranscriptSeal}:context-attempt-${broadcastContextAttemptOrdinal}`;
+      `${runId}:${inputSignature}:${requiredTranscriptSeal}` +
+      `:context-attempt-${broadcastContextAttemptOrdinal}` +
+      `:${contextInputSnapshotJson}`;
     if (autoBroadcastContextSourceRef.current === operationKey) {
       return;
     }
@@ -6183,13 +6879,11 @@ function App() {
     setBroadcastContextStatus("running");
     setBroadcastContextError(null);
 
-    const contextInput = {
-      sourceDurationMs: boundarySourceDurationMs,
-      chapters: boundedBroadcastContextChapters,
-      candidates: broadcastContextCandidateInputs,
-      outputLanguage: analysisLanguage,
-      ...(sourceCastRosterId === null ? {} : { castRosterId: sourceCastRosterId }),
-    };
+    const operationIsCurrent = (): boolean =>
+      !controller.signal.aborted &&
+      isMounted.current &&
+      broadcastContextAbortController.current === controller &&
+      autoBroadcastContextSourceRef.current === operationKey;
     const applyContextResult = (
       result: BroadcastContextResult,
       refinementLeadIds: readonly string[],
@@ -6237,19 +6931,104 @@ function App() {
     void (async () => {
       const contextInputSignature = await createContentFingerprint([
         inputSignature,
-        JSON.stringify(contextInput),
+        contextInputSnapshotJson,
         `broadcast-context-routing:${AI_BROADCAST_CONTEXT_ROUTING_REVISION}`,
         `topical-discovery:${BROADCAST_TOPICAL_DISCOVERY_VERSION}`,
       ]);
-      if (controller.signal.aborted || !isMounted.current) return;
+      const participantGroundingCheckpointJson = JSON.stringify(
+        broadcastParticipantGrounding,
+      );
+      const participantGroundingPlanFingerprint =
+        broadcastParticipantPreContext.planFingerprint;
+      const participantGroundingInputSignature =
+        await createBroadcastParticipantGroundingInputSignature({
+          inputSignature,
+          transcriptSealOperationKey: requiredTranscriptSeal,
+          participantGroundingPlanFingerprint,
+          participantGroundingCheckpointJson,
+        });
+      const contextLedgerFence: BroadcastContextPhaseLedgerFence = {
+        parentContextSignature: contextInputSignature,
+        transcriptSignature: requiredTranscriptSeal,
+        groundingSignature: participantGroundingInputSignature,
+      };
+      if (!operationIsCurrent()) return;
       const store = getResultStore();
-      const saved = await store.getBroadcastContextSession(runId);
+      let saved = await store.getBroadcastContextSession(runId);
+      const serializedContextChapters = JSON.stringify(contextInput.chapters);
       if (
-        saved !== null &&
+        saved === null ||
+        saved.inputSignature !== inputSignature ||
+        saved.sourceCastRosterId !== sourceCastRosterId ||
+        saved.transcriptSealOperationKey !== requiredTranscriptSeal ||
+        sealedBroadcastTranscriptSourceRef.current !== requiredTranscriptSeal ||
+        JSON.stringify(compactBroadcastContextChapters(saved.chapters)) !==
+          serializedContextChapters
+      ) {
+        throw new Error(
+          "저장된 방송 대사 지도와 현재 인물 근거 지도가 일치하지 않아요. 최신 대사 지도를 먼저 복구해 주세요.",
+        );
+      }
+      if (
+        saved.participantGroundingInputSignature !==
+          participantGroundingInputSignature ||
+        saved.participantGroundingPlanFingerprint !==
+          participantGroundingPlanFingerprint ||
+        saved.participantGroundingCheckpointJson !==
+          participantGroundingCheckpointJson
+      ) {
+        const replaced = await store.replaceBroadcastContextSessionIfUnchanged(
+          saved,
+          {
+          ...saved,
+          participantGroundingInputSignature,
+          participantGroundingPlanFingerprint,
+          participantGroundingCheckpointJson,
+          contextInputSignature: null,
+           contextInputCheckpointJson: null,
+           contextPhaseLedgerJson: null,
+           contextResultJson: null,
+           refinementTranscriptInputSignature: null,
+           refinementTranscriptCheckpointJson: null,
+           refinementEvidenceLedgerJson: null,
+           refinementInputSignature: null,
+           refinementCandidatesJson: null,
+          recordedAt: new Date().toISOString(),
+          },
+        );
+        if (!replaced) {
+          throw new Error(
+            "인물 근거 지도를 저장하는 동안 대사 지도가 갱신됐어요. 최신 지도에서 다시 시작합니다.",
+          );
+        }
+        if (!operationIsCurrent()) return;
+        saved = await store.getBroadcastContextSession(runId);
+        if (
+          saved === null ||
+          saved.participantGroundingInputSignature !==
+            participantGroundingInputSignature ||
+          saved.participantGroundingPlanFingerprint !==
+            participantGroundingPlanFingerprint ||
+          saved.participantGroundingCheckpointJson !==
+            participantGroundingCheckpointJson
+        ) {
+          throw new Error(
+            "저장한 인물 근거 지도를 다시 확인하지 못했어요. 전체 맥락 분석은 시작하지 않았습니다.",
+          );
+        }
+      }
+      if (
         saved.inputSignature === inputSignature &&
         saved.contextInputSignature === contextInputSignature &&
+        saved.contextInputCheckpointJson === contextInputSnapshotJson &&
         saved.contextResultJson !== null
       ) {
+        const savedLedger =
+          saved.contextPhaseLedgerJson === null
+            ? null
+            : parseBroadcastContextPhaseLedgerJson(
+                saved.contextPhaseLedgerJson,
+              );
         let savedPayload: unknown;
         try {
           savedPayload = JSON.parse(saved.contextResultJson);
@@ -6261,8 +7040,30 @@ function App() {
           savedEnvelope.resultPayload,
           contextInput,
         );
-        if (savedResult !== null && savedEnvelope.refinementLeadIds !== null) {
-          if (!controller.signal.aborted && isMounted.current) {
+        if (
+          savedResult !== null &&
+          savedEnvelope.refinementLeadIds !== null &&
+          savedLedger !== null &&
+          broadcastContextPhaseLedgerMatchesFence(
+            savedLedger,
+            contextLedgerFence,
+          ) &&
+          savedLedger.units
+            .filter(
+              (unit) =>
+                unit.required &&
+                (unit.phase === "discovery" || unit.phase === "jury"),
+            )
+            .every((unit) => unit.status === "succeeded") &&
+          savedLedger.units.some(
+            (unit) =>
+              unit.phase === "discovery" && unit.unitId === "overview",
+          ) &&
+          savedLedger.units.some(
+            (unit) => unit.phase === "jury" && unit.unitId === "selection",
+          )
+        ) {
+          if (operationIsCurrent()) {
             applyContextResult(
               savedResult,
               savedEnvelope.refinementLeadIds,
@@ -6273,168 +7074,57 @@ function App() {
         }
       }
 
-      const discoverySlices = createParallelBroadcastTopicalDiscoverySlices(
-        boundedBroadcastContextChapters,
-      );
-      // 맥락 AI 호출 전체. 자막 받기와 나란히 놓고 봐야 `broadcastContext` 37%
-      // 안에서 무엇이 무거운지가 갈린다 — 둘은 고치는 방법이 완전히 다르다.
+      // Every paid sub-request is fenced by the exact transcript, participant
+      // grounding and request bytes. Provider calls may run in parallel, while
+      // each transition is committed and read back serially before publication.
       const endContextSpan = stageTimerRef.current?.startSpan(
         "broadcast-context-ai",
         Date.now(),
       );
-      const previousDiscoveryCheckpoint =
-        broadcastContextDiscoveryCheckpointRef.current?.contextInputSignature ===
-        contextInputSignature
-          ? broadcastContextDiscoveryCheckpointRef.current.resultBySlice
-          : new Map<number, BroadcastContextResult>();
-      const overviewSettlement = requestBroadcastContextDeepseek(contextInput, {
-        signal: controller.signal,
-        quota: {
-          participantId: aiQuotaParticipantId,
-          runId,
-          operationId: `context-overview-g${broadcastContextAttemptOrdinal}`,
-        },
-      }).then(
-        (value) => ({ status: "fulfilled" as const, value }),
-        (reason: unknown) => ({ status: "rejected" as const, reason }),
-      );
-      const discoverySettlements = Promise.all(
-        discoverySlices.map((slice, sliceIndex) => {
-          const checkpoint = previousDiscoveryCheckpoint.get(sliceIndex);
-          if (checkpoint !== undefined) {
-            return Promise.resolve({
-              status: "fulfilled" as const,
-              value: checkpoint,
-            });
-          }
-          return requestBroadcastContextDeepseek(
-            {
-              sourceDurationMs: boundarySourceDurationMs,
-              chapters: slice.chapters,
-              candidates: [],
-              outputLanguage: analysisLanguage,
-              ...(sourceCastRosterId === null
-                ? {}
-                : { castRosterId: sourceCastRosterId }),
-            },
-            {
-              signal: controller.signal,
-              analysisMode: "discovery",
-              quota: {
-                participantId: aiQuotaParticipantId,
-                runId,
-                operationId:
-                  `context-discovery-${sliceIndex}-g${broadcastContextAttemptOrdinal}`,
-              },
-            },
-          ).then(
-            (value) => ({ status: "fulfilled" as const, value }),
-            (reason: unknown) => ({ status: "rejected" as const, reason }),
-          );
-        }),
-      );
-      const [settledOverview, discoveryResults] = await Promise.all([
-        overviewSettlement,
-        discoverySettlements,
-      ]);
-      endContextSpan?.(Date.now());
-      if (controller.signal.aborted || !isMounted.current) return;
-      const nextDiscoveryCheckpoint = new Map(previousDiscoveryCheckpoint);
-      discoveryResults.forEach((discovery, sliceIndex) => {
-        if (discovery.status === "fulfilled") {
-          nextDiscoveryCheckpoint.set(sliceIndex, discovery.value);
-        }
-      });
-      if (nextDiscoveryCheckpoint.size > 0) {
-        broadcastContextDiscoveryCheckpointRef.current = {
-          contextInputSignature,
-          resultBySlice: nextDiscoveryCheckpoint,
-        };
-      }
-      if (settledOverview.status === "rejected") {
-        throw settledOverview.reason;
-      }
-      const overviewResult = settledOverview.value;
-      const result: BroadcastContextResult = {
-        ...overviewResult,
-        discoveredLeads: mergeBroadcastTopicalDiscoveryLeads([
-          overviewResult.discoveredLeads,
-          ...discoveryResults.flatMap((discovery) =>
-            discovery.status === "fulfilled"
-              ? [discovery.value.discoveredLeads]
-              : [],
-          ),
-        ]),
-      };
-      const juryPlan = createBroadcastTopicalLeadJuryPlan(
-        boundarySourceDurationMs,
-        result.broadcastSummaryKo,
-        result.semanticChapters,
-        result.discoveredLeads,
-      );
-      let refinementLeadIds: readonly string[];
-      let fastRefinementLeadIds: readonly string[];
-      if (juryPlan.candidates.length === 0) {
-        refinementLeadIds = [];
-        fastRefinementLeadIds = [];
-      } else {
+      const contextPipeline = await (async () => {
         try {
-          const juryResult = await requestBroadcastContextDeepseek(
-            {
-              sourceDurationMs: boundarySourceDurationMs,
-              chapters: juryPlan.chapters,
-              candidates: juryPlan.candidates,
-              outputLanguage: analysisLanguage,
-              ...(sourceCastRosterId === null
-                ? {}
-                : { castRosterId: sourceCastRosterId }),
-            },
-            {
-              signal: controller.signal,
-              analysisMode: "selection",
-              quota: {
-                participantId: aiQuotaParticipantId,
-                runId,
-                operationId: `context-selection-g${broadcastContextAttemptOrdinal}`,
-              },
-            },
-          );
-          refinementLeadIds = selectBroadcastTopicalRefinementLeadIds(
-            result.discoveredLeads,
-            juryPlan,
-            juryResult.annotations,
-            result.semanticChapters,
-          );
-          const refinementLeadIdSet = new Set(refinementLeadIds);
-          fastRefinementLeadIds = selectBroadcastTopicalJuryApprovedLeadIds(
-            result.discoveredLeads,
-            juryPlan,
-            juryResult.annotations,
-          ).filter((leadId) => refinementLeadIdSet.has(leadId));
-        } catch {
-          // The overview and discovery calls are already paid. Keep a bounded
-          // high-recall fallback if only the inexpensive jury transport fails.
-          refinementLeadIds = [...result.discoveredLeads]
-            .sort(
-              (left, right) =>
-                right.confidence - left.confidence || left.startMs - right.startMs,
-            )
-            .slice(0, 4)
-            .map((lead) => lead.leadId);
-          // Jury transport failed, so none of these fallback leads has already
-          // earned the cheaper localization-only contract.
-          fastRefinementLeadIds = [];
+          return await runDurableBroadcastContextPipeline({
+            store,
+            initialSession: saved,
+            runId,
+            contextInput,
+            contextInputSignature,
+            contextInputCheckpointJson: contextInputSnapshotJson,
+            fence: contextLedgerFence,
+            quotaParticipantId: aiQuotaParticipantId,
+            operationGeneration: broadcastContextAttemptOrdinal,
+            signal: controller.signal,
+          });
+        } finally {
+          endContextSpan?.(Date.now());
         }
-      }
-      if (controller.signal.aborted || !isMounted.current) return;
+      })();
+      const {
+        result,
+        refinementLeadIds,
+        fastRefinementLeadIds,
+      } = contextPipeline;
+      if (!operationIsCurrent()) return;
       const transcriptSession = await store.getBroadcastContextSession(runId);
+      if (!operationIsCurrent()) return;
       if (
         transcriptSession === null ||
         transcriptSession.inputSignature !== inputSignature ||
+        transcriptSession.sourceCastRosterId !== sourceCastRosterId ||
+        transcriptSession.transcriptSealOperationKey !==
+          requiredTranscriptSeal ||
         sealedBroadcastTranscriptSourceRef.current !== requiredTranscriptSeal ||
+        transcriptSession.participantGroundingInputSignature !==
+          participantGroundingInputSignature ||
+        transcriptSession.participantGroundingPlanFingerprint !==
+          participantGroundingPlanFingerprint ||
+        transcriptSession.participantGroundingCheckpointJson !==
+          participantGroundingCheckpointJson ||
+        transcriptSession.contextPhaseLedgerJson !==
+          serializeBroadcastContextPhaseLedger(contextPipeline.ledger) ||
         JSON.stringify(
           compactBroadcastContextChapters(transcriptSession.chapters),
-        ) !== JSON.stringify(contextInput.chapters)
+        ) !== serializedContextChapters
       ) {
         throw new Error(
           "전사 지도가 갱신되어 이전 맥락 결과를 저장하지 않았어요. 최신 전사로 다시 분석합니다.",
@@ -6443,20 +7133,47 @@ function App() {
       const contextCandidateIds = broadcastContextCandidateInputs.map(
         ({ candidateId }) => candidateId,
       );
-      await store.putBroadcastContextSession({
-        ...transcriptSession,
-        contextInputSignature,
-        contextResultJson: JSON.stringify({
-          schemaVersion: "1.2.0",
-          result,
-          refinementLeadIds,
-          fastRefinementLeadIds,
-          contextCandidateIds,
-        }),
-        recordedAt: new Date().toISOString(),
-      });
+      if (!operationIsCurrent()) return;
+      const contextWasCommitted =
+        await commitBroadcastContextSessionContextIfUnchanged(
+          store,
+          transcriptSession,
+          {
+            contextInputSignature,
+            contextInputCheckpointJson: contextInputSnapshotJson,
+            contextPhaseLedgerJson:
+              serializeBroadcastContextPhaseLedger(contextPipeline.ledger),
+            contextResultJson: JSON.stringify({
+              schemaVersion: "1.2.0",
+              result,
+              refinementLeadIds,
+              fastRefinementLeadIds,
+              contextCandidateIds,
+            }),
+            recordedAt: new Date().toISOString(),
+          },
+        );
+      if (!contextWasCommitted) {
+        throw new Error(
+          "맥락 결과를 저장하기 전에 대사 또는 인물 근거 지도가 갱신됐어요. 오래된 결과는 저장하지 않았습니다.",
+        );
+      }
+      if (!operationIsCurrent()) return;
       const reopened = await store.getBroadcastContextSession(runId);
       if (
+        !operationIsCurrent() ||
+        reopened?.inputSignature !== inputSignature ||
+        reopened.participantGroundingInputSignature !==
+          participantGroundingInputSignature ||
+        reopened.participantGroundingPlanFingerprint !==
+          participantGroundingPlanFingerprint ||
+        reopened.participantGroundingCheckpointJson !==
+          participantGroundingCheckpointJson ||
+        reopened.contextInputCheckpointJson !== contextInputSnapshotJson ||
+        reopened.contextPhaseLedgerJson !==
+          serializeBroadcastContextPhaseLedger(contextPipeline.ledger) ||
+        JSON.stringify(compactBroadcastContextChapters(reopened.chapters)) !==
+          serializedContextChapters ||
         reopened?.contextInputSignature !== contextInputSignature ||
         reopened.contextResultJson === null
       ) {
@@ -6508,6 +7225,8 @@ function App() {
     analysisRun?.inputSignature,
     boundarySourceDurationMs,
     boundedBroadcastContextChapters,
+    broadcastParticipantGrounding,
+    broadcastParticipantPreContext,
     broadcastContextAttemptOrdinal,
     broadcastContextCandidateInputs,
     broadcastTranscriptAttemptOrdinal,
@@ -6520,6 +7239,7 @@ function App() {
     resetCandidateRanking,
     sourceContentFingerprint,
     sourceCastRosterId,
+    transcriptSourceIdentityFence,
     analysisLanguage,
   ]);
 
@@ -6529,36 +7249,49 @@ function App() {
       broadcastContextResult === null ||
       broadcastContextRefinementLeadIds === null ||
       broadcastContextFastRefinementLeadIds === null ||
+      broadcastParticipantPreContext === null ||
+      semanticRefinementPlan === null ||
       sourceFile === null ||
       currentAnalysisRunId === null ||
+      sourceContentFingerprint === null ||
       boundarySourceDurationMs <= 0
     ) {
-      return;
-    }
-    const leadById = new Map(
-      broadcastContextResult.discoveredLeads.map((lead) => [lead.leadId, lead]),
-    );
-    const refinementLeads = broadcastContextRefinementLeadIds.flatMap((leadId) => {
-      const lead = leadById.get(leadId);
-      return lead === undefined ? [] : [lead];
-    });
-    const plan = youtubeCaptionTrack === null
-      ? createDiscoveredLeadRefinementPlan(
-          refinementLeads,
-          { preserveInputOrder: true },
-        )
-      : createCaptionDiscoveredLeadRefinementPlan(
-          refinementLeads,
-          { preserveInputOrder: true },
+      semanticLeadRefinementAbortController.current?.abort();
+      semanticLeadRefinementAbortController.current = null;
+      autoSemanticLeadRefinementSourceRef.current = null;
+      setActiveRefinementEvidenceProjection(null);
+      const retainedCandidates = candidates.filter(
+        (candidate) => !isContextDiscoveredCandidate(candidate),
+      );
+      if (retainedCandidates.length !== candidates.length) {
+        setCandidates(retainedCandidates);
+        setSelectionResult((current) =>
+          current === null
+            ? current
+            : { ...current, candidateCount: retainedCandidates.length },
         );
-    if (plan.segments.length === 0) {
-      setSemanticLeadRefinementStatus("completed");
+        resetCandidateRanking(retainedCandidates);
+      }
       return;
     }
+    const plan = semanticRefinementPlan;
+    const semanticOperationInput = JSON.stringify([
+      "exclipper.semantic-refinement-effect.v2",
+      currentAnalysisRunId,
+      sourceContentFingerprint,
+      plan,
+      boundedBroadcastContextChapters,
+      broadcastParticipantGrounding,
+      broadcastContextResult,
+      broadcastContextFastRefinementLeadIds,
+      youtubeCaptionTrackExactJson,
+      analysisLanguage,
+      AI_BROADCAST_CONTEXT_ROUTING_REVISION,
+      BROADCAST_TOPICAL_DISCOVERY_VERSION,
+      semanticLeadRefinementAttemptOrdinal,
+    ]);
     const operationKey =
-      `${currentAnalysisRunId}:${plan.selectedLeadIds.join("|")}` +
-      `:context-${broadcastContextAttemptOrdinal}` +
-      `:refinement-${semanticLeadRefinementAttemptOrdinal}`;
+      `${currentAnalysisRunId}:semantic:${semanticOperationInput}`;
     if (autoSemanticLeadRefinementSourceRef.current === operationKey) {
       return;
     }
@@ -6568,6 +7301,21 @@ function App() {
     semanticLeadRefinementAbortController.current = controller;
     setSemanticLeadRefinementStatus("running");
     setSemanticLeadRefinementError(null);
+    const retainedCandidates = candidates.filter(
+      (candidate) => !isContextDiscoveredCandidate(candidate),
+    );
+    if (retainedCandidates.length !== candidates.length) {
+      setCandidates(retainedCandidates);
+      setSelectionResult((current) =>
+        current === null
+          ? current
+          : { ...current, candidateCount: retainedCandidates.length },
+      );
+      resetCandidateRanking(retainedCandidates);
+    }
+    const allowOutcomeUnknownRetry =
+      allowAmbiguousSemanticRefinementRetryRef.current;
+    allowAmbiguousSemanticRefinementRetryRef.current = false;
 
     const chunks = plan.segments.map((segment) => ({
       chunkId: segment.segmentId,
@@ -6616,38 +7364,86 @@ function App() {
       setSemanticLeadRefinementStatus("completed");
     };
 
+    if (plan.selectedLeadIds.length === 0) {
+      setActiveRefinementEvidenceProjection(null);
+      applySemanticCandidates([]);
+      semanticLeadRefinementAbortController.current = null;
+      return;
+    }
+
     void (async () => {
-      const refinementInputSignature = await createContentFingerprint([
-        currentAnalysisRunId,
-        JSON.stringify(plan),
-        JSON.stringify(boundedBroadcastContextChapters),
-        JSON.stringify(broadcastContextResult),
-        JSON.stringify(broadcastContextFastRefinementLeadIds),
-        JSON.stringify(broadcastContextResult.discoveredLeads),
-        youtubeCaptionTrack === null
-          ? BROADCAST_TRANSCRIPT_ACTIVE_MODEL_REVISION
-          : YOUTUBE_CAPTION_MODEL_REVISION,
-      ]);
       if (controller.signal.aborted || !isMounted.current) return;
       const store = getResultStore();
-      const savedSession = await store.getBroadcastContextSession(currentAnalysisRunId);
-      if (
-        savedSession?.refinementInputSignature === refinementInputSignature &&
-        savedSession.refinementCandidatesJson !== null
-      ) {
-        let savedPayload: unknown;
-        try {
-          savedPayload = JSON.parse(savedSession.refinementCandidatesJson);
-        } catch {
-          savedPayload = null;
-        }
-        const savedCandidates = parseSemanticLeadCandidates(savedPayload);
-        if (savedCandidates !== null) {
-          applySemanticCandidates(savedCandidates);
-          return;
-        }
+      const initialSavedSession =
+        await store.getBroadcastContextSession(currentAnalysisRunId);
+      if (initialSavedSession === null) {
+        throw new Error("새 의미 후보를 저장할 분석 세션을 찾지 못했어요.");
       }
-
+      let savedSession = initialSavedSession;
+      if (
+        savedSession.sourceDurationMs !== boundarySourceDurationMs ||
+        savedSession.sourceCastRosterId !== sourceCastRosterId ||
+        savedSession.participantGroundingPlanFingerprint !==
+          broadcastParticipantPreContext.planFingerprint ||
+        savedSession.participantGroundingCheckpointJson !==
+          JSON.stringify(broadcastParticipantGrounding) ||
+        JSON.stringify(compactBroadcastContextChapters(savedSession.chapters)) !==
+          JSON.stringify(boundedBroadcastContextChapters) ||
+        savedSession.contextInputCheckpointJson === null ||
+        savedSession.contextResultJson === null
+      ) {
+        throw new Error(
+          "저장된 대사·등장인물·방송 맥락이 현재 정제 대상과 일치하지 않아 AI 정제를 시작하지 않았어요.",
+        );
+      }
+      let savedContextInputPayload: unknown;
+      let savedContextResultPayload: unknown;
+      try {
+        savedContextInputPayload = JSON.parse(
+          savedSession.contextInputCheckpointJson,
+        );
+        savedContextResultPayload = JSON.parse(savedSession.contextResultJson);
+      } catch {
+        throw new Error(
+          "저장된 방송 맥락 입력과 결과 형식을 확인하지 못해 AI 정제를 시작하지 않았어요.",
+        );
+      }
+      const savedContextInput = createBroadcastContextRequest(
+        savedContextInputPayload as BroadcastContextRequestInput,
+      );
+      if (analysisLanguage !== savedContextInput.outputLanguage) {
+        setAnalysisLanguage(savedContextInput.outputLanguage);
+      }
+      const savedContextEnvelope = unpackPersistedBroadcastContext(
+        savedContextResultPayload,
+      );
+      const savedContextResult = parsePersistedBroadcastContextResult(
+        savedContextEnvelope.resultPayload,
+        {
+          sourceDurationMs: savedContextInput.sourceDurationMs,
+          chapters: savedContextInput.chapters,
+          candidates: savedContextInput.candidates,
+          participantGrounding: savedContextInput.participantGrounding,
+          outputLanguage: savedContextInput.outputLanguage,
+          ...(savedContextInput.castRosterId === null
+            ? {}
+            : { castRosterId: savedContextInput.castRosterId }),
+        },
+      );
+      if (
+        savedContextResult === null ||
+        JSON.stringify(savedContextResult) !== JSON.stringify(broadcastContextResult) ||
+        savedContextEnvelope.refinementLeadIds === null ||
+        JSON.stringify(savedContextEnvelope.refinementLeadIds) !==
+          JSON.stringify(broadcastContextRefinementLeadIds) ||
+        savedContextEnvelope.fastRefinementLeadIds === null ||
+        JSON.stringify(savedContextEnvelope.fastRefinementLeadIds) !==
+          JSON.stringify(broadcastContextFastRefinementLeadIds)
+      ) {
+        throw new Error(
+          "저장된 방송 흐름과 현재 후보 정제 계획이 일치하지 않아 AI 정제를 시작하지 않았어요.",
+        );
+      }
       /*
        * 자막이 없을 때만 도는 원격 전사. **이것이 실제 병목이다** — 음식 토크도
        * 현재 최대 90초 R2 transport의 표본 수만큼 요청이 되고, 배포 전체 1초 gate와
@@ -6658,144 +7454,422 @@ function App() {
        * 않은 구간이 가장 무거웠다.
        */
       const transcriptionStartedAtMs = Date.now();
-      const refinementTranscripts = youtubeCaptionTrack === null
-        ? (
-            await runBroadcastTranscriptWorker(sourceFile, {
-              sourceDurationMs: boundarySourceDurationMs,
-              chunks,
-              quota: {
-                participantId: aiQuotaParticipantId,
-                runId: currentAnalysisRunId,
-                operationNamespace: "refinement",
-                attemptOrdinal: semanticLeadRefinementAttemptOrdinal,
-              },
-              signal: controller.signal,
-            })
-          ).results
-        : createYouTubeCaptionRefinementTranscripts(
-            youtubeCaptionTrack,
-            plan,
-          );
-      // 자막 경로면 몇 밀리초, 원격 전사면 수십 분이다. 같은 이름으로 재서
-      // 표에 나란히 놓으면 그 격차가 그대로 보인다.
-      stageTimerRef.current?.addSpan(
-        youtubeCaptionTrack === null
-          ? "refinement-transcription(no-caption)"
-          : "refinement-from-caption",
-        Date.now() - transcriptionStartedAtMs,
-      );
-      if (controller.signal.aborted || !isMounted.current) return;
-      if (refinementTranscripts.length === 0) {
-        throw new Error("새 의미 후보의 정확한 대사 위치를 다시 찾지 못했어요.");
+      const evidenceBinding = {
+        sourceFingerprint: savedSession.inputSignature,
+        sourceDurationMs: boundarySourceDurationMs,
+        selectedLeadPlan: plan,
+      } as const;
+      let refinementEvidenceLedger: BroadcastRefinementEvidenceLedger =
+        (await parseBroadcastContextSessionRefinementEvidenceLedger(
+          savedSession,
+        )) ??
+        (await createBroadcastRefinementEvidenceLedger(evidenceBinding));
+      if (
+        refinementEvidenceLedger.sourceFingerprint !==
+          evidenceBinding.sourceFingerprint ||
+        refinementEvidenceLedger.sourceDurationMs !==
+          evidenceBinding.sourceDurationMs ||
+        JSON.stringify(refinementEvidenceLedger.selectedLeadPlan) !==
+          JSON.stringify(plan)
+      ) {
+        throw new Error(
+          "저장된 후보 근거 원장이 현재 방송과 후보 구간 계획에 맞지 않아요.",
+        );
       }
-      const parentLeadById = new Map(
-        broadcastContextResult.discoveredLeads.map((lead) => [lead.leadId, lead]),
-      );
-      const fastRefinementLeadIdSet = new Set(
-        broadcastContextFastRefinementLeadIds,
-      );
-      const refinementResults = await mapWithConcurrency(
-        plan.selectedLeadIds,
-        MAX_TOPICAL_REFINEMENT_CONCURRENCY,
-        async (leadId, leadIndex) => {
-          const chapters = createDiscoveredLeadRefinementChapters(
-            leadId,
-            plan,
-            refinementTranscripts,
-            (() => {
-              const parent = parentLeadById.get(leadId);
-              return parent === undefined
-                ? ""
-                : `${parent.eventSummaryKo} / ${parent.evidenceCueKo}`;
-            })(),
-          );
-          if (chapters.length === 0) {
-            return { leadId, failed: true, leads: [] } as const;
-          }
-          try {
-            const refined = await requestBroadcastContextDeepseek(
+      const persistRefinementEvidenceLedger = async (
+        nextLedger: BroadcastRefinementEvidenceLedger,
+      ): Promise<BroadcastRefinementEvidenceLedger> => {
+        const ledgerJson =
+          await serializeBroadcastRefinementEvidenceLedger(nextLedger);
+        if (savedSession.refinementEvidenceLedgerJson !== ledgerJson) {
+          savedSession =
+            await checkpointBroadcastContextSessionRefinementEvidenceLedgerWithReadback(
+              store,
+              savedSession,
               {
-                sourceDurationMs: boundarySourceDurationMs,
-                chapters,
-                candidates: [],
-                outputLanguage: analysisLanguage,
-                ...(sourceCastRosterId === null
-                  ? {}
-                  : { castRosterId: sourceCastRosterId }),
+                refinementEvidenceLedgerJson: ledgerJson,
+                recordedAt: new Date().toISOString(),
               },
-              {
-                signal: controller.signal,
-                analysisMode: fastRefinementLeadIdSet.has(leadId)
-                  ? "refinement-fast"
-                  : "refinement",
+            );
+        }
+        const readback =
+          await parseBroadcastContextSessionRefinementEvidenceLedger(
+            savedSession,
+          );
+        if (
+          readback === null ||
+          readback.ledgerFingerprint !== nextLedger.ledgerFingerprint
+        ) {
+          throw new Error(
+            "후보 근거 원장을 저장한 뒤 같은 내용을 다시 확인하지 못했어요.",
+          );
+        }
+        refinementEvidenceLedger = readback;
+        return readback;
+      };
+
+      let captionRouteActivated = false;
+      if (youtubeCaptionTrack !== null) {
+        const captionEntry =
+          await appendBroadcastRefinementEvidenceRouteEntry(
+            refinementEvidenceLedger,
+            refinementEvidenceLedger.ledgerFingerprint,
+            {
+              ...evidenceBinding,
+              routeKind: "youtube-caption",
+              captionRevision: YOUTUBE_CAPTION_MODEL_REVISION,
+              captionTrack: youtubeCaptionTrack,
+              verifiedNoSpeechEvidence: [],
+            },
+          );
+        refinementEvidenceLedger =
+          await persistRefinementEvidenceLedger(captionEntry.ledger);
+        const appendedCaption = refinementEvidenceLedger.routeEntries.find(
+          ({ entryFingerprint }) =>
+            entryFingerprint === captionEntry.routeEntryFingerprint,
+        );
+        if (appendedCaption?.settlement.publicationEligible === true) {
+          refinementEvidenceLedger =
+            await activateBroadcastRefinementEvidenceRoute(
+              refinementEvidenceLedger,
+              refinementEvidenceLedger.ledgerFingerprint,
+              captionEntry.routeEntryFingerprint,
+            );
+          refinementEvidenceLedger =
+            await persistRefinementEvidenceLedger(
+              refinementEvidenceLedger,
+            );
+          captionRouteActivated = true;
+        }
+      }
+
+      const canReuseActiveEvidence =
+        youtubeCaptionTrack === null &&
+        broadcastRefinementEvidenceLedgerCanPublish(
+          refinementEvidenceLedger,
+        );
+      if (!captionRouteActivated && !canReuseActiveEvidence) {
+        const refinementTranscriptRoute =
+          await requestBroadcastTranscriptRouteSelection(
+            BROADCAST_TRANSCRIPT_PROXY_ENDPOINT,
+            { signal: controller.signal },
+          );
+        const refinementTranscriptInputSignature =
+          await createContentFingerprint([
+            "exclipper.semantic-refinement-transcript-evidence.v3",
+            currentAnalysisRunId,
+            evidenceBinding.sourceFingerprint,
+            JSON.stringify(plan),
+            JSON.stringify(chunks),
+            refinementTranscriptRoute.fingerprint,
+            refinementTranscriptRoute.manifest.modelRevision,
+            BROADCAST_TRANSCRIPT_WORKER_VERSION,
+            BROADCAST_SPEECH_ACTIVITY_MODEL_REVISION,
+            BROADCAST_SPEECH_ACTIVITY_POLICY_REVISION,
+          ]);
+        const refinementTranscriptOperationScope =
+          refinementTranscriptInputSignature
+            .replace(/[^A-Za-z0-9_-]/gu, "_")
+            .slice(-24);
+        const refinementRecovery =
+          await runDurableBroadcastRefinementTranscriptPipeline({
+            store,
+            initialSession: savedSession,
+            runId: currentAnalysisRunId,
+            refinementTranscriptInputSignature,
+            chunks,
+            editorRetryGeneration: semanticLeadRefinementAttemptOrdinal,
+            allowOutcomeUnknownRetry,
+            signal: controller.signal,
+            runAttempt: (attemptChunks, quotaAttemptOrdinal) =>
+              runBroadcastTranscriptWorker(sourceFile, {
+                sourceDurationMs: boundarySourceDurationMs,
+                chunks: attemptChunks,
+                route: refinementTranscriptRoute,
                 quota: {
                   participantId: aiQuotaParticipantId,
                   runId: currentAnalysisRunId,
-                  operationId:
-                    `context-refinement-${leadIndex}` +
-                    `-c${broadcastContextAttemptOrdinal}` +
-                    `-r${semanticLeadRefinementAttemptOrdinal}`,
+                  operationNamespace: "refinement",
+                  operationScope: refinementTranscriptOperationScope,
+                  attemptOrdinal: quotaAttemptOrdinal,
                 },
-              },
+                signal: controller.signal,
+              }),
+          });
+        savedSession = refinementRecovery.session;
+        if (!refinementRecovery.complete) {
+          const retryableCount = refinementRecovery.blockingGaps.filter(
+            ({ reason }) =>
+              reason !== "in-flight" && reason !== "outcome-unknown",
+          ).length;
+          const outcomeUnknownCount =
+            refinementRecovery.blockingGaps.length - retryableCount;
+          throw new Error(
+            "후보 구간의 대사 조각을 모두 복구한 뒤에만 AI 세부 해석을 시작해요. " +
+            `재시도 필요 ${retryableCount}개, 요청 결과 확인 필요 ${outcomeUnknownCount}개가 남았습니다.`,
+          );
+        }
+        let providerReceiptCheckpoint =
+          createBroadcastTranscriptProviderReceiptCheckpoint({
+            sourceFingerprint: evidenceBinding.sourceFingerprint,
+            sourceDurationMs: evidenceBinding.sourceDurationMs,
+            route: refinementTranscriptRoute,
+            plannedCells: chunks,
+          });
+        for (const fragment of refinementRecovery.fragments) {
+          providerReceiptCheckpoint =
+            recordBroadcastTranscriptProviderReceipt(
+              providerReceiptCheckpoint,
+              fragment.chunkId,
+              fragment.result,
             );
-            return {
-              leadId,
-              failed: false,
-              leads: refined.discoveredLeads,
-            } as const;
-          } catch {
-            return { leadId, failed: true, leads: [] } as const;
-          }
-        },
+        }
+        const asrEntry = await appendBroadcastRefinementEvidenceRouteEntry(
+          refinementEvidenceLedger,
+          refinementEvidenceLedger.ledgerFingerprint,
+          {
+            ...evidenceBinding,
+            routeKind: "asr",
+            billingClass:
+              refinementTranscriptRoute.manifest.transportMode ===
+              "paid-direct"
+                ? "paid"
+                : "free",
+            refinementCheckpoint: refinementRecovery.checkpoint,
+            providerReceiptCheckpoint,
+          },
+        );
+        refinementEvidenceLedger =
+          await persistRefinementEvidenceLedger(asrEntry.ledger);
+        const appendedAsr = refinementEvidenceLedger.routeEntries.find(
+          ({ entryFingerprint }) =>
+            entryFingerprint === asrEntry.routeEntryFingerprint,
+        );
+        if (appendedAsr?.settlement.publicationEligible !== true) {
+          throw new Error(
+            "복구된 후보 대사 근거가 모든 계획 구간을 충족하지 못했어요.",
+          );
+        }
+        refinementEvidenceLedger =
+          await activateBroadcastRefinementEvidenceRoute(
+            refinementEvidenceLedger,
+            refinementEvidenceLedger.ledgerFingerprint,
+            asrEntry.routeEntryFingerprint,
+          );
+        refinementEvidenceLedger =
+          await persistRefinementEvidenceLedger(
+            refinementEvidenceLedger,
+          );
+      }
+      const activeRefinementProjection =
+        projectBroadcastRefinementActiveEvidenceRoute(
+          refinementEvidenceLedger,
+        );
+      const activeRefinementEvidence =
+        getBroadcastRefinementActiveEvidencePayload(
+          refinementEvidenceLedger,
+        );
+      if (
+        activeRefinementProjection === null ||
+        !activeRefinementProjection.publicationEligible ||
+        activeRefinementEvidence === null ||
+        !broadcastRefinementEvidenceLedgerCanPublish(
+          refinementEvidenceLedger,
+        )
+      ) {
+        throw new Error(
+          "후보별 AI 해석에 사용할 완전한 활성 대사 근거를 준비하지 못했어요.",
+        );
+      }
+      const refinementTranscripts =
+        activeRefinementEvidenceTranscripts(activeRefinementEvidence);
+      // 자막 경로면 몇 밀리초, 원격 전사면 수십 분이다. 같은 이름으로 재서
+      // 표에 나란히 놓으면 그 격차가 그대로 보인다.
+      stageTimerRef.current?.addSpan(
+        activeRefinementProjection.routeKind === "youtube-caption"
+          ? "refinement-from-caption"
+          : "refinement-transcription(no-caption)",
+        Date.now() - transcriptionStartedAtMs,
       );
       if (controller.signal.aborted || !isMounted.current) return;
+      const refinementLeadInputs: readonly DurableBroadcastRefinementLeadInput[] =
+        createSemanticRefinementLeadInputs({
+          plan,
+          transcripts: refinementTranscripts,
+          discoveredLeads: savedContextResult.discoveredLeads,
+          fastRefinementLeadIds:
+            savedContextEnvelope.fastRefinementLeadIds,
+          sourceDurationMs: savedContextInput.sourceDurationMs,
+          castRosterId: savedContextInput.castRosterId,
+          wholeBroadcastChapters: savedContextInput.chapters,
+          participantGrounding:
+            savedContextInput.participantGrounding,
+          outputLanguage: savedContextInput.outputLanguage,
+        });
+      const refinementRoutingManifestSignature =
+        `broadcast-context-routing:${AI_BROADCAST_CONTEXT_ROUTING_REVISION}`;
+      const refinementAiInputSignature =
+        await createSemanticRefinementAiInputSignature({
+          activeEvidenceProjectionFingerprint:
+            activeRefinementProjection.projectionFingerprint,
+          routingManifestSignature:
+            refinementRoutingManifestSignature,
+          leadInputs: refinementLeadInputs,
+        });
+      setActiveRefinementEvidenceProjection(
+        activeRefinementProjection,
+      );
+      if (controller.signal.aborted || !isMounted.current) return;
+      if (
+        savedSession.contextInputSignature === null ||
+        savedSession.contextInputCheckpointJson === null ||
+        savedSession.contextPhaseLedgerJson === null ||
+        savedSession.contextResultJson === null ||
+        savedSession.transcriptSealOperationKey === null ||
+        savedSession.participantGroundingInputSignature === null ||
+        savedSession.participantGroundingPlanFingerprint === null
+      ) {
+        throw new Error(
+          "후보별 AI 해석에 필요한 방송 맥락 원장과 입력 서명이 준비되지 않았어요.",
+        );
+      }
+      const refinementFence: BroadcastContextPhaseLedgerFence = {
+        parentContextSignature: savedSession.contextInputSignature,
+        transcriptSignature: savedSession.transcriptSealOperationKey,
+        groundingSignature: savedSession.participantGroundingInputSignature,
+      };
+      let activeRefinementLedger =
+        parseBroadcastContextPhaseLedgerJson(
+          savedSession.contextPhaseLedgerJson,
+        );
+      if (
+        activeRefinementLedger === null ||
+        !broadcastContextPhaseLedgerMatchesFence(
+          activeRefinementLedger,
+          refinementFence,
+        )
+      ) {
+        throw new Error(
+          "저장된 후보별 AI 해석 원장이 현재 방송 맥락과 일치하지 않아요.",
+        );
+      }
+      let activeRefinementSession = savedSession;
+      const persistRefinementLedgerAndReadBack = async (
+        ledgerJson: string,
+      ): Promise<void> => {
+        const expectedSession = activeRefinementSession;
+        const replaced =
+          await checkpointBroadcastContextSessionPhaseLedgerIfUnchanged(
+            store,
+            expectedSession,
+            {
+              contextInputSignature:
+                expectedSession.contextInputSignature as string,
+              contextInputCheckpointJson:
+                expectedSession.contextInputCheckpointJson as string,
+              contextPhaseLedgerJson: ledgerJson,
+              recordedAt: new Date().toISOString(),
+            },
+          );
+        if (!replaced) {
+          throw new Error(
+            "후보별 AI 해석 원장을 저장하는 동안 분석 세션이 갱신됐어요.",
+          );
+        }
+        const reopened = await store.getBroadcastContextSession(
+          currentAnalysisRunId,
+        );
+        if (
+          reopened === null ||
+          reopened.contextInputSignature !==
+            expectedSession.contextInputSignature ||
+          reopened.contextInputCheckpointJson !==
+            expectedSession.contextInputCheckpointJson ||
+          reopened.contextPhaseLedgerJson !== ledgerJson ||
+          reopened.contextResultJson !== expectedSession.contextResultJson ||
+          reopened.refinementTranscriptInputSignature !==
+            expectedSession.refinementTranscriptInputSignature ||
+          reopened.refinementTranscriptCheckpointJson !==
+            expectedSession.refinementTranscriptCheckpointJson ||
+          reopened.refinementEvidenceLedgerJson !==
+            expectedSession.refinementEvidenceLedgerJson
+        ) {
+          throw new Error(
+            "저장한 후보별 AI 해석 원장을 정확히 다시 확인하지 못했어요.",
+          );
+        }
+        activeRefinementSession = reopened;
+      };
+      if (
+        allowOutcomeUnknownRetry &&
+        activeRefinementLedger.units.some(
+          (unit) =>
+            unit.phase === "refinement" && unit.status !== "succeeded",
+        )
+      ) {
+        const replanned = replanBroadcastContextPhaseLedgerAfterEditorRetry(
+          activeRefinementLedger,
+          {
+            confirmationId:
+              `editor-refinement-retry-${semanticLeadRefinementAttemptOrdinal}`,
+            nextOperationId: (unit) =>
+              `${unit.operationId}-editor-${semanticLeadRefinementAttemptOrdinal}`,
+          },
+        );
+        const replannedJson =
+          serializeBroadcastContextPhaseLedger(replanned);
+        if (
+          replannedJson !==
+          serializeBroadcastContextPhaseLedger(activeRefinementLedger)
+        ) {
+          await persistRefinementLedgerAndReadBack(replannedJson);
+          activeRefinementLedger = replanned;
+        }
+      }
+      const durableRefinement =
+        await runDurableBroadcastRefinementPipeline({
+          ledger: activeRefinementLedger,
+          fence: refinementFence,
+          leads: refinementLeadInputs,
+          quotaParticipantId: aiQuotaParticipantId,
+          runId: currentAnalysisRunId,
+          evidenceManifestSignature:
+            activeRefinementProjection.projectionFingerprint,
+          routingManifestSignature:
+            refinementRoutingManifestSignature,
+          operationGeneration: semanticLeadRefinementAttemptOrdinal,
+          signal: controller.signal,
+          maximumConcurrency: MAX_TOPICAL_REFINEMENT_CONCURRENCY,
+          persistAndReadBack: async ({ ledger, ledgerJson }) => {
+            await persistRefinementLedgerAndReadBack(ledgerJson);
+            activeRefinementLedger = ledger;
+          },
+        });
+      savedSession = activeRefinementSession;
+      if (controller.signal.aborted || !isMounted.current) return;
+      const refinementResults = durableRefinement.refinements.map(
+        ({ leadId, discoveredLeads }) => ({
+          leadId,
+          leads: discoveredLeads,
+        }),
+      );
 
       const proposals: UnifiedHighlightCandidate[] = [];
       for (const refinement of refinementResults) {
-        if (!refinement.failed) {
-          for (const lead of refinement.leads) {
-            const evidence = materializeRefinedDiscoveredLeadEvidence(
-              lead,
-              refinementTranscripts,
-              boundarySourceDurationMs,
-            );
-            if (evidence === null) continue;
-            proposals.push(
-              createSemanticLeadCandidate(
-                lead,
-                evidence.range,
-                evidence.transcriptKo,
-              ),
-            );
-          }
-          continue;
-        }
-
-        // A transport failure must not erase a paid overview result. Keep the
-        // previous cue matcher for that parent only; a successful empty result
-        // is an intentional abstention and therefore stays empty.
-        const parentLead = parentLeadById.get(refinement.leadId);
-        if (parentLead === undefined) continue;
-        const range = refineDiscoveredLeadRange(
-          parentLead,
-          plan,
-          refinementTranscripts,
-          boundarySourceDurationMs,
-        );
-        if (range === null || range.transcriptMatchScore < 0.2) continue;
-        const matchedSegment = plan.segments.find(
-          (segment) => segment.segmentId === range.matchedSegmentId,
-        );
-        const transcript = matchedSegment === undefined
-          ? undefined
-          : refinementTranscripts.find(
-              (item) =>
-                item.sourceStartMs === matchedSegment.sourceStartMs &&
-                item.sourceEndMs === matchedSegment.sourceEndMs,
-            );
-        if (transcript !== undefined) {
+        for (const lead of refinement.leads) {
+          const evidence = materializeRefinedDiscoveredLeadEvidence(
+            lead,
+            refinementTranscripts,
+            boundarySourceDurationMs,
+          );
+          if (evidence === null) continue;
           proposals.push(
-            createSemanticLeadCandidate(parentLead, range, transcript.textKo),
+            createSemanticLeadCandidate(
+              lead,
+              evidence.range,
+              evidence.transcriptKo,
+              refinement.leadId,
+            ),
           );
         }
       }
@@ -6820,25 +7894,47 @@ function App() {
           semanticCandidates.push(proposal);
         }
       }
-      const currentSession = await store.getBroadcastContextSession(currentAnalysisRunId);
-      if (currentSession === null) {
-        throw new Error("새 의미 후보를 저장할 분석 세션을 찾지 못했어요.");
-      }
       const refinementCandidatesJson = serializeSemanticLeadCandidates(
         semanticCandidates,
       );
-      await store.putBroadcastContextSession({
-        ...currentSession,
-        refinementInputSignature,
-        refinementCandidatesJson,
-        recordedAt: new Date().toISOString(),
-      });
+      if (controller.signal.aborted || !isMounted.current) return;
+      const refinementWasCommitted =
+        await store.replaceBroadcastContextSessionIfUnchanged(
+          savedSession,
+          {
+            ...savedSession,
+            refinementInputSignature: refinementAiInputSignature,
+            refinementCandidatesJson,
+            recordedAt: new Date().toISOString(),
+          },
+        );
+      if (!refinementWasCommitted) {
+        throw new Error(
+          "새 의미 후보를 저장하기 전에 방송 맥락이 갱신됐어요. 오래된 결과는 저장하지 않았습니다.",
+        );
+      }
       const reopened = await store.getBroadcastContextSession(currentAnalysisRunId);
       if (
-        reopened?.refinementInputSignature !== refinementInputSignature ||
-        reopened.refinementCandidatesJson !== refinementCandidatesJson
+        reopened?.refinementInputSignature !== refinementAiInputSignature ||
+        reopened.refinementCandidatesJson !== refinementCandidatesJson ||
+        reopened.contextPhaseLedgerJson !==
+          savedSession.contextPhaseLedgerJson ||
+        reopened.refinementTranscriptInputSignature !==
+          savedSession.refinementTranscriptInputSignature ||
+        reopened.refinementTranscriptCheckpointJson !==
+          savedSession.refinementTranscriptCheckpointJson ||
+        reopened.refinementEvidenceLedgerJson !==
+          savedSession.refinementEvidenceLedgerJson
       ) {
         throw new Error("저장한 새 의미 후보 위치를 다시 확인하지 못했어요.");
+      }
+      if (
+        controller.signal.aborted ||
+        !isMounted.current ||
+        semanticLeadRefinementAbortController.current !== controller ||
+        autoSemanticLeadRefinementSourceRef.current !== operationKey
+      ) {
+        return;
       }
       applySemanticCandidates(semanticCandidates);
     })()
@@ -6863,16 +7959,21 @@ function App() {
     broadcastContextAttemptOrdinal,
     broadcastContextRefinementLeadIds,
     broadcastContextFastRefinementLeadIds,
+    broadcastParticipantGrounding,
     broadcastContextResult,
     broadcastContextStatus,
+    broadcastParticipantPreContext,
     candidates,
     currentAnalysisRunId,
     getResultStore,
     resetCandidateRanking,
+    semanticRefinementPlan,
     semanticLeadRefinementAttemptOrdinal,
     sourceCastRosterId,
+    sourceContentFingerprint,
     sourceFile,
     youtubeCaptionTrack,
+    youtubeCaptionTrackExactJson,
     analysisLanguage,
   ]);
 
@@ -6892,6 +7993,7 @@ function App() {
       inputSignature === null ||
       sourceFile === null ||
       sourceContentFingerprint === null ||
+      !sourceChannelResolutionIsCurrent ||
       broadcastContextSamplingPlan === null ||
       broadcastContextSamplingPlan.transcriptMode !== "adaptive-qwen-asr"
     ) {
@@ -6899,22 +8001,36 @@ function App() {
     }
 
     const transcriptPhase = transcriptPhaseFor(analysisComplete);
-    const operationKey = transcriptOperationKey(
-      runId,
-      sourceContentFingerprint,
-      transcriptPhase,
-      broadcastTranscriptAttemptOrdinal,
-    );
-    if (autoBroadcastTranscriptSourceRef.current === operationKey) {
+    const transcriptPhaseSealPrefix =
+      `${transcriptOperationKey(
+        runId,
+        sourceContentFingerprint,
+        transcriptPhase,
+      )}:identity-`;
+    /*
+     * This is a local React re-entry fence, not a provider/quota identifier.
+     * The descriptive source identity can legitimately exceed the bounded
+     * operation-ID contract (roster + ASR + worker + VAD revisions already sit
+     * near 160 characters), so do not pass it through transcriptOperationKey.
+     * Provider-facing identities below use a SHA-256 fence instead.
+     */
+    const transcriptEffectKey =
+      `${transcriptOperationKey(
+        runId,
+        sourceContentFingerprint,
+        transcriptPhase,
+        broadcastTranscriptAttemptOrdinal,
+      )}:effect-${transcriptSourceIdentityFence}`;
+    if (autoBroadcastTranscriptSourceRef.current === transcriptEffectKey) {
       return;
     }
-    autoBroadcastTranscriptSourceRef.current = operationKey;
+    autoBroadcastTranscriptSourceRef.current = transcriptEffectKey;
     const sourceDurationMs = broadcastContextSamplingPlan.sourceDurationMs;
     const chunks = createBroadcastContextTranscriptionChunks(
       broadcastContextSamplingPlan.samplingWindows,
     );
     if (chunks.length === 0) {
-      sealedBroadcastTranscriptSourceRef.current = operationKey;
+      sealedBroadcastTranscriptSourceRef.current = transcriptEffectKey;
       setBroadcastTranscriptStatus("completed");
       setBroadcastTranscriptChapters([]);
       setBroadcastTranscriptExplorationCells([]);
@@ -6939,9 +8055,11 @@ function App() {
       const matchedSaved =
         saved !== null &&
         saved.inputSignature === inputSignature &&
-        saved.sourceDurationMs === sourceDurationMs
+        saved.sourceDurationMs === sourceDurationMs &&
+        saved.sourceCastRosterId === sourceCastRosterId
           ? saved
           : null;
+      let transcriptSessionSnapshot = matchedSaved;
 
       const persistTranscriptMap = async (
         chapters: readonly BroadcastContextChapterInput[],
@@ -6949,7 +8067,36 @@ function App() {
         gapChunkIds: readonly string[],
         modelRevision: string,
         fragmentGaps: readonly StoredBroadcastTranscriptGap[] = [],
+        transcriptSealOperationKey: string | null = null,
+        transcriptEvidenceCheckpoint:
+          BroadcastTranscriptResolvedEvidenceCheckpoint | null = null,
+        transcriptProviderReceiptCheckpoint:
+          BroadcastTranscriptProviderReceiptCheckpoint | null = null,
       ) => {
+        if (
+          transcriptEvidenceCheckpoint !== null &&
+          transcriptEvidenceCheckpoint.modelRevision !== modelRevision
+        ) {
+          throw new Error(
+            "대사 증거 원장의 모델 경계가 현재 전사 체크포인트와 일치하지 않아요.",
+          );
+        }
+        const transcriptEvidenceInputSignature =
+          transcriptEvidenceCheckpoint?.transcriptInputSignature ?? null;
+        const transcriptEvidenceCheckpointJson =
+          transcriptEvidenceCheckpoint === null
+            ? null
+            : serializeBroadcastTranscriptResolvedEvidenceCheckpoint(
+                transcriptEvidenceCheckpoint,
+              );
+        const transcriptProviderReceiptInputSignature =
+          transcriptProviderReceiptCheckpoint?.routeManifestFingerprint ?? null;
+        const transcriptProviderReceiptCheckpointJson =
+          transcriptProviderReceiptCheckpoint === null
+            ? null
+            : serializeBroadcastTranscriptProviderReceiptCheckpoint(
+                transcriptProviderReceiptCheckpoint,
+              );
         const record = {
           kind: "broadcastContextSession" as const,
           runId,
@@ -6960,14 +8107,58 @@ function App() {
           chapters,
           gapChunkIds,
           fragmentGaps,
+          transcriptEvidenceInputSignature,
+          transcriptEvidenceCheckpointJson,
+          transcriptProviderReceiptInputSignature,
+          transcriptProviderReceiptCheckpointJson,
           modelRevision,
+          sourceCastRosterId,
+          transcriptSealOperationKey,
+          participantGroundingInputSignature: null,
+          participantGroundingPlanFingerprint: null,
+          participantGroundingCheckpointJson: null,
           contextInputSignature: null,
-          contextResultJson: null,
-          refinementInputSignature: null,
-          refinementCandidatesJson: null,
+           contextInputCheckpointJson: null,
+           contextPhaseLedgerJson: null,
+           contextResultJson: null,
+           refinementTranscriptInputSignature: null,
+           refinementTranscriptCheckpointJson: null,
+           refinementInputSignature: null,
+           refinementCandidatesJson: null,
           recordedAt: new Date().toISOString(),
         };
-        await store.putBroadcastContextSession(record);
+        if (transcriptSessionSnapshot === null) {
+          if (saved !== null) {
+            throw new Error(
+              "같은 분석 세션에 다른 원본의 대사 체크포인트가 있어 덮어쓰지 않았어요.",
+            );
+          }
+          await store.putBroadcastContextSession(record);
+        } else {
+          const replaced =
+            await checkpointBroadcastContextSessionTranscriptIfUnchanged(
+              store,
+              transcriptSessionSnapshot,
+              {
+                completeAudioCoverage,
+                chapters,
+                gapChunkIds,
+                fragmentGaps,
+                transcriptEvidenceInputSignature,
+                transcriptEvidenceCheckpointJson,
+                transcriptProviderReceiptInputSignature,
+                transcriptProviderReceiptCheckpointJson,
+                modelRevision,
+                transcriptSealOperationKey,
+                recordedAt: record.recordedAt,
+              },
+            );
+          if (!replaced) {
+            throw new Error(
+              "대사 지도를 저장하는 동안 다른 실행이 같은 세션을 갱신했어요.",
+            );
+          }
+        }
         const reopened = await store.getBroadcastContextSession(runId);
         if (
           reopened === null ||
@@ -6975,69 +8166,272 @@ function App() {
           reopened.sourceDurationMs !== sourceDurationMs ||
           reopened.completeAudioCoverage !== completeAudioCoverage ||
           reopened.modelRevision !== modelRevision ||
-          JSON.stringify(reopened.chapters) !== JSON.stringify(chapters) ||
+          reopened.transcriptEvidenceInputSignature !==
+            transcriptEvidenceInputSignature ||
+          reopened.transcriptEvidenceCheckpointJson !==
+            transcriptEvidenceCheckpointJson ||
+          reopened.transcriptProviderReceiptInputSignature !==
+            transcriptProviderReceiptInputSignature ||
+          reopened.transcriptProviderReceiptCheckpointJson !==
+            transcriptProviderReceiptCheckpointJson ||
+          reopened.sourceCastRosterId !== sourceCastRosterId ||
+          reopened.transcriptSealOperationKey !==
+            transcriptSealOperationKey ||
+          reopened.participantGroundingInputSignature !== null ||
+          reopened.participantGroundingPlanFingerprint !== null ||
+          reopened.participantGroundingCheckpointJson !== null ||
+           reopened.contextInputCheckpointJson !== null ||
+           reopened.contextPhaseLedgerJson !== null ||
+           reopened.refinementTranscriptInputSignature !== null ||
+           reopened.refinementTranscriptCheckpointJson !== null ||
+           JSON.stringify(reopened.chapters) !== JSON.stringify(chapters) ||
           JSON.stringify(reopened.gapChunkIds) !== JSON.stringify(gapChunkIds) ||
           JSON.stringify(reopened.fragmentGaps) !== JSON.stringify(fragmentGaps)
         ) {
           throw new Error("저장한 방송 대사 지도를 다시 확인하지 못했어요.");
         }
+        transcriptSessionSnapshot = reopened;
         return reopened;
       };
 
+      const transcriptProviderPlanCells = chunks.map(
+        ({ chunkId, sourceStartMs, sourceEndMs }) => ({
+          chunkId,
+          sourceStartMs,
+          sourceEndMs,
+        }),
+      );
+      const storedTranscriptProviderReceiptCheckpoint =
+        matchedSaved?.transcriptProviderReceiptCheckpointJson === null ||
+        matchedSaved?.transcriptProviderReceiptCheckpointJson === undefined
+          ? null
+          : parseBroadcastTranscriptProviderReceiptCheckpointJson(
+              matchedSaved.transcriptProviderReceiptCheckpointJson,
+            );
+      const storedTranscriptEvidenceCheckpoint =
+        matchedSaved?.transcriptEvidenceCheckpointJson === null ||
+        matchedSaved?.transcriptEvidenceCheckpointJson === undefined
+          ? null
+          : parseBroadcastTranscriptResolvedEvidenceCheckpointJson(
+              matchedSaved.transcriptEvidenceCheckpointJson,
+            );
+      const storedTranscriptEvidenceMatchesSession =
+        storedTranscriptEvidenceCheckpoint !== null &&
+        matchedSaved !== null &&
+        matchedSaved.transcriptEvidenceInputSignature ===
+          storedTranscriptEvidenceCheckpoint.transcriptInputSignature &&
+        storedTranscriptEvidenceCheckpoint.sourceFingerprint === inputSignature &&
+        storedTranscriptEvidenceCheckpoint.sourceDurationMs === sourceDurationMs &&
+        storedTranscriptEvidenceCheckpoint.modelRevision ===
+          matchedSaved.modelRevision &&
+        JSON.stringify(storedTranscriptEvidenceCheckpoint.plannedCells) ===
+          JSON.stringify(transcriptProviderPlanCells);
+      const storedTranscriptProviderReceiptMatchesSession =
+        storedTranscriptProviderReceiptCheckpoint !== null &&
+        matchedSaved !== null &&
+        matchedSaved.transcriptProviderReceiptInputSignature ===
+          storedTranscriptProviderReceiptCheckpoint.routeManifestFingerprint &&
+        storedTranscriptProviderReceiptCheckpoint.sourceFingerprint ===
+          inputSignature &&
+        storedTranscriptProviderReceiptCheckpoint.sourceDurationMs ===
+          sourceDurationMs &&
+        broadcastTranscriptProviderReceiptCheckpointModelRevision(
+          storedTranscriptProviderReceiptCheckpoint,
+        ) === matchedSaved.modelRevision &&
+        JSON.stringify(storedTranscriptProviderReceiptCheckpoint.plannedCells) ===
+          JSON.stringify(transcriptProviderPlanCells);
+      let storedAsrPlanIsSettled = false;
       if (
         matchedSaved !== null &&
-        youtubeVideoId !== null &&
-        matchedSaved.modelRevision === YOUTUBE_CAPTION_MODEL_REVISION
+        storedTranscriptProviderReceiptMatchesSession &&
+        (matchedSaved.transcriptEvidenceCheckpointJson === null ||
+          storedTranscriptEvidenceMatchesSession)
       ) {
-          /*
-           * 이미 받아 둔 자막이면 다시 받지 않는다.
-           *
-           * 이 이펙트의 deps 에 `broadcastTranscriptStatus` 가 있고 이펙트 자신이
-           * 그 상태를 바꾼다. 그래서 첫 분석이 자막으로 지도를 만들어 저장하면,
-           * 바뀐 상태가 이펙트를 다시 돌리고 이번에는 방금 저장한 지도가
-           * `matchedSaved` 로 잡혀 **같은 자막을 한 번 더 받는다.** 실측에서
-           * `youtube-caption-fetch` 와 `(restore)` 가 한 실행에 둘 다 찍혀 드러났다.
-           */
-          if (youtubeCaptionTrackRef.current === null) {
-          try {
-            const endRestoredCaptionSpan = stageTimerRef.current?.startSpan(
-              "youtube-caption-fetch(restore)",
-              Date.now(),
-            );
-            const captionTrack = await requestYouTubeCaptionTrack(youtubeVideoId, {
-              signal: controller.signal,
+        try {
+          const resolvedChunkIds = storedTranscriptEvidenceMatchesSession
+            ? storedTranscriptEvidenceCheckpoint.resolvedEvidence.map(
+                ({ chunkId }) => chunkId,
+              )
+            : [];
+          const providerSettlement =
+            inspectBroadcastTranscriptProviderReceiptSettlement({
+              checkpoint: storedTranscriptProviderReceiptCheckpoint,
+              chapterRanges: matchedSaved.chapters.map(({ startMs, endMs }) => ({
+                startMs,
+                endMs,
+              })),
+              resolvedChunkIds,
+              gapChunkIds: matchedSaved.gapChunkIds,
             });
-            endRestoredCaptionSpan?.(Date.now());
-            if (!controller.signal.aborted && isMounted.current) {
-              youtubeCaptionTrackRef.current = captionTrack;
-              setYouTubeCaptionTrack(captionTrack);
-            }
-          } catch {
-            // The persisted complete chapter map remains usable offline.
-          }
-          }
+          const evidenceSettlement =
+            storedTranscriptEvidenceMatchesSession
+              ? inspectBroadcastTranscriptEvidenceSettlement({
+                  checkpoint: storedTranscriptEvidenceCheckpoint,
+                  chapterRanges: matchedSaved.chapters.map(
+                    ({ startMs, endMs }) => ({
+                      startMs,
+                      endMs,
+                    }),
+                  ),
+                  gapRanges: matchedSaved.fragmentGaps.map(
+                    ({ chunkId, sourceStartMs, sourceEndMs }) => ({
+                      chunkId,
+                      sourceStartMs,
+                      sourceEndMs,
+                    }),
+                  ),
+                })
+              : null;
+          storedAsrPlanIsSettled =
+            providerSettlement.isPlanSettled &&
+            (evidenceSettlement === null || evidenceSettlement.isPlanSettled);
+        } catch {
+          // A malformed or cross-route checkpoint is retained for diagnosis,
+          // but it can never reopen as a completed transcript.
+          storedAsrPlanIsSettled = false;
+        }
+      }
+      const storedCaptionIsSettled =
+        matchedSaved !== null &&
+        matchedSaved.modelRevision === YOUTUBE_CAPTION_MODEL_REVISION &&
+        matchedSaved.chapters.length > 0 &&
+        matchedSaved.transcriptProviderReceiptCheckpointJson === null &&
+        matchedSaved.transcriptEvidenceCheckpointJson === null;
+      if (
+        matchedSaved !== null &&
+        matchedSaved.transcriptSealOperationKey !== null &&
+        matchedSaved.transcriptSealOperationKey.startsWith(
+          transcriptPhaseSealPrefix,
+        ) &&
+        (storedCaptionIsSettled ||
+          matchedSaved.transcriptSealOperationKey ===
+            storedTranscriptEvidenceCheckpoint?.transcriptInputSignature) &&
+        matchedSaved.gapChunkIds.length === 0 &&
+        (storedCaptionIsSettled || storedAsrPlanIsSettled)
+      ) {
         if (!controller.signal.aborted && isMounted.current) {
           setBroadcastTranscriptExplorationCells(
             createChapterExplorationCells(matchedSaved.chapters),
           );
           setBroadcastTranscriptChapters(matchedSaved.chapters);
-          sealedBroadcastTranscriptSourceRef.current = operationKey;
+          sealedBroadcastTranscriptSourceRef.current =
+            matchedSaved.transcriptSealOperationKey;
           setBroadcastTranscriptStatus("completed");
         }
         return;
       }
 
+      /*
+       * Captions are free and do not depend on the transcript provider health
+       * route. Try them before `/healthz`, but never overwrite a partially paid
+       * ASR checkpoint: the single-session schema cannot yet preserve both
+       * active routes without losing provenance.
+       */
+      if (
+        youtubeVideoId !== null &&
+        (matchedSaved === null ||
+          matchedSaved.modelRevision === YOUTUBE_CAPTION_MODEL_REVISION)
+      ) {
+        try {
+          const endCaptionSpan = stageTimerRef.current?.startSpan(
+            "youtube-caption-fetch",
+            Date.now(),
+          );
+          const captionTrack = await requestYouTubeCaptionTrack(youtubeVideoId, {
+            signal: controller.signal,
+          });
+          endCaptionSpan?.(Date.now());
+          if (controller.signal.aborted || !isMounted.current) return;
+          youtubeCaptionTrackRef.current = captionTrack;
+          setYouTubeCaptionTrack(captionTrack);
+          const captionChapters = createYouTubeCaptionChapters(
+            captionTrack,
+            sourceDurationMs,
+          );
+          if (captionChapters.length > 0) {
+            const captionSourceIdentityFence =
+              await createTranscriptSourceIdentityFence([
+                "caption",
+                transcriptSourceIdentityFence,
+                youtubeVideoId,
+                YOUTUBE_CAPTION_MODEL_REVISION,
+              ]);
+            const captionOperationKey = transcriptOperationKey(
+              runId,
+              sourceContentFingerprint,
+              transcriptPhase,
+              broadcastTranscriptAttemptOrdinal,
+              captionSourceIdentityFence,
+            );
+            const reopened = await persistTranscriptMap(
+              captionChapters,
+              true,
+              [],
+              YOUTUBE_CAPTION_MODEL_REVISION,
+              [],
+              captionOperationKey,
+            );
+            if (!controller.signal.aborted && isMounted.current) {
+              setBroadcastTranscriptExplorationCells(
+                createChapterExplorationCells(reopened.chapters),
+              );
+              setBroadcastTranscriptChapters(reopened.chapters);
+              sealedBroadcastTranscriptSourceRef.current = captionOperationKey;
+              setBroadcastTranscriptStatus("completed");
+            }
+            return;
+          }
+        } catch {
+          // YouTube may throttle or withhold captions. The bounded ASR route
+          // below is the automatic fallback and needs no user action.
+        }
+      }
+
+      const transcriptRoute = await requestBroadcastTranscriptRouteSelection(
+        BROADCAST_TRANSCRIPT_PROXY_ENDPOINT,
+        { signal: controller.signal },
+      );
+      const routeSourceIdentityFence =
+        await createTranscriptSourceIdentityFence([
+          "provider",
+          transcriptSourceIdentityFence,
+          transcriptRoute.fingerprint,
+        ]);
+      const matchingStoredTranscriptProviderReceiptCheckpoint =
+        storedTranscriptProviderReceiptMatchesSession &&
+        storedTranscriptProviderReceiptCheckpoint.routeManifestFingerprint ===
+          transcriptRoute.fingerprint
+          ? storedTranscriptProviderReceiptCheckpoint
+          : null;
+      const operationKey =
+        matchingStoredTranscriptProviderReceiptCheckpoint !== null &&
+        storedTranscriptEvidenceCheckpoint !== null &&
+        storedTranscriptEvidenceMatchesSession
+          ? storedTranscriptEvidenceCheckpoint.transcriptInputSignature
+          : transcriptOperationKey(
+              runId,
+              sourceContentFingerprint,
+              transcriptPhase,
+              broadcastTranscriptAttemptOrdinal,
+              routeSourceIdentityFence,
+            );
+      const transcriptQuotaOperationScope = (
+        await createContentFingerprint([
+          "exclipper.transcript-quota-operation-scope.v1",
+          operationKey,
+        ])
+      )
+        .replace(/[^A-Za-z0-9_-]/gu, "_")
+        .slice(-24);
+      if (controller.signal.aborted || !isMounted.current) return;
+
       const savedQwenCheckpoint =
         matchedSaved !== null &&
-        (matchedSaved.modelRevision === BROADCAST_TRANSCRIPT_ACTIVE_MODEL_REVISION ||
-          matchedSaved.modelRevision ===
-            BROADCAST_TRANSCRIPT_PREVIOUS_ACTIVE_MODEL_REVISION ||
-          matchedSaved.modelRevision ===
-            BROADCAST_TRANSCRIPT_MIXED_CHECKPOINT_MODEL_REVISION)
+        matchingStoredTranscriptProviderReceiptCheckpoint !== null
           ? matchedSaved
           : null;
       const ambiguousStoredGaps =
-        savedQwenCheckpoint?.fragmentGaps.filter(
+        matchedSaved?.fragmentGaps.filter(
           ({ reason, attemptCount }) =>
             transcriptGapRequiresExplicitBillingRetry(reason, attemptCount),
         ) ?? [];
@@ -7060,63 +8454,43 @@ function App() {
         nextTranscriptFragmentManualGeneration(
           savedQwenCheckpoint?.fragmentGaps.map(
             ({ attemptCount }) => attemptCount,
-          ) ?? [],
+          ) ??
+            matchedSaved?.fragmentGaps.map(
+              ({ attemptCount }) => attemptCount,
+            ) ??
+            [],
         ),
       );
-      if (youtubeVideoId !== null) {
-        try {
-          // 자막 받기와 그 뒤의 맥락 분석을 갈라 잰다. `broadcastContext` 가
-          // 가장 무거운데(실측 37%) 그 안에서 무엇이 무거운지를 몰라, 자막
-          // 조달을 넓혀야 할지 맥락 호출을 줄여야 할지 정할 수 없었다.
-          const endCaptionSpan = stageTimerRef.current?.startSpan(
-            "youtube-caption-fetch",
-            Date.now(),
-          );
-          const captionTrack = await requestYouTubeCaptionTrack(youtubeVideoId, {
-            signal: controller.signal,
-          });
-          endCaptionSpan?.(Date.now());
-          if (controller.signal.aborted || !isMounted.current) return;
-          youtubeCaptionTrackRef.current = captionTrack;
-          setYouTubeCaptionTrack(captionTrack);
-          const captionChapters = createYouTubeCaptionChapters(
-            captionTrack,
-            sourceDurationMs,
-          );
-          if (captionChapters.length > 0) {
-            const reopened = await persistTranscriptMap(
-              captionChapters,
-              true,
-              [],
-              YOUTUBE_CAPTION_MODEL_REVISION,
-            );
-            if (!controller.signal.aborted && isMounted.current) {
-              setBroadcastTranscriptExplorationCells(
-                createChapterExplorationCells(reopened.chapters),
-              );
-              setBroadcastTranscriptChapters(reopened.chapters);
-              sealedBroadcastTranscriptSourceRef.current = operationKey;
-              setBroadcastTranscriptStatus("completed");
-            }
-            return;
-          }
-        } catch {
-          // YouTube may throttle or withhold captions. The bounded Qwen audio
-          // path below is the automatic fallback and needs no user action.
-        }
-      }
-
-      const checkpointChapters = savedQwenCheckpoint?.chapters ?? [];
-      const recoveredCheckpointModelRevision =
-        savedQwenCheckpoint?.modelRevision ===
-          BROADCAST_TRANSCRIPT_PREVIOUS_ACTIVE_MODEL_REVISION ||
-        savedQwenCheckpoint?.modelRevision ===
-          BROADCAST_TRANSCRIPT_MIXED_CHECKPOINT_MODEL_REVISION
-          ? BROADCAST_TRANSCRIPT_MIXED_CHECKPOINT_MODEL_REVISION
-          : BROADCAST_TRANSCRIPT_ACTIVE_MODEL_REVISION;
+      let transcriptProviderReceiptCheckpoint =
+        matchingStoredTranscriptProviderReceiptCheckpoint ??
+        createBroadcastTranscriptProviderReceiptCheckpoint({
+          sourceFingerprint: inputSignature,
+          sourceDurationMs,
+          route: transcriptRoute,
+          plannedCells: transcriptProviderPlanCells,
+        });
+      let recoveredCheckpointModelRevision =
+        broadcastTranscriptProviderReceiptCheckpointModelRevision(
+          transcriptProviderReceiptCheckpoint,
+        );
+      const preparedTranscriptEvidence =
+        prepareBroadcastTranscriptEvidenceProjection({
+          sourceFingerprint: inputSignature,
+          sourceDurationMs,
+          transcriptInputSignature: operationKey,
+          modelRevision: recoveredCheckpointModelRevision,
+          plannedChunks: chunks,
+          storedCheckpointJson:
+            savedQwenCheckpoint?.transcriptEvidenceCheckpointJson ?? null,
+          storedChapters: savedQwenCheckpoint?.chapters ?? [],
+        });
+      let transcriptEvidenceCheckpoint =
+        preparedTranscriptEvidence.checkpoint;
+      const checkpointChapters =
+        preparedTranscriptEvidence.dialogueChapters;
       const uncoveredSamplingWindows = subtractBroadcastContextCoveredRanges(
         broadcastContextSamplingPlan.samplingWindows,
-        checkpointChapters,
+        preparedTranscriptEvidence.coveredRanges,
       );
       const transcriptChunks = createBroadcastContextTranscriptionChunks(
         uncoveredSamplingWindows,
@@ -7137,8 +8511,11 @@ function App() {
           migratedChapters,
           completeAudioCoverage,
           [],
-          savedQwenCheckpoint?.modelRevision ??
-            BROADCAST_TRANSCRIPT_ACTIVE_MODEL_REVISION,
+          recoveredCheckpointModelRevision,
+          [],
+          operationKey,
+          transcriptEvidenceCheckpoint,
+          transcriptProviderReceiptCheckpoint,
         );
         setBroadcastTranscriptChapters(reopened.chapters);
         setBroadcastTranscriptExplorationCells(
@@ -7172,7 +8549,6 @@ function App() {
         );
       };
       const checkpointResults = new Map<string, BroadcastTranscriptQwenResult>();
-      const checkpointNoAudioChunkIds = new Set<string>();
       const checkpointGapState = new Map<
         string,
         {
@@ -7195,15 +8571,28 @@ function App() {
       const mainTranscriptionStartedAtMs = Date.now();
       const queueTranscriptCheckpoint = (): void => {
         const resultSnapshot = [...checkpointResults.values()];
-        const noAudioChunkSnapshot = transcriptChunks.filter(({ chunkId }) =>
-          checkpointNoAudioChunkIds.has(chunkId),
+        const providerReceiptCheckpointSnapshot =
+          transcriptProviderReceiptCheckpoint;
+        const checkpointModelRevision =
+          broadcastTranscriptProviderReceiptCheckpointModelRevision(
+            providerReceiptCheckpointSnapshot,
+          );
+        const evidenceCheckpointSnapshot =
+          rebaseBroadcastTranscriptResolvedEvidenceModelRevision(
+            transcriptEvidenceCheckpoint,
+            checkpointModelRevision,
+          );
+        const resolvedChunkIds = new Set(
+          evidenceCheckpointSnapshot.resolvedEvidence.map(
+            ({ chunkId }) => chunkId,
+          ),
         );
         const pendingFragmentGaps: readonly StoredBroadcastTranscriptGap[] =
           transcriptChunks
             .filter(
               (chunk) =>
                 !checkpointResults.has(chunk.chunkId) &&
-                !checkpointNoAudioChunkIds.has(chunk.chunkId),
+                !resolvedChunkIds.has(chunk.chunkId),
             )
             .map((chunk) => {
               const gapState = checkpointGapState.get(chunk.chunkId);
@@ -7222,13 +8611,9 @@ function App() {
             sourceDurationMs,
             false,
           );
-          const recoveredNoAudioChapters = createBroadcastNoAudioChapters(
-            noAudioChunkSnapshot,
-            sourceDurationMs,
-          );
           const checkpointMap = mergeBroadcastTranscriptChapters(
             checkpointChapters,
-            [...recoveredChapters, ...recoveredNoAudioChapters],
+            recoveredChapters,
             sourceDurationMs,
             false,
           );
@@ -7236,8 +8621,11 @@ function App() {
             checkpointMap,
             false,
             pendingGapIds,
-            recoveredCheckpointModelRevision,
+            checkpointModelRevision,
             pendingFragmentGaps,
+            null,
+            evidenceCheckpointSnapshot,
+            providerReceiptCheckpointSnapshot,
           );
           if (!controller.signal.aborted && isMounted.current) {
             setBroadcastTranscriptChapters(reopened.chapters);
@@ -7246,23 +8634,67 @@ function App() {
       };
       const persistPartialResult = (
         chunkId: string,
-        partialResult: BroadcastTranscriptQwenResult,
+        partialResult: BroadcastTranscriptVerifiedResult,
       ): void => {
         updateExplorationCell(chunkId, "complete");
         checkpointResults.set(chunkId, partialResult);
-        checkpointNoAudioChunkIds.delete(chunkId);
+        transcriptProviderReceiptCheckpoint =
+          recordBroadcastTranscriptProviderReceipt(
+            transcriptProviderReceiptCheckpoint,
+            chunkId,
+            partialResult,
+          );
+        recoveredCheckpointModelRevision =
+          broadcastTranscriptProviderReceiptCheckpointModelRevision(
+            transcriptProviderReceiptCheckpoint,
+          );
+        transcriptEvidenceCheckpoint =
+          rebaseBroadcastTranscriptResolvedEvidenceModelRevision(
+            transcriptEvidenceCheckpoint,
+            recoveredCheckpointModelRevision,
+          );
         checkpointGapState.delete(chunkId);
         queueTranscriptCheckpoint();
       };
-      const persistGapResult = (
+      const persistAbstentionOrGap = (
         chunkId: string,
-        reason: StoredBroadcastTranscriptGap["reason"] | "no-audio",
+        reason:
+          | StoredBroadcastTranscriptGap["reason"]
+          | "no-audio"
+          | "no-speech",
         quotaAttemptOrdinal: number,
+        speechActivityReceipt: BroadcastSpeechActivityRunReceipt | null = null,
       ): void => {
-        updateExplorationCell(chunkId, "gap");
-        if (reason === "no-audio") {
+        updateExplorationCell(
+          chunkId,
+          reason === "no-audio" || reason === "no-speech"
+            ? "complete"
+            : "gap",
+        );
+        if (reason === "no-audio" || reason === "no-speech") {
           checkpointGapState.delete(chunkId);
-          checkpointNoAudioChunkIds.add(chunkId);
+          if (reason === "no-audio") {
+            transcriptEvidenceCheckpoint =
+              recordBroadcastTranscriptResolvedEvidence(
+                transcriptEvidenceCheckpoint,
+                chunkId,
+                "no-audio",
+                null,
+              );
+          } else {
+            if (speechActivityReceipt === null) {
+              throw new Error(
+                "Confirmed no-speech evidence lost its VAD receipt.",
+              );
+            }
+            transcriptEvidenceCheckpoint =
+              recordBroadcastTranscriptResolvedEvidence(
+                transcriptEvidenceCheckpoint,
+                chunkId,
+                "no-speech",
+                speechActivityReceipt,
+              );
+          }
         } else {
           checkpointGapState.set(chunkId, {
             reason,
@@ -7308,10 +8740,12 @@ function App() {
             return runBroadcastTranscriptWorker(sourceFile, {
               sourceDurationMs,
               chunks: attemptChunks,
+              route: transcriptRoute,
               quota: {
                 participantId: aiQuotaParticipantId,
                 runId,
                 operationNamespace: transcriptPhase,
+                operationScope: transcriptQuotaOperationScope,
                 attemptOrdinal: quotaAttemptOrdinal,
               },
               signal: controller.signal,
@@ -7326,8 +8760,20 @@ function App() {
                 }
               },
               onPartialResult: persistPartialResult,
+              onChunkAbstention: (abstention) => {
+                persistAbstentionOrGap(
+                  abstention.chunkId,
+                  abstention.reason,
+                  quotaAttemptOrdinal,
+                  abstention.speechActivityReceipt,
+                );
+              },
               onChunkGap: (chunkId, reason) => {
-                persistGapResult(chunkId, reason, quotaAttemptOrdinal);
+                persistAbstentionOrGap(
+                  chunkId,
+                  reason,
+                  quotaAttemptOrdinal,
+                );
               },
             });
           },
@@ -7396,19 +8842,30 @@ function App() {
         sourceDurationMs,
         completeAudioCoverage,
       );
-      const chunkById = new Map(
-        transcriptChunks.map((chunk) => [chunk.chunkId, chunk]),
-      );
-      const noAudioChapters = createBroadcastNoAudioChapters(
-        recoveryResult.noAudioGaps.flatMap(({ chunkId }) => {
-          const chunk = chunkById.get(chunkId);
-          return chunk === undefined ? [] : [chunk];
-        }),
-        sourceDurationMs,
-      );
+      for (const { chunkId } of recoveryResult.noAudioGaps) {
+        transcriptEvidenceCheckpoint =
+          recordBroadcastTranscriptResolvedEvidence(
+            transcriptEvidenceCheckpoint,
+            chunkId,
+            "no-audio",
+            null,
+          );
+      }
+      for (const {
+        chunkId,
+        speechActivityReceipt,
+      } of recoveryResult.noSpeechAbstentions) {
+        transcriptEvidenceCheckpoint =
+          recordBroadcastTranscriptResolvedEvidence(
+            transcriptEvidenceCheckpoint,
+            chunkId,
+            "no-speech",
+            speechActivityReceipt,
+          );
+      }
       const chapters = mergeBroadcastTranscriptChapters(
         checkpointChapters,
-        [...recoveredChapters, ...noAudioChapters],
+        recoveredChapters,
         sourceDurationMs,
         completeAudioCoverage,
       );
@@ -7418,6 +8875,9 @@ function App() {
         finalGapChunkIds,
         recoveredCheckpointModelRevision,
         unresolvedFragmentGaps,
+        finalGapChunkIds.length === 0 ? operationKey : null,
+        transcriptEvidenceCheckpoint,
+        transcriptProviderReceiptCheckpoint,
       );
       if (!controller.signal.aborted && isMounted.current) {
         setBroadcastTranscriptChapters(reopened.chapters);
@@ -7467,7 +8927,10 @@ function App() {
     getResultStore,
     openedRecoveredResult?.terminal.inputSignature,
     sourceContentFingerprint,
+    sourceCastRosterId,
+    sourceChannelResolutionIsCurrent,
     sourceFile,
+    transcriptSourceIdentityFence,
   ]);
 
   const copyApprovedTimecodes = async (): Promise<void> => {
@@ -8443,6 +9906,7 @@ function App() {
                         retryWholeContextPhase();
                       } else if (semanticLeadRefinementStatus === "failed") {
                         autoSemanticLeadRefinementSourceRef.current = null;
+                        allowAmbiguousSemanticRefinementRetryRef.current = true;
                         setSemanticLeadRefinementAttemptOrdinal(
                           (current) => current + 1,
                         );

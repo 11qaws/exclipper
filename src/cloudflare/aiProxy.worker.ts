@@ -66,9 +66,11 @@ import {
   MAX_BROADCAST_TRANSCRIPT_QWEN_BASE64_LENGTH,
   MAX_BROADCAST_TRANSCRIPT_QWEN_DURATION_MS,
   MAX_BROADCAST_TRANSCRIPT_QWEN_RESPONSE_BYTES,
+  buildBroadcastTranscriptGroqRequestBody,
   buildBroadcastTranscriptGeminiRequestBody,
   buildBroadcastTranscriptQwenOmniRequestBody,
   buildBroadcastTranscriptQwenOmniUrlRequestBody,
+  extractBroadcastTranscriptGroqResponse,
   extractBroadcastTranscriptGeminiResponse,
   extractBroadcastTranscriptQwenOmniSseResponse,
   parseBroadcastTranscriptQwenProxyRequest,
@@ -900,6 +902,59 @@ function buildBroadcastTranscriptUpstreamBytes(
   return output;
 }
 
+function decodeBroadcastTranscriptBase64(value: string): Uint8Array<ArrayBuffer> {
+  const binary = atob(value);
+  const bytes = new Uint8Array(binary.length);
+  for (
+    let offset = 0;
+    offset < binary.length;
+    offset += BASE64_CHUNK_BYTES
+  ) {
+    const end = Math.min(binary.length, offset + BASE64_CHUNK_BYTES);
+    for (let index = offset; index < end; index += 1) {
+      bytes[index] = binary.charCodeAt(index);
+    }
+  }
+  return bytes;
+}
+
+/**
+ * Groq accepts either a native multipart WAV upload or a provider-fetched URL.
+ * Free R2 therefore keeps the Worker on the small URL-only path; legacy
+ * Base64 is decoded only in the explicitly paid direct transport.
+ */
+function buildBroadcastTranscriptGroqUpstreamBody(
+  audio: BroadcastTranscriptAudioPayload,
+): FormData {
+  if (audio.kind === "audio-url") {
+    return buildBroadcastTranscriptGroqRequestBody({
+      kind: "audio-url",
+      audioUrl: audio.audioUrl,
+    });
+  }
+  if (audio.kind === "wav-bytes") {
+    return buildBroadcastTranscriptGroqRequestBody({
+      kind: "wav-bytes",
+      wavBytes: audio.wavBytes,
+    });
+  }
+  const encoded =
+    audio.kind === "base64"
+      ? audio.audioBase64
+      : new TextDecoder("utf-8", { fatal: true }).decode(
+          audio.audioBase64Bytes,
+        );
+  const wavBytes = decodeBroadcastTranscriptBase64(encoded);
+  try {
+    return buildBroadcastTranscriptGroqRequestBody({
+      kind: "wav-bytes",
+      wavBytes,
+    });
+  } finally {
+    wavBytes.fill(0);
+  }
+}
+
 const BASE64_BODY_SCAN_CHUNK_BYTES = 64 * 1024;
 const BASE64_BODY_CHUNK_PATTERN = /^[A-Za-z0-9+/]+$/u;
 const BASE64_ONE_BYTE_TAIL_CHARACTERS = "AQgw";
@@ -1641,6 +1696,7 @@ async function healthResponse(
   const quotaMode = aiQuotaMode(environment);
   const transcriptTransport = resolveBroadcastTranscriptTransport(environment);
   const candidateProvider = resolveCandidateInsightConnection(environment);
+  const transcriptProvider = resolveBroadcastTranscriptConnection(environment);
   let quotaCoordinatorReady = quotaMode === "disabled";
   if (quotaMode !== "disabled") {
     try {
@@ -1660,6 +1716,13 @@ async function healthResponse(
     transcriptTransport.ok &&
     (transcriptTransport.mode === "paid-direct" ||
       quotaMode === "required");
+  const transcriptRouteReady =
+    transcriptTransportReady &&
+    transcriptProvider.ok &&
+    transcriptProvider.connection.provider !== "disabled" &&
+    (transcriptTransport.mode === "paid-direct" ||
+      transcriptProvider.connection.provider === "qwen" ||
+      transcriptProvider.connection.provider === "groq");
   const candidateTransportReady =
     transcriptTransport.ok &&
     candidateProvider.ok &&
@@ -1668,7 +1731,7 @@ async function healthResponse(
         candidateProvider.connection.provider === "qwen"));
   const healthy =
     (quotaMode === "disabled" || quotaCoordinatorReady) &&
-    transcriptTransportReady &&
+    transcriptRouteReady &&
     candidateTransportReady;
   const body = request.method === "HEAD"
     ? null
@@ -3357,11 +3420,13 @@ async function attemptBroadcastTranscriptProvider(
   fetchImplementation: FetchImplementation,
   timeoutMs: number,
 ): Promise<BroadcastTranscriptProviderAttempt> {
-  let upstreamBody: string | Uint8Array<ArrayBuffer>;
+  let upstreamBody: string | Uint8Array<ArrayBuffer> | FormData;
   try {
     upstreamBody =
-      audio.kind === "audio-url"
-        ? connection.provider === "qwen"
+      connection.provider === "groq"
+        ? buildBroadcastTranscriptGroqUpstreamBody(audio)
+        : audio.kind === "audio-url"
+          ? connection.provider === "qwen"
           ? JSON.stringify(
               buildBroadcastTranscriptQwenOmniUrlRequestBody(audio.audioUrl),
             )
@@ -3397,10 +3462,14 @@ async function attemptBroadcastTranscriptProvider(
     const upstreamResponse = await fetchImplementation(connection.endpoint, {
       method: "POST",
       headers: {
-        "Content-Type": "application/json",
-        ...(connection.provider === "gemini"
-          ? { "x-goog-api-key": connection.apiKey }
-          : { Authorization: `Bearer ${connection.apiKey}` }),
+        ...(connection.provider === "groq"
+          ? { Authorization: `Bearer ${connection.apiKey}` }
+          : {
+              "Content-Type": "application/json",
+              ...(connection.provider === "gemini"
+                ? { "x-goog-api-key": connection.apiKey }
+                : { Authorization: `Bearer ${connection.apiKey}` }),
+            }),
       },
       body: upstreamBody,
       cache: "no-store",
@@ -3460,9 +3529,21 @@ async function attemptBroadcastTranscriptProvider(
     );
     const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
     bytes.fill(0);
-    result = connection.provider === "gemini"
-      ? extractBroadcastTranscriptGeminiResponse(JSON.parse(text), transcriptRequest)
-      : extractBroadcastTranscriptQwenOmniSseResponse(text, transcriptRequest);
+    result =
+      connection.provider === "gemini"
+        ? extractBroadcastTranscriptGeminiResponse(
+            JSON.parse(text),
+            transcriptRequest,
+          )
+        : connection.provider === "groq"
+          ? extractBroadcastTranscriptGroqResponse(
+              JSON.parse(text),
+              transcriptRequest,
+            )
+          : extractBroadcastTranscriptQwenOmniSseResponse(
+              text,
+              transcriptRequest,
+            );
   } catch (error) {
     return {
       ok: false,
@@ -3621,7 +3702,8 @@ function freeR2TranscriptProvider(
 ): ActiveBroadcastTranscriptConnection | null {
   const resolution = resolveBroadcastTranscriptConnection(environment);
   return resolution.ok &&
-    resolution.connection.provider === "qwen"
+    (resolution.connection.provider === "qwen" ||
+      resolution.connection.provider === "groq")
     ? resolution.connection
     : null;
 }
@@ -4025,7 +4107,8 @@ async function handleFreeR2BroadcastTranscriptRequest(
 ): Promise<Response> {
   if (
     aiQuotaMode(environment) !== "required" ||
-    environment.IP_RATE_LIMITER === undefined
+    environment.IP_RATE_LIMITER === undefined ||
+    freeR2TranscriptProvider(environment) === null
   ) {
     return transcriptTransportUnavailableResponse(origin);
   }
@@ -4112,7 +4195,8 @@ export async function handleBroadcastTranscriptRequest(
   const providerResolution = resolveBroadcastTranscriptConnection(environment);
   const requestedProvider =
     environment.BROADCAST_TRANSCRIPT_PROVIDER === "gemini" ||
-    environment.BROADCAST_TRANSCRIPT_PROVIDER === "qwen"
+    environment.BROADCAST_TRANSCRIPT_PROVIDER === "qwen" ||
+    environment.BROADCAST_TRANSCRIPT_PROVIDER === "groq"
       ? environment.BROADCAST_TRANSCRIPT_PROVIDER
       : null;
   let providerConnection: ActiveBroadcastTranscriptConnection;

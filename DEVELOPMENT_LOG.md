@@ -1,5 +1,288 @@
 # Development Log
 
+## 2026-07-29 v0.8.8 파이프라인 내구성 릴리스
+
+### 릴리스 범위
+
+- 전체 방송 전사와 맥락 분석을 조각 단위 체크포인트·provider 영수증·CAS 저장으로
+  묶어, 일부 요청이 실패하거나 탭을 새로고침해도 이미 완료된 근거를 보존하고
+  실패 조각만 다시 처리할 수 있게 했다.
+- 후보별 맥락·대사·화면 4장·대표 썸네일·AI 영수증이 같은 source range와
+  fingerprint를 가리킬 때만 최종 후보로 게시한다. 구형 또는 다른 구간의 결과를
+  섞어 완성된 후보처럼 보이는 경로는 닫았다.
+- 방송 맥락 전에 참여자 근거를 정리하는 durable grounding 계약과, 이후 화자
+  인식을 위한 고정 WavLM Worker·검증 도구를 추가했다. 검증되지 않은 음성 표본은
+  인명을 확정하지 않으며 production 화자 adapter는 계속 비활성 상태다.
+- 참여자 grounding 저장 서명에 사용한 sampling plan fingerprint를 세션 schema
+  `1.10.0`에 함께 보존하고, 저장과 새로고침 복원이 같은 서명 helper를 사용하게
+  했다. 새 plan으로 만든 근거를 과거 맥락에 붙이지 않으며, plan fingerprint가
+  없는 legacy 기록은 보존하되 유료 맥락 완료 상태로 자동 복원하지 않는다.
+- 후보 정제 대사의 출처를 `BroadcastContextSession` schema `1.11.0`의
+  `refinementEvidenceLedgerJson`으로 보존한다. YouTube 자막과 ASR은 같은
+  non-overlapping plan을 사용하고, 자막의 빈 cell은 exact VAD 근거가 없으면
+  자동 성공시키지 않고 같은 plan의 ASR 복구로 넘긴다. 활성 route의
+  projection fingerprint가 semantic AI phase ledger·저장 후보·Pass B 영수증까지
+  일치할 때만 다음 단계로 진행한다.
+- main 및 refinement `no-speech`는 단순 사유 문자열이 아니라 원본 구간,
+  고정 VAD 모델·정책 revision, 완전 coverage를 담은
+  `BroadcastSpeechActivityRunReceipt`를 Worker에서 저장 원장까지 보존한다.
+  영수증이 없거나 변조된 legacy 무발화 기록은 현재 완료 근거로 재사용하지 않는다.
+  방송 전체가 무발화인 경우에는 조용한 화면 사건을 임의로 “없음” 처리하지 않고
+  `visual-evidence-required` gap으로 종료해 전체 맥락과 최종 게시를 차단한다.
+- Candidate Pass B 검증 영수증을 schema `1.4.0`으로 올리고 후보 구간·모델·활성
+  정제 근거에 더해 `outputLanguage`와 nullable `castRosterId`를 exact source
+  fence로 묶었다. 구형 영수증은 읽을 수 있지만 현재 결과로 재사용하지 않으며,
+  언어 또는 등장인물 명부가 바뀌면 해당 후보만 다시 분석한다.
+- 후보별 화면·대사·AI 결과 full-map 저장도 직전에 읽은 exact snapshot에 대한
+  compare-and-swap과 저장 후 readback을 사용한다. 병렬 후보 완료나 다른 탭의
+  늦은 callback이 더 최신 썸네일·영수증·설명을 과거 snapshot으로 덮어쓰지 못한다.
+- Groq Whisper Large V3 Turbo를 선택형 전사 provider로 준비하고 credential은
+  Cloudflare Worker secret에만 둔다. 이번 릴리스의 production 기본 경로는
+  기존과 같은 `Qwen + free-r2`이며, Groq로 자동 전환하거나 추가 비용을 만들지
+  않는다.
+
+### 배포 게이트
+
+- 전체 typecheck·lint·Vitest·음성 표본 도구 테스트, production build,
+  `wrangler deploy --dry-run`, staged diff의 secret 및 whitespace 검사를 모두
+  통과한 동일 소스 상태만 Worker와 GitHub Pages에 배포한다.
+- 호환성을 위해 Cloudflare Worker를 먼저 배포하고 `/healthz`를 확인한 다음,
+  같은 commit을 `main`에 push하여 GitHub Pages를 갱신한다.
+- 배포 직전 독립 재검증에서 TypeScript, ESLint warning 0, Vitest 140개 파일
+  1,684개 테스트, 음성 표본 CLI 9개 테스트와 production build가 모두 통과했다.
+  Worker dry-run은 474.40 KiB(89.30 KiB gzip)였고 production 기본 provider
+  `Qwen`, `free-r2`, quota coordinator 최대 5명 구성을 그대로 확인했다.
+
+## 2026-07-29 화자 임베딩 실행부·18개 표본 교차검증
+
+### 실행부
+
+- 브라우저 전용 `SpeakerEmbeddingWorkerClient`와 WASM Worker를 추가했다. 모델은
+  `Xenova/wavlm-base-plus-sv`의 고정 revision
+  `e61029603001bd11295c36d878698708bf59190f`, q8, Transformers.js `3.8.1`이다.
+  입력은 16 kHz mono Float32, 3~30초, 최대 1,920,000 bytes로 제한한다.
+- source fingerprint·시간 범위·audio bundle reuse key·PCM SHA-256·speech/overlap/music
+  준비 영수증을 하나의 input fingerprint로 묶는다. Worker는 한 번에 한 발화만
+  처리하고 모델을 재사용하며, NaN·0벡터·형태 오류와 stale identity를 거부한다.
+  PCM과 임베딩은 영속 결과에 넣지 않고 작업이 끝나면 메모리 버퍼를 비운다.
+- 여러 등록 표본의 정규화 prototype 평균, cosine score, 부분 coverage, open-set
+  `unknown` 투영을 분리했다. 등록 표본이 없는 참여자는 억지로 6인 closed set 중
+  하나로 고르지 않고 `missingParticipantIds`에 남는다.
+
+### 표본 추출·실측
+
+- 전원 등장 방송 6개와 사용자가 준 개인 채널 4개에서 총 18개 FLAC 후보를
+  repository 밖 `Codex/artifacts/voice-enrollment-candidates/`에 추출했다.
+  개인 채널 표본은 유레카 3개, 망징이 4개, 세나 아르벨 2개, 토로리 코코 3개다.
+- `npm run enrollment:evaluate-speakers`는 FLAC을 임시 16 kHz PCM으로 디코드하고
+  production과 같은 고정 WavLM revision으로 임베딩한 뒤, 원음·PCM·임베딩을
+  저장하지 않고 cosine 진단만 출력한다. 개인 채널 내부 평균 일관성은 유레카
+  0.891, 망징이 0.879, 세나 아르벨 0.898, 토로리 코코 0.908이었다.
+- 전원 방송의 30초 후보를 개인 채널 prototype과 교차검증하자 망징이만 명확히
+  일치(0.940)했고, 세나는 같은 이름이 top-1이지만 점수가 0.603으로 약했다.
+  유레카 후보는 세나, 코코 후보도 세나가 top-1이었다. 이는 30초 안에 여러
+  발화자·음악이 섞였거나 수동 시점 라벨이 틀렸다는 실측 근거다. 아모레또와
+  세라는 독립 prototype이 없어 아직 교차검증할 수 없다.
+- 따라서 18개 파일은 모두 `humanVerification=pending`,
+  `containsOverlappingSpeech=true`, `containsMusic=true` 상태를 유지한다. 현재
+  App에는 runtime을 활성화하거나 인명을 확정하는 manifest를 연결하지 않았다.
+  다음 단계는 VAD/overlap 제거 뒤 3~10초 단독 발화 turn을 다시 만들고,
+  독립 source prototype과 개인별 threshold·top-1/top-2 margin을 검증하는 것이다.
+- speaker runtime 집중 테스트 18개와 전체 `npm run check`를 통과했다.
+  전체 결과는 Vitest 139개 파일·1,638개 테스트와 enrollment CLI 9개 테스트다.
+  production build와 `wrangler deploy --dry-run`도 통과했으며, App에서 runtime을
+  import하지 않으므로 이번 build에는 speaker Worker chunk나 97MB 모델이 포함되지
+  않았다. 실제 voice adapter를 켤 때만 모델을 지연 다운로드해야 한다.
+
+### Groq secret 상태
+
+- 사용자가 제공한 Groq credential은 Cloudflare Worker secret
+  `GROQ_API_KEY`로만 등록했고, 이름 존재를 `wrangler secret list`로 확인했다.
+  값은 Git, Pages bundle, 문서, 로그, 브라우저 저장소에 기록하지 않았다.
+- production 기본 전사는 계속 `BROADCAST_TRANSCRIPT_PROVIDER=qwen`이다. secret이
+  있다는 이유만으로 Groq를 자동 선택하거나 Qwen 실패를 Groq 호출로 넘기지 않는다.
+
+## 2026-07-29 Groq Whisper Large V3 Turbo 선택형 전사 경로 준비
+
+### 구현
+
+- 기존 Qwen/Gemini 전사 결과 계약을 유지한 채 provider catalog에 `groq`를 추가했다. 기본 `BROADCAST_TRANSCRIPT_PROVIDER=qwen`과 Qwen→Gemini fallback은 바꾸지 않았으며, Groq는 환경 변수를 명시적으로 `groq`로 선택한 경우에만 활성화된다.
+- Worker secret `GROQ_API_KEY` readiness와 공식 endpoint `https://api.groq.com/openai/v1/audio/transcriptions`를 추가했다. 실제 키는 소스·테스트·설정 파일에 저장하지 않는다. 이후 운영 secret 등록은 위의 별도 기록처럼 값 비공개 상태로 완료했다.
+- `free-r2` resolve는 서버가 발급한 짧은 HTTPS media capability를 Groq multipart `url`로 넘겨 Worker가 WAV/Base64 본문을 다루지 않는다. 별도 유료 `paid-direct` 호환 경로는 bounded WAV를 multipart `file`로 보낸다.
+- 모델은 가격·속도 우선 비교 대상인 `whisper-large-v3-turbo`로 고정했다. 요청은 `language=ko`, `verbose_json`, segment timestamp, temperature 0이고, response는 128KiB·20,000자·512 segment 및 chunk 상대 timestamp 범위와 한국어를 검증한다. 정상 무발화만 `[대사 없음]`으로 투영한다.
+- 응답 header에 실제 model ID와 `groq-whisper-large-v3-turbo-ko-segment-v1-2026-07-29` revision을 넣고 provider 오류 원문·request metadata·secret은 반환하지 않는다. `/healthz`는 transport 구성과 provider credential readiness를 서로 다른 필드로 보고한다.
+
+### 검증과 남은 release gate
+
+- 대상 Vitest 5개 파일 **132개 테스트 통과**. URL/file multipart, 고정 한국어·timestamp 설정, malformed/non-Korean/범위 밖 응답 거부, 무발화, free-R2 cleanup, paid-direct, 401 redaction, health readiness와 기존 Qwen fallback 불변을 포함한다.
+- 대상 TypeScript 파일 ESLint warning 0. 전체 TypeScript는 같은 worktree의 병행 `App.tsx` 변경 오류 때문에 별도로 최종 재검증해야 하며, 이번 변경 파일에서는 오류가 보고되지 않았다.
+- Groq 활성화 전 Pages cache fence가 서버가 반환한 model revision을 사용하도록 확인해야 한다. provider live smoke, 기본 route 전환, commit·push·배포는 수행하지 않았다.
+
+## 2026-07-29 자막 없는 의미 refinement 전사 per-fragment checkpoint
+
+### 저장 계약과 복구 경계
+
+- `BroadcastRefinementTranscriptCheckpoint`는 refinement input signature와
+  canonical 정렬된 `chunkId + sourceStartMs + sourceEndMs + kind` 계획 전체를
+  함께 고정한다. 성공한 `BroadcastTranscriptQwenResult`는 같은 chunk의 정확한
+  source range일 때만 저장되고, `no-audio | no-speech`는 해결된 abstention으로,
+  미해결 사유는 attempt count와 함께 별도 gap으로 남는다.
+- checkpoint JSON은 exact-key validator와 canonical serializer를 통과해야 하며
+  2MiB UTF-8 상한을 갖는다. 추가 필드, 중복 settlement, 계획 밖 chunk, 범위가
+  이동한 결과, 비정규 JSON, signature 불일치는 모두 복구 자료로 인정하지 않는다.
+- `BroadcastContextSession` schema를 `1.7.0`으로 올리고
+  `refinementTranscriptInputSignature + refinementTranscriptCheckpointJson`
+  nullable pair를 추가했다. `1.6.0`은 두 필드를 `null`로 migration한다.
+  parent context invalidate/commit은 pair를 지우고, 동일 context input의
+  phase-ledger checkpoint만 보존한다.
+- `checkpointBroadcastContextSessionRefinementTranscriptIfUnchanged`는 직전 session
+  snapshot이 정확할 때만 per-fragment checkpoint를 교체한다. checkpoint evidence가
+  달라지면 파생 semantic candidate pair도 같은 replacement에서 지우고, 완전히
+  동일한 checkpoint의 timestamp 갱신만 기존 파생 결과를 보존한다.
+
+### 검증
+
+- checkpoint contract, session migration/lifecycle, in-memory CAS,
+  durable context fixture를 포함한 **4개 파일 81개 테스트 통과**
+- 대상 ESLint warning 0, 전체 TypeScript 통과
+- commit·push·배포하지 않았다.
+
+## 2026-07-29 맥락 전 6인 등장인물 grounding 계획·완료 gate
+
+### 실제 순서와 순환 제거
+
+- 현재 앱은 전체 대사 지도 뒤 `BroadcastParticipantGrounding`을 만들지만,
+  visual/voice output을 전달하지 않는다. 따라서 맥락 전에는 채널 prior와 대사
+  이름 언급만 있고, 실제 4-frame 인물 판정은 맥락 뒤 Candidate Pass B에서만
+  발생한다. 새 순수 계약은 이를 `방송 단위 pre-context grounding`과 `후보 단위
+post-context confirmation`으로 분리한다.
+- `BroadcastParticipantGroundingPlan`은 source fingerprint·12시간 상한·transcript
+  seal·roster/catalog·sampling revision을 하나의 source fence로 묶고,
+  transcript/visual/voice adapter마다 model/reference manifest fence와 정확한
+  source-time cell을 고정한다.
+- enabled adapter의 모든 cell은 modality에 맞는 terminal이어야 한다.
+  transcript-name은 `identified | none`, visual은
+  `identified | none | unidentified`, voice는
+  `identified | unidentified | no-speech`만 허용한다. `retryable`과
+  `outcome-unknown`, receipt 누락은 서로 별도로 집계하고 하나라도 남으면
+  seal을 거부한다. 인물 없음·무발화·미식별은 정상 결과이며 복구용 gap이 아니다.
+
+### 참조 자료와 재사용 경계
+
+- visual/voice 참조 manifest가 없거나 닫힌 source roster 전원을 덮지 못하면
+  adapter는 `no-verified-reference-manifest` unavailable terminal이 되고 cell을
+  실행하지 않는다. 이 상태는 전체 맥락을 막지 않지만 인물 이름을 만들지도
+  않는다.
+- voice plan은 `ParticipantVoiceEnrollmentManifest`를 직접 정규화하고 eligible
+  asset만 계산한다. `consent=unknown`, human verification pending, overlap/music
+  포함인 현재 6개 후보 FLAC은 hash fence에는 남지만 covered participant가 0인
+  unavailable adapter가 되며 자동 speaker prototype으로 승격되지 않는다.
+- 각 cell은 source fingerprint·범위·16k mono audio 또는 서로 다른 JPEG 4장의
+  정확한 timestamp로 bundle reuse key를 만든다. Candidate Pass B가 같은 key를
+  만들 때만 pre-context decode/frame bundle을 재사용할 수 있다.
+- range 설명 helper도 실제 `no-visible-participant`,
+  `visible-participant-unidentified`, `speaker-unidentified`, `no-speech`
+  evidence를 숨기지 않고 “인물 없음/미식별/무발화”로 서술한다. 완료된 media
+  검토를 더 이상 “식별을 수행하지 않음”으로 잘못 표시하지 않는다.
+
+### 검증
+
+- 새 순수 계획·gate 및 기존 grounding/enrollment 집중 테스트:
+  **3개 파일, 30개 테스트 통과**
+- 새 계획 모듈 독립 strict TypeScript, 전체 TypeScript, 대상 ESLint warning 0,
+  `git diff --check` 통과
+- commit·push·배포하지 않았다.
+
+## 2026-07-29 개발자 전용 6인 음성 enrollment 후보 추출 도구
+
+### 상태·안전 경계
+
+- 이 도구는 Pages 앱이나 공개 `public/` 자산 경로에 들어가지 않는 Node CLI다.
+  상태는 `recipe validated → current playback fetched → bounded playlists built →
+FLAC staged → hashes verified → pending manifest staged → directory renamed` 순서로만
+  진행한다. 중간 실패·SIGINT·SIGTERM이면 signed HLS URL이 든 OS 임시
+  mini-playlist와 staging 디렉터리를 삭제하고, 완전한 package만 마지막 directory
+  rename으로 공개한다.
+- recipe schema는 CHZZK replay `13996057`, 공식 replay locator, 고정 6인 ID,
+  2~60초 범위, 고정 safety acknowledgement를 exact-key로 검증한다. 다른 video
+  number, 임의 media URL, 중복 범위, 추가 필드는 거부한다.
+- 생성 manifest는 `ParticipantVoiceEnrollmentManifest`의 metadata-only 계약만
+  사용한다. 모든 asset은 `consent=unknown`, `humanVerification=pending`,
+  `containsOverlappingSpeech=true`, `containsMusic=true`,
+  `embeddingModelRevision=speaker-embedding:unassigned`로 고정되어 자동 eligible이
+  될 수 없다. sample의 여섯 구간은 현재 맥락에서 지정한 후보일 뿐 화자·단독
+  발화·동의가 검증됐다고 표시하지 않는다.
+
+### bounded HLS·ffmpeg 처리
+
+- 매 실행마다 고정 CHZZK metadata endpoint에서 현재 `liveRewindPlaybackJson`을
+  메모리에서만 읽고, HLS master의 `BANDWIDTH`가 가장 낮은 variant를 고른다.
+  metadata/master/media playlist는 각자 byte 상한과 timeout을 적용하며 signed
+  URL은 로그·manifest·repository에 기록하지 않는다.
+- 전체 variant URL을 ffmpeg에 넘기지 않는다. source range와 겹치는 2초 segment,
+  필요한 `EXT-X-MAP`·`EXT-X-KEY`·discontinuity tag만 절대 URL로 만든 임시
+  mini-playlist에 넣는다. ffmpeg는 그 playlist의 시작점부터 최대 한 segment
+  이내 offset만 decode해 16 kHz mono FLAC을 만든다.
+- CDN은 실행 중 `*.akamaized.net`과 `*.navercdn.com` 사이에서 달라질 수 있음을
+  실측했다. 고정 HTTPS suffix allowlist와 playlist별 same-origin 검증을 함께
+  사용한다. 첫 스모크에서 local playlist input 앞의 ffmpeg `user_agent` option이
+  file protocol에 적용되어 거부된 문제는 signed segment가 별도 header 없이
+  접근 가능한 것을 확인한 뒤 제거했다.
+
+### sample·실측·검증
+
+- pending recipe: 세라 교수님 `02:30–03:00`, 토로리 코코 `09:20–09:50`,
+  세나 아르벨 `12:30–13:00`, 망징이 `15:50–16:20`, 유레카 `27:00–27:30`,
+  아모레또 `53:53–54:25`.
+- 실제 current HLS 최저 variant는 `256x144 / 192000bps`였고, 앞의 다섯 후보는
+  각각 15개 segment, 마지막 32초 후보는 17개 segment만 요청했다. 여섯 FLAC은
+  모두 `flac / 16000Hz / mono`, 29.995~32.000초였으며 manifest SHA-256과 실제
+  파일 hash가 모두 일치했다.
+- 실제 산출물은 repository 밖
+  `Codex/artifacts/voice-enrollment-candidates/chzzk-video-13996057-pending-candidates-v1`
+  에 두었고, `ParticipantVoiceEnrollmentManifest` normalizer 통과,
+  eligible asset `0`, 임시 playlist 잔존 `0`을 확인했다.
+- Node pure-helper 테스트는 recipe fence·range·CLI, lowest-bandwidth 선택,
+  cross-origin 거부, time-zero segment를 제외한 mini-playlist, pending manifest
+  불변식, `public/` 출력 선거부, signed URL 오류 redaction 8건을 통과했다.
+  graphify는 공유 작업공간의
+  변경된 문서 93개를 처리할 semantic backend가 없어 첫 update가 중단됐고,
+  `--code-only` incremental update로 새 CLI·helper AST를 반영했다.
+  commit·push·배포하지 않았다.
+
+## 2026-07-28 다음 배포 후보 · 6인 등장인물 근거와 맥락 commit 봉인
+
+### 이전 구조에서 확인한 문제
+
+- 개인 채널 roster가 채널 주인 한 명만 남겨 합방 게스트 네 명을 인식 후보에서 제외했다. 반대로 닫힌 명단과 채널 주인 정보는 실제 화면 등장·발화 증거처럼 프롬프트에 전달될 수 있었다.
+- 전체 맥락 전에 있는 인물 정보는 “아직 확인하지 못함”뿐이었고, 실제 화면·목소리 근거를 나중에 추가하더라도 기존 evidence union과 exact factory validator가 이를 거부하는 구조였다.
+- 이름 경계에서 `코코아`를 `코코` 호명으로 오인할 수 있었고, 출처를 모르는 방송의 일반 호칭 `교수님`도 세라 교수님 근거로 잘못 승격할 수 있었다.
+- whole-context operation identity에 언어·후보·인물 패킷이 빠져 입력이 바뀐 뒤에도 이전 요청이 살아남을 수 있었다. 새 grounding 저장은 과거 context/refinement를 함께 지우지 않아 호출 실패 후 “새 근거 + 옛 결과”가 복원될 수 있었다.
+- context commit은 마지막 read 뒤 일반 put을 사용해, 그 사이 transcript/session이 바뀌면 늦은 유료 응답이 새 checkpoint를 덮어쓸 수 있었다. 복구도 당시 exact context input과 transcript seal을 재검증하지 않았다.
+
+### 반영한 계약
+
+- 안정적인 6인 ID 카탈로그를 만들었다. 교환학생 메인 채널은 세라 교수님을 host prior로 6명을 허용하고, 개인 채널은 채널 주인을 host prior로 두되 세라를 제외한 다섯 멤버를 허용한다. 출처 불명은 6인 canonical 이름만 유지하고 일반 별칭을 근거로 쓰지 않는다.
+- `BroadcastParticipantGrounding`은 source prior, 대사 이름 언급, 실제 화면·목소리 관측을 서로 다른 evidence kind로 보존한다. visual/voice adapter는 식별, 인물 있음-미확인, 인물 없음, 화자 미확인, 무발화를 terminal 결과로 기록할 수 있다. 현재 검증된 reference manifest가 없으므로 두 media adapter는 정직하게 `unavailable`이며 source prior만으로 인명을 확정하지 않는다.
+- 긴 방송의 145개 이상 챕터를 144개로 줄일 때 transcript-name projection은 bounded map에서 다시 만들되 이미 확인된 media evidence와 adapter receipt는 그대로 재결합한다.
+- whole-context operation key는 exact input snapshot 전체를 포함한다. effect가 바뀌면 이전 controller를 abort하고, 모든 await와 durable write 전후에 현재 controller/key를 다시 확인한다.
+- session schema `1.5.0`은 source roster, transcript seal, grounding pair, whole-context exact input JSON을 저장한다. grounding이 바뀌면 이전 context/refinement를 같은 write에서 null로 지운다.
+- context와 refinement 결과는 직전에 읽은 session과 byte-equivalent일 때만 한 IndexedDB readwrite transaction에서 교체하는 compare-and-swap으로 commit한다. 복구 시 transcript seal, catalog version, grounding JSON, exact context input의 fingerprint를 다시 계산하며 하나라도 다르면 과거 유료 자료는 보존하되 완료 결과로 표시하지 않는다.
+- participant checkpoint는 UTF-16 글자 수가 아니라 UTF-8 byte로 64KiB를 제한하고, whole-context input checkpoint는 Worker의 8MiB ingress 상한과 맞춘다.
+
+### 현재 경계
+
+- 다섯 UI 초상은 인식용으로 검증된 reference asset이 아니며 세라 이미지와 6인 음성 enrollment가 아직 없다. 따라서 이번 변경은 실제 media adapter가 안전하게 들어갈 데이터·저장·프롬프트·복구 경로를 완성한 것이고, 화면/음성 식별 자체를 완료했다고 표시하지 않는다.
+- 다음 구현 단위는 후보별 서로 다른 화면 4장을 전체 맥락 전에 준비해 visual adapter를 실행하고, VAD→diarization→검증된 speaker embedding 순서로 voice adapter를 연결하는 것이다.
+
+### 검증 결과
+
+- 인물 이름 경계·unknown-source alias·실제 visual evidence 보존·144챕터 rebase·프롬프트·session migration/UTF-8 상한·메모리/IndexedDB compare-and-swap 집중 회귀를 추가했다.
+- `npm run check`: TypeScript strict, ESLint warning 0, **118개 테스트 파일·1,374개 테스트 통과**
+- `npm run build`: Vite production build 통과, 205개 모듈 변환 완료
+- `git diff --check`: 공백 오류 없음
+- 이 변경은 아직 commit, push, 배포하지 않았다.
+
 ## 2026-07-28 `0.8.7` 배포 후보 · 실패 전사 조각 선복구와 맥락 봉인
 
 ### 확인한 원인
@@ -2137,3 +2420,11 @@ PassB가 정상 동작해도 `context-missing` 6개는 남는다. 대사 텍스�
 - **공개 시그니처:** `estimateRemainingMs`, `formatRemainingLabel`, `estimateAnalysisDurationRangeMs` 의 시그니처는 그대로 두고 `clampToMonotonic` 만 추가했다. 계획 범위 함수(`estimateAnalysisDurationRangeMs`)는 캘리브레이션된 원본이라 패딩하지 않는다 — 패딩은 표시 단계에서만 붙는다.
 - **테스트 9건 추가:** 패딩 적용(measured/static 양쪽), 완료 시 0 수렴, 첫 표시, 상승 시 유지, 하강 시 추종, 요동치는 추정 시퀀스 전체에서 비상승, 0 고정, 멱등성, 비유한 입력 방어. `npm run check` 전체 통과(932 tests).
 - **알아 둘 것:** `roundToMinutes` 는 하한이 1분이라 남은 값이 0이어도 라벨은 "약 1분 남음"이다(기존 의도된 동작, 이번 변경과 무관).
+
+### Candidate Pass B verification receipt exact source-range fence · 2026-07-29
+
+- **문제:** 기존 verification receipt `1.1.0`은 canonical context fingerprint만 묶었다. candidate ID가 같아도 시작·끝 경계가 바뀐 경우, 저장된 유료 insight와 thumbnail이 새 구간의 결과인 것처럼 durability/final projection을 통과할 수 있었다.
+- **결정:** current receipt를 `1.2.0`으로 올리고 `candidateId`, `sourceStartMs`, `sourceEndMs`, `routingModelRevision`, `contextFingerprint`를 하나의 exact fence로 저장한다. 발급 함수는 네 relative frame timestamp가 해당 source range 안에 있고 thumbnail이 그 네 장 중 하나이며 routing revision이 현재 revision일 때만 receipt를 만든다.
+- **복구:** `1.0.0 | 1.1.0`과 과거 routing revision의 `1.2.0`은 이미 결제한 insight를 잃지 않도록 저장 계층에서 계속 읽는다. 다만 source range 전체를 증명하지 못하거나 현재 routing revision과 다르므로 `candidatePassBReceiptMatchesContext`와 final publication은 항상 거부하고 해당 candidate만 다시 분석 대상으로 남긴다.
+- **저장 무결성:** current receipt 안의 `candidateId`가 `verificationReceiptById` map key와 다르면 record 자체를 거부한다. durability readback과 analysis outstanding 판정도 현재 `sourceFenceByCandidateId`가 없거나 한 필드라도 다르면 fail-closed한다.
+- **검증:** exact context parity, candidate ID/start/end/routing mismatch, legacy receipt, 이전 routing receipt, range 밖 frame, source fence 누락, 저장 map-key mismatch, durability 재실행을 포함한 관련 6개 파일 81개 테스트, 전체 TypeScript typecheck와 대상 ESLint가 통과했다. `App.tsx`는 별도 통합 작업자에게 정확한 4th argument와 `sourceFenceByCandidateId` 연결 지점을 전달했으며 이 작업에서는 수정하지 않았다.

@@ -2,12 +2,18 @@ import type { BroadcastContextTranscriptionChunk } from "./broadcastContextSampl
 import {
   BROADCAST_TRANSCRIPT_QWEN_SCHEMA_VERSION,
   MAX_BROADCAST_TRANSCRIPT_QWEN_DURATION_MS,
-  isBroadcastTranscriptModelId,
-  type BroadcastTranscriptQwenResult,
 } from "./broadcastTranscriptQwen";
+import {
+  createBroadcastTranscriptProviderReceipt,
+  isBroadcastTranscriptRouteSelection,
+  normalizeBroadcastTranscriptProviderReceipt,
+  type BroadcastTranscriptRouteSelection,
+  type BroadcastTranscriptVerifiedResult,
+} from "./broadcastTranscriptRouteManifest";
 import {
   MAX_BROADCAST_TRANSCRIPT_WORKER_CHUNKS,
   isBroadcastTranscriptChunkId,
+  type BroadcastTranscriptChunkAbstention,
   type BroadcastTranscriptChunkGap,
   type BroadcastTranscriptChunkGapReason,
   type BroadcastTranscriptQuotaIdentity,
@@ -15,6 +21,10 @@ import {
   type BroadcastTranscriptWorkerRequest,
   type BroadcastTranscriptWorkerResponse,
 } from "./broadcastTranscriptWorkerProtocol";
+import {
+  broadcastSpeechActivityCanSkipAsr,
+  normalizeBroadcastSpeechActivityRunReceipt,
+} from "./broadcastSpeechActivity";
 
 interface WorkerLike {
   postMessage(message: BroadcastTranscriptWorkerRequest): void;
@@ -28,28 +38,34 @@ interface WorkerLike {
 export interface RunBroadcastTranscriptWorkerOptions {
   readonly sourceDurationMs: number;
   readonly chunks: readonly BroadcastContextTranscriptionChunk[];
+  readonly route: BroadcastTranscriptRouteSelection;
   readonly quota?: BroadcastTranscriptQuotaIdentity;
   readonly signal?: AbortSignal;
   readonly workerFactory?: () => WorkerLike;
   readonly onProgress?: (progress: BroadcastTranscriptWorkerProgress) => void;
   readonly onPartialResult?: (
     chunkId: string,
-    result: BroadcastTranscriptQwenResult,
+    result: BroadcastTranscriptVerifiedResult,
   ) => void;
   readonly onChunkGap?: (
     chunkId: string,
     reason: BroadcastTranscriptChunkGapReason,
   ) => void;
+  readonly onChunkAbstention?: (
+    abstention: BroadcastTranscriptChunkAbstention,
+  ) => void;
 }
 
 export interface BroadcastTranscriptWorkerFragment {
   readonly chunkId: string;
-  readonly result: BroadcastTranscriptQwenResult;
+  readonly result: BroadcastTranscriptVerifiedResult;
 }
 
 export interface BroadcastTranscriptWorkerRunResult {
   readonly fragments: readonly BroadcastTranscriptWorkerFragment[];
-  readonly results: readonly BroadcastTranscriptQwenResult[];
+  readonly results: readonly BroadcastTranscriptVerifiedResult[];
+  readonly abstentions: readonly BroadcastTranscriptChunkAbstention[];
+  readonly abstainedChunkIds: readonly string[];
   readonly gaps: readonly BroadcastTranscriptChunkGap[];
   readonly gapChunkIds: readonly string[];
   readonly requestedCount: number;
@@ -84,29 +100,58 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function validResult(
   value: unknown,
   chunk: BroadcastContextTranscriptionChunk,
-): value is BroadcastTranscriptQwenResult {
-  return (
-    isRecord(value) &&
-    value.schemaVersion === BROADCAST_TRANSCRIPT_QWEN_SCHEMA_VERSION &&
-    isBroadcastTranscriptModelId(value.modelId) &&
-    value.sourceStartMs === chunk.sourceStartMs &&
-    value.sourceEndMs === chunk.sourceEndMs &&
-    typeof value.textKo === "string" &&
-    value.textKo.trim().length > 0 &&
-    (value.detectedLanguage === null || typeof value.detectedLanguage === "string") &&
-    (value.emotion === null || typeof value.emotion === "string") &&
-    (value.billedSeconds === null ||
+  route: BroadcastTranscriptRouteSelection,
+): value is BroadcastTranscriptVerifiedResult {
+  if (
+    !isRecord(value) ||
+    value.schemaVersion !== BROADCAST_TRANSCRIPT_QWEN_SCHEMA_VERSION ||
+    typeof value.modelRevision !== "string" ||
+    value.sourceStartMs !== chunk.sourceStartMs ||
+    value.sourceEndMs !== chunk.sourceEndMs ||
+    typeof value.textKo !== "string" ||
+    value.textKo.trim().length === 0 ||
+    (value.detectedLanguage !== null &&
+      typeof value.detectedLanguage !== "string") ||
+    (value.emotion !== null && typeof value.emotion !== "string") ||
+    !(
+      value.billedSeconds === null ||
       (typeof value.billedSeconds === "number" &&
         Number.isFinite(value.billedSeconds) &&
-        value.billedSeconds >= 0))
-  );
+        value.billedSeconds >= 0)
+    )
+  ) {
+    return false;
+  }
+  try {
+    const receipt = normalizeBroadcastTranscriptProviderReceipt(
+      value.providerReceipt,
+    );
+    const expected = createBroadcastTranscriptProviderReceipt(
+      route,
+      value.modelId,
+      value.modelRevision,
+      receipt.fallbackUsed,
+    );
+    return (
+      receipt.routeManifestFingerprint === route.fingerprint &&
+      receipt.modelId === value.modelId &&
+      receipt.modelRevision === value.modelRevision &&
+      JSON.stringify(receipt) === JSON.stringify(expected)
+    );
+  } catch {
+    return false;
+  }
 }
 
 function inputIssue(
   file: File,
   sourceDurationMs: number,
   chunks: readonly BroadcastContextTranscriptionChunk[],
+  route: BroadcastTranscriptRouteSelection,
 ): string | null {
+  if (!isBroadcastTranscriptRouteSelection(route)) {
+    return "방송 대사 분석 모델 경로가 고정되지 않았어요.";
+  }
   if (
     typeof file.name !== "string" ||
     file.name.trim().length === 0 ||
@@ -179,6 +224,7 @@ function isResponse(value: unknown): value is BroadcastTranscriptWorkerResponse 
     [
       "broadcast-transcript-progress",
       "broadcast-transcript-partial",
+      "broadcast-transcript-abstention",
       "broadcast-transcript-gap",
       "broadcast-transcript-complete",
       "broadcast-transcript-cancelled",
@@ -187,11 +233,57 @@ function isResponse(value: unknown): value is BroadcastTranscriptWorkerResponse 
   );
 }
 
+function normalizeWorkerAbstention(
+  value: Extract<
+    BroadcastTranscriptWorkerResponse,
+    { readonly type: "broadcast-transcript-abstention" }
+  >,
+  chunk: BroadcastContextTranscriptionChunk,
+  sourceDurationMs: number,
+): BroadcastTranscriptChunkAbstention | null {
+  if (value.reason === "no-audio") {
+    return value.speechActivityReceipt === null
+      ? {
+          chunkId: chunk.chunkId,
+          reason: "no-audio",
+          speechActivityReceipt: null,
+        }
+      : null;
+  }
+  if (value.reason !== "no-speech") return null;
+  const receipt = normalizeBroadcastSpeechActivityRunReceipt(
+    value.speechActivityReceipt,
+  );
+  if (
+    receipt === null ||
+    receipt.sourceDurationMs !== sourceDurationMs ||
+    receipt.sourceStartMs !== chunk.sourceStartMs ||
+    receipt.sourceEndMs !== chunk.sourceEndMs ||
+    !receipt.coverage.complete ||
+    receipt.coverage.repairRequired ||
+    receipt.coverage.asrRequiredDurationMs !== 0 ||
+    receipt.cells.length !== receipt.coverage.plannedCellCount ||
+    !receipt.cells.every(broadcastSpeechActivityCanSkipAsr)
+  ) {
+    return null;
+  }
+  return {
+    chunkId: chunk.chunkId,
+    reason: "no-speech",
+    speechActivityReceipt: receipt,
+  };
+}
+
 export function runBroadcastTranscriptWorker(
   file: File,
   options: RunBroadcastTranscriptWorkerOptions,
 ): Promise<BroadcastTranscriptWorkerRunResult> {
-  const issue = inputIssue(file, options.sourceDurationMs, options.chunks);
+  const issue = inputIssue(
+    file,
+    options.sourceDurationMs,
+    options.chunks,
+    options.route,
+  );
   if (issue !== null) {
     return Promise.reject(
       new BroadcastTranscriptWorkerClientError(
@@ -220,7 +312,10 @@ export function runBroadcastTranscriptWorker(
 
   return new Promise((resolve, reject) => {
     let settled = false;
-    const resultsByChunkId = new Map<string, BroadcastTranscriptQwenResult>();
+    const resultsByChunkId =
+      new Map<string, BroadcastTranscriptVerifiedResult>();
+    const abstentionByChunkId =
+      new Map<string, BroadcastTranscriptChunkAbstention>();
     const gapReasonByChunkId = new Map<string, BroadcastTranscriptChunkGapReason>();
 
     const cleanup = (): void => {
@@ -296,8 +391,9 @@ export function runBroadcastTranscriptWorker(
           if (
             chunk === undefined ||
             resultsByChunkId.has(event.data.chunkId) ||
+            abstentionByChunkId.has(event.data.chunkId) ||
             gapReasonByChunkId.has(event.data.chunkId) ||
-            !validResult(event.data.result, chunk)
+            !validResult(event.data.result, chunk, options.route)
           ) {
             malformed();
             return;
@@ -310,10 +406,42 @@ export function runBroadcastTranscriptWorker(
           }
           return;
         }
+        case "broadcast-transcript-abstention": {
+          const chunk = chunkById.get(event.data.chunkId);
+          const abstention =
+            chunk === undefined
+              ? null
+              : normalizeWorkerAbstention(
+                  event.data,
+                  chunk,
+                  options.sourceDurationMs,
+                );
+          if (
+            chunk === undefined ||
+            abstention === null ||
+            resultsByChunkId.has(event.data.chunkId) ||
+            abstentionByChunkId.has(event.data.chunkId) ||
+            gapReasonByChunkId.has(event.data.chunkId)
+          ) {
+            malformed();
+            return;
+          }
+          abstentionByChunkId.set(
+            event.data.chunkId,
+            abstention,
+          );
+          try {
+            options.onChunkAbstention?.(abstention);
+          } catch {
+            malformed();
+          }
+          return;
+        }
         case "broadcast-transcript-gap":
           if (
             !chunkById.has(event.data.chunkId) ||
             resultsByChunkId.has(event.data.chunkId) ||
+            abstentionByChunkId.has(event.data.chunkId) ||
             gapReasonByChunkId.has(event.data.chunkId) ||
             ![
               "decode-failed",
@@ -337,8 +465,12 @@ export function runBroadcastTranscriptWorker(
           if (
             event.data.requestedCount !== options.chunks.length ||
             event.data.completedCount !== resultsByChunkId.size ||
+            event.data.abstentionCount !== abstentionByChunkId.size ||
             event.data.gapCount !== gapReasonByChunkId.size ||
-            resultsByChunkId.size + gapReasonByChunkId.size !== options.chunks.length
+            resultsByChunkId.size +
+                abstentionByChunkId.size +
+                gapReasonByChunkId.size !==
+              options.chunks.length
           ) {
             malformed();
             return;
@@ -357,9 +489,17 @@ export function runBroadcastTranscriptWorker(
               ? []
               : [{ chunkId: chunk.chunkId, reason }];
           });
+          const abstentions = chronologicalChunks.flatMap((chunk) => {
+            const abstention = abstentionByChunkId.get(chunk.chunkId);
+            return abstention === undefined
+              ? []
+              : [abstention];
+          });
           resolve({
             fragments,
             results: fragments.map(({ result }) => result),
+            abstentions,
+            abstainedChunkIds: abstentions.map(({ chunkId }) => chunkId),
             gaps,
             gapChunkIds: gaps.map(({ chunkId }) => chunkId),
             requestedCount: options.chunks.length,
@@ -383,6 +523,7 @@ export function runBroadcastTranscriptWorker(
       type: "broadcast-transcript-analyze",
       identity,
       ...(options.quota === undefined ? {} : { quota: options.quota }),
+      route: options.route,
       file,
       sourceDurationMs: options.sourceDurationMs,
       chunks: options.chunks,

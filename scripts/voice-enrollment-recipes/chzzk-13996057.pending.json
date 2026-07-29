@@ -1,0 +1,46 @@
+{
+  "schemaVersion": "1.0.0",
+  "tool": "exclipper.voice-enrollment-candidate-extractor",
+  "safetyAcknowledgement": "candidate-ranges-are-unverified-and-require-human-voice-review",
+  "videoNo": "13996057",
+  "sourceLocator": "https://chzzk.naver.com/video/13996057",
+  "manifestRevision": "chzzk-video-13996057-pending-candidates-v1",
+  "ranges": [
+    {
+      "participantId": "sera-professor",
+      "start": "00:02:30",
+      "end": "00:03:00",
+      "reviewNote": "현재 맥락에서 지정된 후보 구간일 뿐, 세라 교수님의 단독 발화인지 아직 검증하지 않았습니다."
+    },
+    {
+      "participantId": "torori-coco",
+      "start": "00:09:20",
+      "end": "00:09:50",
+      "reviewNote": "현재 맥락에서 지정된 후보 구간일 뿐, 토로리 코코의 단독 발화인지 아직 검증하지 않았습니다."
+    },
+    {
+      "participantId": "sena-arbel",
+      "start": "00:12:30",
+      "end": "00:13:00",
+      "reviewNote": "현재 맥락에서 지정된 후보 구간일 뿐, 세나 아르벨의 단독 발화인지 아직 검증하지 않았습니다."
+    },
+    {
+      "participantId": "mangjing",
+      "start": "00:15:50",
+      "end": "00:16:20",
+      "reviewNote": "현재 맥락에서 지정된 후보 구간일 뿐, 망징이의 단독 발화인지 아직 검증하지 않았습니다."
+    },
+    {
+      "participantId": "eureka",
+      "start": "00:27:00",
+      "end": "00:27:30",
+      "reviewNote": "현재 맥락에서 지정된 후보 구간일 뿐, 유레카의 단독 발화인지 아직 검증하지 않았습니다."
+    },
+    {
+      "participantId": "amoretto",
+      "start": "00:53:53",
+      "end": "00:54:25",
+      "reviewNote": "현재 맥락에서 지정된 후보 구간일 뿐, 아모레또의 단독 발화인지 아직 검증하지 않았습니다."
+    }
+  ]
+}

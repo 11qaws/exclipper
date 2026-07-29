@@ -12,6 +12,36 @@ import type {
   BroadcastTranscriptWorkerRequest,
   BroadcastTranscriptWorkerResponse,
 } from "./broadcastTranscriptWorkerProtocol";
+import {
+  createBroadcastTranscriptProviderReceipt,
+  type BroadcastTranscriptRouteSelection,
+} from "./broadcastTranscriptRouteManifest";
+import { BROADCAST_TRANSCRIPT_QWEN_OMNI_MODEL_REVISION } from "./broadcastTranscriptQwen";
+import { createVerifiedNoSpeechRunReceiptForTest } from "../testSupport/broadcastSpeechActivityTestReceipt";
+
+const ROUTE: BroadcastTranscriptRouteSelection = {
+  manifest: {
+    schemaVersion: "1.0.0",
+    serviceVersion: 5,
+    routingPolicyVersion: "1.11.0",
+    providerConfigurationVersion: "1.3.0",
+    transportVersion: 2,
+    transportMode: "free-r2",
+    maximumChunkDurationMs: 90_000,
+    primaryMediaType: "audio/wav",
+    provider: "qwen",
+    modelId: "qwen3.5-omni-flash",
+    modelRevision: BROADCAST_TRANSCRIPT_QWEN_OMNI_MODEL_REVISION,
+  },
+  fingerprint: `sha256:${"1".repeat(64)}`,
+};
+
+const PRIMARY_RECEIPT = createBroadcastTranscriptProviderReceipt(
+  ROUTE,
+  "qwen3.5-omni-flash",
+  BROADCAST_TRANSCRIPT_QWEN_OMNI_MODEL_REVISION,
+  false,
+);
 
 class FakeWorker {
   public readonly posted: BroadcastTranscriptWorkerRequest[] = [];
@@ -46,6 +76,7 @@ describe("broadcastTranscriptWorkerClient", () => {
       new File(["x"], "food-talk.mp4"),
       {
         sourceDurationMs,
+        route: ROUTE,
         chunks,
         signal: controller.signal,
         workerFactory: () => worker,
@@ -70,6 +101,7 @@ describe("broadcastTranscriptWorkerClient", () => {
       new File(["x"], "retry.mp4"),
       {
         sourceDurationMs: 1_000,
+        route: ROUTE,
         chunks: [
           {
             chunkId: "asr-001",
@@ -103,6 +135,7 @@ describe("broadcastTranscriptWorkerClient", () => {
     try {
       await runBroadcastTranscriptWorker(new File(["x"], "sample.mp4"), {
         sourceDurationMs: 2_000,
+        route: ROUTE,
         chunks: [
           {
             chunkId: "asr-001",
@@ -129,6 +162,7 @@ describe("broadcastTranscriptWorkerClient", () => {
     ];
     const promise = runBroadcastTranscriptWorker(new File(["x"], "sample.mp4"), {
       sourceDurationMs: 2_000,
+      route: ROUTE,
       chunks,
       workerFactory: () => worker,
     });
@@ -140,7 +174,9 @@ describe("broadcastTranscriptWorkerClient", () => {
     ]);
     const result = (start: number) => ({
       schemaVersion: "1.0.0" as const,
-      modelId: "qwen3-asr-flash" as const,
+      modelId: "qwen3.5-omni-flash" as const,
+      modelRevision: BROADCAST_TRANSCRIPT_QWEN_OMNI_MODEL_REVISION,
+      providerReceipt: PRIMARY_RECEIPT,
       sourceStartMs: start,
       sourceEndMs: start + 1_000,
       textKo: `대사 ${start}`,
@@ -155,6 +191,7 @@ describe("broadcastTranscriptWorkerClient", () => {
       identity: analyze.identity,
       requestedCount: 2,
       completedCount: 2,
+      abstentionCount: 0,
       gapCount: 0,
       concurrencyOutcome: "동시 4 (상한 미확인)",
     });
@@ -174,6 +211,7 @@ describe("broadcastTranscriptWorkerClient", () => {
     await expect(
       runBroadcastTranscriptWorker(new File(["x"], "sample.mp4"), {
         sourceDurationMs: 3_000,
+        route: ROUTE,
         chunks: [
           { chunkId: "late", sourceStartMs: 1_000, sourceEndMs: 2_000, kind: "event" },
           { chunkId: "overlap", sourceStartMs: 500, sourceEndMs: 1_500, kind: "uniform" },
@@ -187,6 +225,7 @@ describe("broadcastTranscriptWorkerClient", () => {
     const onChunkGap = vi.fn();
     const promise = runBroadcastTranscriptWorker(new File(["x"], "sample.mp4"), {
       sourceDurationMs: 1_000,
+      route: ROUTE,
       chunks: [
         { chunkId: "asr-001", sourceStartMs: 0, sourceEndMs: 1_000, kind: "uniform" },
       ],
@@ -206,6 +245,7 @@ describe("broadcastTranscriptWorkerClient", () => {
       identity: analyze.identity,
       requestedCount: 1,
       completedCount: 0,
+      abstentionCount: 0,
       gapCount: 1,
       concurrencyOutcome: "동시 1 (2 에서 실패)",
     });
@@ -223,10 +263,112 @@ describe("broadcastTranscriptWorkerClient", () => {
     );
   });
 
+  it("returns confirmed no-speech as a resolved abstention, not a retry gap", async () => {
+    const worker = new FakeWorker();
+    const onChunkAbstention = vi.fn();
+    const promise = runBroadcastTranscriptWorker(
+      new File(["x"], "sample.mp4"),
+      {
+        sourceDurationMs: 10_000,
+        route: ROUTE,
+        chunks: [
+          {
+            chunkId: "asr-001",
+            sourceStartMs: 0,
+            sourceEndMs: 10_000,
+            kind: "uniform",
+          },
+        ],
+        workerFactory: () => worker,
+        onChunkAbstention,
+      },
+    );
+    const analyze = worker.posted[0];
+    if (analyze?.type !== "broadcast-transcript-analyze") {
+      throw new Error("request");
+    }
+    worker.emit({
+      type: "broadcast-transcript-abstention",
+      identity: analyze.identity,
+      chunkId: "asr-001",
+      reason: "no-speech",
+      speechActivityReceipt: createVerifiedNoSpeechRunReceiptForTest(
+        10_000,
+        0,
+        10_000,
+      ),
+    });
+    worker.emit({
+      type: "broadcast-transcript-complete",
+      identity: analyze.identity,
+      requestedCount: 1,
+      completedCount: 0,
+      abstentionCount: 1,
+      gapCount: 0,
+      concurrencyOutcome: "동시 1",
+    });
+
+    await expect(promise).resolves.toMatchObject({
+      requestedCount: 1,
+      results: [],
+      abstainedChunkIds: ["asr-001"],
+      abstentions: [
+        expect.objectContaining({
+          chunkId: "asr-001",
+          reason: "no-speech",
+        }),
+      ],
+      gapChunkIds: [],
+      gaps: [],
+    });
+    expect(onChunkAbstention).toHaveBeenCalledWith(
+      expect.objectContaining({
+        chunkId: "asr-001",
+        reason: "no-speech",
+      }),
+    );
+  });
+
+  it("rejects a no-speech claim without an exact VAD receipt", async () => {
+    const worker = new FakeWorker();
+    const promise = runBroadcastTranscriptWorker(
+      new File(["x"], "sample.mp4"),
+      {
+        sourceDurationMs: 10_000,
+        route: ROUTE,
+        chunks: [
+          {
+            chunkId: "asr-001",
+            sourceStartMs: 0,
+            sourceEndMs: 10_000,
+            kind: "uniform",
+          },
+        ],
+        workerFactory: () => worker,
+      },
+    );
+    const analyze = worker.posted[0];
+    if (analyze?.type !== "broadcast-transcript-analyze") {
+      throw new Error("request");
+    }
+    worker.emit({
+      type: "broadcast-transcript-abstention",
+      identity: analyze.identity,
+      chunkId: "asr-001",
+      reason: "no-speech",
+      speechActivityReceipt: null,
+    } as unknown as BroadcastTranscriptWorkerResponse);
+
+    await expect(promise).rejects.toMatchObject({
+      code: "WORKER_MESSAGE_ERROR",
+    });
+  });
+
   it("rejects a partial result outside its chunk fence", async () => {
     const worker = new FakeWorker();
     const promise = runBroadcastTranscriptWorker(new File(["x"], "sample.mp4"), {
       sourceDurationMs: 2_000,
+      route: ROUTE,
       chunks: [{ chunkId: "asr-001", sourceStartMs: 0, sourceEndMs: 1_000, kind: "uniform" }],
       workerFactory: () => worker,
     });
@@ -238,7 +380,9 @@ describe("broadcastTranscriptWorkerClient", () => {
       chunkId: "asr-001",
       result: {
         schemaVersion: "1.0.0",
-        modelId: "qwen3-asr-flash",
+        modelId: "qwen3.5-omni-flash",
+        modelRevision: BROADCAST_TRANSCRIPT_QWEN_OMNI_MODEL_REVISION,
+        providerReceipt: PRIMARY_RECEIPT,
         sourceStartMs: 1_000,
         sourceEndMs: 2_000,
         textKo: "잘못된 구간",
@@ -255,6 +399,7 @@ describe("broadcastTranscriptWorkerClient", () => {
     const controller = new AbortController();
     const promise = runBroadcastTranscriptWorker(new File(["x"], "sample.mp4"), {
       sourceDurationMs: 2_000,
+      route: ROUTE,
       chunks: [{ chunkId: "asr-001", sourceStartMs: 0, sourceEndMs: 1_000, kind: "uniform" }],
       signal: controller.signal,
       workerFactory: () => worker,

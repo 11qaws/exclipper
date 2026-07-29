@@ -17,10 +17,12 @@
 |---|---|---|
 | `thumbnailById` | `storage/candidatePassBInsightStore.ts` | 후보당 대표 프레임 1장(base64). **복원하면 살아난다** |
 | `insightById` | `storage/candidatePassBInsightStore.ts` | Pass B 인사이트 |
-| `verificationReceiptById` | `storage/candidatePassBInsightStore.ts` | 검증 영수증 |
+| `verificationReceiptById` | `storage/candidatePassBInsightStore.ts` | 검증 영수증. current `1.2.0`은 map key와 같은 `candidateId`·source start/end·routing revision·context fingerprint를 exact fence로 저장 |
 | `modelByCandidateId` | `storage/candidatePassBInsightStore.ts` | 후보별 사용 모델 |
 | `contentFingerprint` | `storage/durableAnalysisPayload.ts` | 콘텐츠 지문. **캐시의 조회 키가 된다** |
 | `rankPercentile` | `storage/durableAnalysisPayload.ts` | 내부 계산용. **사용자에게 보이면 안 된다** |
+| `refinementTranscriptInputSignature` | `storage/broadcastContextSessionStore.ts` | 자막 없는 의미 refinement 전사 계획의 exact input fence |
+| `refinementTranscriptCheckpointJson` | `storage/broadcastContextSessionStore.ts` | 성공 조각·무발화/무오디오 abstention·미해결 gap의 canonical per-fragment checkpoint |
 | `job.runIds` | `storage/analysisResultStore.ts` (`analysisJobs`) | 이력용이 아니라 **삭제용**. 없으면 실행 결과가 고아로 남는다 |
 | `handle` | `storage/sourceHandleStore.ts` | **별도 DB.** JSON 이 아니라 기존 저장소가 거부한다 |
 
@@ -46,6 +48,17 @@
 ---
 
 ## 2. 파일명이 개념과 다른 것
+
+| 파일 | 실제 책임 |
+|---|---|
+| `analysis/broadcastTranscriptQwen.ts` | 이름과 달리 방송 전사의 provider-neutral 계약이다. Qwen·Gemini·Groq 요청/응답 검증, model ID/revision, 공통 `BroadcastTranscriptQwenResult`를 소유한다. Groq는 서버가 만든 URL 또는 bounded WAV만 받고 한국어·segment timestamp를 검증한다. |
+| `cloudflare/aiProviderConfiguration.ts` | 후보·전체 맥락·전사의 provider 선택, secret readiness, endpoint와 bounded fallback 정책을 소유한다. Groq secret이 있어도 기본 Qwen route를 자동 변경하지 않는다. |
+| `cloudflare/aiProxy.worker.ts` | `free-r2` ticket을 provider URL 요청으로 해소하고, `paid-direct` WAV를 multipart file로 변환하며, credential과 upstream 오류를 브라우저에서 차단한다. |
+| `analysis/speakerEmbeddingWorkerProtocol.ts` | WavLM 모델·revision·입력 PCM 상한과 source/preparation fingerprint를 고정하는 화자 임베딩 Worker 계약이다. |
+| `analysis/speakerEmbedding.worker.ts` | 브라우저 WASM에서 한 발화씩 WavLM x-vector를 만들고 PCM을 폐기하는 실행부다. |
+| `analysis/speakerEmbeddingWorkerClient.ts` | 모델을 유지하는 Worker 수명, 취소·stale identity·진행률·결과 검증을 소유한다. |
+| `analysis/speakerEmbeddingMath.ts` | prototype 평균, cosine score, 부분 coverage와 open-set `unknown` 투영을 소유한다. |
+| `scripts/evaluate-speaker-enrollment-candidates.mjs` | repository 밖의 pending FLAC을 고정 모델로 교차검증하고 점수만 출력하는 개발 도구다. |
 
 한국어로 떠올린 개념과 영어 파일명이 멀어 검색이 빗나가는 것들. 개념어가 아니라
 **영어 식별자로 찾아야 한다**(`AGENTS.md` §9.1).

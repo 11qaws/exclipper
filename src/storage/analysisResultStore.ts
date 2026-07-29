@@ -15,14 +15,30 @@ import {
 } from "./durableAnalysisPayload";
 import {
   assertCandidatePassBInsightsRecord,
+  candidatePassBInsightSnapshotsExactlyMatch,
   cloneCandidatePassBInsightsRecord,
   type CandidatePassBInsightsRecord,
 } from "./candidatePassBInsightStore";
 import {
+  checkpointBroadcastContextSessionTranscript,
+  checkpointBroadcastContextSessionPhaseLedger,
+  checkpointBroadcastContextSessionRefinementEvidenceLedger,
+  checkpointBroadcastContextSessionRefinementTranscript,
+  cloneBroadcastContextSessionInitialWriteRecord,
   cloneBroadcastContextSessionRecord,
+  commitBroadcastContextSessionContext,
+  invalidateBroadcastContextSessionContext,
+  parseBroadcastContextSessionRefinementEvidenceLedger,
+  type BroadcastContextSessionContextCommit,
+  type BroadcastContextSessionPhaseLedgerCheckpoint,
   type BroadcastContextSessionRecord,
+  type BroadcastContextSessionInitialWriteRecord,
+  type BroadcastContextSessionRefinementEvidenceLedgerCheckpoint,
+  type BroadcastContextSessionRefinementTranscriptCheckpoint,
+  type BroadcastContextSessionTranscriptCheckpoint,
 } from "./broadcastContextSessionStore";
 import type { AnalysisJob } from "../domain/analysisJob";
+import type { ContentDigestAdapter } from "../security/contentFingerprint";
 
 export type JsonPrimitive = string | number | boolean | null;
 
@@ -31,10 +47,7 @@ export type JsonObject = Readonly<{ [key: string]: JsonValue }>;
 export type JsonValue = JsonPrimitive | JsonObject | readonly JsonValue[];
 
 export type AnalysisRecordKind =
-  | "manifest"
-  | "provisionalResult"
-  | "finalResult"
-  | "failure";
+  "manifest" | "provisionalResult" | "finalResult" | "failure";
 
 interface AnalysisPayloadByKind {
   readonly manifest: DurableManifestPayload;
@@ -55,15 +68,13 @@ export interface AnalysisRecord<K extends AnalysisRecordKind> {
 }
 
 export type AnalysisManifestRecord = AnalysisRecord<"manifest">;
-export type ProvisionalAnalysisResultRecord = AnalysisRecord<"provisionalResult">;
+export type ProvisionalAnalysisResultRecord =
+  AnalysisRecord<"provisionalResult">;
 export type FinalAnalysisResultRecord = AnalysisRecord<"finalResult">;
 export type AnalysisFailureRecord = AnalysisRecord<"failure">;
 
 export type AnalysisTerminalOutcome =
-  | "completed"
-  | "completedWithGaps"
-  | "cancelled"
-  | "failed";
+  "completed" | "completedWithGaps" | "cancelled" | "failed";
 
 /**
  * The sole durable terminal pointer for a run. Final/failure artifacts are
@@ -130,12 +141,176 @@ export interface AnalysisResultStore {
   getTerminalRecord(runId: string): Promise<AnalysisTerminalRecord | null>;
   listTerminalRecords(): Promise<AnalysisTerminalRecordCatalog>;
   putSourceSnapshot(record: SourceCapabilitySnapshotRecord): Promise<void>;
-  getSourceSnapshot(sourceCheckId: string): Promise<SourceCapabilitySnapshotRecord | null>;
-  putCandidatePassBInsights(record: CandidatePassBInsightsRecord): Promise<void>;
-  getCandidatePassBInsights(runId: string): Promise<CandidatePassBInsightsRecord | null>;
-  putBroadcastContextSession(record: BroadcastContextSessionRecord): Promise<void>;
-  getBroadcastContextSession(runId: string): Promise<BroadcastContextSessionRecord | null>;
+  getSourceSnapshot(
+    sourceCheckId: string,
+  ): Promise<SourceCapabilitySnapshotRecord | null>;
+  putCandidatePassBInsights(
+    record: CandidatePassBInsightsRecord,
+  ): Promise<void>;
+  replaceCandidatePassBInsightsIfUnchanged(
+    expected: CandidatePassBInsightsRecord | null,
+    replacement: CandidatePassBInsightsRecord,
+  ): Promise<boolean>;
+  getCandidatePassBInsights(
+    runId: string,
+  ): Promise<CandidatePassBInsightsRecord | null>;
+  putBroadcastContextSession(
+    record: BroadcastContextSessionInitialWriteRecord,
+  ): Promise<void>;
+  replaceBroadcastContextSessionIfUnchanged(
+    expected: BroadcastContextSessionRecord,
+    replacement: BroadcastContextSessionRecord,
+  ): Promise<boolean>;
+  getBroadcastContextSession(
+    runId: string,
+  ): Promise<BroadcastContextSessionRecord | null>;
   close(): void;
+}
+
+type BroadcastContextSessionCompareAndSwapStore = Pick<
+  AnalysisResultStore,
+  "replaceBroadcastContextSessionIfUnchanged"
+>;
+
+type BroadcastContextSessionCheckpointReadbackStore = Pick<
+  AnalysisResultStore,
+  "replaceBroadcastContextSessionIfUnchanged" | "getBroadcastContextSession"
+>;
+
+/**
+ * Atomically replaces one exact transcript-map snapshot together with its
+ * source-fenced no-speech/no-audio evidence. A stale tab cannot split the two
+ * records or overwrite a newer checkpoint.
+ */
+export function checkpointBroadcastContextSessionTranscriptIfUnchanged(
+  store: BroadcastContextSessionCompareAndSwapStore,
+  expected: BroadcastContextSessionRecord,
+  checkpoint: BroadcastContextSessionTranscriptCheckpoint,
+): Promise<boolean> {
+  return store.replaceBroadcastContextSessionIfUnchanged(
+    expected,
+    checkpointBroadcastContextSessionTranscript(expected, checkpoint),
+  );
+}
+
+/**
+ * Invalidates a whole-context result only while the durable session still
+ * equals the caller's exact snapshot. A stale tab or late callback receives
+ * `false` and cannot erase a newer context or refinement.
+ */
+export function invalidateBroadcastContextSessionContextIfUnchanged(
+  store: BroadcastContextSessionCompareAndSwapStore,
+  expected: BroadcastContextSessionRecord,
+  recordedAt: string,
+): Promise<boolean> {
+  return store.replaceBroadcastContextSessionIfUnchanged(
+    expected,
+    invalidateBroadcastContextSessionContext(expected, recordedAt),
+  );
+}
+
+/**
+ * Commits a new exact-input-bound whole-context result with CAS semantics.
+ * Refinements from the previous parent context are cleared by the validated
+ * replacement builder before the storage transaction starts.
+ */
+export function commitBroadcastContextSessionContextIfUnchanged(
+  store: BroadcastContextSessionCompareAndSwapStore,
+  expected: BroadcastContextSessionRecord,
+  commit: BroadcastContextSessionContextCommit,
+): Promise<boolean> {
+  return store.replaceBroadcastContextSessionIfUnchanged(
+    expected,
+    commitBroadcastContextSessionContext(expected, commit),
+  );
+}
+
+/**
+ * Persists one exact-input-bound phase-ledger checkpoint with CAS semantics.
+ * A stale tab cannot overwrite a newer ledger transition or context result.
+ */
+export function checkpointBroadcastContextSessionPhaseLedgerIfUnchanged(
+  store: BroadcastContextSessionCompareAndSwapStore,
+  expected: BroadcastContextSessionRecord,
+  checkpoint: BroadcastContextSessionPhaseLedgerCheckpoint,
+): Promise<boolean> {
+  return store.replaceBroadcastContextSessionIfUnchanged(
+    expected,
+    checkpointBroadcastContextSessionPhaseLedger(expected, checkpoint),
+  );
+}
+
+/**
+ * Persists one exact-input-bound no-caption refinement transcript checkpoint
+ * with CAS semantics. A stale tab cannot replace newer fragment settlements or
+ * preserve semantic candidates derived from different transcript evidence.
+ */
+export function checkpointBroadcastContextSessionRefinementTranscriptIfUnchanged(
+  store: BroadcastContextSessionCompareAndSwapStore,
+  expected: BroadcastContextSessionRecord,
+  checkpoint: BroadcastContextSessionRefinementTranscriptCheckpoint,
+): Promise<boolean> {
+  return store.replaceBroadcastContextSessionIfUnchanged(
+    expected,
+    checkpointBroadcastContextSessionRefinementTranscript(
+      expected,
+      checkpoint,
+    ),
+  );
+}
+
+/**
+ * Persists one canonical refinement-evidence ledger with exact-session CAS,
+ * then proves the exact replacement and its SHA-256 ledger fences can be read
+ * back before the caller advances to another paid or semantic operation.
+ */
+export async function checkpointBroadcastContextSessionRefinementEvidenceLedgerWithReadback(
+  store: BroadcastContextSessionCheckpointReadbackStore,
+  expected: BroadcastContextSessionRecord,
+  checkpoint: BroadcastContextSessionRefinementEvidenceLedgerCheckpoint,
+  digestAdapter: ContentDigestAdapter | null = globalThis.crypto?.subtle ?? null,
+): Promise<BroadcastContextSessionRecord> {
+  const expectedSnapshot = cloneBroadcastContextSessionRecord(expected);
+  const replacement =
+    await checkpointBroadcastContextSessionRefinementEvidenceLedger(
+      expectedSnapshot,
+      checkpoint,
+      digestAdapter,
+    );
+  const replaced = await store.replaceBroadcastContextSessionIfUnchanged(
+    expectedSnapshot,
+    replacement,
+  );
+  if (!replaced) {
+    throw new Error(
+      "Broadcast refinement evidence checkpoint was rejected because the durable session changed.",
+    );
+  }
+  const readback = await store.getBroadcastContextSession(replacement.runId);
+  if (readback === null) {
+    throw new Error(
+      "Broadcast refinement evidence checkpoint could not be verified: readback is missing.",
+    );
+  }
+  let verifiedReadback: BroadcastContextSessionRecord;
+  try {
+    verifiedReadback = cloneBroadcastContextSessionRecord(readback);
+    await parseBroadcastContextSessionRefinementEvidenceLedger(
+      verifiedReadback,
+      digestAdapter,
+    );
+  } catch (error) {
+    throw new Error(
+      "Broadcast refinement evidence checkpoint could not be verified: readback is invalid.",
+      { cause: error },
+    );
+  }
+  if (JSON.stringify(verifiedReadback) !== JSON.stringify(replacement)) {
+    throw new Error(
+      "Broadcast refinement evidence checkpoint could not be verified: readback does not exactly match the written session.",
+    );
+  }
+  return verifiedReadback;
 }
 
 export interface AnalysisTerminalRecordCatalog {
@@ -168,7 +343,8 @@ export class AnalysisResultStoreError extends Error {
   }
 }
 
-export const DEFAULT_ANALYSIS_RESULT_DB_NAME = "retto-highlight-analysis-results";
+export const DEFAULT_ANALYSIS_RESULT_DB_NAME =
+  "retto-highlight-analysis-results";
 export const ANALYSIS_RESULT_DB_VERSION = 5;
 
 export const ANALYSIS_RESULT_OBJECT_STORES = {
@@ -231,7 +407,10 @@ const FORBIDDEN_PROPERTY_NAMES = new Set([
   "username",
 ]);
 
-function payloadError(message: string, cause?: unknown): AnalysisResultStoreError {
+function payloadError(
+  message: string,
+  cause?: unknown,
+): AnalysisResultStoreError {
   return new AnalysisResultStoreError("INVALID_PAYLOAD", message, cause);
 }
 
@@ -249,7 +428,9 @@ function assertSafePropertyName(propertyName: string, path: string): void {
     normalized.includes("filesystemhandle") ||
     normalized.endsWith("filehandle")
   ) {
-    throw payloadError(`${path}.${propertyName} is not permitted in durable analysis data.`);
+    throw payloadError(
+      `${path}.${propertyName} is not permitted in durable analysis data.`,
+    );
   }
 }
 
@@ -302,7 +483,9 @@ function assertSafeJsonValue(
   const descriptors = Object.getOwnPropertyDescriptors(value);
   for (const [propertyName, descriptor] of Object.entries(descriptors)) {
     if (descriptor.get !== undefined || descriptor.set !== undefined) {
-      throw payloadError(`${path}.${propertyName} must be a plain data property.`);
+      throw payloadError(
+        `${path}.${propertyName} must be a plain data property.`,
+      );
     }
   }
 
@@ -323,20 +506,30 @@ function assertSafeJsonValue(
         continue;
       }
       assertSafePropertyName(propertyName, path);
-      assertSafeJsonValue(descriptor.value, `${path}.${propertyName}`, ancestors);
+      assertSafeJsonValue(
+        descriptor.value,
+        `${path}.${propertyName}`,
+        ancestors,
+      );
     }
   } finally {
     ancestors.delete(value);
   }
 }
 
-function assertIdentifier(value: unknown, label: string): asserts value is string {
+function assertIdentifier(
+  value: unknown,
+  label: string,
+): asserts value is string {
   if (typeof value !== "string" || value.trim().length === 0) {
     throw payloadError(`${label} must be a non-empty string.`);
   }
 }
 
-function assertOperationIdentifier(value: unknown, label: string): asserts value is string {
+function assertOperationIdentifier(
+  value: unknown,
+  label: string,
+): asserts value is string {
   assertIdentifier(value, label);
   if (value.length > 180 || !/^[a-z][a-z0-9-]*$/u.test(value)) {
     throw payloadError(`${label} must be a bounded generated identifier.`);
@@ -351,7 +544,9 @@ function analysisSchemaFamily(value: unknown): DurableAnalysisSchemaFamily {
     return durableAnalysisSchemaFamily(value);
   } catch (cause) {
     throw payloadError(
-      cause instanceof Error ? cause.message : "schemaVersion is not supported.",
+      cause instanceof Error
+        ? cause.message
+        : "schemaVersion is not supported.",
       cause,
     );
   }
@@ -369,7 +564,9 @@ function assertModelManifestHash(value: unknown): asserts value is string {
     value.length > 128 ||
     !/^[a-z0-9][a-z0-9._-]*$/u.test(value)
   ) {
-    throw payloadError("modelManifestHash must be a bounded engine identifier.");
+    throw payloadError(
+      "modelManifestHash must be a bounded engine identifier.",
+    );
   }
 }
 
@@ -444,7 +641,9 @@ function assertAnalysisRecord(
     }
   } catch (cause) {
     throw payloadError(
-      cause instanceof Error ? cause.message : "The analysis payload is invalid.",
+      cause instanceof Error
+        ? cause.message
+        : "The analysis payload is invalid.",
       cause,
     );
   }
@@ -489,13 +688,16 @@ function assertSourceSnapshotRecord(
     assertDurableBrowserCapabilities(capabilities, "$.capabilities");
   } catch (cause) {
     throw payloadError(
-      cause instanceof Error ? cause.message : "The source capability payload is invalid.",
+      cause instanceof Error
+        ? cause.message
+        : "The source capability payload is invalid.",
       cause,
     );
   }
   if (
     typeof record.browserCapabilitySignature !== "string" ||
-    record.browserCapabilitySignature !== expectedBrowserCapabilitySignature(capabilities)
+    record.browserCapabilitySignature !==
+      expectedBrowserCapabilitySignature(capabilities)
   ) {
     throw payloadError(
       "browserCapabilitySignature must be derived exactly from the stored capability flags.",
@@ -503,7 +705,9 @@ function assertSourceSnapshotRecord(
   }
 }
 
-function assertTerminalRecord(value: unknown): asserts value is AnalysisTerminalRecord {
+function assertTerminalRecord(
+  value: unknown,
+): asserts value is AnalysisTerminalRecord {
   assertSafeJsonValue(value, "$", new Set<object>());
   const record = asRecord(value);
   assertExactRootKeys(record, [
@@ -534,11 +738,17 @@ function assertTerminalRecord(value: unknown): asserts value is AnalysisTerminal
   ) {
     throw payloadError("outcome is not a supported terminal disposition.");
   }
-  if (record.resultRecordKind !== "finalResult" && record.resultRecordKind !== "failure") {
-    throw payloadError("resultRecordKind must reference finalResult or failure.");
+  if (
+    record.resultRecordKind !== "finalResult" &&
+    record.resultRecordKind !== "failure"
+  ) {
+    throw payloadError(
+      "resultRecordKind must reference finalResult or failure.",
+    );
   }
   if (
-    (record.outcome === "completed" || record.outcome === "completedWithGaps") !==
+    (record.outcome === "completed" ||
+      record.outcome === "completedWithGaps") !==
     (record.resultRecordKind === "finalResult")
   ) {
     throw payloadError("Terminal outcome and resultRecordKind do not agree.");
@@ -550,7 +760,10 @@ function cloneJson<T>(value: T): T {
   try {
     serialized = JSON.stringify(value);
   } catch (cause) {
-    throw payloadError("The durable record could not be serialized as JSON.", cause);
+    throw payloadError(
+      "The durable record could not be serialized as JSON.",
+      cause,
+    );
   }
   if (serialized === undefined) {
     throw payloadError("The durable record could not be serialized as JSON.");
@@ -587,8 +800,14 @@ function assertJobRecord(value: unknown): asserts value is AnalysisJobRecord {
   const record = value as Partial<AnalysisJobRecord>;
   assertIdentifier(record.jobId, "jobId");
   assertRecordedAt(record.lastActivityAt);
-  if (typeof record.bytes !== "number" || !Number.isFinite(record.bytes) || record.bytes < 0) {
-    throw payloadError("Analysis job record must carry a non-negative byte count.");
+  if (
+    typeof record.bytes !== "number" ||
+    !Number.isFinite(record.bytes) ||
+    record.bytes < 0
+  ) {
+    throw payloadError(
+      "Analysis job record must carry a non-negative byte count.",
+    );
   }
   if (typeof record.job !== "object" || record.job === null) {
     throw payloadError("Analysis job record must carry a job.");
@@ -596,7 +815,9 @@ function assertJobRecord(value: unknown): asserts value is AnalysisJobRecord {
   assertIdentifier(record.job.jobId, "job.jobId");
   if (record.job.jobId !== record.jobId) {
     // 키와 내용이 어긋나면 조회는 되는데 잘못된 작업을 지우게 된다.
-    throw payloadError("Analysis job record key does not match the job it holds.");
+    throw payloadError(
+      "Analysis job record key does not match the job it holds.",
+    );
   }
   if (!Array.isArray(record.job.runIds)) {
     throw payloadError("Analysis job must carry the list of runs it spawned.");
@@ -605,7 +826,9 @@ function assertJobRecord(value: unknown): asserts value is AnalysisJobRecord {
   assertSafeJsonValue(record.job, "job", new Set());
 }
 
-function validateAndCloneJobRecord(record: AnalysisJobRecord): AnalysisJobRecord {
+function validateAndCloneJobRecord(
+  record: AnalysisJobRecord,
+): AnalysisJobRecord {
   assertJobRecord(record);
   return cloneJson(record);
 }
@@ -639,18 +862,33 @@ function rejectedOperation<T>(operation: () => T): Promise<T> {
 }
 
 function storeClosedError(): AnalysisResultStoreError {
-  return new AnalysisResultStoreError("STORE_CLOSED", "The analysis result store is closed.");
+  return new AnalysisResultStoreError(
+    "STORE_CLOSED",
+    "The analysis result store is closed.",
+  );
 }
 
 export class InMemoryAnalysisResultStore implements AnalysisResultStore {
   private readonly manifests = new Map<string, AnalysisManifestRecord>();
-  private readonly provisionalResults = new Map<string, ProvisionalAnalysisResultRecord>();
+  private readonly provisionalResults = new Map<
+    string,
+    ProvisionalAnalysisResultRecord
+  >();
   private readonly finalResults = new Map<string, FinalAnalysisResultRecord>();
   private readonly failures = new Map<string, AnalysisFailureRecord>();
   private readonly terminals = new Map<string, AnalysisTerminalRecord>();
-  private readonly sourceSnapshots = new Map<string, SourceCapabilitySnapshotRecord>();
-  private readonly candidatePassBInsights = new Map<string, CandidatePassBInsightsRecord>();
-  private readonly broadcastContextSessions = new Map<string, BroadcastContextSessionRecord>();
+  private readonly sourceSnapshots = new Map<
+    string,
+    SourceCapabilitySnapshotRecord
+  >();
+  private readonly candidatePassBInsights = new Map<
+    string,
+    CandidatePassBInsightsRecord
+  >();
+  private readonly broadcastContextSessions = new Map<
+    string,
+    BroadcastContextSessionRecord
+  >();
   private readonly jobs = new Map<string, AnalysisJobRecord>();
   private closed = false;
 
@@ -714,8 +952,14 @@ export class InMemoryAnalysisResultStore implements AnalysisResultStore {
     });
   }
 
-  public putProvisionalResult(record: ProvisionalAnalysisResultRecord): Promise<void> {
-    return this.putAnalysisRecord(this.provisionalResults, record, "provisionalResult");
+  public putProvisionalResult(
+    record: ProvisionalAnalysisResultRecord,
+  ): Promise<void> {
+    return this.putAnalysisRecord(
+      this.provisionalResults,
+      record,
+      "provisionalResult",
+    );
   }
 
   public putFinalResult(record: FinalAnalysisResultRecord): Promise<void> {
@@ -726,7 +970,9 @@ export class InMemoryAnalysisResultStore implements AnalysisResultStore {
     return this.putAnalysisRecord(this.failures, record, "failure");
   }
 
-  public getFinalResult(runId: string): Promise<FinalAnalysisResultRecord | null> {
+  public getFinalResult(
+    runId: string,
+  ): Promise<FinalAnalysisResultRecord | null> {
     return rejectedOperation(() => {
       this.assertOpen();
       assertIdentifier(runId, "runId");
@@ -750,7 +996,9 @@ export class InMemoryAnalysisResultStore implements AnalysisResultStore {
     });
   }
 
-  public getTerminalRecord(runId: string): Promise<AnalysisTerminalRecord | null> {
+  public getTerminalRecord(
+    runId: string,
+  ): Promise<AnalysisTerminalRecord | null> {
     return rejectedOperation(() => {
       this.assertOpen();
       assertIdentifier(runId, "runId");
@@ -771,7 +1019,9 @@ export class InMemoryAnalysisResultStore implements AnalysisResultStore {
     });
   }
 
-  public putSourceSnapshot(record: SourceCapabilitySnapshotRecord): Promise<void> {
+  public putSourceSnapshot(
+    record: SourceCapabilitySnapshotRecord,
+  ): Promise<void> {
     return rejectedOperation(() => {
       this.assertOpen();
       const snapshot = validateAndCloneSourceSnapshot(record);
@@ -790,11 +1040,50 @@ export class InMemoryAnalysisResultStore implements AnalysisResultStore {
     });
   }
 
-  public putCandidatePassBInsights(record: CandidatePassBInsightsRecord): Promise<void> {
+  public putCandidatePassBInsights(
+    record: CandidatePassBInsightsRecord,
+  ): Promise<void> {
     return rejectedOperation(() => {
       this.assertOpen();
       const snapshot = cloneCandidatePassBInsightsRecord(record);
       this.candidatePassBInsights.set(snapshot.runId, snapshot);
+    });
+  }
+
+  public replaceCandidatePassBInsightsIfUnchanged(
+    expected: CandidatePassBInsightsRecord | null,
+    replacement: CandidatePassBInsightsRecord,
+  ): Promise<boolean> {
+    return rejectedOperation(() => {
+      this.assertOpen();
+      const expectedSnapshot =
+        expected === null ? null : cloneCandidatePassBInsightsRecord(expected);
+      const replacementSnapshot =
+        cloneCandidatePassBInsightsRecord(replacement);
+      if (
+        expectedSnapshot !== null &&
+        expectedSnapshot.runId !== replacementSnapshot.runId
+      ) {
+        throw new AnalysisResultStoreError(
+          "INVALID_PAYLOAD",
+          "Candidate Pass B compare-and-swap records must share one run id.",
+        );
+      }
+      const current =
+        this.candidatePassBInsights.get(replacementSnapshot.runId) ?? null;
+      if (
+        !candidatePassBInsightSnapshotsExactlyMatch(
+          expectedSnapshot,
+          current,
+        )
+      ) {
+        return false;
+      }
+      this.candidatePassBInsights.set(
+        replacementSnapshot.runId,
+        replacementSnapshot,
+      );
+      return true;
     });
   }
 
@@ -805,17 +1094,49 @@ export class InMemoryAnalysisResultStore implements AnalysisResultStore {
       this.assertOpen();
       assertIdentifier(runId, "runId");
       const record = this.candidatePassBInsights.get(runId);
-      return record === undefined ? null : cloneCandidatePassBInsightsRecord(record);
+      return record === undefined
+        ? null
+        : cloneCandidatePassBInsightsRecord(record);
     });
   }
 
   public putBroadcastContextSession(
-    record: BroadcastContextSessionRecord,
+    record: BroadcastContextSessionInitialWriteRecord,
   ): Promise<void> {
     return rejectedOperation(() => {
       this.assertOpen();
-      const snapshot = cloneBroadcastContextSessionRecord(record);
+      const snapshot = cloneBroadcastContextSessionInitialWriteRecord(record);
       this.broadcastContextSessions.set(snapshot.runId, snapshot);
+    });
+  }
+
+  public replaceBroadcastContextSessionIfUnchanged(
+    expected: BroadcastContextSessionRecord,
+    replacement: BroadcastContextSessionRecord,
+  ): Promise<boolean> {
+    return rejectedOperation(() => {
+      this.assertOpen();
+      const expectedSnapshot = cloneBroadcastContextSessionRecord(expected);
+      const replacementSnapshot =
+        cloneBroadcastContextSessionRecord(replacement);
+      if (expectedSnapshot.runId !== replacementSnapshot.runId) {
+        throw new AnalysisResultStoreError(
+          "INVALID_PAYLOAD",
+          "Broadcast context compare-and-swap records must share one run id.",
+        );
+      }
+      const current = this.broadcastContextSessions.get(expectedSnapshot.runId);
+      if (
+        current === undefined ||
+        JSON.stringify(current) !== JSON.stringify(expectedSnapshot)
+      ) {
+        return false;
+      }
+      this.broadcastContextSessions.set(
+        replacementSnapshot.runId,
+        replacementSnapshot,
+      );
+      return true;
     });
   }
 
@@ -871,7 +1192,10 @@ function normalizeStoreFailure(
     : new AnalysisResultStoreError(code, message, cause);
 }
 
-function requestError(error: DOMException | null, action: string): AnalysisResultStoreError {
+function requestError(
+  error: DOMException | null,
+  action: string,
+): AnalysisResultStoreError {
   return normalizeStoreFailure(
     error,
     "TRANSACTION_FAILED",
@@ -885,7 +1209,8 @@ export class IndexedDbAnalysisResultStore implements AnalysisResultStore {
   private readonly factory: IDBFactory | null;
   private database: IDBDatabase | null = null;
   private openPromise: Promise<IDBDatabase> | null = null;
-  private rejectPendingOpen: ((reason: AnalysisResultStoreError) => void) | null = null;
+  private rejectPendingOpen:
+    ((reason: AnalysisResultStoreError) => void) | null = null;
   private closed = false;
 
   public constructor(options: IndexedDbAnalysisResultStoreOptions = {}) {
@@ -909,30 +1234,35 @@ export class IndexedDbAnalysisResultStore implements AnalysisResultStore {
   public getJob(jobId: string): Promise<AnalysisJobRecord | null> {
     return rejectedOperation(() => {
       assertIdentifier(jobId, "jobId");
-      return this.readRecord(ANALYSIS_RESULT_OBJECT_STORES.jobs, jobId, (value) => {
-        assertJobRecord(value);
-        return cloneJson(value);
-      });
+      return this.readRecord(
+        ANALYSIS_RESULT_OBJECT_STORES.jobs,
+        jobId,
+        (value) => {
+          assertJobRecord(value);
+          return cloneJson(value);
+        },
+      );
     }).then((operation) => operation);
   }
 
   public listJobs(): Promise<readonly AnalysisJobRecord[]> {
-    return this.readAllRecords(ANALYSIS_RESULT_OBJECT_STORES.jobs, (value) => value).then(
-      (values) => {
-        const records: AnalysisJobRecord[] = [];
-        for (const value of values) {
-          // 레코드 하나가 깨졌다고 목록 전체를 못 보여 주면, 사용자는 멀쩡한
-          // 작업까지 잃은 것으로 본다. 깨진 것만 건너뛴다.
-          try {
-            assertJobRecord(value);
-            records.push(cloneJson(value));
-          } catch {
-            continue;
-          }
+    return this.readAllRecords(
+      ANALYSIS_RESULT_OBJECT_STORES.jobs,
+      (value) => value,
+    ).then((values) => {
+      const records: AnalysisJobRecord[] = [];
+      for (const value of values) {
+        // 레코드 하나가 깨졌다고 목록 전체를 못 보여 주면, 사용자는 멀쩡한
+        // 작업까지 잃은 것으로 본다. 깨진 것만 건너뛴다.
+        try {
+          assertJobRecord(value);
+          records.push(cloneJson(value));
+        } catch {
+          continue;
         }
-        return records;
-      },
-    );
+      }
+      return records;
+    });
   }
 
   public deleteJob(jobId: string): Promise<void> {
@@ -967,7 +1297,9 @@ export class IndexedDbAnalysisResultStore implements AnalysisResultStore {
     }).then((operation) => operation);
   }
 
-  public putProvisionalResult(record: ProvisionalAnalysisResultRecord): Promise<void> {
+  public putProvisionalResult(
+    record: ProvisionalAnalysisResultRecord,
+  ): Promise<void> {
     return this.putAnalysisRecord(
       ANALYSIS_RESULT_OBJECT_STORES.provisionalResults,
       record,
@@ -991,7 +1323,9 @@ export class IndexedDbAnalysisResultStore implements AnalysisResultStore {
     );
   }
 
-  public getFinalResult(runId: string): Promise<FinalAnalysisResultRecord | null> {
+  public getFinalResult(
+    runId: string,
+  ): Promise<FinalAnalysisResultRecord | null> {
     return rejectedOperation(() => {
       assertIdentifier(runId, "runId");
       return this.readRecord(
@@ -1012,7 +1346,9 @@ export class IndexedDbAnalysisResultStore implements AnalysisResultStore {
     }).then((operation) => operation);
   }
 
-  public getTerminalRecord(runId: string): Promise<AnalysisTerminalRecord | null> {
+  public getTerminalRecord(
+    runId: string,
+  ): Promise<AnalysisTerminalRecord | null> {
     return rejectedOperation(() => {
       assertIdentifier(runId, "runId");
       return this.readRecord(
@@ -1048,10 +1384,15 @@ export class IndexedDbAnalysisResultStore implements AnalysisResultStore {
     });
   }
 
-  public putSourceSnapshot(record: SourceCapabilitySnapshotRecord): Promise<void> {
+  public putSourceSnapshot(
+    record: SourceCapabilitySnapshotRecord,
+  ): Promise<void> {
     return rejectedOperation(() => {
       const snapshot = validateAndCloneSourceSnapshot(record);
-      return this.writeRecord(ANALYSIS_RESULT_OBJECT_STORES.sourceSnapshots, snapshot);
+      return this.writeRecord(
+        ANALYSIS_RESULT_OBJECT_STORES.sourceSnapshots,
+        snapshot,
+      );
     }).then((operation) => operation);
   }
 
@@ -1071,10 +1412,40 @@ export class IndexedDbAnalysisResultStore implements AnalysisResultStore {
     }).then((operation) => operation);
   }
 
-  public putCandidatePassBInsights(record: CandidatePassBInsightsRecord): Promise<void> {
+  public putCandidatePassBInsights(
+    record: CandidatePassBInsightsRecord,
+  ): Promise<void> {
     return rejectedOperation(() => {
       const snapshot = cloneCandidatePassBInsightsRecord(record);
-      return this.writeRecord(ANALYSIS_RESULT_OBJECT_STORES.candidatePassBInsights, snapshot);
+      return this.writeRecord(
+        ANALYSIS_RESULT_OBJECT_STORES.candidatePassBInsights,
+        snapshot,
+      );
+    }).then((operation) => operation);
+  }
+
+  public replaceCandidatePassBInsightsIfUnchanged(
+    expected: CandidatePassBInsightsRecord | null,
+    replacement: CandidatePassBInsightsRecord,
+  ): Promise<boolean> {
+    return rejectedOperation(() => {
+      const expectedSnapshot =
+        expected === null ? null : cloneCandidatePassBInsightsRecord(expected);
+      const replacementSnapshot =
+        cloneCandidatePassBInsightsRecord(replacement);
+      if (
+        expectedSnapshot !== null &&
+        expectedSnapshot.runId !== replacementSnapshot.runId
+      ) {
+        throw new AnalysisResultStoreError(
+          "INVALID_PAYLOAD",
+          "Candidate Pass B compare-and-swap records must share one run id.",
+        );
+      }
+      return this.compareAndSwapCandidatePassBInsights(
+        expectedSnapshot,
+        replacementSnapshot,
+      );
     }).then((operation) => operation);
   }
 
@@ -1095,13 +1466,34 @@ export class IndexedDbAnalysisResultStore implements AnalysisResultStore {
   }
 
   public putBroadcastContextSession(
-    record: BroadcastContextSessionRecord,
+    record: BroadcastContextSessionInitialWriteRecord,
   ): Promise<void> {
     return rejectedOperation(() => {
-      const snapshot = cloneBroadcastContextSessionRecord(record);
+      const snapshot = cloneBroadcastContextSessionInitialWriteRecord(record);
       return this.writeRecord(
         ANALYSIS_RESULT_OBJECT_STORES.broadcastContextSessions,
         snapshot,
+      );
+    }).then((operation) => operation);
+  }
+
+  public replaceBroadcastContextSessionIfUnchanged(
+    expected: BroadcastContextSessionRecord,
+    replacement: BroadcastContextSessionRecord,
+  ): Promise<boolean> {
+    return rejectedOperation(() => {
+      const expectedSnapshot = cloneBroadcastContextSessionRecord(expected);
+      const replacementSnapshot =
+        cloneBroadcastContextSessionRecord(replacement);
+      if (expectedSnapshot.runId !== replacementSnapshot.runId) {
+        throw new AnalysisResultStoreError(
+          "INVALID_PAYLOAD",
+          "Broadcast context compare-and-swap records must share one run id.",
+        );
+      }
+      return this.compareAndSwapBroadcastContextSession(
+        expectedSnapshot,
+        replacementSnapshot,
       );
     }).then((operation) => operation);
   }
@@ -1114,9 +1506,10 @@ export class IndexedDbAnalysisResultStore implements AnalysisResultStore {
       return this.readRecord(
         ANALYSIS_RESULT_OBJECT_STORES.broadcastContextSessions,
         runId,
-        (value) => cloneBroadcastContextSessionRecord(
-          value as BroadcastContextSessionRecord,
-        ),
+        (value) =>
+          cloneBroadcastContextSessionRecord(
+            value as BroadcastContextSessionRecord,
+          ),
       );
     }).then((operation) => operation);
   }
@@ -1150,8 +1543,14 @@ export class IndexedDbAnalysisResultStore implements AnalysisResultStore {
    * 나눠서 지우면 중간에 실패했을 때 결과만 주인 없이 남는다. 그 레코드는 어느
    * 화면에도 나타나지 않으므로 사용자가 지울 수도 없고, 용량만 계속 차지한다.
    */
-  private deleteJobAndRuns(jobId: string, runIds: readonly string[]): Promise<void> {
-    const storeNames = [ANALYSIS_RESULT_OBJECT_STORES.jobs, ...RUN_KEYED_OBJECT_STORES];
+  private deleteJobAndRuns(
+    jobId: string,
+    runIds: readonly string[],
+  ): Promise<void> {
+    const storeNames = [
+      ANALYSIS_RESULT_OBJECT_STORES.jobs,
+      ...RUN_KEYED_OBJECT_STORES,
+    ];
     return this.openDatabase().then(
       (database) =>
         new Promise<void>((resolve, reject) => {
@@ -1185,10 +1584,20 @@ export class IndexedDbAnalysisResultStore implements AnalysisResultStore {
             }
           };
           transaction.onerror = () => {
-            rejectOnce(requestError(transaction.error, `delete transaction for job ${jobId}`));
+            rejectOnce(
+              requestError(
+                transaction.error,
+                `delete transaction for job ${jobId}`,
+              ),
+            );
           };
           transaction.onabort = () => {
-            rejectOnce(requestError(transaction.error, `aborted delete for job ${jobId}`));
+            rejectOnce(
+              requestError(
+                transaction.error,
+                `aborted delete for job ${jobId}`,
+              ),
+            );
           };
 
           try {
@@ -1200,7 +1609,9 @@ export class IndexedDbAnalysisResultStore implements AnalysisResultStore {
             }
             // 작업 레코드를 마지막에 지운다 — 앞이 실패해 트랜잭션이 되돌아가면
             // `runIds` 가 남아 있어 다시 시도할 수 있다.
-            transaction.objectStore(ANALYSIS_RESULT_OBJECT_STORES.jobs).delete(jobId);
+            transaction
+              .objectStore(ANALYSIS_RESULT_OBJECT_STORES.jobs)
+              .delete(jobId);
           } catch (cause) {
             try {
               transaction.abort();
@@ -1219,7 +1630,10 @@ export class IndexedDbAnalysisResultStore implements AnalysisResultStore {
     );
   }
 
-  private writeRecord(storeName: AnalysisStoreName, record: unknown): Promise<void> {
+  private writeRecord(
+    storeName: AnalysisStoreName,
+    record: unknown,
+  ): Promise<void> {
     return this.openDatabase().then(
       (database) =>
         new Promise<void>((resolve, reject) => {
@@ -1253,16 +1667,28 @@ export class IndexedDbAnalysisResultStore implements AnalysisResultStore {
             }
           };
           transaction.onerror = () => {
-            rejectOnce(requestError(transaction.error, `write transaction for ${storeName}`));
+            rejectOnce(
+              requestError(
+                transaction.error,
+                `write transaction for ${storeName}`,
+              ),
+            );
           };
           transaction.onabort = () => {
-            rejectOnce(requestError(transaction.error, `aborted write transaction for ${storeName}`));
+            rejectOnce(
+              requestError(
+                transaction.error,
+                `aborted write transaction for ${storeName}`,
+              ),
+            );
           };
 
           try {
             const request = transaction.objectStore(storeName).put(record);
             request.onerror = () => {
-              rejectOnce(requestError(request.error, `write request for ${storeName}`));
+              rejectOnce(
+                requestError(request.error, `write request for ${storeName}`),
+              );
             };
           } catch (cause) {
             try {
@@ -1282,7 +1708,294 @@ export class IndexedDbAnalysisResultStore implements AnalysisResultStore {
     );
   }
 
-  private writeTerminalRecordOnce(record: AnalysisTerminalRecord): Promise<void> {
+  private compareAndSwapCandidatePassBInsights(
+    expected: CandidatePassBInsightsRecord | null,
+    replacement: CandidatePassBInsightsRecord,
+  ): Promise<boolean> {
+    const storeName = ANALYSIS_RESULT_OBJECT_STORES.candidatePassBInsights;
+    return this.openDatabase().then(
+      (database) =>
+        new Promise<boolean>((resolve, reject) => {
+          let settled = false;
+          let decision: boolean | null = null;
+          let transaction: IDBTransaction;
+
+          const rejectOnce = (error: AnalysisResultStoreError): void => {
+            if (!settled) {
+              settled = true;
+              reject(error);
+            }
+          };
+          const abortAfter = (error: AnalysisResultStoreError): void => {
+            rejectOnce(error);
+            try {
+              transaction.abort();
+            } catch {
+              // The comparison/request error remains authoritative.
+            }
+          };
+
+          try {
+            transaction = database.transaction(storeName, "readwrite");
+          } catch (cause) {
+            rejectOnce(
+              normalizeStoreFailure(
+                cause,
+                "TRANSACTION_FAILED",
+                `Could not start a compare-and-swap transaction for ${storeName}.`,
+              ),
+            );
+            return;
+          }
+
+          transaction.oncomplete = () => {
+            if (settled) return;
+            if (decision === null) {
+              rejectOnce(
+                new AnalysisResultStoreError(
+                  "TRANSACTION_FAILED",
+                  `The ${storeName} transaction completed before its comparison.`,
+                ),
+              );
+              return;
+            }
+            settled = true;
+            resolve(decision);
+          };
+          transaction.onerror = () => {
+            rejectOnce(
+              requestError(
+                transaction.error,
+                `compare-and-swap transaction for ${storeName}`,
+              ),
+            );
+          };
+          transaction.onabort = () => {
+            rejectOnce(
+              requestError(
+                transaction.error,
+                `aborted compare-and-swap for ${storeName}`,
+              ),
+            );
+          };
+
+          try {
+            const objectStore = transaction.objectStore(storeName);
+            const getRequest = objectStore.get(replacement.runId);
+            getRequest.onsuccess = () => {
+              if (settled) return;
+              let current: CandidatePassBInsightsRecord | null;
+              try {
+                current =
+                  getRequest.result === undefined
+                    ? null
+                    : cloneCandidatePassBInsightsRecord(
+                        getRequest.result as CandidatePassBInsightsRecord,
+                      );
+              } catch {
+                decision = false;
+                return;
+              }
+              if (
+                !candidatePassBInsightSnapshotsExactlyMatch(expected, current)
+              ) {
+                decision = false;
+                return;
+              }
+              let putRequest: IDBRequest<IDBValidKey>;
+              try {
+                putRequest = objectStore.put(replacement);
+              } catch (cause) {
+                abortAfter(
+                  normalizeStoreFailure(
+                    cause,
+                    "TRANSACTION_FAILED",
+                    `Could not replace ${storeName} after comparison.`,
+                  ),
+                );
+                return;
+              }
+              putRequest.onsuccess = () => {
+                decision = true;
+              };
+              putRequest.onerror = () => {
+                abortAfter(
+                  requestError(
+                    putRequest.error,
+                    `compare-and-swap write for ${storeName}`,
+                  ),
+                );
+              };
+            };
+            getRequest.onerror = () => {
+              abortAfter(
+                requestError(
+                  getRequest.error,
+                  `compare-and-swap read for ${storeName}`,
+                ),
+              );
+            };
+          } catch (cause) {
+            try {
+              transaction.abort();
+            } catch {
+              // The original operation error remains authoritative.
+            }
+            rejectOnce(
+              normalizeStoreFailure(
+                cause,
+                "TRANSACTION_FAILED",
+                `Could not compare and replace a record in ${storeName}.`,
+              ),
+            );
+          }
+        }),
+    );
+  }
+
+  private compareAndSwapBroadcastContextSession(
+    expected: BroadcastContextSessionRecord,
+    replacement: BroadcastContextSessionRecord,
+  ): Promise<boolean> {
+    const storeName = ANALYSIS_RESULT_OBJECT_STORES.broadcastContextSessions;
+    return this.openDatabase().then(
+      (database) =>
+        new Promise<boolean>((resolve, reject) => {
+          let settled = false;
+          let decision: boolean | null = null;
+          let transaction: IDBTransaction;
+
+          const rejectOnce = (error: AnalysisResultStoreError): void => {
+            if (!settled) {
+              settled = true;
+              reject(error);
+            }
+          };
+          const abortAfter = (error: AnalysisResultStoreError): void => {
+            rejectOnce(error);
+            try {
+              transaction.abort();
+            } catch {
+              // The comparison/request error remains authoritative.
+            }
+          };
+
+          try {
+            transaction = database.transaction(storeName, "readwrite");
+          } catch (cause) {
+            rejectOnce(
+              normalizeStoreFailure(
+                cause,
+                "TRANSACTION_FAILED",
+                `Could not start a compare-and-swap transaction for ${storeName}.`,
+              ),
+            );
+            return;
+          }
+
+          transaction.oncomplete = () => {
+            if (settled) return;
+            if (decision === null) {
+              rejectOnce(
+                new AnalysisResultStoreError(
+                  "TRANSACTION_FAILED",
+                  `The ${storeName} transaction completed before its comparison.`,
+                ),
+              );
+              return;
+            }
+            settled = true;
+            resolve(decision);
+          };
+          transaction.onerror = () => {
+            rejectOnce(
+              requestError(
+                transaction.error,
+                `compare-and-swap transaction for ${storeName}`,
+              ),
+            );
+          };
+          transaction.onabort = () => {
+            rejectOnce(
+              requestError(
+                transaction.error,
+                `aborted compare-and-swap for ${storeName}`,
+              ),
+            );
+          };
+
+          try {
+            const objectStore = transaction.objectStore(storeName);
+            const getRequest = objectStore.get(expected.runId);
+            getRequest.onsuccess = () => {
+              if (settled) return;
+              let current: BroadcastContextSessionRecord;
+              try {
+                current = cloneBroadcastContextSessionRecord(
+                  getRequest.result as unknown,
+                );
+              } catch {
+                decision = false;
+                return;
+              }
+              if (JSON.stringify(current) !== JSON.stringify(expected)) {
+                decision = false;
+                return;
+              }
+              let putRequest: IDBRequest<IDBValidKey>;
+              try {
+                putRequest = objectStore.put(replacement);
+              } catch (cause) {
+                abortAfter(
+                  normalizeStoreFailure(
+                    cause,
+                    "TRANSACTION_FAILED",
+                    `Could not replace ${storeName} after comparison.`,
+                  ),
+                );
+                return;
+              }
+              putRequest.onsuccess = () => {
+                decision = true;
+              };
+              putRequest.onerror = () => {
+                abortAfter(
+                  requestError(
+                    putRequest.error,
+                    `compare-and-swap write for ${storeName}`,
+                  ),
+                );
+              };
+            };
+            getRequest.onerror = () => {
+              abortAfter(
+                requestError(
+                  getRequest.error,
+                  `compare-and-swap read for ${storeName}`,
+                ),
+              );
+            };
+          } catch (cause) {
+            try {
+              transaction.abort();
+            } catch {
+              // The original operation error remains authoritative.
+            }
+            rejectOnce(
+              normalizeStoreFailure(
+                cause,
+                "TRANSACTION_FAILED",
+                `Could not compare and replace ${storeName}.`,
+              ),
+            );
+          }
+        }),
+    );
+  }
+
+  private writeTerminalRecordOnce(
+    record: AnalysisTerminalRecord,
+  ): Promise<void> {
     const storeName = ANALYSIS_RESULT_OBJECT_STORES.terminals;
     return this.openDatabase().then(
       (database) =>
@@ -1337,7 +2050,10 @@ export class IndexedDbAnalysisResultStore implements AnalysisResultStore {
           };
           transaction.onerror = () => {
             rejectOnce(
-              requestError(transaction.error, `write-once transaction for ${storeName}`),
+              requestError(
+                transaction.error,
+                `write-once transaction for ${storeName}`,
+              ),
             );
           };
           transaction.onabort = () => {
@@ -1405,7 +2121,10 @@ export class IndexedDbAnalysisResultStore implements AnalysisResultStore {
             };
             getRequest.onerror = () => {
               abortAfter(
-                requestError(getRequest.error, `write-once read request for ${storeName}`),
+                requestError(
+                  getRequest.error,
+                  `write-once read request for ${storeName}`,
+                ),
               );
             };
           } catch (cause) {
@@ -1471,17 +2190,30 @@ export class IndexedDbAnalysisResultStore implements AnalysisResultStore {
             resolve(loaded);
           };
           transaction.onerror = () => {
-            rejectOnce(requestError(transaction.error, `read transaction for ${storeName}`));
+            rejectOnce(
+              requestError(
+                transaction.error,
+                `read transaction for ${storeName}`,
+              ),
+            );
           };
           transaction.onabort = () => {
-            rejectOnce(requestError(transaction.error, `aborted read transaction for ${storeName}`));
+            rejectOnce(
+              requestError(
+                transaction.error,
+                `aborted read transaction for ${storeName}`,
+              ),
+            );
           };
 
           try {
             const request = transaction.objectStore(storeName).get(key);
             request.onsuccess = () => {
               try {
-                loaded = request.result === undefined ? null : deserialize(request.result);
+                loaded =
+                  request.result === undefined
+                    ? null
+                    : deserialize(request.result);
                 requestFinished = true;
               } catch (cause) {
                 rejectOnce(
@@ -1499,7 +2231,9 @@ export class IndexedDbAnalysisResultStore implements AnalysisResultStore {
               }
             };
             request.onerror = () => {
-              rejectOnce(requestError(request.error, `read request for ${storeName}`));
+              rejectOnce(
+                requestError(request.error, `read request for ${storeName}`),
+              );
             };
           } catch (cause) {
             try {
@@ -1568,11 +2302,19 @@ export class IndexedDbAnalysisResultStore implements AnalysisResultStore {
             resolve(loaded);
           };
           transaction.onerror = () => {
-            rejectOnce(requestError(transaction.error, `list transaction for ${storeName}`));
+            rejectOnce(
+              requestError(
+                transaction.error,
+                `list transaction for ${storeName}`,
+              ),
+            );
           };
           transaction.onabort = () => {
             rejectOnce(
-              requestError(transaction.error, `aborted list transaction for ${storeName}`),
+              requestError(
+                transaction.error,
+                `aborted list transaction for ${storeName}`,
+              ),
             );
           };
 
@@ -1580,7 +2322,9 @@ export class IndexedDbAnalysisResultStore implements AnalysisResultStore {
             const request = transaction.objectStore(storeName).getAll();
             request.onsuccess = () => {
               try {
-                const values = Array.isArray(request.result) ? request.result : [];
+                const values = Array.isArray(request.result)
+                  ? request.result
+                  : [];
                 loaded = values.map(deserialize);
                 requestFinished = true;
               } catch (cause) {
@@ -1599,7 +2343,9 @@ export class IndexedDbAnalysisResultStore implements AnalysisResultStore {
               }
             };
             request.onerror = () => {
-              rejectOnce(requestError(request.error, `list request for ${storeName}`));
+              rejectOnce(
+                requestError(request.error, `list request for ${storeName}`),
+              );
             };
           } catch (cause) {
             try {
@@ -1657,7 +2403,11 @@ export class IndexedDbAnalysisResultStore implements AnalysisResultStore {
         request = factory.open(this.dbName, this.version);
       } catch (cause) {
         rejectOnce(
-          normalizeStoreFailure(cause, "OPEN_FAILED", "IndexedDB could not be opened."),
+          normalizeStoreFailure(
+            cause,
+            "OPEN_FAILED",
+            "IndexedDB could not be opened.",
+          ),
         );
         return;
       }
@@ -1666,7 +2416,9 @@ export class IndexedDbAnalysisResultStore implements AnalysisResultStore {
         try {
           for (const storeName of ALL_OBJECT_STORES) {
             if (!request.result.objectStoreNames.contains(storeName)) {
-              request.result.createObjectStore(storeName, { keyPath: keyPathFor(storeName) });
+              request.result.createObjectStore(storeName, {
+                keyPath: keyPathFor(storeName),
+              });
               continue;
             }
 
@@ -1710,7 +2462,11 @@ export class IndexedDbAnalysisResultStore implements AnalysisResultStore {
       request.onerror = () => {
         rejectOnce(
           upgradeError ??
-            normalizeStoreFailure(request.error, "OPEN_FAILED", "IndexedDB could not be opened."),
+            normalizeStoreFailure(
+              request.error,
+              "OPEN_FAILED",
+              "IndexedDB could not be opened.",
+            ),
         );
       };
       request.onsuccess = () => {
@@ -1747,22 +2503,25 @@ export class IndexedDbAnalysisResultStore implements AnalysisResultStore {
   }
 }
 
-function keyPathFor(storeName: AnalysisStoreName): "runId" | "sourceCheckId" | "jobId" {
-  if (storeName === ANALYSIS_RESULT_OBJECT_STORES.sourceSnapshots) return "sourceCheckId";
+function keyPathFor(
+  storeName: AnalysisStoreName,
+): "runId" | "sourceCheckId" | "jobId" {
+  if (storeName === ANALYSIS_RESULT_OBJECT_STORES.sourceSnapshots)
+    return "sourceCheckId";
   if (storeName === ANALYSIS_RESULT_OBJECT_STORES.jobs) return "jobId";
   return "runId";
 }
 
 /** 실행 결과가 들어 있는 저장소들. 작업을 지울 때 함께 비워야 하는 곳이다. */
-const RUN_KEYED_OBJECT_STORES: readonly AnalysisStoreName[] = ALL_OBJECT_STORES.filter(
-  (storeName) => keyPathFor(storeName) === "runId",
-);
+const RUN_KEYED_OBJECT_STORES: readonly AnalysisStoreName[] =
+  ALL_OBJECT_STORES.filter((storeName) => keyPathFor(storeName) === "runId");
 
 function sortTerminalRecordsNewestFirst(
   records: readonly AnalysisTerminalRecord[],
 ): readonly AnalysisTerminalRecord[] {
   return [...records].sort(
     (left, right) =>
-      right.recordedAt.localeCompare(left.recordedAt) || left.runId.localeCompare(right.runId),
+      right.recordedAt.localeCompare(left.recordedAt) ||
+      left.runId.localeCompare(right.runId),
   );
 }

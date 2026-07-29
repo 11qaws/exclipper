@@ -11,6 +11,9 @@ export interface CandidatePublicationGateInput {
   readonly candidatePassBStatus: CandidatePassBRunState["status"] | null;
   readonly candidatePassBBusy: boolean;
   readonly semanticLeadRefinementStatus: SemanticLeadRefinementStatus;
+  readonly refinementEvidenceRequired: boolean;
+  readonly refinementEvidenceProjectionFingerprint: string | null;
+  readonly refinementEvidencePublicationEligible: boolean;
   readonly wholeContextComplete: boolean;
   readonly wholeContextFailed: boolean;
 }
@@ -19,6 +22,7 @@ export interface CandidatePublicationGate {
   readonly detailedReviewActive: boolean;
   readonly detailedReviewFailed: boolean;
   readonly candidateDetailSettled: boolean;
+  readonly refinementEvidenceReady: boolean;
   readonly finalSelectionReady: boolean;
 }
 
@@ -75,18 +79,33 @@ export function deriveCandidatePublicationGate(
     input.candidatePassBStatus === "completedWithGaps";
   const detailFailureStillHasMissingArtifacts =
     detailedReviewFailed && input.candidateDetailOutstandingCount > 0;
+  const refinementEvidenceContractValid =
+    typeof input.refinementEvidenceRequired === "boolean" &&
+    typeof input.refinementEvidencePublicationEligible === "boolean" &&
+    (input.refinementEvidenceProjectionFingerprint === null ||
+      (typeof input.refinementEvidenceProjectionFingerprint === "string" &&
+        /^sha256:[a-f0-9]{64}$/u.test(
+          input.refinementEvidenceProjectionFingerprint,
+        )));
+  const refinementEvidenceReady =
+    refinementEvidenceContractValid &&
+    (!input.refinementEvidenceRequired ||
+      (input.refinementEvidenceProjectionFingerprint !== null &&
+        input.refinementEvidencePublicationEligible));
   const finalSelectionReady =
     !detailedReviewActive &&
     !detailFailureStillHasMissingArtifacts &&
     candidateDetailSettled &&
-    ((input.wholeContextComplete &&
-      input.semanticLeadRefinementStatus === "completed") ||
-      input.wholeContextFailed);
+    refinementEvidenceReady &&
+    input.wholeContextComplete &&
+    !input.wholeContextFailed &&
+    input.semanticLeadRefinementStatus === "completed";
 
   return {
     detailedReviewActive,
     detailedReviewFailed,
     candidateDetailSettled,
+    refinementEvidenceReady,
     finalSelectionReady,
   };
 }

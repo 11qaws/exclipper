@@ -18,6 +18,17 @@ import {
 } from "./aiQuotaClient";
 import { aiQuotaLeaseHeaders, type AiQuotaLeaseHeaders } from "./aiQuotaProtocol";
 import {
+  CANDIDATE_PASS_B_RESPONSE_FALLBACK_HEADER,
+  CANDIDATE_PASS_B_RESPONSE_MODEL_ID_HEADER,
+  CANDIDATE_PASS_B_RESPONSE_MODEL_REVISION_HEADER,
+} from "./candidatePassBWorkerProtocol";
+import {
+  createBroadcastTranscriptProviderReceipt,
+  verifyBroadcastTranscriptRouteSelection,
+  type BroadcastTranscriptRouteSelection,
+  type BroadcastTranscriptVerifiedResult,
+} from "./broadcastTranscriptRouteManifest";
+import {
   BROADCAST_TRANSCRIPT_MEDIA_RESOLVE_CONTENT_TYPE,
   createBroadcastTranscriptMediaResolveRequest,
   parseBroadcastTranscriptMediaStagedResponse,
@@ -103,7 +114,8 @@ async function resolveBroadcastTranscriptProxyResponse(
   responsePromise: Promise<Response>,
   sourceStartMs: number,
   durationMs: number,
-): Promise<BroadcastTranscriptQwenResult> {
+  route: BroadcastTranscriptRouteSelection,
+): Promise<BroadcastTranscriptVerifiedResult> {
   let response: Response;
   try {
     response = await responsePromise;
@@ -190,7 +202,45 @@ async function resolveBroadcastTranscriptProxyResponse(
       "방송 대사 분석 응답 형식을 확인하지 못했어요.",
     );
   }
-  return result;
+  const responseModelId = response.headers.get(
+    CANDIDATE_PASS_B_RESPONSE_MODEL_ID_HEADER,
+  );
+  const responseModelRevision = response.headers.get(
+    CANDIDATE_PASS_B_RESPONSE_MODEL_REVISION_HEADER,
+  );
+  const responseFallbackUsed = response.headers.get(
+    CANDIDATE_PASS_B_RESPONSE_FALLBACK_HEADER,
+  );
+  if (
+    responseModelId === null ||
+    responseModelRevision === null ||
+    (responseFallbackUsed !== "true" && responseFallbackUsed !== "false") ||
+    responseModelId !== result.modelId
+  ) {
+    throw new BroadcastTranscriptQwenClientError(
+      "PROXY_INVALID_RESPONSE",
+      "방송 대사 분석 응답의 실제 모델 정보를 확인하지 못했어요.",
+    );
+  }
+  let providerReceipt;
+  try {
+    providerReceipt = createBroadcastTranscriptProviderReceipt(
+      route,
+      responseModelId,
+      responseModelRevision,
+      responseFallbackUsed === "true",
+    );
+  } catch {
+    throw new BroadcastTranscriptQwenClientError(
+      "PROXY_INVALID_RESPONSE",
+      "방송 대사 분석 응답의 실제 모델 경로가 시작 전에 고정한 경로와 달라요.",
+    );
+  }
+  return {
+    ...result,
+    modelRevision: providerReceipt.modelRevision,
+    providerReceipt,
+  };
 }
 
 export async function requestBroadcastTranscriptQwenChunk(
@@ -198,11 +248,12 @@ export async function requestBroadcastTranscriptQwenChunk(
   sourceStartMs: number,
   durationMs: number,
   options: {
+    readonly route: BroadcastTranscriptRouteSelection;
     readonly signal?: AbortSignal;
     readonly fetchImplementation?: FetchImplementation;
     readonly quota?: Omit<AiQuotaClientIdentity, "pool">;
-  } = {},
-): Promise<BroadcastTranscriptQwenResult> {
+  },
+): Promise<BroadcastTranscriptVerifiedResult> {
   if (
     typeof audioBase64 !== "string" ||
     audioBase64.length === 0 ||
@@ -216,6 +267,15 @@ export async function requestBroadcastTranscriptQwenChunk(
     throw new BroadcastTranscriptQwenClientError(
       "INVALID_INPUT",
       "방송 대사 분석 구간을 준비하지 못했어요.",
+    );
+  }
+  let route: BroadcastTranscriptRouteSelection;
+  try {
+    route = await verifyBroadcastTranscriptRouteSelection(options.route);
+  } catch {
+    throw new BroadcastTranscriptQwenClientError(
+      "INVALID_INPUT",
+      "방송 대사 분석 모델 경로가 고정되지 않았어요.",
     );
   }
 
@@ -245,9 +305,10 @@ export async function requestBroadcastTranscriptQwenChunk(
               ? {}
               : { fetchImplementation: options.fetchImplementation }),
           },
-        ),
+    ),
     sourceStartMs,
     durationMs,
+    route,
   );
 }
 
@@ -268,11 +329,12 @@ export async function requestBroadcastTranscriptChunkBinary(
   sourceStartMs: number,
   durationMs: number,
   options: {
+    readonly route: BroadcastTranscriptRouteSelection;
     readonly signal?: AbortSignal;
     readonly fetchImplementation?: FetchImplementation;
     readonly quota?: Omit<AiQuotaClientIdentity, "pool">;
-  } = {},
-): Promise<BroadcastTranscriptQwenResult> {
+  },
+): Promise<BroadcastTranscriptVerifiedResult> {
   if (
     !(wavBytes instanceof Uint8Array) ||
     wavBytes.byteLength < 44 ||
@@ -286,6 +348,15 @@ export async function requestBroadcastTranscriptChunkBinary(
     throw new BroadcastTranscriptQwenClientError(
       "INVALID_INPUT",
       "방송 대사 분석 구간을 준비하지 못했어요.",
+    );
+  }
+  let route: BroadcastTranscriptRouteSelection;
+  try {
+    route = await verifyBroadcastTranscriptRouteSelection(options.route);
+  } catch {
+    throw new BroadcastTranscriptQwenClientError(
+      "INVALID_INPUT",
+      "방송 대사 분석 모델 경로가 고정되지 않았어요.",
     );
   }
   const requestInit: RequestInit = {
@@ -358,5 +429,6 @@ export async function requestBroadcastTranscriptChunkBinary(
         }, (lease) => preparedFetch(lease)),
     sourceStartMs,
     durationMs,
+    route,
   );
 }

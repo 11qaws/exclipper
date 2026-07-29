@@ -1,0 +1,28 @@
+{
+  "schemaVersion": "1.0.0",
+  "tool": "exclipper.voice-enrollment-candidate-extractor",
+  "safetyAcknowledgement": "candidate-ranges-are-unverified-and-require-human-voice-review",
+  "videoNo": "14415543",
+  "sourceLocator": "https://chzzk.naver.com/video/14415543",
+  "manifestRevision": "chzzk-video-14415543-eureka-pending-candidates-v1",
+  "ranges": [
+    {
+      "participantId": "eureka",
+      "start": "00:42:16",
+      "end": "00:42:46",
+      "reviewNote": "발화 확률은 높지만 노래 화면이므로 사람 검토에서 음악·가창 여부를 우선 확인합니다."
+    },
+    {
+      "participantId": "eureka",
+      "start": "00:58:16",
+      "end": "00:58:46",
+      "reviewNote": "발화 확률은 높지만 노래 화면이므로 깨끗한 단독 대화가 아니면 폐기합니다."
+    },
+    {
+      "participantId": "eureka",
+      "start": "01:06:16",
+      "end": "01:06:46",
+      "reviewNote": "가창·배경 음악·겹침이 없는 유레카 단독 발화인지 사람 검토가 필요합니다."
+    }
+  ]
+}

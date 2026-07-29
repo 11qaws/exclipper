@@ -45,16 +45,18 @@ export const CANDIDATE_PASS_B_ROUTING_MODEL_REVISION =
 export const CANDIDATE_PASS_B_LEGACY_ROUTING_MODEL_REVISION =
   "qwen3.5-omni-flash_then_gemini-3.5-flash_bounded-v2" as const;
 
-/** Keeps already-paid v2 candidate interpretations recoverable after the GA upgrade. */
-export function isCompatibleCandidatePassBRoutingModelRevision(
-  value: unknown,
-): value is
+export type CandidatePassBRoutingModelRevision =
   | typeof CANDIDATE_PASS_B_ROUTING_MODEL_REVISION
   | typeof CANDIDATE_PASS_B_PRIOR_ROUTING_MODEL_REVISION
   | typeof CANDIDATE_PASS_B_PREVIOUS_ROUTING_MODEL_REVISION
   | typeof CANDIDATE_PASS_B_OLDER_ROUTING_MODEL_REVISION
   | typeof CANDIDATE_PASS_B_CONTEXTLESS_ROUTING_MODEL_REVISION
-  | typeof CANDIDATE_PASS_B_LEGACY_ROUTING_MODEL_REVISION {
+  | typeof CANDIDATE_PASS_B_LEGACY_ROUTING_MODEL_REVISION;
+
+/** Keeps already-paid v2 candidate interpretations recoverable after the GA upgrade. */
+export function isCompatibleCandidatePassBRoutingModelRevision(
+  value: unknown,
+): value is CandidatePassBRoutingModelRevision {
   return (
     value === CANDIDATE_PASS_B_ROUTING_MODEL_REVISION ||
     value === CANDIDATE_PASS_B_PRIOR_ROUTING_MODEL_REVISION ||
@@ -135,17 +137,35 @@ export type CandidatePassBProgramMaterial =
   | "music-or-intermission"
   | "routine-or-unclear";
 
-/** Locally issued only after the actual audio, four frames and context packet succeeded. */
-export interface CandidatePassBVerificationReceipt {
+export const CANDIDATE_PASS_B_VERIFICATION_RECEIPT_SCHEMA_VERSION =
+  "1.4.0" as const;
+
+/**
+ * Exact source identity used both when issuing a receipt and when deciding
+ * whether a persisted receipt can still satisfy the current final gate.
+ */
+export interface CandidatePassBVerificationSourceFence {
+  readonly candidateId: string;
+  readonly sourceStartMs: number;
+  readonly sourceEndMs: number;
+  readonly routingModelRevision: CandidatePassBRoutingModelRevision;
+  /** Exact editorial language used by the whole-context and candidate passes. */
+  readonly outputLanguage: AnalysisLanguage;
+  /** Exact closed cast roster used for participant grounding, or no roster. */
+  readonly castRosterId: CandidatePassBCastRosterId | null;
   /**
-   * 1.0.0 receipts are readable only so an existing paid insight can be
-   * recovered. They do not carry a context fingerprint and therefore never
-   * satisfy the current final-publication gate.
+   * Exact active refinement-evidence projection used for this candidate.
+   *
+   * `null` is valid only when the sealed semantic-refinement plan selected no
+   * leads. Publication independently proves that relationship before issuing
+   * or accepting a final candidate.
    */
-  readonly schemaVersion: "1.0.0" | "1.1.0";
+  readonly refinementEvidenceProjectionFingerprint: string | null;
+}
+
+interface CandidatePassBVerificationReceiptBase {
   readonly contextSchemaVersion: typeof CANDIDATE_PASS_B_CONTEXT_SCHEMA_VERSION;
   readonly transcriptSource: CandidatePassBReferenceTranscriptSource;
-  readonly contextFingerprint?: string;
   readonly audioReviewed: true;
   readonly videoFrameCount: typeof MAX_CANDIDATE_PASS_B_VIDEO_FRAMES;
   readonly thumbnailPrepared: true;
@@ -153,6 +173,51 @@ export interface CandidatePassBVerificationReceipt {
   readonly referenceTranscriptReviewed: true;
   readonly broadcastContextReviewed: true;
 }
+
+/**
+ * Locally issued only after the actual audio, four frames and exact context
+ * packet succeeded.
+ *
+ * 1.0.0 through 1.3.0 remain readable so an already-paid insight is
+ * recoverable. 1.0.0 and 1.1.0 do not carry the complete source-range fence;
+ * 1.2.0 does not bind the refinement-evidence projection; 1.3.0 does not bind
+ * the output language or cast roster. None may satisfy the current
+ * final-publication or reuse gate.
+ */
+export type CandidatePassBCurrentVerificationReceipt =
+  CandidatePassBVerificationReceiptBase &
+    CandidatePassBVerificationSourceFence & {
+      readonly schemaVersion: typeof CANDIDATE_PASS_B_VERIFICATION_RECEIPT_SCHEMA_VERSION;
+      readonly contextFingerprint: string;
+    };
+
+export type CandidatePassBVerificationReceipt =
+  | (CandidatePassBVerificationReceiptBase & {
+      readonly schemaVersion: "1.0.0";
+    })
+  | (CandidatePassBVerificationReceiptBase & {
+      readonly schemaVersion: "1.1.0";
+      readonly contextFingerprint: string;
+    })
+  | (CandidatePassBVerificationReceiptBase &
+      Omit<
+        CandidatePassBVerificationSourceFence,
+        | "refinementEvidenceProjectionFingerprint"
+        | "outputLanguage"
+        | "castRosterId"
+      > & {
+        readonly schemaVersion: "1.2.0";
+        readonly contextFingerprint: string;
+      })
+  | (CandidatePassBVerificationReceiptBase &
+      Omit<
+        CandidatePassBVerificationSourceFence,
+        "outputLanguage" | "castRosterId"
+      > & {
+        readonly schemaVersion: "1.3.0";
+        readonly contextFingerprint: string;
+      })
+  | CandidatePassBCurrentVerificationReceipt;
 
 /**
  * A Pass B run has its own identity in addition to the fast-pass analysis run.

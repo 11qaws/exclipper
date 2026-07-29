@@ -10,9 +10,15 @@ const settledContext = {
   candidateDetailOutstandingCount: 8,
   candidatePassBBusy: false,
   semanticLeadRefinementStatus: "completed",
+  refinementEvidenceRequired: false,
+  refinementEvidenceProjectionFingerprint: null,
+  refinementEvidencePublicationEligible: false,
   wholeContextComplete: true,
   wholeContextFailed: false,
 } as const;
+
+const refinementEvidenceProjectionFingerprint =
+  `sha256:${"a".repeat(64)}` as const;
 
 describe("deriveCandidatePublicationGate", () => {
   it("opens publication after a fully completed detail run", () => {
@@ -32,6 +38,74 @@ describe("deriveCandidatePublicationGate", () => {
 
     expect(gate.candidateDetailSettled).toBe(true);
     expect(gate.finalSelectionReady).toBe(true);
+  });
+
+  it("waits for the active refinement evidence route when the sealed plan selected leads", () => {
+    const gate = deriveCandidatePublicationGate({
+      ...settledContext,
+      candidateDetailOutstandingCount: 0,
+      candidatePassBStatus: "completed",
+      refinementEvidenceRequired: true,
+    });
+
+    expect(gate.refinementEvidenceReady).toBe(false);
+    expect(gate.finalSelectionReady).toBe(false);
+  });
+
+  it("does not accept a settled but publication-ineligible refinement route", () => {
+    const gate = deriveCandidatePublicationGate({
+      ...settledContext,
+      candidateDetailOutstandingCount: 0,
+      candidatePassBStatus: "completed",
+      refinementEvidenceRequired: true,
+      refinementEvidenceProjectionFingerprint,
+      refinementEvidencePublicationEligible: false,
+    });
+
+    expect(gate.refinementEvidenceReady).toBe(false);
+    expect(gate.finalSelectionReady).toBe(false);
+  });
+
+  it("opens only after the required active refinement projection is publication eligible", () => {
+    const gate = deriveCandidatePublicationGate({
+      ...settledContext,
+      candidateDetailOutstandingCount: 0,
+      candidatePassBStatus: "completed",
+      refinementEvidenceRequired: true,
+      refinementEvidenceProjectionFingerprint,
+      refinementEvidencePublicationEligible: true,
+    });
+
+    expect(gate.refinementEvidenceReady).toBe(true);
+    expect(gate.finalSelectionReady).toBe(true);
+  });
+
+  it("fails closed when a stale caller omits the refinement evidence contract", () => {
+    const staleInput = {
+      candidateDetailOutstandingCount: 0,
+      candidatePassBStatus: "completed",
+      candidatePassBBusy: false,
+      semanticLeadRefinementStatus: "completed",
+      wholeContextComplete: true,
+      wholeContextFailed: false,
+    } as unknown as Parameters<typeof deriveCandidatePublicationGate>[0];
+
+    const gate = deriveCandidatePublicationGate(staleInput);
+
+    expect(gate.refinementEvidenceReady).toBe(false);
+    expect(gate.finalSelectionReady).toBe(false);
+  });
+
+  it("never exposes a final selection after whole-context failure", () => {
+    const gate = deriveCandidatePublicationGate({
+      ...settledContext,
+      candidateDetailOutstandingCount: 0,
+      candidatePassBStatus: "completed",
+      wholeContextComplete: false,
+      wholeContextFailed: true,
+    });
+
+    expect(gate.finalSelectionReady).toBe(false);
   });
 
   it.each(["failed", "cancelled"] as const)(

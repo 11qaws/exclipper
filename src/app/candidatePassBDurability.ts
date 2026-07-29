@@ -4,6 +4,7 @@ import {
 import type {
   CandidatePassBContextPacket,
   CandidatePassBVerificationReceipt,
+  CandidatePassBVerificationSourceFence,
 } from "../analysis/candidatePassBWorkerProtocol";
 import type {
   CandidatePassBInsightsRecord,
@@ -87,10 +88,13 @@ export function candidatePassBInsightIsComplete(
  */
 export function candidatePassBArtifactIsDurable(
   record: CandidatePassBInsightsRecord | null,
-  candidateId: string,
+  sourceFence: CandidatePassBVerificationSourceFence | undefined,
   context: CandidatePassBContextPacket | undefined,
 ): boolean {
-  if (record === null || context === undefined) return false;
+  if (record === null || sourceFence === undefined || context === undefined) {
+    return false;
+  }
+  const { candidateId } = sourceFence;
   const evidence = record.evidenceById[candidateId];
   const insight = record.insightById[candidateId];
   const model = record.modelByCandidateId?.[candidateId];
@@ -102,7 +106,7 @@ export function candidatePassBArtifactIsDurable(
     model !== undefined &&
     thumbnail !== undefined &&
     receipt !== undefined &&
-    candidatePassBReceiptMatchesContext(receipt, context) &&
+    candidatePassBReceiptMatchesContext(receipt, context, sourceFence) &&
     receipt.audioReviewed === true &&
     receipt.videoFrameCount === 4 &&
     receipt.thumbnailPrepared === true &&
@@ -131,17 +135,22 @@ export function selectCandidatePassBAnalysisOutstandingIds(input: {
   readonly contextByCandidateId: Readonly<
     Record<string, CandidatePassBContextPacket>
   >;
+  readonly sourceFenceByCandidateId: Readonly<
+    Record<string, CandidatePassBVerificationSourceFence>
+  >;
 }): readonly string[] {
   return input.candidateIds.filter((candidateId) => {
     const context = input.contextByCandidateId[candidateId];
     const receipt = input.receiptByCandidateId[candidateId];
+    const sourceFence = input.sourceFenceByCandidateId[candidateId];
     return (
       !candidatePassBInsightIsComplete(
         input.insightByCandidateId[candidateId],
       ) ||
       receipt === undefined ||
       context === undefined ||
-      !candidatePassBReceiptMatchesContext(receipt, context)
+      sourceFence === undefined ||
+      !candidatePassBReceiptMatchesContext(receipt, context, sourceFence)
     );
   });
 }
@@ -152,12 +161,15 @@ export function selectCandidatePassBDurabilityOutstandingIds(input: {
   readonly contextByCandidateId: Readonly<
     Record<string, CandidatePassBContextPacket>
   >;
+  readonly sourceFenceByCandidateId: Readonly<
+    Record<string, CandidatePassBVerificationSourceFence>
+  >;
 }): readonly string[] {
   return input.candidateIds.filter(
     (candidateId) =>
       !candidatePassBArtifactIsDurable(
         input.record,
-        candidateId,
+        input.sourceFenceByCandidateId[candidateId],
         input.contextByCandidateId[candidateId],
       ),
   );
@@ -168,6 +180,9 @@ export function selectCandidatePassBDurableIds(input: {
   readonly record: CandidatePassBInsightsRecord | null;
   readonly contextByCandidateId: Readonly<
     Record<string, CandidatePassBContextPacket>
+  >;
+  readonly sourceFenceByCandidateId: Readonly<
+    Record<string, CandidatePassBVerificationSourceFence>
   >;
 }): ReadonlySet<string> {
   const outstanding = new Set(

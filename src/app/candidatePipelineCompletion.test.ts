@@ -10,6 +10,7 @@ import type {
   CandidatePassBInsight,
   CandidatePassBVerificationReceipt,
 } from "../analysis/candidatePassBWorkerProtocol";
+import { CANDIDATE_PASS_B_ROUTING_MODEL_REVISION } from "../analysis/candidatePassBWorkerProtocol";
 import { selectBroadcastContextCandidateCohort } from "./broadcastContextCandidateCohort";
 import { selectCandidateVerificationCohort } from "./candidateVerificationCohort";
 
@@ -65,10 +66,11 @@ describe("candidate pipeline completion regression", () => {
       detailScheduled.map(({ id }) => [id, insight]),
     );
     const receiptByCandidateId = Object.fromEntries(
-      detailScheduled.map(({ id }, index) => {
+      detailScheduled.map((candidate) => {
+        const { id } = candidate;
         const context = contextByCandidateId[id]!;
         const frames = [1, 2, 3, 4].map((ordinal) => ({
-          timestampMs: index * 60_000 + ordinal * 1_000,
+          timestampMs: ordinal * 1_000,
         }));
         return [
           id,
@@ -76,6 +78,15 @@ describe("candidate pipeline completion regression", () => {
             context,
             frames,
             frames[0]!.timestampMs,
+            {
+              candidateId: id,
+              sourceStartMs: candidate.startMs,
+              sourceEndMs: candidate.endMs,
+              routingModelRevision: CANDIDATE_PASS_B_ROUTING_MODEL_REVISION,
+              refinementEvidenceProjectionFingerprint: null,
+              outputLanguage: "ko",
+              castRosterId: null,
+            },
           )!,
         ];
       }),
@@ -94,6 +105,9 @@ describe("candidate pipeline completion regression", () => {
       insightByCandidateId,
       receiptByCandidateId,
       completeEvidenceCandidateIds: detailScheduledIds,
+      refinementEvidenceProjectionFingerprint: null,
+      outputLanguage: "ko",
+      castRosterId: null,
     });
 
     expect(contextScheduled).toHaveLength(17);

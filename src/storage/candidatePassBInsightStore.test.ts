@@ -1,10 +1,15 @@
 import { describe, expect, it } from "vitest";
 
 import type { CandidatePassBEvidence } from "../analysis/candidatePassB";
-import { isCompatibleCandidatePassBRoutingModelRevision } from "../analysis/candidatePassBWorkerProtocol";
+import {
+  CANDIDATE_PASS_B_ROUTING_MODEL_REVISION,
+  CANDIDATE_PASS_B_VERIFICATION_RECEIPT_SCHEMA_VERSION,
+  isCompatibleCandidatePassBRoutingModelRevision,
+} from "../analysis/candidatePassBWorkerProtocol";
 import {
   CANDIDATE_PASS_B_INSIGHT_SCHEMA_VERSION,
   assertCandidatePassBInsightsRecord,
+  candidatePassBInsightSnapshotsExactlyMatch,
   cloneCandidatePassBInsightsRecord,
   persistCandidatePassBInsightsWithReadback,
   type CandidatePassBInsightStorePort,
@@ -120,6 +125,45 @@ describe("Candidate Pass B insight persistence", () => {
     ).not.toThrow();
   });
 
+  it("accepts a current exact-range receipt only under its matching candidate map key", () => {
+    const currentReceipt = {
+      schemaVersion: CANDIDATE_PASS_B_VERIFICATION_RECEIPT_SCHEMA_VERSION,
+      contextSchemaVersion: "1.0.0" as const,
+      transcriptSource: "broadcast-transcript" as const,
+      contextFingerprint: "fnv1a64:0123456789abcdef",
+      candidateId: "candidate-a",
+      sourceStartMs: 10_000,
+      sourceEndMs: 50_000,
+      routingModelRevision: CANDIDATE_PASS_B_ROUTING_MODEL_REVISION,
+      refinementEvidenceProjectionFingerprint: null,
+      outputLanguage: "ko" as const,
+      castRosterId: null,
+      audioReviewed: true as const,
+      videoFrameCount: 4 as const,
+      thumbnailPrepared: true as const,
+      thumbnailTimestampMs: 1_500,
+      referenceTranscriptReviewed: true as const,
+      broadcastContextReviewed: true as const,
+    };
+    expect(() =>
+      assertCandidatePassBInsightsRecord({
+        ...record,
+        verificationReceiptById: { "candidate-a": currentReceipt },
+      }),
+    ).not.toThrow();
+    expect(() =>
+      assertCandidatePassBInsightsRecord({
+        ...record,
+        verificationReceiptById: {
+          "candidate-a": {
+            ...currentReceipt,
+            candidateId: "candidate-b",
+          },
+        },
+      }),
+    ).toThrow(/verification receipt/u);
+  });
+
   it("keeps already-paid Gemini 3.5 candidate results readable after the 3.6 upgrade", () => {
     expect(() =>
       assertCandidatePassBInsightsRecord({
@@ -165,9 +209,14 @@ describe("persistCandidatePassBInsightsWithReadback", () => {
   it("returns a detached snapshot only after an exact durable readback", async () => {
     let stored: CandidatePassBInsightsRecord | null = null;
     const store: CandidatePassBInsightStorePort = {
-      putCandidatePassBInsights(candidateRecord) {
-        stored = cloneCandidatePassBInsightsRecord(candidateRecord);
-        return Promise.resolve();
+      replaceCandidatePassBInsightsIfUnchanged(expected, replacement) {
+        if (
+          !candidatePassBInsightSnapshotsExactlyMatch(expected, stored)
+        ) {
+          return Promise.resolve(false);
+        }
+        stored = cloneCandidatePassBInsightsRecord(replacement);
+        return Promise.resolve(true);
       },
       getCandidatePassBInsights(runId) {
         expect(runId).toBe(record.runId);
@@ -179,6 +228,7 @@ describe("persistCandidatePassBInsightsWithReadback", () => {
 
     const restored = await persistCandidatePassBInsightsWithReadback(
       store,
+      null,
       record,
     );
 
@@ -193,11 +243,11 @@ describe("persistCandidatePassBInsightsWithReadback", () => {
     );
   });
 
-  it("propagates a rejected write and does not attempt readback", async () => {
+  it("propagates a rejected compare-and-swap and does not attempt readback", async () => {
     const writeFailure = new Error("indexeddb transaction aborted");
     let readCount = 0;
     const store: CandidatePassBInsightStorePort = {
-      putCandidatePassBInsights() {
+      replaceCandidatePassBInsightsIfUnchanged() {
         return Promise.reject(writeFailure);
       },
       getCandidatePassBInsights() {
@@ -207,15 +257,54 @@ describe("persistCandidatePassBInsightsWithReadback", () => {
     };
 
     await expect(
-      persistCandidatePassBInsightsWithReadback(store, record),
+      persistCandidatePassBInsightsWithReadback(store, null, record),
     ).rejects.toBe(writeFailure);
     expect(readCount).toBe(0);
   });
 
+  it("rejects a stale writer before readback and preserves the newer full snapshot", async () => {
+    const store = new InMemoryAnalysisResultStore();
+    const original = await persistCandidatePassBInsightsWithReadback(
+      store,
+      null,
+      record,
+    );
+    const newer = {
+      ...record,
+      insightById: {
+        "candidate-a": {
+          ...record.insightById["candidate-a"]!,
+          reactionSummaryKo: "최신 반응 설명",
+        },
+      },
+      recordedAt: "2026-07-21T00:00:01.000Z",
+    };
+    const stale = {
+      ...record,
+      thumbnailById: {
+        "candidate-a": {
+          ...record.thumbnailById!["candidate-a"]!,
+          dataBase64: "c3RhbGU=",
+        },
+      },
+      recordedAt: "2026-07-21T00:00:02.000Z",
+    };
+
+    await expect(
+      persistCandidatePassBInsightsWithReadback(store, original, newer),
+    ).resolves.toEqual(newer);
+    await expect(
+      persistCandidatePassBInsightsWithReadback(store, original, stale),
+    ).rejects.toThrow(/durable snapshot changed/u);
+    await expect(
+      store.getCandidatePassBInsights(record.runId),
+    ).resolves.toEqual(newer);
+  });
+
   it("rejects a committed write whose immediate readback is missing", async () => {
     const store: CandidatePassBInsightStorePort = {
-      putCandidatePassBInsights() {
-        return Promise.resolve();
+      replaceCandidatePassBInsightsIfUnchanged() {
+        return Promise.resolve(true);
       },
       getCandidatePassBInsights() {
         return Promise.resolve(null);
@@ -223,7 +312,7 @@ describe("persistCandidatePassBInsightsWithReadback", () => {
     };
 
     await expect(
-      persistCandidatePassBInsightsWithReadback(store, record),
+      persistCandidatePassBInsightsWithReadback(store, null, record),
     ).rejects.toThrow(/readback is missing/u);
   });
 
@@ -298,8 +387,8 @@ describe("persistCandidatePassBInsightsWithReadback", () => {
     "rejects a stale or mismatched %s readback",
     async (_label, staleRecord) => {
       const store: CandidatePassBInsightStorePort = {
-        putCandidatePassBInsights() {
-          return Promise.resolve();
+        replaceCandidatePassBInsightsIfUnchanged() {
+          return Promise.resolve(true);
         },
         getCandidatePassBInsights() {
           return Promise.resolve(staleRecord);
@@ -307,7 +396,7 @@ describe("persistCandidatePassBInsightsWithReadback", () => {
       };
 
       await expect(
-        persistCandidatePassBInsightsWithReadback(store, record),
+        persistCandidatePassBInsightsWithReadback(store, null, record),
       ).rejects.toThrow(/does not exactly match/u);
     },
   );

@@ -5,6 +5,8 @@ import {
   CANDIDATE_PASS_B_QWEN_MODEL_REVISION,
 } from "../analysis/candidatePassBWorkerProtocol";
 import {
+  BROADCAST_TRANSCRIPT_GROQ_MODEL_ID,
+  BROADCAST_TRANSCRIPT_GROQ_MODEL_REVISION,
   BROADCAST_TRANSCRIPT_GEMINI_MODEL_ID,
   BROADCAST_TRANSCRIPT_GEMINI_MODEL_REVISION,
   BROADCAST_TRANSCRIPT_QWEN_OMNI_MODEL_ID,
@@ -15,7 +17,7 @@ import {
   EXCLIPPER_MODEL_IDS,
 } from "../analysis/aiModelRoutingPolicy";
 
-export const AI_PROVIDER_CONFIGURATION_VERSION = "1.2.0" as const;
+export const AI_PROVIDER_CONFIGURATION_VERSION = "1.3.0" as const;
 
 export const QWEN_CANDIDATE_MODEL_ID = CANDIDATE_PASS_B_QWEN_MODEL_ID;
 export const QWEN_CANDIDATE_MODEL_REVISION = CANDIDATE_PASS_B_QWEN_MODEL_REVISION;
@@ -39,7 +41,11 @@ export const QWEN_CONTEXT_QUALITY_REFINEMENT_MODEL_REVISION =
 
 export type CandidateInsightProviderId = "gemini" | "qwen";
 export type BroadcastContextProviderId = "disabled" | "deepseek" | "qwen";
-export type BroadcastTranscriptProviderId = "disabled" | "gemini" | "qwen";
+export type BroadcastTranscriptProviderId =
+  | "disabled"
+  | "gemini"
+  | "qwen"
+  | "groq";
 export type AiProviderImplementationStatus = "active" | "prepared";
 export type QwenRegion = "singapore" | "beijing";
 export type AiProviderFallbackMode = "disabled" | "bounded";
@@ -53,7 +59,7 @@ export interface AiProviderDescriptor {
   readonly provider: Exclude<
     CandidateInsightProviderId | BroadcastContextProviderId,
     "disabled"
-  >;
+  > | Exclude<BroadcastTranscriptProviderId, "disabled">;
   readonly modelId: string;
   readonly modelRevision: string;
   readonly implementationStatus: AiProviderImplementationStatus;
@@ -112,6 +118,13 @@ export const AI_PROVIDER_CATALOG = {
       modelRevision: BROADCAST_TRANSCRIPT_QWEN_OMNI_MODEL_REVISION,
       implementationStatus: "active",
     },
+    groq: {
+      role: "broadcast-transcript",
+      provider: "groq",
+      modelId: BROADCAST_TRANSCRIPT_GROQ_MODEL_ID,
+      modelRevision: BROADCAST_TRANSCRIPT_GROQ_MODEL_REVISION,
+      implementationStatus: "active",
+    },
   },
 } as const satisfies {
   readonly candidateInsight: Readonly<
@@ -121,7 +134,7 @@ export const AI_PROVIDER_CATALOG = {
     Record<"deepseek" | "qwen", AiProviderDescriptor>
   >;
   readonly broadcastTranscript: Readonly<
-    Record<"gemini" | "qwen", AiProviderDescriptor>
+    Record<"gemini" | "qwen" | "groq", AiProviderDescriptor>
   >;
 };
 
@@ -131,6 +144,7 @@ export interface AiProviderEnvironment {
   readonly BROADCAST_TRANSCRIPT_PROVIDER?: string;
   readonly GEMINI_API_KEY?: string;
   readonly QWEN_API_KEY?: string;
+  readonly GROQ_API_KEY?: string;
   readonly QWEN_WORKSPACE_ID?: string;
   readonly QWEN_REGION?: string;
   readonly DEEPSEEK_API_KEY?: string;
@@ -209,6 +223,12 @@ export type BroadcastTranscriptConnection =
       readonly endpoint: string;
       readonly apiKey: string;
       readonly region: QwenRegion;
+    }
+  | {
+      readonly provider: "groq";
+      readonly descriptor: typeof AI_PROVIDER_CATALOG.broadcastTranscript.groq;
+      readonly endpoint: string;
+      readonly apiKey: string;
     };
 
 export type BroadcastTranscriptConnectionResolution =
@@ -246,9 +266,15 @@ export interface AiProviderReadinessManifest {
     readonly candidateInsightConfigured: boolean;
     readonly broadcastTranscriptConfigured: boolean;
   };
+  /** Secret-free readiness for the optional Groq Whisper route. */
+  readonly groqRoutes: {
+    readonly broadcastTranscriptConfigured: boolean;
+  };
 }
 
 const DEEPSEEK_ENDPOINT = "https://api.deepseek.com/chat/completions";
+const GROQ_TRANSCRIPT_ENDPOINT =
+  "https://api.groq.com/openai/v1/audio/transcriptions";
 const DEFAULT_QWEN_REGION: QwenRegion = "singapore";
 const MAX_API_KEY_LENGTH = 512;
 const MAX_WORKSPACE_ID_LENGTH = 63;
@@ -295,7 +321,12 @@ function readBroadcastTranscriptProvider(
   value: unknown,
 ): BroadcastTranscriptProviderId | null {
   if (value === undefined) return "disabled";
-  return value === "disabled" || value === "gemini" || value === "qwen"
+  return (
+    value === "disabled" ||
+    value === "gemini" ||
+    value === "qwen" ||
+    value === "groq"
+  )
     ? value
     : null;
 }
@@ -491,6 +522,19 @@ export function resolveBroadcastTranscriptConnection(
       },
     };
   }
+  if (provider === "groq") {
+    const apiKey = normalizeSecret(environment.GROQ_API_KEY);
+    if (apiKey === null) return { ok: false, code: "MISSING_CREDENTIALS" };
+    return {
+      ok: true,
+      connection: {
+        provider,
+        descriptor: AI_PROVIDER_CATALOG.broadcastTranscript.groq,
+        endpoint: GROQ_TRANSCRIPT_ENDPOINT,
+        apiKey,
+      },
+    };
+  }
   const apiKey = normalizeSecret(environment.QWEN_API_KEY);
   if (apiKey === null) return { ok: false, code: "MISSING_CREDENTIALS" };
   const region = readQwenRegion(environment.QWEN_REGION);
@@ -527,7 +571,13 @@ export function resolveBroadcastTranscriptFallbackConnection(
   primaryProvider: Exclude<BroadcastTranscriptProviderId, "disabled">,
 ): Exclude<BroadcastTranscriptConnection, { readonly provider: "disabled" }> | null {
   if (!isBoundedAiProviderFallbackEnabled(environment)) return null;
-  const fallbackProvider = primaryProvider === "qwen" ? "gemini" : "qwen";
+  const fallbackProvider: Exclude<
+    BroadcastTranscriptProviderId,
+    "disabled" | "groq"
+  > =
+    primaryProvider === "qwen"
+      ? "gemini"
+      : "qwen";
   const resolution = resolveBroadcastTranscriptConnection({
     ...environment,
     BROADCAST_TRANSCRIPT_PROVIDER: fallbackProvider,
@@ -570,7 +620,9 @@ export function createAiProviderReadinessManifest(
     ? AI_PROVIDER_CATALOG.broadcastTranscript.gemini
     : transcriptProvider === "qwen"
       ? AI_PROVIDER_CATALOG.broadcastTranscript.qwen
-      : null;
+      : transcriptProvider === "groq"
+        ? AI_PROVIDER_CATALOG.broadcastTranscript.groq
+        : null;
   const geminiCandidateResolution = resolveCandidateInsightConnection({
     ...environment,
     CANDIDATE_INSIGHT_PROVIDER: "gemini",
@@ -578,6 +630,10 @@ export function createAiProviderReadinessManifest(
   const geminiTranscriptResolution = resolveBroadcastTranscriptConnection({
     ...environment,
     BROADCAST_TRANSCRIPT_PROVIDER: "gemini",
+  });
+  const groqTranscriptResolution = resolveBroadcastTranscriptConnection({
+    ...environment,
+    BROADCAST_TRANSCRIPT_PROVIDER: "groq",
   });
 
   return {
@@ -616,6 +672,9 @@ export function createAiProviderReadinessManifest(
     geminiRoutes: {
       candidateInsightConfigured: geminiCandidateResolution.ok,
       broadcastTranscriptConfigured: geminiTranscriptResolution.ok,
+    },
+    groqRoutes: {
+      broadcastTranscriptConfigured: groqTranscriptResolution.ok,
     },
   };
 }

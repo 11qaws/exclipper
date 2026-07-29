@@ -272,6 +272,11 @@ describe("aiProxy.worker", () => {
         expect(messages[1]?.content).toContain("세라 교수님");
         expect(messages[1]?.content).toContain("토로리 코코");
         expect(messages[1]?.content).toContain("목소리 느낌만으로 발화자를 정하거나");
+        expect(messages[1]?.content).toContain("맥락 분석 전 인물 근거 지도");
+        expect(messages[1]?.content).toContain("채널 주인 prior는 실제 출연 증거가 아니고");
+        expect(messages[1]?.content).toContain(
+          "visual-identity: 사용 불가(검증된 참조 자료 없음)",
+        );
         return Promise.resolve(
           new Response(
             JSON.stringify({
@@ -1078,9 +1083,12 @@ describe("aiProxy.worker", () => {
         requiredFrameCount: 4,
       },
       providers: {
-        schemaVersion: "1.2.0",
+        schemaVersion: "1.3.0",
         geminiRoutes: {
           candidateInsightConfigured: false,
+          broadcastTranscriptConfigured: false,
+        },
+        groqRoutes: {
           broadcastTranscriptConfigured: false,
         },
       },

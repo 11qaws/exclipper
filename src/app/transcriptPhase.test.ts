@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 
 import {
   canStartTranscriptRun,
+  createTranscriptSourceIdentityFence,
   transcriptGapRequiresExplicitBillingRetry,
+  transcriptContextReadiness,
   transcriptIsSealedForContext,
   transcriptNeedsExplicitRetry,
   transcriptOperationKey,
@@ -32,10 +34,67 @@ describe("transcriptOperationKey", () => {
     );
   });
 
-  it("gives an explicit retry a fresh operation fence", () => {
-    expect(transcriptOperationKey("run-1", "fp", "uniform", 0)).not.toBe(
+  it("keeps the exact source seal stable across retry generations", () => {
+    expect(transcriptOperationKey("run-1", "fp", "uniform", 0)).toBe(
       transcriptOperationKey("run-1", "fp", "uniform", 1),
     );
+  });
+
+  it("fences a transcript seal to the resolved source roster", () => {
+    const unresolved = transcriptOperationKey(
+      "run-1",
+      "fp",
+      "uniform",
+      0,
+      "cast-none",
+    );
+    const resolved = transcriptOperationKey(
+      "run-1",
+      "fp",
+      "uniform",
+      0,
+      "cast-amoretto-v1",
+    );
+    expect(unresolved).not.toBe(resolved);
+    expect(resolved).toContain("identity-cast-amoretto-v1");
+  });
+
+  it("rejects an invalid source identity fence", () => {
+    expect(() =>
+      transcriptOperationKey("run-1", "fp", "uniform", 0, "bad\r\nfence"),
+    ).toThrow(/identity fence/u);
+  });
+
+  it("hashes long descriptive identities before they enter the bounded key", async () => {
+    const descriptiveIdentity = [
+      "cast-exchange-student-six-person-roster-v2",
+      "qwen3.5-omni-flash-audio-transcript-90s-reviewed-2026-07-22",
+      "worker-1.9.0",
+      "vad-733a93b6473d019a773298e08cefa686894b1854",
+      "speech-presence-v1",
+      `route-${"a".repeat(71)}`,
+    ];
+    expect(descriptiveIdentity.join(":").length).toBeGreaterThan(160);
+
+    const fence = await createTranscriptSourceIdentityFence(
+      descriptiveIdentity,
+    );
+    expect(fence.length).toBeLessThanOrEqual(160);
+    expect(() =>
+      transcriptOperationKey("run-1", "fp", "uniform", 0, fence),
+    ).not.toThrow();
+  });
+
+  it("changes the compact fence when any exact route identity changes", async () => {
+    const primary = await createTranscriptSourceIdentityFence([
+      "source-policy",
+      "route-a",
+    ]);
+    const fallback = await createTranscriptSourceIdentityFence([
+      "source-policy",
+      "route-b",
+    ]);
+    expect(primary).not.toBe(fallback);
   });
 });
 
@@ -104,6 +163,7 @@ describe("transcriptNeedsExplicitRetry", () => {
   it("reopens a completed-with-gaps map so only uncovered chunks can resume", () => {
     expect(transcriptNeedsExplicitRetry("completedWithGaps", 263)).toBe(true);
     expect(transcriptNeedsExplicitRetry("completed", 271)).toBe(false);
+    expect(transcriptNeedsExplicitRetry("completed", 0)).toBe(false);
   });
 });
 
@@ -171,5 +231,32 @@ describe("transcriptIsSealedForContext", () => {
         sealedOperationKey: eventBoostKey,
       }),
     ).toBe(true);
+  });
+
+  it("routes an exact sealed zero-dialogue map to visual evidence instead of retranscription", () => {
+    const input = {
+      analysisComplete: true,
+      broadcastTranscriptStatus: "completed",
+      completedChapterCount: 0,
+      requiredEventBoostOperationKey: eventBoostKey,
+      sealedOperationKey: eventBoostKey,
+    };
+
+    expect(transcriptContextReadiness(input)).toBe(
+      "visual-evidence-required",
+    );
+    expect(transcriptIsSealedForContext(input)).toBe(false);
+  });
+
+  it("does not mistake an unsealed empty map for visual evidence work", () => {
+    expect(
+      transcriptContextReadiness({
+        analysisComplete: true,
+        broadcastTranscriptStatus: "completed",
+        completedChapterCount: 0,
+        requiredEventBoostOperationKey: eventBoostKey,
+        sealedOperationKey: null,
+      }),
+    ).toBe("not-ready");
   });
 });

@@ -3,8 +3,11 @@ import { describe, expect, it, vi } from "vitest";
 import {
   BROADCAST_CONTEXT_PROXY_ENDPOINT,
   BroadcastContextDeepseekClientError,
+  broadcastContextFailureDisposition,
   requestBroadcastContextDeepseek,
 } from "./broadcastContextDeepseekClient";
+import { createBroadcastContextRequest } from "./broadcastContextProtocol";
+import { createBroadcastParticipantGrounding } from "./broadcastParticipantGrounding";
 import { DEFAULT_CANDIDATE_PASS_B_CAST_ROSTER_ID } from "./participantRoster";
 
 const input = {
@@ -78,6 +81,104 @@ const result = {
 };
 
 describe("requestBroadcastContextDeepseek", () => {
+  it("separates safe retries from ambiguous paid outcomes", () => {
+    expect(
+      broadcastContextFailureDisposition(
+        new BroadcastContextDeepseekClientError(
+          "PROXY_REJECTED",
+          "rate limited",
+          { status: 429, proxyErrorCode: "UPSTREAM_RATE_LIMITED" },
+        ),
+      ),
+    ).toBe("retryable");
+    expect(
+      broadcastContextFailureDisposition(
+        new BroadcastContextDeepseekClientError(
+          "PROXY_UNAVAILABLE",
+          "coordinator unavailable",
+          { proxyErrorCode: "QUOTA_COORDINATOR_UNAVAILABLE" },
+        ),
+      ),
+    ).toBe("retryable");
+    expect(
+      broadcastContextFailureDisposition(
+        new BroadcastContextDeepseekClientError(
+          "OUTCOME_UNKNOWN",
+          "response lost",
+          { proxyErrorCode: "UPSTREAM_OUTCOME_UNKNOWN" },
+        ),
+      ),
+    ).toBe("outcome-unknown");
+    expect(
+      broadcastContextFailureDisposition(
+        new BroadcastContextDeepseekClientError(
+          "PROXY_UNAVAILABLE",
+          "generic transport loss",
+        ),
+      ),
+    ).toBe("outcome-unknown");
+    expect(
+      broadcastContextFailureDisposition(
+        new BroadcastContextDeepseekClientError(
+          "INVALID_INPUT",
+          "bad input",
+        ),
+      ),
+    ).toBe("fatal");
+  });
+
+  it("preserves an ambiguous post-dispatch quota outcome", async () => {
+    let paidAttemptCount = 0;
+    const fetchImplementation = vi.fn(
+      (request: RequestInfo | URL): Promise<Response> => {
+        const url =
+          typeof request === "string"
+            ? request
+            : request instanceof URL
+              ? request.href
+              : request.url;
+        if (url.endsWith("/v1/ai-quota")) {
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                schemaVersion: "1.0.0",
+                status: "granted",
+                leaseToken:
+                  "lease_0000000000000000000000000000000000000001",
+                leaseExpiresAtMs: Date.now() + 30_000,
+                retryAfterMs: 0,
+                activeParticipantCount: 1,
+                poolInFlightCount: 1,
+              }),
+              {
+                status: 200,
+                headers: { "Content-Type": "application/json" },
+              },
+            ),
+          );
+        }
+        paidAttemptCount += 1;
+        return Promise.reject(new TypeError("connection lost"));
+      },
+    );
+
+    const error = await requestBroadcastContextDeepseek(input, {
+      quota: {
+        participantId: "participant_11111111111111111111111111111111",
+        runId: "analysis-run-1",
+        operationId: "context-overview-ambiguous",
+      },
+      fetchImplementation,
+    }).catch((caught: unknown) => caught);
+
+    expect(error).toMatchObject({
+      code: "OUTCOME_UNKNOWN",
+      proxyErrorCode: "UPSTREAM_OUTCOME_UNKNOWN",
+    });
+    expect(broadcastContextFailureDisposition(error)).toBe("outcome-unknown");
+    expect(paidAttemptCount).toBe(2);
+  });
+
   it("sends the bounded public request and revalidates the parsed result", async () => {
     let receivedInit: RequestInit | undefined;
     const fetchImplementation = vi.fn(
@@ -100,8 +201,10 @@ describe("requestBroadcastContextDeepseek", () => {
     );
     const body = receivedInit?.body;
     expect(typeof body).toBe("string");
+    const normalized = createBroadcastContextRequest(input);
     expect(JSON.parse(typeof body === "string" ? body : "null")).toEqual({
       ...input,
+      participantGrounding: normalized.participantGrounding,
       outputLanguage: "ko",
     });
   });
@@ -116,8 +219,46 @@ describe("requestBroadcastContextDeepseek", () => {
       summaryKo: `${index + 1}번째 저장 구간`,
     }));
     let receivedBody: Record<string, unknown> | undefined;
+    const unboundedGrounding = createBroadcastParticipantGrounding(
+      {
+        sourceDurationMs: 145_000,
+        castRosterId: null,
+        chapters,
+      },
+      {
+        visualIdentity: {
+          receipt: {
+            adapter: "visual-identity",
+            revision: "visual-reference-v1",
+            status: "completed",
+            inputCount: 4,
+            processedCount: 4,
+            unavailableReason: null,
+          },
+          evidence: [
+            {
+              evidenceId: "visual:saved-10:amoretto",
+              participantId: "amoretto",
+              kind: "visual-reference-match",
+              supports: "visible-identity",
+              adapter: "visual-identity",
+              startMs: 9_000,
+              endMs: 10_000,
+              chapterId: "saved-10",
+              confidence: 0.93,
+              evidenceKo: "대표 화면에서 아모레또 참조 아바타와 일치합니다.",
+            },
+          ],
+        },
+      },
+    );
     const response = await requestBroadcastContextDeepseek(
-      { ...input, sourceDurationMs: 145_000, chapters },
+      {
+        ...input,
+        sourceDurationMs: 145_000,
+        chapters,
+        participantGrounding: unboundedGrounding,
+      },
       {
         fetchImplementation: (_request, init) => {
           if (typeof init?.body !== "string") {
@@ -149,6 +290,29 @@ describe("requestBroadcastContextDeepseek", () => {
     );
 
     expect(receivedBody?.chapters).toHaveLength(144);
+    expect(receivedBody?.participantGrounding).toMatchObject({
+      adapterReceipts: [
+        expect.objectContaining({
+          adapter: "transcript-names",
+          inputCount: 144,
+          processedCount: 144,
+        }),
+        expect.any(Object),
+        expect.any(Object),
+      ],
+    });
+    expect(
+      (
+        receivedBody?.participantGrounding as {
+          evidence: readonly { kind: string }[];
+        }
+      ).evidence,
+    ).toContainEqual(
+      expect.objectContaining({
+        kind: "visual-reference-match",
+        participantId: "amoretto",
+      }),
+    );
     expect(response.semanticChapters[0]?.endMs).toBe(145_000);
   });
 
@@ -369,8 +533,10 @@ describe("requestBroadcastContextDeepseek", () => {
     });
 
     expect(response.broadcastSummaryKo).toContain("사과");
+    const normalized = createBroadcastContextRequest(input);
     expect(receivedBody).toEqual({
       ...input,
+      participantGrounding: normalized.participantGrounding,
       outputLanguage: "ko",
       analysisMode: "refinement",
     });
@@ -390,8 +556,13 @@ describe("requestBroadcastContextDeepseek", () => {
         },
       },
     );
+    const normalized = createBroadcastContextRequest({
+      ...input,
+      castRosterId: DEFAULT_CANDIDATE_PASS_B_CAST_ROSTER_ID,
+    });
     expect(receivedBody).toEqual({
       ...input,
+      participantGrounding: normalized.participantGrounding,
       outputLanguage: "ko",
       castRosterId: DEFAULT_CANDIDATE_PASS_B_CAST_ROSTER_ID,
     });

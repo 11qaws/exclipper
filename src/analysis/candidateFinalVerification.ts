@@ -1,13 +1,28 @@
 import type { SelectableCandidate } from "./contextAwareCandidateSelection";
 import {
   CANDIDATE_PASS_B_CONTEXT_SCHEMA_VERSION,
+  CANDIDATE_PASS_B_ROUTING_MODEL_REVISION,
+  CANDIDATE_PASS_B_VERIFICATION_RECEIPT_SCHEMA_VERSION,
   MAX_CANDIDATE_PASS_B_CONTEXT_TEXT_LENGTH,
+  MAX_CANDIDATE_PASS_B_SOURCE_DURATION_MS,
+  MAX_CANDIDATE_PASS_B_TARGET_DURATION_MS,
   MAX_CANDIDATE_PASS_B_VIDEO_FRAMES,
+  isCompatibleCandidatePassBRoutingModelRevision,
   type CandidatePassBContextPacket,
+  type CandidatePassBCurrentVerificationReceipt,
   type CandidatePassBInsight,
   type CandidatePassBVerificationReceipt,
+  type CandidatePassBVerificationSourceFence,
 } from "./candidatePassBWorkerProtocol";
 import { canonicalizeCandidatePassBContextPacket } from "./candidatePassBContextBudget";
+import {
+  isCandidatePassBCastRosterId,
+  type CandidatePassBCastRosterId,
+} from "./participantRoster";
+import {
+  isAnalysisLanguage,
+  type AnalysisLanguage,
+} from "../domain/analysisLanguage";
 
 export interface CandidateFinalVerificationInput<
   TCandidate extends SelectableCandidate = SelectableCandidate,
@@ -31,6 +46,15 @@ export interface CandidateFinalVerificationInput<
    * AI results can never be published ahead of durable artifacts.
    */
   readonly completeEvidenceCandidateIds: ReadonlySet<string>;
+  /**
+   * Active refinement-evidence projection for the sealed broadcast plan.
+   * `null` is the exact fence for a plan that selected no refinement leads.
+   */
+  readonly refinementEvidenceProjectionFingerprint: string | null;
+  /** Exact whole-context narration language consumed by this Pass B run. */
+  readonly outputLanguage: AnalysisLanguage;
+  /** Exact participant-grounding roster consumed by this Pass B run. */
+  readonly castRosterId: CandidatePassBCastRosterId | null;
 }
 
 export type CandidateFinalVerificationGap =
@@ -160,7 +184,8 @@ export function createCandidatePassBVerificationReceipt(
   context: CandidatePassBContextPacket,
   frames: readonly { readonly timestampMs: number }[],
   thumbnailTimestampMs: number,
-): CandidatePassBVerificationReceipt | null {
+  sourceFence: CandidatePassBVerificationSourceFence,
+): CandidatePassBCurrentVerificationReceipt | null {
   let canonicalContext: CandidatePassBContextPacket;
   try {
     canonicalContext = canonicalizeCandidatePassBContextPacket(context);
@@ -169,19 +194,33 @@ export function createCandidatePassBVerificationReceipt(
   }
   if (
     canonicalContext.schemaVersion !== CANDIDATE_PASS_B_CONTEXT_SCHEMA_VERSION ||
+    !isCandidatePassBVerificationSourceFence(sourceFence) ||
+    sourceFence.routingModelRevision !== CANDIDATE_PASS_B_ROUTING_MODEL_REVISION
+  ) {
+    return null;
+  }
+  const sourceDurationMs = sourceFence.sourceEndMs - sourceFence.sourceStartMs;
+  if (
     frames.length !== MAX_CANDIDATE_PASS_B_VIDEO_FRAMES ||
     new Set(frames.map(({ timestampMs }) => timestampMs)).size !==
       MAX_CANDIDATE_PASS_B_VIDEO_FRAMES ||
+    frames.some(
+      ({ timestampMs }) =>
+        !Number.isSafeInteger(timestampMs) ||
+        timestampMs < 0 ||
+        timestampMs >= sourceDurationMs,
+    ) ||
     !Number.isSafeInteger(thumbnailTimestampMs) ||
     !frames.some(({ timestampMs }) => timestampMs === thumbnailTimestampMs)
   ) {
     return null;
   }
   return {
-    schemaVersion: "1.1.0",
+    schemaVersion: CANDIDATE_PASS_B_VERIFICATION_RECEIPT_SCHEMA_VERSION,
     contextSchemaVersion: canonicalContext.schemaVersion,
     transcriptSource: canonicalContext.transcriptSource,
     contextFingerprint: candidatePassBContextFingerprint(canonicalContext),
+    ...sourceFence,
     audioReviewed: true,
     videoFrameCount: MAX_CANDIDATE_PASS_B_VIDEO_FRAMES,
     thumbnailPrepared: true,
@@ -191,16 +230,137 @@ export function createCandidatePassBVerificationReceipt(
   };
 }
 
+function hasValidCandidatePassBVerificationSourceRange(
+  value: Record<string, unknown>,
+): boolean {
+  return (
+    typeof value.candidateId === "string" &&
+    value.candidateId.length > 0 &&
+    value.candidateId.length <= 256 &&
+    value.candidateId === value.candidateId.trim() &&
+    !/[\p{Cc}\p{Cf}]/u.test(value.candidateId) &&
+    Number.isSafeInteger(value.sourceStartMs) &&
+    (value.sourceStartMs as number) >= 0 &&
+    Number.isSafeInteger(value.sourceEndMs) &&
+    (value.sourceEndMs as number) > (value.sourceStartMs as number) &&
+    (value.sourceEndMs as number) <= MAX_CANDIDATE_PASS_B_SOURCE_DURATION_MS &&
+    (value.sourceEndMs as number) - (value.sourceStartMs as number) <=
+      MAX_CANDIDATE_PASS_B_TARGET_DURATION_MS &&
+    isCompatibleCandidatePassBRoutingModelRevision(value.routingModelRevision)
+  );
+}
+
+function hasValidRefinementEvidenceProjectionFingerprint(
+  value: unknown,
+): boolean {
+  return (
+    value === null ||
+    (typeof value === "string" && /^sha256:[a-f0-9]{64}$/u.test(value))
+  );
+}
+
+export function isCandidatePassBVerificationSourceFence(
+  value: unknown,
+): value is CandidatePassBVerificationSourceFence {
+  if (!isRecord(value)) return false;
+  return (
+    Object.keys(value).sort().join() ===
+      [
+        "candidateId",
+        "sourceStartMs",
+        "sourceEndMs",
+        "routingModelRevision",
+        "refinementEvidenceProjectionFingerprint",
+        "outputLanguage",
+        "castRosterId",
+      ]
+        .sort()
+        .join() &&
+    hasValidCandidatePassBVerificationSourceRange(value) &&
+    hasValidRefinementEvidenceProjectionFingerprint(
+      value.refinementEvidenceProjectionFingerprint,
+    ) &&
+    isAnalysisLanguage(value.outputLanguage) &&
+    (value.castRosterId === null ||
+      isCandidatePassBCastRosterId(value.castRosterId))
+  );
+}
+
+function isCandidatePassBV12VerificationSourceFence(
+  value: unknown,
+): value is Omit<
+  CandidatePassBVerificationSourceFence,
+  | "refinementEvidenceProjectionFingerprint"
+  | "outputLanguage"
+  | "castRosterId"
+> {
+  if (!isRecord(value)) return false;
+  return (
+    Object.keys(value).sort().join() ===
+      [
+        "candidateId",
+        "sourceStartMs",
+        "sourceEndMs",
+        "routingModelRevision",
+      ]
+        .sort()
+        .join() &&
+    hasValidCandidatePassBVerificationSourceRange(value)
+  );
+}
+
+function isCandidatePassBV13VerificationSourceFence(
+  value: unknown,
+): value is Omit<
+  CandidatePassBVerificationSourceFence,
+  "outputLanguage" | "castRosterId"
+> {
+  if (!isRecord(value)) return false;
+  return (
+    Object.keys(value).sort().join() ===
+      [
+        "candidateId",
+        "sourceStartMs",
+        "sourceEndMs",
+        "routingModelRevision",
+        "refinementEvidenceProjectionFingerprint",
+      ]
+        .sort()
+        .join() &&
+    hasValidCandidatePassBVerificationSourceRange(value) &&
+    hasValidRefinementEvidenceProjectionFingerprint(
+      value.refinementEvidenceProjectionFingerprint,
+    )
+  );
+}
+
 export function isCandidatePassBVerificationReceipt(
   value: unknown,
 ): value is CandidatePassBVerificationReceipt {
   if (!isRecord(value)) return false;
-  const isLegacy = value.schemaVersion === "1.0.0";
+  const isV1 = value.schemaVersion === "1.0.0";
+  const isV11 = value.schemaVersion === "1.1.0";
+  const isV12 = value.schemaVersion === "1.2.0";
+  const isV13 = value.schemaVersion === "1.3.0";
+  const isCurrent =
+    value.schemaVersion === CANDIDATE_PASS_B_VERIFICATION_RECEIPT_SCHEMA_VERSION;
   const expectedKeys = [
     "schemaVersion",
     "contextSchemaVersion",
     "transcriptSource",
-    ...(isLegacy ? [] : ["contextFingerprint"]),
+    ...(isV1 ? [] : ["contextFingerprint"]),
+    ...(isV12 || isV13 || isCurrent
+      ? [
+          "candidateId",
+          "sourceStartMs",
+          "sourceEndMs",
+          "routingModelRevision",
+        ]
+      : []),
+    ...(isV13 || isCurrent
+      ? ["refinementEvidenceProjectionFingerprint"]
+      : []),
+    ...(isCurrent ? ["outputLanguage", "castRosterId"] : []),
     "audioReviewed",
     "videoFrameCount",
     "thumbnailPrepared",
@@ -210,15 +370,42 @@ export function isCandidatePassBVerificationReceipt(
   ];
   return (
     Object.keys(value).sort().join() === expectedKeys.sort().join() &&
-    (isLegacy || value.schemaVersion === "1.1.0") &&
+    (isV1 || isV11 || isV12 || isV13 || isCurrent) &&
     value.contextSchemaVersion === CANDIDATE_PASS_B_CONTEXT_SCHEMA_VERSION &&
     ["youtube-caption", "broadcast-transcript", "semantic-refinement"].includes(
       value.transcriptSource as string,
     ) &&
     value.audioReviewed === true &&
-    (isLegacy ||
+    (isV1 ||
       (typeof value.contextFingerprint === "string" &&
         /^fnv1a64:[0-9a-f]{16}$/u.test(value.contextFingerprint))) &&
+    (!isV12 ||
+      isCandidatePassBV12VerificationSourceFence({
+        candidateId: value.candidateId,
+        sourceStartMs: value.sourceStartMs,
+        sourceEndMs: value.sourceEndMs,
+        routingModelRevision: value.routingModelRevision,
+      })) &&
+    (!isV13 ||
+      isCandidatePassBV13VerificationSourceFence({
+        candidateId: value.candidateId,
+        sourceStartMs: value.sourceStartMs,
+        sourceEndMs: value.sourceEndMs,
+        routingModelRevision: value.routingModelRevision,
+        refinementEvidenceProjectionFingerprint:
+          value.refinementEvidenceProjectionFingerprint,
+      })) &&
+    (!isCurrent ||
+      isCandidatePassBVerificationSourceFence({
+        candidateId: value.candidateId,
+        sourceStartMs: value.sourceStartMs,
+        sourceEndMs: value.sourceEndMs,
+        routingModelRevision: value.routingModelRevision,
+        refinementEvidenceProjectionFingerprint:
+          value.refinementEvidenceProjectionFingerprint,
+        outputLanguage: value.outputLanguage,
+        castRosterId: value.castRosterId,
+      })) &&
     value.videoFrameCount === MAX_CANDIDATE_PASS_B_VIDEO_FRAMES &&
     value.thumbnailPrepared === true &&
     Number.isSafeInteger(value.thumbnailTimestampMs) &&
@@ -262,15 +449,28 @@ export function candidatePassBContextFingerprint(
 export function candidatePassBReceiptMatchesContext(
   receipt: CandidatePassBVerificationReceipt,
   context: CandidatePassBContextPacket,
+  sourceFence: CandidatePassBVerificationSourceFence,
 ): boolean {
   try {
     const canonicalContext = canonicalizeCandidatePassBContextPacket(context);
     return (
-      receipt.schemaVersion === "1.1.0" &&
+      isCandidatePassBVerificationReceipt(receipt) &&
+      isCandidatePassBVerificationSourceFence(sourceFence) &&
+      receipt.schemaVersion ===
+        CANDIDATE_PASS_B_VERIFICATION_RECEIPT_SCHEMA_VERSION &&
       receipt.contextSchemaVersion === canonicalContext.schemaVersion &&
       receipt.transcriptSource === canonicalContext.transcriptSource &&
       receipt.contextFingerprint ===
-        candidatePassBContextFingerprint(canonicalContext)
+        candidatePassBContextFingerprint(canonicalContext) &&
+      receipt.candidateId === sourceFence.candidateId &&
+      receipt.sourceStartMs === sourceFence.sourceStartMs &&
+      receipt.sourceEndMs === sourceFence.sourceEndMs &&
+      receipt.routingModelRevision === sourceFence.routingModelRevision &&
+      receipt.refinementEvidenceProjectionFingerprint ===
+        sourceFence.refinementEvidenceProjectionFingerprint &&
+      receipt.outputLanguage === sourceFence.outputLanguage &&
+      receipt.castRosterId === sourceFence.castRosterId &&
+      receipt.routingModelRevision === CANDIDATE_PASS_B_ROUTING_MODEL_REVISION
     );
   } catch {
     return false;
@@ -314,7 +514,16 @@ export function finalizeFullyVerifiedCandidates<
       continue;
     }
     if (
-      !candidatePassBReceiptMatchesContext(receipt, context) ||
+      !candidatePassBReceiptMatchesContext(receipt, context, {
+        candidateId: candidate.id,
+        sourceStartMs: candidate.startMs,
+        sourceEndMs: candidate.endMs,
+        routingModelRevision: CANDIDATE_PASS_B_ROUTING_MODEL_REVISION,
+        refinementEvidenceProjectionFingerprint:
+          input.refinementEvidenceProjectionFingerprint,
+        outputLanguage: input.outputLanguage,
+        castRosterId: input.castRosterId,
+      }) ||
       receipt.audioReviewed !== true ||
       receipt.videoFrameCount !== MAX_CANDIDATE_PASS_B_VIDEO_FRAMES ||
       receipt.thumbnailPrepared !== true ||

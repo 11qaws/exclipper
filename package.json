@@ -1,7 +1,7 @@
 {
   "name": "exclipper",
   "private": true,
-  "version": "0.8.7",
+  "version": "0.8.8",
   "type": "module",
   "engines": {
     "node": ">=22.12.0"
@@ -14,11 +14,14 @@
     "lint": "eslint . --max-warnings 0",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:voice-enrollment-tool": "node --test scripts/extract-chzzk-voice-enrollment-candidates.test.mjs",
+    "enrollment:extract-candidates": "node scripts/extract-chzzk-voice-enrollment-candidates.mjs",
+    "enrollment:evaluate-speakers": "node scripts/evaluate-speaker-enrollment-candidates.mjs",
     "dev:focus": "node dev/focus-server.mjs",
     "cloudflare:dev": "wrangler dev",
     "cloudflare:deploy": "wrangler deploy",
     "evaluate:live-context": "tsx scripts/evaluate-live-caption-context.mjs",
-    "check": "npm run typecheck && npm run lint && npm run test"
+    "check": "npm run typecheck && npm run lint && npm run test && npm run test:voice-enrollment-tool"
   },
   "dependencies": {
     "@huggingface/transformers": "3.8.1",

@@ -37,6 +37,8 @@
     }
   ],
   "secrets": {
+    // Optional Groq route: inject GROQ_API_KEY with `wrangler secret put`
+    // only when BROADCAST_TRANSCRIPT_PROVIDER is explicitly set to "groq".
     "required": [
       "GEMINI_API_KEY",
       "QWEN_API_KEY",

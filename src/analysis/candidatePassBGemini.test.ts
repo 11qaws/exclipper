@@ -14,6 +14,7 @@ import {
 } from "./candidatePassBGemini";
 import { DEFAULT_CANDIDATE_PASS_B_CAST_ROSTER_ID } from "./participantRoster";
 import {
+  CANDIDATE_PASS_B_ROUTING_MODEL_REVISION,
   MAX_CANDIDATE_PASS_B_CONTEXT_TEXT_LENGTH,
   type CandidatePassBContextPacket,
 } from "./candidatePassBWorkerProtocol";
@@ -261,6 +262,15 @@ describe("candidatePassBGemini", () => {
         rawContext,
         frames,
         1_000,
+        {
+          candidateId: "candidate-prompt-parity",
+          sourceStartMs: 0,
+          sourceEndMs: 60_000,
+          routingModelRevision: CANDIDATE_PASS_B_ROUTING_MODEL_REVISION,
+          refinementEvidenceProjectionFingerprint: null,
+          outputLanguage,
+          castRosterId: DEFAULT_CANDIDATE_PASS_B_CAST_ROSTER_ID,
+        },
       );
 
       expect(direct.contents[0].parts[0].text).toBe(expectedPrompt);

@@ -2,6 +2,10 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { BroadcastContextTranscriptionChunk } from "./broadcastContextSamplingPlan";
 import type { BroadcastTranscriptWorkerRunResult } from "./broadcastTranscriptWorkerClient";
+import type {
+  BroadcastTranscriptChunkAbstention,
+  BroadcastTranscriptChunkGap,
+} from "./broadcastTranscriptWorkerProtocol";
 import {
   MAX_BROADCAST_TRANSCRIPT_FRAGMENT_ATTEMPTS,
   nextTranscriptFragmentManualGeneration,
@@ -9,6 +13,8 @@ import {
   transcriptFragmentQuotaAttemptOrdinal,
   transcriptFragmentQuotaOperationId,
 } from "./broadcastTranscriptFragmentRecovery";
+import { BROADCAST_TRANSCRIPT_QWEN_OMNI_MODEL_REVISION } from "./broadcastTranscriptQwen";
+import { createVerifiedNoSpeechRunReceiptForTest } from "../testSupport/broadcastSpeechActivityTestReceipt";
 
 const chunks: readonly BroadcastContextTranscriptionChunk[] = [
   {
@@ -42,7 +48,16 @@ function transcript(
     chunkId: chunk.chunkId,
     result: {
       schemaVersion: "1.0.0",
-      modelId: "qwen3-asr-flash",
+      modelId: "qwen3.5-omni-flash",
+      modelRevision: BROADCAST_TRANSCRIPT_QWEN_OMNI_MODEL_REVISION,
+      providerReceipt: {
+        schemaVersion: "1.0.0",
+        routeManifestFingerprint: `sha256:${"1".repeat(64)}`,
+        provider: "qwen",
+        modelId: "qwen3.5-omni-flash",
+        modelRevision: BROADCAST_TRANSCRIPT_QWEN_OMNI_MODEL_REVISION,
+        fallbackUsed: false,
+      },
       sourceStartMs: chunk.sourceStartMs,
       sourceEndMs: chunk.sourceEndMs,
       textKo: `${chunk.chunkId} transcript`,
@@ -56,18 +71,54 @@ function transcript(
 function attempt(
   requested: readonly BroadcastContextTranscriptionChunk[],
   successfulIds: readonly string[],
-  gapReason: "decode-failed" | "no-audio" | "transcription-failed" | "rate-limited" | "outcome-unknown",
+  gapReason:
+    | "decode-failed"
+    | "no-audio"
+    | "no-speech"
+    | "transcription-failed"
+    | "rate-limited"
+    | "outcome-unknown",
 ): BroadcastTranscriptWorkerRunResult {
   const success = new Set(successfulIds);
   const fragments = requested
     .filter(({ chunkId }) => success.has(chunkId))
     .map(transcript);
-  const gaps = requested
-    .filter(({ chunkId }) => !success.has(chunkId))
-    .map(({ chunkId }) => ({ chunkId, reason: gapReason }));
+  const unresolvedChunks = requested.filter(
+    ({ chunkId }) => !success.has(chunkId),
+  );
+  const abstentions: readonly BroadcastTranscriptChunkAbstention[] =
+    gapReason === "no-audio" || gapReason === "no-speech"
+      ? unresolvedChunks.map((chunk) =>
+          gapReason === "no-audio"
+            ? {
+                chunkId: chunk.chunkId,
+                reason: gapReason,
+                speechActivityReceipt: null,
+              }
+            : {
+                chunkId: chunk.chunkId,
+                reason: gapReason,
+                speechActivityReceipt:
+                  createVerifiedNoSpeechRunReceiptForTest(
+                    3_000,
+                    chunk.sourceStartMs,
+                    chunk.sourceEndMs,
+                  ),
+              },
+        )
+      : [];
+  const gaps: readonly BroadcastTranscriptChunkGap[] =
+    gapReason === "no-audio" || gapReason === "no-speech"
+      ? []
+      : unresolvedChunks.map(({ chunkId }) => ({
+          chunkId,
+          reason: gapReason,
+        }));
   return {
     fragments,
     results: fragments.map(({ result }) => result),
+    abstentions,
+    abstainedChunkIds: abstentions.map(({ chunkId }) => chunkId),
     gaps,
     gapChunkIds: gaps.map(({ chunkId }) => chunkId),
     requestedCount: requested.length,
@@ -151,9 +202,81 @@ describe("recoverBroadcastTranscriptFragments", () => {
 
     expect(runAttempt).toHaveBeenCalledTimes(1);
     expect(result.noAudioGaps).toEqual([
-      { chunkId: "asr-a", reason: "no-audio" },
+      {
+        chunkId: "asr-a",
+        reason: "no-audio",
+        speechActivityReceipt: null,
+      },
+    ]);
+    expect(result.resolvedAbstentions).toEqual([
+      {
+        chunkId: "asr-a",
+        reason: "no-audio",
+        speechActivityReceipt: null,
+      },
     ]);
     expect(result.unresolvedRetryableGaps).toEqual([]);
+  });
+
+  it("normalizes a legacy 1.6 no-audio gap into a resolved abstention", async () => {
+    const runAttempt = vi.fn(
+      (
+        requested: readonly BroadcastContextTranscriptionChunk[],
+      ): Promise<BroadcastTranscriptWorkerRunResult> =>
+        Promise.resolve({
+          fragments: [],
+          results: [],
+          abstentions: [],
+          abstainedChunkIds: [],
+          gaps: requested.map(({ chunkId }) => ({
+            chunkId,
+            reason: "no-audio" as const,
+          })),
+          gapChunkIds: requested.map(({ chunkId }) => chunkId),
+          requestedCount: requested.length,
+          concurrencyOutcome: "legacy 1.6",
+        }),
+    );
+
+    const result = await recoverBroadcastTranscriptFragments({
+      chunks: [firstChunk],
+      manualAttemptGeneration: 0,
+      runAttempt,
+    });
+
+    expect(runAttempt).toHaveBeenCalledTimes(1);
+    expect(result.resolvedAbstentions).toEqual([
+      {
+        chunkId: "asr-a",
+        reason: "no-audio",
+        speechActivityReceipt: null,
+      },
+    ]);
+    expect(result.unresolvedRetryableGaps).toEqual([]);
+  });
+
+  it("treats confirmed no-speech as a resolved abstention instead of retrying it", async () => {
+    const runAttempt = vi.fn(
+      (requested: readonly BroadcastContextTranscriptionChunk[]) =>
+        Promise.resolve(attempt(requested, [], "no-speech")),
+    );
+
+    const result = await recoverBroadcastTranscriptFragments({
+      chunks: [firstChunk],
+      manualAttemptGeneration: 0,
+      runAttempt,
+    });
+
+    expect(runAttempt).toHaveBeenCalledTimes(1);
+    expect(result.noSpeechAbstentions).toEqual([
+      expect.objectContaining({ chunkId: "asr-a", reason: "no-speech" }),
+    ]);
+    expect(result.resolvedAbstentions).toEqual([
+      expect.objectContaining({ chunkId: "asr-a", reason: "no-speech" }),
+    ]);
+    expect(result.noAudioGaps).toEqual([]);
+    expect(result.unresolvedRetryableGaps).toEqual([]);
+    expect(result.outcomeUnknownGaps).toEqual([]);
   });
 
   it("never blindly retries an outcome-unknown request", async () => {
@@ -171,6 +294,45 @@ describe("recoverBroadcastTranscriptFragments", () => {
     expect(runAttempt).toHaveBeenCalledTimes(1);
     expect(result.outcomeUnknownGaps).toEqual([
       { chunkId: "asr-a", reason: "outcome-unknown" },
+    ]);
+  });
+
+  it("awaits durable start and settlement hooks around every worker attempt", async () => {
+    const events: string[] = [];
+    const result = await recoverBroadcastTranscriptFragments({
+      chunks: [firstChunk],
+      manualAttemptGeneration: 3,
+      onAttemptStarting: async (requested, quotaAttemptOrdinal, attemptIndex) => {
+        await Promise.resolve();
+        events.push(
+          `start:${attemptIndex}:${quotaAttemptOrdinal}:${requested[0]?.chunkId}`,
+        );
+      },
+      runAttempt: (requested, quotaAttemptOrdinal, attemptIndex) => {
+        events.push(
+          `run:${attemptIndex}:${quotaAttemptOrdinal}:${requested[0]?.chunkId}`,
+        );
+        return Promise.resolve(
+          attempt(requested, ["asr-a"], "transcription-failed"),
+        );
+      },
+      onAttemptSettled: async (
+        settled,
+        quotaAttemptOrdinal,
+        attemptIndex,
+      ) => {
+        await Promise.resolve();
+        events.push(
+          `settle:${attemptIndex}:${quotaAttemptOrdinal}:${settled.fragments[0]?.chunkId}`,
+        );
+      },
+    });
+
+    expect(result.fragments.map(({ chunkId }) => chunkId)).toEqual(["asr-a"]);
+    expect(events).toEqual([
+      "start:0:12:asr-a",
+      "run:0:12:asr-a",
+      "settle:0:12:asr-a",
     ]);
   });
 
@@ -219,6 +381,21 @@ describe("recoverBroadcastTranscriptFragments", () => {
       transcriptFragmentQuotaOperationId("refinement", 0, chunkId),
     ).not.toBe(
       transcriptFragmentQuotaOperationId("event-boost", 0, chunkId),
+    );
+    expect(
+      transcriptFragmentQuotaOperationId(
+        "refinement",
+        0,
+        chunkId,
+        "inputscope00000001",
+      ),
+    ).not.toBe(
+      transcriptFragmentQuotaOperationId(
+        "refinement",
+        0,
+        chunkId,
+        "inputscope00000002",
+      ),
     );
   });
 });

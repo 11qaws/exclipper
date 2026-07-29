@@ -1,6 +1,14 @@
 /// <reference lib="webworker" />
 
 import {
+  AutoModelForAudioFrameClassification,
+  AutoProcessor,
+  env,
+  Tensor,
+  type PreTrainedModel,
+  type Processor,
+} from "@huggingface/transformers";
+import {
   ALL_FORMATS,
   AudioSampleSink,
   BlobSource,
@@ -17,11 +25,29 @@ import { CANDIDATE_PASS_B_SAMPLE_RATE_HZ } from "./candidatePassBWorkerProtocol"
 import {
   MAX_BROADCAST_TRANSCRIPT_QWEN_DURATION_MS,
 } from "./broadcastTranscriptQwen";
+import {
+  BROADCAST_SPEECH_ACTIVITY_INPUT_SAMPLE_COUNT,
+  BROADCAST_SPEECH_ACTIVITY_MODEL_DTYPE,
+  BROADCAST_SPEECH_ACTIVITY_MODEL_ID,
+  BROADCAST_SPEECH_ACTIVITY_MODEL_REVISION,
+  BROADCAST_SPEECH_ACTIVITY_OUTPUT_CLASS_COUNT,
+  BROADCAST_SPEECH_ACTIVITY_SAMPLE_RATE_HZ,
+  broadcastSpeechActivityCanSkipAsr,
+  createBroadcastSpeechActivityPlan,
+  createBroadcastSpeechActivityRunReceipt,
+  postprocessBroadcastSpeechActivityLogits,
+  type BroadcastSpeechActivityCellReceipt,
+  type BroadcastSpeechActivityRunReceipt,
+} from "./broadcastSpeechActivity";
 import type { BroadcastContextTranscriptionChunk } from "./broadcastContextSamplingPlan";
 import {
   BroadcastTranscriptQwenClientError,
   requestBroadcastTranscriptChunkBinary,
 } from "./broadcastTranscriptQwenClient";
+import {
+  isBroadcastTranscriptRouteSelection,
+  verifyBroadcastTranscriptRouteSelection,
+} from "./broadcastTranscriptRouteManifest";
 import {
   AdaptiveConcurrency,
   requestSpacingMs,
@@ -40,6 +66,7 @@ import { transcriptFragmentQuotaOperationId } from "./broadcastTranscriptFragmen
 import {
   MAX_BROADCAST_TRANSCRIPT_WORKER_CHUNKS,
   isBroadcastTranscriptChunkId,
+  isBroadcastTranscriptQuotaOperationScope,
   type BroadcastTranscriptChunkGapReason,
   type BroadcastTranscriptWorkerIdentity,
   type BroadcastTranscriptWorkerRequest,
@@ -50,12 +77,19 @@ declare const self: DedicatedWorkerGlobalScope;
 
 const MAX_SOURCE_DURATION_MS = 12 * 60 * 60_000;
 const SOURCE_CACHE_BYTES = 8 * 1024 * 1024;
+const BUNDLED_ORT_WASM_URL = new URL(
+  "../../node_modules/@huggingface/transformers/dist/ort-wasm-simd-threaded.jsep.wasm",
+  import.meta.url,
+);
 
 interface ActiveTask {
   readonly identity: BroadcastTranscriptWorkerIdentity;
   cancelled: boolean;
   input: Input<BlobSource> | null;
   readonly fetchControllers: Set<AbortController>;
+  speechActivityProcessor: Processor | null;
+  speechActivityModel: PreTrainedModel | null;
+  speechActivityUnavailable: boolean;
 }
 
 
@@ -96,6 +130,7 @@ function isValidAnalyzeRequest(
     !isRecord(value) ||
     value.type !== "broadcast-transcript-analyze" ||
     !isValidIdentity(value.identity) ||
+    !isBroadcastTranscriptRouteSelection(value.route) ||
     !(value.file instanceof File) ||
     !Number.isSafeInteger(value.sourceDurationMs) ||
     (value.sourceDurationMs as number) <= 0 ||
@@ -109,12 +144,25 @@ function isValidAnalyzeRequest(
   if (
     value.quota !== undefined &&
     (!isRecord(value.quota) ||
-      ![3, 4].includes(Object.keys(value.quota).length) ||
+      ![3, 4, 5].includes(Object.keys(value.quota).length) ||
+      !Object.keys(value.quota).every((key) =>
+        [
+          "participantId",
+          "runId",
+          "operationNamespace",
+          "operationScope",
+          "attemptOrdinal",
+        ].includes(key),
+      ) ||
       !isAiQuotaParticipantId(value.quota.participantId) ||
       !isAiQuotaOpaqueId(value.quota.runId) ||
       !["uniform", "event-boost", "refinement"].includes(
         value.quota.operationNamespace as string,
       ) ||
+      (value.quota.operationScope !== undefined &&
+        !isBroadcastTranscriptQuotaOperationScope(
+          value.quota.operationScope,
+        )) ||
       (value.quota.attemptOrdinal !== undefined &&
         (!Number.isSafeInteger(value.quota.attemptOrdinal) ||
           (value.quota.attemptOrdinal as number) < 0)))
@@ -191,6 +239,111 @@ function disposeTask(task: ActiveTask): void {
   }
 }
 
+async function disposeSpeechActivityArtifacts(task: ActiveTask): Promise<void> {
+  const model = task.speechActivityModel;
+  task.speechActivityModel = null;
+  task.speechActivityProcessor = null;
+  if (model === null) return;
+  try {
+    await model.dispose();
+  } catch {
+    // Worker termination is the final resource boundary; cleanup is best-effort.
+  }
+}
+
+function configureBundledOrtWasm(): void {
+  const wasm = env.backends.onnx.wasm;
+  if (wasm === undefined) {
+    throw new Error("The bundled ONNX WASM runtime is unavailable.");
+  }
+  wasm.wasmPaths = { wasm: BUNDLED_ORT_WASM_URL };
+  wasm.numThreads = 1;
+  wasm.proxy = false;
+}
+
+function assertPinnedSpeechActivityLabels(model: PreTrainedModel): void {
+  const config: unknown = model.config;
+  if (!isRecord(config) || !isRecord(config.id2label)) {
+    throw new Error("The pinned speech-activity label map is unavailable.");
+  }
+  const id2label = config.id2label;
+  if (
+    config.num_labels !== undefined &&
+    config.num_labels !== BROADCAST_SPEECH_ACTIVITY_OUTPUT_CLASS_COUNT
+  ) {
+    throw new Error("The pinned speech-activity class count changed.");
+  }
+  const expected = [
+    "NO_SPEAKER",
+    "SPEAKER_1",
+    "SPEAKER_2",
+    "SPEAKER_3",
+    "SPEAKERS_1_AND_2",
+    "SPEAKERS_1_AND_3",
+    "SPEAKERS_2_AND_3",
+  ] as const;
+  if (
+    Object.keys(id2label).length !== expected.length ||
+    expected.some(
+      (label, classId) => id2label[String(classId)] !== label,
+    )
+  ) {
+    throw new Error("The pinned speech-activity label order changed.");
+  }
+}
+
+/**
+ * Loads the immutable VAD model at the first decoded audio fragment. A failed
+ * load is remembered for this task so every later fragment goes directly to
+ * ASR instead of repeatedly stalling on the same unavailable model.
+ */
+async function loadSpeechActivityArtifacts(task: ActiveTask): Promise<boolean> {
+  if (
+    task.speechActivityProcessor !== null &&
+    task.speechActivityModel !== null
+  ) {
+    return true;
+  }
+  if (task.speechActivityUnavailable || task.cancelled) {
+    return false;
+  }
+  try {
+    configureBundledOrtWasm();
+    const processor = await AutoProcessor.from_pretrained(
+      BROADCAST_SPEECH_ACTIVITY_MODEL_ID,
+      {
+        revision: BROADCAST_SPEECH_ACTIVITY_MODEL_REVISION,
+      },
+    );
+    if (task.cancelled) return false;
+    const model =
+      await AutoModelForAudioFrameClassification.from_pretrained(
+        BROADCAST_SPEECH_ACTIVITY_MODEL_ID,
+        {
+          revision: BROADCAST_SPEECH_ACTIVITY_MODEL_REVISION,
+          dtype: BROADCAST_SPEECH_ACTIVITY_MODEL_DTYPE,
+          device: "wasm",
+        },
+      );
+    if (task.cancelled) {
+      try {
+        await model.dispose();
+      } catch {
+        // The worker may be terminated immediately after cancellation.
+      }
+      return false;
+    }
+    task.speechActivityProcessor = processor;
+    task.speechActivityModel = model;
+    assertPinnedSpeechActivityLabels(model);
+    return true;
+  } catch {
+    task.speechActivityUnavailable = true;
+    await disposeSpeechActivityArtifacts(task);
+    return false;
+  }
+}
+
 function clamp(value: number, minimum: number, maximum: number): number {
   return Math.min(maximum, Math.max(minimum, value));
 }
@@ -200,6 +353,7 @@ class PcmRangeBuilder {
   private monoScratch = new Float32Array(0);
   private nextOutputFrame = 0;
   private overlapFrames = 0;
+  private writtenOutputFrameCount = 0;
   public readonly pcm: Float32Array;
 
   public constructor(
@@ -267,12 +421,20 @@ class PcmRangeBuilder {
         -1,
         1,
       );
+      this.writtenOutputFrameCount += 1;
       this.nextOutputFrame += 1;
     }
   }
 
   public hasAudio(): boolean {
     return this.overlapFrames > 0;
+  }
+
+  public hasCompleteOutputCoverage(): boolean {
+    return (
+      this.pcm.length > 0 &&
+      this.writtenOutputFrameCount === this.pcm.length
+    );
   }
 
   private ensureScratch(frameCount: number): void {
@@ -284,12 +446,21 @@ class PcmRangeBuilder {
   }
 }
 
+interface DecodedPcmRange {
+  readonly pcm: Float32Array;
+  /**
+   * True only when decoder samples populated every output frame. Zero-filled
+   * holes must never be mistaken for model-confirmed no-speech.
+   */
+  readonly completeForSpeechActivity: boolean;
+}
+
 async function decodeRange(
   audioTrack: InputAudioTrack,
   startMs: number,
   endMs: number,
   task: ActiveTask,
-): Promise<Float32Array | null> {
+): Promise<DecodedPcmRange | null> {
   const builder = new PcmRangeBuilder(startMs, endMs);
   const sink = new AudioSampleSink(audioTrack);
   try {
@@ -311,9 +482,173 @@ async function decodeRange(
   }
   if (!builder.hasAudio()) {
     builder.pcm.fill(0);
-    return new Float32Array();
+    return {
+      pcm: new Float32Array(),
+      completeForSpeechActivity: false,
+    };
   }
-  return builder.pcm;
+  return {
+    pcm: builder.pcm,
+    completeForSpeechActivity: builder.hasCompleteOutputCoverage(),
+  };
+}
+
+function disposeTensorGraph(value: unknown, disposed: Set<unknown>): void {
+  if (value === null || value === undefined || disposed.has(value)) return;
+  if (value instanceof Tensor) {
+    disposed.add(value);
+    try {
+      value.dispose();
+    } catch {
+      // Tensor cleanup cannot turn a conservative ASR fallback into failure.
+    }
+    return;
+  }
+  if (typeof value !== "object") return;
+  disposed.add(value);
+  if (Array.isArray(value)) {
+    value.forEach((entry) => disposeTensorGraph(entry, disposed));
+    return;
+  }
+  Object.values(value).forEach((entry) =>
+    disposeTensorGraph(entry, disposed),
+  );
+}
+
+function speechActivityLogitFrames(
+  output: unknown,
+): readonly (readonly number[])[] {
+  if (!isRecord(output) || !(output.logits instanceof Tensor)) {
+    throw new Error("Speech-activity output did not contain logits.");
+  }
+  const { logits } = output;
+  const data = logits.data;
+  if (
+    logits.dims.length !== 3 ||
+    logits.dims[0] !== 1 ||
+    !Number.isSafeInteger(logits.dims[1]) ||
+    (logits.dims[1] ?? 0) <= 0 ||
+    logits.dims[2] !== BROADCAST_SPEECH_ACTIVITY_OUTPUT_CLASS_COUNT ||
+    !(data instanceof Float32Array)
+  ) {
+    throw new Error("Speech-activity logits have an unexpected shape.");
+  }
+  const frameCount = logits.dims[1] ?? 0;
+  if (
+    data.length !==
+    frameCount * BROADCAST_SPEECH_ACTIVITY_OUTPUT_CLASS_COUNT
+  ) {
+    throw new Error("Speech-activity logits are incomplete.");
+  }
+  return Array.from({ length: frameCount }, (_, frameIndex) => {
+    const start =
+      frameIndex * BROADCAST_SPEECH_ACTIVITY_OUTPUT_CLASS_COUNT;
+    return Array.from(
+      data.subarray(
+        start,
+        start + BROADCAST_SPEECH_ACTIVITY_OUTPUT_CLASS_COUNT,
+      ),
+    );
+  });
+}
+
+/**
+ * Returns a complete receipt only when every valid model frame in every
+ * 10-second cell is a confident NO_SPEAKER decision. Any uncertainty, speech,
+ * runtime error, model error, or malformed output returns null so the original
+ * PCM proceeds to ASR.
+ */
+async function chunkHasConfirmedNoSpeech(
+  pcm: Float32Array,
+  chunk: BroadcastContextTranscriptionChunk,
+  sourceDurationMs: number,
+  task: ActiveTask,
+  attemptOrdinal: number,
+): Promise<BroadcastSpeechActivityRunReceipt | null> {
+  if (
+    CANDIDATE_PASS_B_SAMPLE_RATE_HZ !==
+      BROADCAST_SPEECH_ACTIVITY_SAMPLE_RATE_HZ ||
+    task.cancelled ||
+    !(await loadSpeechActivityArtifacts(task))
+  ) {
+    return null;
+  }
+  const processor = task.speechActivityProcessor;
+  const model = task.speechActivityModel;
+  if (processor === null || model === null) return null;
+
+  try {
+    const plan = createBroadcastSpeechActivityPlan(sourceDurationMs, {
+      sourceStartMs: chunk.sourceStartMs,
+      sourceEndMs: chunk.sourceEndMs,
+    });
+    const receipts: BroadcastSpeechActivityCellReceipt[] = [];
+    for (const cell of plan.cells) {
+      if (task.cancelled) return null;
+      if (
+        !Number.isSafeInteger(cell.validSampleCount) ||
+        cell.validSampleCount <= 0 ||
+        cell.validSampleCount >
+          BROADCAST_SPEECH_ACTIVITY_INPUT_SAMPLE_COUNT
+      ) {
+        return null;
+      }
+      const sourceOffset = Math.round(
+        ((cell.sourceStartMs - chunk.sourceStartMs) *
+          BROADCAST_SPEECH_ACTIVITY_SAMPLE_RATE_HZ) /
+          1_000,
+      );
+      const sourceEnd = sourceOffset + cell.validSampleCount;
+      if (
+        sourceOffset < 0 ||
+        sourceEnd > pcm.length ||
+        sourceEnd <= sourceOffset
+      ) {
+        return null;
+      }
+
+      const cellPcm = new Float32Array(
+        BROADCAST_SPEECH_ACTIVITY_INPUT_SAMPLE_COUNT,
+      );
+      cellPcm.set(pcm.subarray(sourceOffset, sourceEnd));
+      let inputs: unknown = null;
+      let output: unknown = null;
+      try {
+        inputs = await processor(cellPcm);
+        if (task.cancelled) return null;
+        output = await model(inputs);
+        if (task.cancelled) return null;
+        const receipt = postprocessBroadcastSpeechActivityLogits({
+          operationId: `vad-${chunk.chunkId}-${cell.ordinal}`,
+          attemptOrdinal,
+          runtime: "wasm",
+          cell,
+          logits: speechActivityLogitFrames(output),
+        });
+        if (!broadcastSpeechActivityCanSkipAsr(receipt)) {
+          return null;
+        }
+        receipts.push(receipt);
+      } finally {
+        cellPcm.fill(0);
+        const disposed = new Set<unknown>();
+        disposeTensorGraph(output, disposed);
+        disposeTensorGraph(inputs, disposed);
+      }
+    }
+    return plan.cells.length > 0
+      ? createBroadcastSpeechActivityRunReceipt(plan, receipts)
+      : null;
+  } catch {
+    /*
+     * VAD is a cost/latency gate, never the source of transcript loss. Once a
+     * runtime/model inference has failed, remember it for the remaining task
+     * and let every fragment use ASR.
+     */
+    task.speechActivityUnavailable = true;
+    await disposeSpeechActivityArtifacts(task);
+    return null;
+  }
 }
 
 async function runAnalyze(
@@ -323,6 +658,18 @@ async function runAnalyze(
   >,
   task: ActiveTask,
 ): Promise<void> {
+  try {
+    await verifyBroadcastTranscriptRouteSelection(request.route);
+  } catch {
+    post({
+      type: "broadcast-transcript-failed",
+      identity: task.identity,
+      reason: "invalid-input",
+    });
+    disposeTask(task);
+    if (activeTask === task) activeTask = null;
+    return;
+  }
   try {
     task.input = new Input({
       formats: ALL_FORMATS,
@@ -339,6 +686,7 @@ async function runAnalyze(
       return;
     }
     let successfulCount = 0;
+    let abstentionCount = 0;
     let processedCount = 0;
     let gapCount = 0;
     /*
@@ -384,10 +732,10 @@ async function runAnalyze(
           concurrency: concurrency.limit,
         },
       });
-      let pcm: Float32Array | null;
+      let decoded: DecodedPcmRange | null;
       let decodeFailed = false;
       try {
-        pcm = await decodeRange(
+        decoded = await decodeRange(
           audioTrack,
           chunk.sourceStartMs,
           chunk.sourceEndMs,
@@ -395,17 +743,58 @@ async function runAnalyze(
         );
       } catch {
         decodeFailed = true;
-        pcm = new Float32Array();
+        decoded = {
+          pcm: new Float32Array(),
+          completeForSpeechActivity: false,
+        };
       }
-      if (task.cancelled || pcm === null) return;
+      if (task.cancelled || decoded === null) return;
+      const { pcm } = decoded;
       if (pcm.length === 0) {
-        gapCount += 1;
+        processedCount += 1;
+        if (decodeFailed) {
+          gapCount += 1;
+          post({
+            type: "broadcast-transcript-gap",
+            identity: task.identity,
+            chunkId: chunk.chunkId,
+            reason: "decode-failed",
+          });
+        } else {
+          abstentionCount += 1;
+          post({
+            type: "broadcast-transcript-abstention",
+            identity: task.identity,
+            chunkId: chunk.chunkId,
+            reason: "no-audio",
+            speechActivityReceipt: null,
+          });
+        }
+        continue;
+      }
+      const speechActivityReceipt = decoded.completeForSpeechActivity
+        ? await chunkHasConfirmedNoSpeech(
+            pcm,
+            chunk,
+            request.sourceDurationMs,
+            task,
+            request.quota?.attemptOrdinal ?? 0,
+          )
+        : null;
+      if (task.cancelled) {
+        pcm.fill(0);
+        return;
+      }
+      if (speechActivityReceipt !== null) {
+        pcm.fill(0);
+        abstentionCount += 1;
         processedCount += 1;
         post({
-          type: "broadcast-transcript-gap",
+          type: "broadcast-transcript-abstention",
           identity: task.identity,
           chunkId: chunk.chunkId,
-          reason: decodeFailed ? "decode-failed" : "no-audio",
+          reason: "no-speech",
+          speechActivityReceipt,
         });
         continue;
       }
@@ -453,6 +842,7 @@ async function runAnalyze(
                 chunk.sourceStartMs,
                 durationMs,
                 {
+                  route: request.route,
                   signal: controller.signal,
                   ...(request.quota === undefined
                     ? {}
@@ -464,6 +854,7 @@ async function runAnalyze(
                             request.quota.operationNamespace,
                             request.quota.attemptOrdinal ?? 0,
                             chunkId,
+                            request.quota.operationScope,
                           ),
                         },
                       }),
@@ -552,6 +943,7 @@ async function runAnalyze(
       identity: task.identity,
       requestedCount: request.chunks.length,
       completedCount: successfulCount,
+      abstentionCount,
       gapCount,
       concurrencyOutcome: concurrency.describe(),
     });
@@ -567,6 +959,7 @@ async function runAnalyze(
     });
   } finally {
     disposeTask(task);
+    await disposeSpeechActivityArtifacts(task);
     if (activeTask === task) activeTask = null;
   }
 }
@@ -598,6 +991,9 @@ self.addEventListener("message", (event: MessageEvent<unknown>) => {
     cancelled: false,
     input: null,
     fetchControllers: new Set<AbortController>(),
+    speechActivityProcessor: null,
+    speechActivityModel: null,
+    speechActivityUnavailable: false,
   };
   activeTask = task;
   void runAnalyze(value, task);

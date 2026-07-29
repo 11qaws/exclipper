@@ -1,5 +1,18 @@
 # ExClipper 제품·UX·기술 계획서
 
+## 다음 배포 후보 · 방송 등장인물 근거화 계약
+
+- 제품이 알고 있는 6인 카탈로그, 원본 채널 prior, 실제 대사·화면·목소리 관측은 서로 다른 자료다. 채널 주인과 닫힌 명단은 등장·발화 증거가 아니며 이름 언급도 발화자 증거가 아니다.
+- 교환학생 메인 채널은 세라 교수님을 likely host로 두고 6명 전부를 허용한다. 개인 채널은 채널 주인을 likely host로 두되 세라를 제외한 나머지 5명을 닫힌 후보군으로 유지한다. 출처 불명은 6인 카탈로그만 유지하고 source prior를 만들지 않는다.
+- 전체 대사 지도 seal 뒤 `BroadcastParticipantGrounding`을 결정론적으로 만들고 session에 저장한 다음 exact readback이 성공해야 전체 맥락 API를 시작한다. `sealed`는 계획한 근거 수집이 정상 terminal이라는 뜻이며 인물 식별 성공을 뜻하지 않는다.
+- 현재 transcript-name 어댑터는 이름·고정 호칭이 나타난 챕터만 근거화한다. visual/voice 어댑터는 6인 전원의 검증된 reference manifest가 없으므로 명시적인 unavailable terminal로 기록한다. 이 상태에서는 맥락은 진행하되 주 진행자 이름과 발화자를 source prior만으로 확정하지 않는다.
+- voice 어댑터의 WavLM 임베딩 Worker와 부분 coverage/open-set 비교 계층은 준비되어 있다. 다만 전원 방송 6개와 개인 채널 12개를 교차검증한 결과 전원 방송의 30초 표본 다수가 다중 화자·음악에 오염된 것으로 나타났으므로 아직 App에 연결하지 않는다. VAD/overlap 제거와 사람 검증을 통과한 참여자만 prototype coverage에 포함하고, 나머지는 `unknown`으로 남긴다.
+- session schema `1.7.0`은 source roster, transcript seal, grounding pair, refinement transcript checkpoint, whole-context exact input snapshot을 함께 저장한다. 맥락·refinement 결과는 compare-and-swap으로만 commit하며 복구 때 모든 fingerprint를 다시 계산한다. 기존 1.2~1.6 결과는 삭제하지 않고 마이그레이션하되 grounding이나 exact input이 없던 과거 맥락을 새 근거가 있는 결과로 표시하지 않는다.
+- visual/voice 결과 타입과 validator는 실제 관찰 근거 및 `인물 없음 | 식별 불가 | 무발화` terminal을 이미 보존한다. 145개 이상 챕터를 요청 경계에서 압축할 때도 media evidence는 버리지 않고 새 bounded transcript-name projection 위에 다시 결합한다.
+- 실제 매체 식별은 두 계층이다. 맥락 전 방송 단위 grounding pass는 빠른 탐색·전사와 병렬로 source-time 화면 4장 묶음과 VAD의 비중첩 clean speech turn을 준비하고, visual identity와 `diarization → speaker embedding verification`을 모두 terminal로 만든 뒤 저장·readback한다. 맥락 뒤 후보 단위 confirmation은 같은 immutable bundle key가 일치할 때만 이미 디코딩한 화면·오디오를 재사용해 후보별로 다시 확인한다. 이름 없음·인물 없음·무발화·식별 불가는 정상 결과이며 디코딩·모델 실패만 다음 phase 전에 해당 cell을 재시도한다.
+- pre-context 계획은 transcript/visual/voice adapter의 source·model·reference manifest fence를 하나의 fingerprint로 묶는다. enabled adapter의 모든 cell이 modality에 맞는 terminal이고 누락·retryable·outcome-unknown이 0일 때만 seal한다. 검증된 visual/voice manifest가 없으면 해당 adapter는 명시적 unavailable terminal이므로 맥락은 진행하지만 이름을 만들지 않는다.
+- 상세 설계와 다음 adapter gate는 `docs/PARTICIPANT_GROUNDING_PIPELINE_2026-07-28.md`를 따른다.
+
 ## 다음 배포 후보 · 완전 검증 파이프라인 계약
 
 - 전체 방송 전사는 한 번의 Worker run이 아니라 `초기 시도 → 실패 조각만 최대 2회 복구 → 저장 readback → event-boost seal`의 한 phase다. 성공 조각은 즉시 source-fenced checkpoint로 보존하며 자동 복구에서 다시 보내지 않는다.
@@ -77,7 +90,7 @@
 
 - 빠른 탐색과 의미 탐색의 결과는 최종 후보가 아니라 candidate reservoir다. 최종 검토 목록에 들어가려면 전체 방송 요약, 주제 구간, 직전·현재·직후 흐름, 실제 참고 대사, 후보 오디오, 서로 다른 대표 화면 4장, 그 묶음에서 고른 대표 썸네일, 멀티모달 AI 판정이 같은 candidate ID와 source range로 연결되어야 한다.
 - 후보별 bounded context packet은 전체 방송 흐름, 후보 주제, 앞뒤 흐름, 참고 대사 출처, 빠른 탐색 근거와 비식별 채팅 반응 요약을 소유한다. 이 패킷이 준비된 후보만 화면 추출 큐에 들어가며, 모델은 단편 구간을 독립적으로 추측하지 않고 전체 흐름과 실제 오디오·네 화면의 일치 여부를 다시 판정한다.
-- 후보 모델은 `recommend | reject | uncertain`, `consistent | conflict | insufficient`, `streamer-event | music-or-intermission | routine-or-unclear`를 명시적으로 반환한다. 앱은 네 화면과 같은 묶음의 썸네일, 오디오 결과, 맥락 schema가 모두 확인된 뒤에만 로컬 verification receipt를 발급한다. 저장 데이터가 단순히 존재하거나 과거 결과가 복원됐다는 사실만으로 receipt를 만들지 않는다.
+- 후보 모델은 `recommend | reject | uncertain`, `consistent | conflict | insufficient`, `streamer-event | music-or-intermission | routine-or-unclear`를 명시적으로 반환한다. 앱은 candidate ID·실제 검토 source start/end·현재 routing revision·canonical context fingerprint와 네 화면, 같은 묶음의 썸네일, 오디오 결과가 모두 확인된 뒤에만 로컬 verification receipt `1.2.0`을 발급한다. 저장 데이터가 단순히 존재하거나 과거 결과가 복원됐다는 사실만으로 receipt를 만들지 않으며, source range가 바뀐 후보는 해당 후보만 다시 검증한다.
 - 최종 publication gate는 receipt가 있고 `recommend + consistent + streamer-event`인 후보만 통과시킨다. 음악·MV·오프닝·엔딩·휴식, 평범한 진행, 맥락 충돌, 대사·화면·썸네일 누락은 candidate reservoir와 오류 원인은 보존하되 최종 후보 카드·다운로드 목록에는 올리지 않는다.
 - 최종 후보 상세에는 `전체 방송 흐름 → 직전 흐름 → 검증된 후보 상황 → 직후 흐름 → 확인한 대사`를 항상 표시한다. 따라서 모든 후보는 하루치 방송 안에서 왜 이 장면이 나왔고 어떤 반응·결과로 이어졌는지 독립된 설명을 가진다.
 - AI 방송 흐름 문단은 최종 후보와 연결된 서술을 굵게 표시하고, 바로 뒤에 실제 최종 목록 번호를 클릭 가능한 윗첨자 주석으로 붙인다. 모델이 번호를 생성하지 않고 UI가 candidate ID에서 번호를 계산하므로 후보 추가·제외 뒤에도 주석이 다른 장면을 가리키지 않는다. 원문 요약에 해당 사건이 빠졌으면 검증된 후보 상황 문장을 같은 문단 끝에 추가해 모든 최종 후보가 정확히 한 번 이상 인용되게 한다.

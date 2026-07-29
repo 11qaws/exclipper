@@ -6,8 +6,14 @@ import {
   isAnalysisLanguage,
   type AnalysisLanguage,
 } from "../domain/analysisLanguage";
+import {
+  createBroadcastParticipantGrounding,
+  normalizeBroadcastParticipantGroundingForInput,
+  participantContextForBroadcastRange,
+  type BroadcastParticipantGrounding,
+} from "./broadcastParticipantGrounding";
 
-export const BROADCAST_CONTEXT_SCHEMA_VERSION = "1.6.0" as const;
+export const BROADCAST_CONTEXT_SCHEMA_VERSION = "1.7.0" as const;
 export const MAX_BROADCAST_CONTEXT_SOURCE_DURATION_MS = 12 * 60 * 60_000;
 export const MAX_BROADCAST_CONTEXT_CHAPTERS = 144;
 /** Stale-client input ceiling before the Worker compacts to the 144-item model contract. */
@@ -53,6 +59,11 @@ export interface BroadcastContextRequestInput {
   readonly candidates: readonly BroadcastContextCandidateInput[];
   /** Server-known closed roster only; arbitrary prompt text is never accepted. */
   readonly castRosterId?: CandidatePassBCastRosterId;
+  /**
+   * Deterministic pre-context participant snapshot. Older clients may omit it;
+   * the receiver rebuilds the exact same packet from chapters and roster.
+   */
+  readonly participantGrounding?: BroadcastParticipantGrounding;
   readonly outputLanguage?: AnalysisLanguage;
 }
 
@@ -62,6 +73,7 @@ export interface BroadcastContextRequest {
   readonly chapters: readonly BroadcastContextChapterInput[];
   readonly candidates: readonly BroadcastContextCandidateInput[];
   readonly castRosterId: CandidatePassBCastRosterId | null;
+  readonly participantGrounding: BroadcastParticipantGrounding;
   readonly outputLanguage: AnalysisLanguage;
 }
 
@@ -189,6 +201,7 @@ export interface BroadcastContextHostStreamerProfile {
 export interface BroadcastContextResult {
   readonly schemaVersion:
     | typeof BROADCAST_CONTEXT_SCHEMA_VERSION
+    | "1.6.0"
     | "1.5.0"
     | "1.4.0"
     | "1.2.0"
@@ -234,6 +247,7 @@ export type BroadcastContextInputErrorCode =
   | "OVERLAPPING_CHAPTERS"
   | "INVALID_TEXT"
   | "INVALID_CAST_ROSTER"
+  | "INVALID_PARTICIPANT_GROUNDING"
   | "INVALID_SEMANTIC_CHAPTER";
 
 export class BroadcastContextInputError extends Error {
@@ -439,6 +453,31 @@ export function createBroadcastContextRequest(
       summaryKo: chapter.summaryKo,
     };
   });
+  const castRosterId = input.castRosterId ?? null;
+  const participantGroundingInput = {
+    sourceDurationMs: input.sourceDurationMs,
+    castRosterId,
+    chapters,
+  };
+  const fallbackParticipantGrounding = createBroadcastParticipantGrounding(
+    participantGroundingInput,
+  );
+  const suppliedParticipantGrounding =
+    input.participantGrounding === undefined
+      ? null
+      : normalizeBroadcastParticipantGroundingForInput(
+      input.participantGrounding,
+      participantGroundingInput,
+    );
+  if (input.participantGrounding !== undefined &&
+      suppliedParticipantGrounding === null) {
+    throw new BroadcastContextInputError(
+      "INVALID_PARTICIPANT_GROUNDING",
+      "Broadcast participant grounding must be the sealed packet for this exact source map.",
+    );
+  }
+  const participantGrounding =
+    suppliedParticipantGrounding ?? fallbackParticipantGrounding;
 
   const candidates = input.candidates.map((candidate) => {
     assertRange(
@@ -487,7 +526,11 @@ export function createBroadcastContextRequest(
       reactionSummaryKo: candidate.reactionSummaryKo,
       participantContextKo:
         candidate.participantContextKo ??
-        "이 후보의 화면 등장인물은 아직 확인하지 못했습니다.",
+        participantContextForBroadcastRange(
+          participantGrounding,
+          candidate.startMs,
+          candidate.endMs,
+        ),
       chatReactionSummaryKo: candidate.chatReactionSummaryKo,
     };
   });
@@ -497,7 +540,8 @@ export function createBroadcastContextRequest(
     sourceDurationMs: input.sourceDurationMs,
     chapters,
     candidates,
-    castRosterId: input.castRosterId ?? null,
+    castRosterId,
+    participantGrounding,
     outputLanguage: input.outputLanguage ?? "ko",
   };
 }
