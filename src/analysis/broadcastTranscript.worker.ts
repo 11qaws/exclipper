@@ -710,6 +710,17 @@ async function runAnalyze(
     const spacingMs = requestSpacingMs();
     let nextSendAtMs = 0;
     const inFlight = new Set<Promise<void>>();
+    let routeChanged = false;
+    const settleRouteChangedGap = (chunkId: string): void => {
+      gapCount += 1;
+      processedCount += 1;
+      post({
+        type: "broadcast-transcript-gap",
+        identity: task.identity,
+        chunkId,
+        reason: "route-changed",
+      });
+    };
     const chronologicalChunks = [...request.chunks].sort(
       (left, right) =>
         left.sourceStartMs - right.sourceStartMs ||
@@ -717,7 +728,16 @@ async function runAnalyze(
         left.chunkId.localeCompare(right.chunkId),
     );
     let pendingChunks = [...request.chunks];
+    const settleUndispatchedRouteChangedGaps = (): void => {
+      for (const pending of pendingChunks.splice(0)) {
+        settleRouteChangedGap(pending.chunkId);
+      }
+    };
     while (pendingChunks.length > 0) {
+      if (routeChanged) {
+        settleUndispatchedRouteChangedGaps();
+        break;
+      }
       const chunk = pendingChunks.shift();
       if (chunk === undefined) break;
       if (task.cancelled) return;
@@ -832,6 +852,11 @@ async function runAnalyze(
             wav.fill(0);
             return Promise.resolve();
           }
+          if (routeChanged) {
+            wav.fill(0);
+            settleRouteChangedGap(chunkId);
+            return Promise.resolve();
+          }
           const controller = new AbortController();
           task.fetchControllers.add(controller);
           const requestStamp = concurrency.captureRequestWave();
@@ -892,9 +917,15 @@ async function runAnalyze(
                 error.code === "RATE_LIMITED"
                   ? "rate-limited"
                   : error instanceof BroadcastTranscriptQwenClientError &&
+                      error.code === "ROUTE_CHANGED"
+                    ? "route-changed"
+                  : error instanceof BroadcastTranscriptQwenClientError &&
                       error.code === "OUTCOME_UNKNOWN"
                     ? "outcome-unknown"
                     : "transcription-failed";
+              if (reason === "route-changed") {
+                routeChanged = true;
+              }
               gapCount += 1;
               post({
                 type: "broadcast-transcript-gap",
@@ -934,6 +965,9 @@ async function runAnalyze(
       // the reduction.
       await waitForAdaptiveConcurrencyCapacity(inFlight, concurrency);
       if (task.cancelled) return;
+      if (routeChanged && pendingChunks.length > 0) {
+        settleUndispatchedRouteChangedGaps();
+      }
     }
 
     await Promise.all(inFlight);

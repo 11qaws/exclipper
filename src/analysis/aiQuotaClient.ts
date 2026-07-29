@@ -363,6 +363,25 @@ async function isRetryableRateLimitResponse(response: Response): Promise<boolean
   }
 }
 
+async function transcriptRouteResponseLeavesLeaseUnused(
+  response: Response,
+): Promise<boolean> {
+  if (response.status !== 400 && response.status !== 409) return false;
+  try {
+    const text = await response.clone().text();
+    if (text.length > 4_096) return false;
+    const payload = JSON.parse(text) as {
+      readonly error?: { readonly code?: unknown };
+    };
+    return [
+      "INVALID_TRANSCRIPT_ROUTE",
+      "TRANSCRIPT_ROUTE_CHANGED",
+    ].includes(String(payload.error?.code));
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Runs one logical paid operation with a lease bound to `payloadBody`.
  *
@@ -438,6 +457,12 @@ export async function fetchWithPreparedAiQuota(
           "동일 요청이 이미 처리되었을 수 있어 새 결제 요청을 만들지 않았어요.",
         );
       }
+    }
+    if (
+      options.pool === "transcript" &&
+      (await transcriptRouteResponseLeavesLeaseUnused(response))
+    ) {
+      await cancelQuotaOperationBestEffort(fetchImplementation, identity);
     }
     const retryableRateLimit = await isRetryableRateLimitResponse(response);
     if (attempt >= MAX_RATE_LIMIT_RETRIES || !retryableRateLimit) {

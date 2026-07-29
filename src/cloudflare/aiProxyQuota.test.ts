@@ -9,6 +9,23 @@ import {
   AI_QUOTA_SCHEMA_VERSION,
   type AiQuotaLeaseHeaders,
 } from "../analysis/aiQuotaProtocol";
+import { AI_MODEL_ROUTING_POLICY_VERSION } from "../analysis/aiModelRoutingPolicy";
+import {
+  BROADCAST_TRANSCRIPT_GEMINI_MODEL_ID,
+  BROADCAST_TRANSCRIPT_GEMINI_MODEL_REVISION,
+  BROADCAST_TRANSCRIPT_QWEN_OMNI_MODEL_ID,
+  BROADCAST_TRANSCRIPT_QWEN_OMNI_MODEL_REVISION,
+  MAX_BROADCAST_TRANSCRIPT_QWEN_DURATION_MS,
+} from "../analysis/broadcastTranscriptQwen";
+import {
+  BROADCAST_TRANSCRIPT_HEALTH_SERVICE_VERSION,
+  BROADCAST_TRANSCRIPT_PRIMARY_MEDIA_TYPE,
+  BROADCAST_TRANSCRIPT_PROVIDER_CONFIGURATION_VERSION,
+  BROADCAST_TRANSCRIPT_ROUTE_MANIFEST_SCHEMA_VERSION,
+  BROADCAST_TRANSCRIPT_TRANSPORT_VERSION,
+  broadcastTranscriptRouteRequestHeaders,
+  createBroadcastTranscriptRouteSelection,
+} from "../analysis/broadcastTranscriptRouteManifest";
 import {
   encodeCandidatePassBBase64,
   encodeCandidatePassBPcm16Wav,
@@ -31,6 +48,48 @@ const CONTEXT_ENDPOINT =
 const PRODUCTION_ORIGIN = "https://11qaws.github.io";
 const PUBLIC_LEASE_TOKEN = `public_${"a".repeat(40)}`;
 const INTERNAL_LEASE_TOKEN = `internal_${"b".repeat(40)}`;
+
+async function currentTranscriptRouteHeaders(
+  environment: AiProxyEnvironment,
+  headers: Readonly<Record<string, string>> = {},
+): Promise<Readonly<Record<string, string>>> {
+  if (
+    environment.BROADCAST_TRANSCRIPT_PROVIDER !== "qwen" ||
+    environment.BROADCAST_TRANSCRIPT_TRANSPORT_MODE !== "paid-direct" ||
+    environment.AI_PROVIDER_FALLBACK_MODE !== "bounded" ||
+    typeof environment.QWEN_API_KEY !== "string" ||
+    typeof environment.GEMINI_API_KEY !== "string"
+  ) {
+    throw new TypeError(
+      "Quota test environment does not match its transcript route.",
+    );
+  }
+  const route = await createBroadcastTranscriptRouteSelection({
+    schemaVersion: BROADCAST_TRANSCRIPT_ROUTE_MANIFEST_SCHEMA_VERSION,
+    serviceVersion: BROADCAST_TRANSCRIPT_HEALTH_SERVICE_VERSION,
+    routingPolicyVersion: AI_MODEL_ROUTING_POLICY_VERSION,
+    providerConfigurationVersion:
+      BROADCAST_TRANSCRIPT_PROVIDER_CONFIGURATION_VERSION,
+    transportVersion: BROADCAST_TRANSCRIPT_TRANSPORT_VERSION,
+    transportMode: "paid-direct",
+    maximumChunkDurationMs:
+      MAX_BROADCAST_TRANSCRIPT_QWEN_DURATION_MS,
+    primaryMediaType: BROADCAST_TRANSCRIPT_PRIMARY_MEDIA_TYPE,
+    provider: "qwen",
+    modelId: BROADCAST_TRANSCRIPT_QWEN_OMNI_MODEL_ID,
+    modelRevision: BROADCAST_TRANSCRIPT_QWEN_OMNI_MODEL_REVISION,
+    effectiveFallback: {
+      mode: "bounded",
+      provider: "gemini",
+      modelId: BROADCAST_TRANSCRIPT_GEMINI_MODEL_ID,
+      modelRevision: BROADCAST_TRANSCRIPT_GEMINI_MODEL_REVISION,
+    },
+  });
+  return {
+    ...headers,
+    ...broadcastTranscriptRouteRequestHeaders(route),
+  };
+}
 
 type CoordinatorRequest = Readonly<{
   action:
@@ -117,25 +176,6 @@ function binaryTranscriptRequest(
   );
 }
 
-function base64TranscriptRequest(
-  audioBase64: string,
-  headers: Record<string, string> = {},
-): Request {
-  return new Request(
-    `${TRANSCRIPT_ENDPOINT}?startMs=0&durationMs=2000`,
-    {
-      method: "POST",
-      headers: {
-        Origin: PRODUCTION_ORIGIN,
-        "Content-Type": "application/vnd.exclipper.transcript-base64",
-        "CF-Connecting-IP": "203.0.113.42",
-        ...headers,
-      },
-      body: audioBase64,
-    },
-  );
-}
-
 function jsonQuotaRequest(
   endpoint: string,
   serializedBody: string,
@@ -158,6 +198,7 @@ function hangingQuotaRequest(
   contentType: "application/json" | "audio/wav",
   lease: AiQuotaLeaseHeaders,
   onCancel?: () => void,
+  headers: Readonly<Record<string, string>> = {},
 ): Request {
   return new Request(endpoint, {
     method: "POST",
@@ -166,6 +207,7 @@ function hangingQuotaRequest(
       "Content-Type": contentType,
       "CF-Connecting-IP": "203.0.113.42",
       ...quotaHeaders(lease),
+      ...headers,
     },
     body: new ReadableStream<Uint8Array>({
       cancel() {
@@ -372,7 +414,10 @@ describe("AI quota integration at the paid Worker boundary", () => {
     const coordinator = createCoordinator();
     const { environment, clientLimiter, globalLimiter } =
       createEnvironment(coordinator);
-    const request = binaryTranscriptRequest(wav);
+    const request = binaryTranscriptRequest(
+      wav,
+      await currentTranscriptRouteHeaders(environment),
+    );
     if (request.body === null) throw new Error("Expected request body.");
     const bodyReader = vi.spyOn(request.body, "getReader");
     const upstreamFetch = vi.fn();
@@ -519,7 +564,13 @@ describe("AI quota integration at the paid Worker boundary", () => {
     });
 
     const response = await handleBroadcastTranscriptRequest(
-      binaryTranscriptRequest(wav, quotaHeaders(lease)),
+      binaryTranscriptRequest(
+        wav,
+        await currentTranscriptRouteHeaders(
+          environment,
+          quotaHeaders(lease),
+        ),
+      ),
       environment,
       { fetchImplementation: upstreamFetch },
     );
@@ -546,11 +597,9 @@ describe("AI quota integration at the paid Worker boundary", () => {
     });
   });
 
-  it("binds the direct Base64 body to its lease before the paid fetch", async () => {
-    const audioBase64 = encodeCandidatePassBBase64(silentWav(2_000));
-    const bodyBytes = new TextEncoder().encode(audioBase64);
-    const lease = quotaLease(await payloadDigest(bodyBytes));
-    bodyBytes.fill(0);
+  it("binds the direct raw WAV body to its lease before the paid fetch", async () => {
+    const wav = silentWav(2_000);
+    const lease = quotaLease(await payloadDigest(wav));
     const events: string[] = [];
     const coordinator = createCoordinator((request) => {
       events.push(request.action);
@@ -571,7 +620,13 @@ describe("AI quota integration at the paid Worker boundary", () => {
     });
 
     const response = await handleBroadcastTranscriptRequest(
-      base64TranscriptRequest(audioBase64, quotaHeaders(lease)),
+      binaryTranscriptRequest(
+        wav,
+        await currentTranscriptRouteHeaders(
+          environment,
+          quotaHeaders(lease),
+        ),
+      ),
       environment,
       { fetchImplementation: upstreamFetch },
     );
@@ -585,8 +640,8 @@ describe("AI quota integration at the paid Worker boundary", () => {
     ]);
   });
 
-  it("releases a direct Base64 upload ticket when the body digest differs", async () => {
-    const audioBase64 = encodeCandidatePassBBase64(silentWav(2_000));
+  it("releases a direct raw WAV upload ticket when the body digest differs", async () => {
+    const wav = silentWav(2_000);
     const lease = quotaLease(`sha256:${"f".repeat(64)}`);
     const coordinator = createCoordinator();
     const { environment, clientLimiter, globalLimiter } =
@@ -594,7 +649,13 @@ describe("AI quota integration at the paid Worker boundary", () => {
     const upstreamFetch = vi.fn();
 
     const response = await handleBroadcastTranscriptRequest(
-      base64TranscriptRequest(audioBase64, quotaHeaders(lease)),
+      binaryTranscriptRequest(
+        wav,
+        await currentTranscriptRouteHeaders(
+          environment,
+          quotaHeaders(lease),
+        ),
+      ),
       environment,
       { fetchImplementation: upstreamFetch },
     );
@@ -641,7 +702,13 @@ describe("AI quota integration at the paid Worker boundary", () => {
     });
 
     const response = await handleBroadcastTranscriptRequest(
-      binaryTranscriptRequest(wav, quotaHeaders(lease)),
+      binaryTranscriptRequest(
+        wav,
+        await currentTranscriptRouteHeaders(
+          environment,
+          quotaHeaders(lease),
+        ),
+      ),
       environment,
       { fetchImplementation: upstreamFetch },
     );
@@ -760,6 +827,8 @@ describe("AI quota integration at the paid Worker boundary", () => {
         `${TRANSCRIPT_ENDPOINT}?startMs=0&durationMs=2000`,
         "audio/wav",
         lease,
+        undefined,
+        await currentTranscriptRouteHeaders(environment),
       ),
       environment,
       {
@@ -967,7 +1036,13 @@ describe("AI quota integration at the paid Worker boundary", () => {
       .mockResolvedValueOnce(geminiTranscriptSuccess("폴백 전사가 성공했다."));
 
     const response = await handleBroadcastTranscriptRequest(
-      binaryTranscriptRequest(wav, quotaHeaders(lease)),
+      binaryTranscriptRequest(
+        wav,
+        await currentTranscriptRouteHeaders(
+          environment,
+          quotaHeaders(lease),
+        ),
+      ),
       environment,
       { fetchImplementation: upstreamFetch },
     );
@@ -1051,7 +1126,13 @@ describe("AI quota integration at the paid Worker boundary", () => {
     const upstreamFetch = vi.fn();
 
     const response = await handleBroadcastTranscriptRequest(
-      binaryTranscriptRequest(wav, quotaHeaders(lease)),
+      binaryTranscriptRequest(
+        wav,
+        await currentTranscriptRouteHeaders(
+          environment,
+          quotaHeaders(lease),
+        ),
+      ),
       environment,
       { fetchImplementation: upstreamFetch },
     );
@@ -1081,7 +1162,13 @@ describe("AI quota integration at the paid Worker boundary", () => {
     );
     const { environment, clientLimiter, globalLimiter } =
       createEnvironment(coordinator);
-    const request = binaryTranscriptRequest(wav, quotaHeaders(lease));
+    const request = binaryTranscriptRequest(
+      wav,
+      await currentTranscriptRouteHeaders(
+        environment,
+        quotaHeaders(lease),
+      ),
+    );
     if (request.body === null) throw new Error("Expected request body.");
     const bodyReader = vi.spyOn(request.body, "getReader");
     const upstreamFetch = vi.fn();

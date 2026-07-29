@@ -1,14 +1,16 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   canStartTranscriptRun,
   createTranscriptSourceIdentityFence,
-  transcriptGapRequiresExplicitBillingRetry,
   transcriptContextReadiness,
+  transcriptGapRequiresExplicitBillingRetry,
   transcriptIsSealedForContext,
   transcriptNeedsExplicitRetry,
   transcriptOperationKey,
   transcriptPhaseFor,
+  transcriptRouteRecoveryDelayMs,
+  waitForTranscriptRouteRecoveryDelay,
 } from "./transcriptPhase";
 
 describe("transcriptPhaseFor", () => {
@@ -18,6 +20,70 @@ describe("transcriptPhaseFor", () => {
 
   it("runs the event-boost phase once candidates exist", () => {
     expect(transcriptPhaseFor(true)).toBe("event-boost");
+  });
+});
+
+describe("transcript route recovery delay", () => {
+  it("backs off deterministically and stays capped without imposing a retry limit", () => {
+    expect(
+      Array.from({ length: 11 }, (_, count) =>
+        transcriptRouteRecoveryDelayMs(count),
+      ),
+    ).toEqual([
+      0,
+      250,
+      500,
+      1_000,
+      2_000,
+      4_000,
+      8_000,
+      10_000,
+      10_000,
+      10_000,
+      10_000,
+    ]);
+    expect(transcriptRouteRecoveryDelayMs(10_000)).toBe(10_000);
+  });
+
+  it("rejects invalid counters instead of producing an accidental hot loop", () => {
+    for (const count of [-1, 0.5, Number.MAX_SAFE_INTEGER + 1]) {
+      expect(() => transcriptRouteRecoveryDelayMs(count)).toThrow(RangeError);
+    }
+  });
+
+  it("waits for the computed delay", async () => {
+    vi.useFakeTimers();
+    try {
+      const waiting = waitForTranscriptRouteRecoveryDelay(1);
+      expect(vi.getTimerCount()).toBe(1);
+      await vi.advanceTimersByTimeAsync(249);
+      expect(vi.getTimerCount()).toBe(1);
+      await vi.advanceTimersByTimeAsync(1);
+      await expect(waiting).resolves.toBeUndefined();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("cancels the pending timer through the owning analysis signal", async () => {
+    vi.useFakeTimers();
+    try {
+      const controller = new AbortController();
+      const waiting = waitForTranscriptRouteRecoveryDelay(
+        6,
+        controller.signal,
+      );
+      expect(vi.getTimerCount()).toBe(1);
+
+      const reason = new Error("analysis replaced");
+      controller.abort(reason);
+
+      await expect(waiting).rejects.toBe(reason);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
@@ -181,6 +247,9 @@ describe("transcriptGapRequiresExplicitBillingRetry", () => {
     expect(
       transcriptGapRequiresExplicitBillingRetry("transcription-failed", 3),
     ).toBe(false);
+    expect(transcriptGapRequiresExplicitBillingRetry("route-changed", 9)).toBe(
+      false,
+    );
   });
 });
 

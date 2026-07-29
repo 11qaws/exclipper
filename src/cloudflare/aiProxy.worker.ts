@@ -60,10 +60,7 @@ import {
 } from "../analysis/broadcastContextProtocol";
 import { compactBroadcastContextChapters } from "../analysis/broadcastContextChapterCompaction";
 import {
-  BROADCAST_TRANSCRIPT_BASE64_CONTENT_TYPE,
   BROADCAST_TRANSCRIPT_QWEN_MAX_OUTPUT_TOKENS,
-  MAX_BROADCAST_TRANSCRIPT_DIRECT_DURATION_MS,
-  MAX_BROADCAST_TRANSCRIPT_QWEN_BASE64_LENGTH,
   MAX_BROADCAST_TRANSCRIPT_QWEN_DURATION_MS,
   MAX_BROADCAST_TRANSCRIPT_QWEN_RESPONSE_BYTES,
   buildBroadcastTranscriptGroqRequestBody,
@@ -73,7 +70,6 @@ import {
   extractBroadcastTranscriptGroqResponse,
   extractBroadcastTranscriptGeminiResponse,
   extractBroadcastTranscriptQwenOmniSseResponse,
-  parseBroadcastTranscriptQwenProxyRequest,
   type BroadcastTranscriptQwenResult,
 } from "../analysis/broadcastTranscriptQwen";
 import {
@@ -82,6 +78,18 @@ import {
   BROADCAST_TRANSCRIPT_MEDIA_SCHEMA_VERSION,
   parseBroadcastTranscriptMediaResolveRequest,
 } from "../analysis/broadcastTranscriptMediaProtocol";
+import {
+  BROADCAST_TRANSCRIPT_HEALTH_SERVICE_VERSION,
+  BROADCAST_TRANSCRIPT_PRIMARY_MEDIA_TYPE,
+  BROADCAST_TRANSCRIPT_PROVIDER_CONFIGURATION_VERSION,
+  BROADCAST_TRANSCRIPT_ROUTE_FINGERPRINT_HEADER,
+  BROADCAST_TRANSCRIPT_ROUTE_MANIFEST_SCHEMA_VERSION,
+  BROADCAST_TRANSCRIPT_TRANSPORT_VERSION,
+  createBroadcastTranscriptRouteSelection,
+  isBroadcastTranscriptRouteFingerprint,
+  type BroadcastTranscriptEffectiveFallback,
+  type BroadcastTranscriptRouteSelection,
+} from "../analysis/broadcastTranscriptRouteManifest";
 import {
   YOUTUBE_VIDEO_ID_PATTERN,
   extractKoreanYouTubeCaptionTrackFromPlayerResponse,
@@ -154,6 +162,7 @@ import {
   resolveBroadcastTranscriptTransport,
   serveBroadcastTranscriptMediaRequest,
   stageBroadcastTranscriptMedia,
+  verifyBroadcastTranscriptMediaTicket,
   type BroadcastTranscriptMediaBinding,
   type BroadcastTranscriptTransportEnvironment,
   type BroadcastTranscriptTransportResolution,
@@ -221,8 +230,6 @@ const MAX_BROADCAST_TRANSCRIPT_WAV_BYTES =
     PCM_BYTES_PER_SAMPLE *
     (MAX_BROADCAST_TRANSCRIPT_QWEN_DURATION_MS / 1_000);
 const MAX_BROADCAST_TRANSCRIPT_SOURCE_DURATION_MS = 12 * 60 * 60_000;
-const MAX_BROADCAST_TRANSCRIPT_REQUEST_BODY_BYTES =
-  MAX_BROADCAST_TRANSCRIPT_QWEN_BASE64_LENGTH + 8_192;
 const MAX_UPSTREAM_ERROR_BYTES = 16 * 1024;
 const MAX_UPSTREAM_ERROR_BODY_TIMEOUT_MS = 5_000;
 const REQUEST_BODY_TIMEOUT_MS = 60_000;
@@ -456,6 +463,7 @@ function corsHeaders(origin: string): Headers {
       CANDIDATE_PASS_B_RESPONSE_MODEL_ID_HEADER,
       CANDIDATE_PASS_B_RESPONSE_MODEL_REVISION_HEADER,
       CANDIDATE_PASS_B_RESPONSE_FALLBACK_HEADER,
+      BROADCAST_TRANSCRIPT_ROUTE_FINGERPRINT_HEADER,
       EXCLIPPER_USAGE_PROMPT_TOKENS_HEADER,
       EXCLIPPER_USAGE_COMPLETION_TOKENS_HEADER,
       EXCLIPPER_USAGE_TOTAL_TOKENS_HEADER,
@@ -501,6 +509,7 @@ function preflightResponse(origin: string, methods = "POST, OPTIONS"): Response 
       AI_QUOTA_OPERATION_HEADER,
       AI_QUOTA_PAYLOAD_DIGEST_HEADER,
       AI_QUOTA_LEASE_HEADER,
+      BROADCAST_TRANSCRIPT_ROUTE_FINGERPRINT_HEADER,
     ].join(", "),
   );
   headers.set("Access-Control-Max-Age", "600");
@@ -825,11 +834,6 @@ function base64EncodeToBytes(input: Uint8Array): Uint8Array<ArrayBuffer> {
 }
 
 type BroadcastTranscriptAudioPayload =
-  | { readonly kind: "base64"; readonly audioBase64: string }
-  | {
-      readonly kind: "base64-bytes";
-      readonly audioBase64Bytes: Uint8Array;
-    }
   | { readonly kind: "wav-bytes"; readonly wavBytes: Uint8Array }
   | { readonly kind: "audio-url"; readonly audioUrl: string };
 
@@ -838,8 +842,6 @@ function clearBroadcastTranscriptAudio(
 ): void {
   if (audio.kind === "wav-bytes") {
     audio.wavBytes.fill(0);
-  } else if (audio.kind === "base64-bytes") {
-    audio.audioBase64Bytes.fill(0);
   }
 }
 
@@ -902,26 +904,10 @@ function buildBroadcastTranscriptUpstreamBytes(
   return output;
 }
 
-function decodeBroadcastTranscriptBase64(value: string): Uint8Array<ArrayBuffer> {
-  const binary = atob(value);
-  const bytes = new Uint8Array(binary.length);
-  for (
-    let offset = 0;
-    offset < binary.length;
-    offset += BASE64_CHUNK_BYTES
-  ) {
-    const end = Math.min(binary.length, offset + BASE64_CHUNK_BYTES);
-    for (let index = offset; index < end; index += 1) {
-      bytes[index] = binary.charCodeAt(index);
-    }
-  }
-  return bytes;
-}
-
 /**
  * Groq accepts either a native multipart WAV upload or a provider-fetched URL.
- * Free R2 therefore keeps the Worker on the small URL-only path; legacy
- * Base64 is decoded only in the explicitly paid direct transport.
+ * Free R2 therefore keeps the Worker on the small URL-only path while paid
+ * direct forwards the validated raw WAV.
  */
 function buildBroadcastTranscriptGroqUpstreamBody(
   audio: BroadcastTranscriptAudioPayload,
@@ -938,101 +924,7 @@ function buildBroadcastTranscriptGroqUpstreamBody(
       wavBytes: audio.wavBytes,
     });
   }
-  const encoded =
-    audio.kind === "base64"
-      ? audio.audioBase64
-      : new TextDecoder("utf-8", { fatal: true }).decode(
-          audio.audioBase64Bytes,
-        );
-  const wavBytes = decodeBroadcastTranscriptBase64(encoded);
-  try {
-    return buildBroadcastTranscriptGroqRequestBody({
-      kind: "wav-bytes",
-      wavBytes,
-    });
-  } finally {
-    wavBytes.fill(0);
-  }
-}
-
-const BASE64_BODY_SCAN_CHUNK_BYTES = 64 * 1024;
-const BASE64_BODY_CHUNK_PATTERN = /^[A-Za-z0-9+/]+$/u;
-const BASE64_ONE_BYTE_TAIL_CHARACTERS = "AQgw";
-const BASE64_TWO_BYTE_TAIL_CHARACTERS = "AEIMQUYcgkosw048";
-
-/**
- * Validates a browser-prepared Base64 body without materializing a second
- * megabyte-scale string. The expected decoded WAV length fixes both the exact
- * encoded length and the only legal padding, so each bounded chunk only needs
- * an alphabet check.
- */
-function isStrictBase64Bytes(
-  bytes: Uint8Array,
-  expectedDecodedByteLength: number,
-): boolean {
-  const expectedLength = 4 * Math.ceil(expectedDecodedByteLength / 3);
-  if (bytes.byteLength !== expectedLength || bytes.byteLength === 0) {
-    return false;
-  }
-  const padding = (3 - (expectedDecodedByteLength % 3)) % 3;
-  const contentLength = bytes.byteLength - padding;
-  for (let index = contentLength; index < bytes.byteLength; index += 1) {
-    if (bytes[index] !== 0x3d) return false;
-  }
-  const decoder = new TextDecoder("utf-8", { fatal: true });
-  try {
-    for (
-      let offset = 0;
-      offset < contentLength;
-      offset += BASE64_BODY_SCAN_CHUNK_BYTES
-    ) {
-      const chunk = decoder.decode(
-        bytes.subarray(
-          offset,
-          Math.min(contentLength, offset + BASE64_BODY_SCAN_CHUNK_BYTES),
-        ),
-      );
-      if (!BASE64_BODY_CHUNK_PATTERN.test(chunk)) return false;
-    }
-  } catch {
-    return false;
-  }
-  if (
-    (padding === 2 &&
-      !BASE64_ONE_BYTE_TAIL_CHARACTERS.includes(
-        String.fromCharCode(bytes[contentLength - 1] ?? 0),
-      )) ||
-    (padding === 1 &&
-      !BASE64_TWO_BYTE_TAIL_CHARACTERS.includes(
-        String.fromCharCode(bytes[contentLength - 1] ?? 0),
-      ))
-  ) {
-    return false;
-  }
-  return true;
-}
-
-function decodeBase64BytePrefix(
-  bytes: Uint8Array,
-  maximumBytes: number,
-): Uint8Array | null {
-  const wholeGroups = Math.min(
-    bytes.byteLength / 4,
-    Math.ceil(maximumBytes / 3),
-  );
-  try {
-    const prefix = new TextDecoder("utf-8", { fatal: true }).decode(
-      bytes.subarray(0, wholeGroups * 4),
-    );
-    const decoded = atob(prefix);
-    const output = new Uint8Array(Math.min(decoded.length, maximumBytes));
-    for (let index = 0; index < output.byteLength; index += 1) {
-      output[index] = decoded.charCodeAt(index);
-    }
-    return output;
-  } catch {
-    return null;
-  }
+  throw new TypeError("Unsupported transcript audio payload.");
 }
 
 /**
@@ -1729,6 +1621,16 @@ async function healthResponse(
     (transcriptTransport.mode === "paid-direct" ||
       (quotaMode === "required" &&
         candidateProvider.connection.provider === "qwen"));
+  const transcriptEffectiveFallback: BroadcastTranscriptEffectiveFallback =
+    transcriptTransport.ok &&
+    transcriptProvider.ok &&
+    transcriptProvider.connection.provider !== "disabled"
+      ? effectiveBroadcastTranscriptFallback(
+          environment,
+          transcriptTransport.mode,
+          transcriptProvider.connection,
+        )
+      : { mode: "disabled" };
   const healthy =
     (quotaMode === "disabled" || quotaCoordinatorReady) &&
     transcriptRouteReady &&
@@ -1738,11 +1640,11 @@ async function healthResponse(
     : JSON.stringify({
         ok: healthy,
         service: "rettohighlight-gemini",
-        version: 5,
+        version: BROADCAST_TRANSCRIPT_HEALTH_SERVICE_VERSION,
         routingPolicyVersion: AI_PROVIDER_ROUTING_POLICY_VERSION,
         contextModelRevision: QWEN_CONTEXT_MODEL_REVISION,
         transcriptTransport: {
-          version: 2,
+          version: BROADCAST_TRANSCRIPT_TRANSPORT_VERSION,
           mode: transcriptTransport.ok
             ? transcriptTransport.mode
             : "unavailable",
@@ -1750,15 +1652,8 @@ async function healthResponse(
           primaryMediaType: "audio/wav",
           maximumChunkDurationMs:
             MAX_BROADCAST_TRANSCRIPT_QWEN_DURATION_MS,
+          effectiveFallback: transcriptEffectiveFallback,
           stagedSchemaVersion: BROADCAST_TRANSCRIPT_MEDIA_SCHEMA_VERSION,
-          legacyMediaTypes:
-            transcriptTransport.ok &&
-            transcriptTransport.mode === "paid-direct"
-              ? [
-                  "application/json",
-                  BROADCAST_TRANSCRIPT_BASE64_CONTENT_TYPE,
-                ]
-              : [],
         },
         candidateTransport: {
           version: 1,
@@ -3427,29 +3322,18 @@ async function attemptBroadcastTranscriptProvider(
         ? buildBroadcastTranscriptGroqUpstreamBody(audio)
         : audio.kind === "audio-url"
           ? connection.provider === "qwen"
-          ? JSON.stringify(
-              buildBroadcastTranscriptQwenOmniUrlRequestBody(audio.audioUrl),
-            )
-          : (() => {
-              throw new Error(
-                "URL-backed transcript media requires the Qwen provider.",
-              );
-            })()
-        : audio.kind === "wav-bytes"
-        ? buildBroadcastTranscriptUpstreamBytes(
-            connection.provider,
-            audio.wavBytes,
-          )
-        : audio.kind === "base64-bytes"
-          ? buildBroadcastTranscriptUpstreamBase64Bytes(
+            ? JSON.stringify(
+                buildBroadcastTranscriptQwenOmniUrlRequestBody(audio.audioUrl),
+              )
+            : (() => {
+                throw new Error(
+                  "URL-backed transcript media requires the Qwen provider.",
+                );
+              })()
+          : buildBroadcastTranscriptUpstreamBytes(
               connection.provider,
-              audio.audioBase64Bytes,
+              audio.wavBytes,
             )
-          : JSON.stringify(
-            connection.provider === "gemini"
-              ? buildBroadcastTranscriptGeminiRequestBody(audio.audioBase64)
-              : buildBroadcastTranscriptQwenOmniRequestBody(audio.audioBase64),
-            );
   } catch {
     return { ok: false, kind: "invalid-argument" };
   }
@@ -3708,11 +3592,126 @@ function freeR2TranscriptProvider(
     : null;
 }
 
+function effectiveBroadcastTranscriptFallback(
+  environment: AiProxyEnvironment,
+  transportMode: "free-r2" | "paid-direct",
+  primaryConnection: ActiveBroadcastTranscriptConnection,
+): BroadcastTranscriptEffectiveFallback {
+  if (transportMode === "free-r2") return { mode: "disabled" };
+  const fallback = resolveBroadcastTranscriptFallbackConnection(
+    environment,
+    primaryConnection.provider,
+  );
+  return fallback === null
+    ? { mode: "disabled" }
+    : {
+        mode: "bounded",
+        provider: fallback.provider,
+        modelId: fallback.descriptor.modelId,
+        modelRevision: fallback.descriptor.modelRevision,
+      };
+}
+
+type ActiveBroadcastTranscriptTransport = Extract<
+  BroadcastTranscriptTransportResolution,
+  { readonly ok: true }
+>;
+
+type BroadcastTranscriptRouteGuard =
+  | {
+      readonly ok: true;
+      readonly route: BroadcastTranscriptRouteSelection;
+    }
+  | {
+      readonly ok: false;
+      readonly response: Response;
+    };
+
+async function guardBroadcastTranscriptRoute(
+  request: Request,
+  environment: AiProxyEnvironment,
+  transport: ActiveBroadcastTranscriptTransport,
+  origin: string,
+): Promise<BroadcastTranscriptRouteGuard> {
+  const requestedFingerprint = request.headers.get(
+    BROADCAST_TRANSCRIPT_ROUTE_FINGERPRINT_HEADER,
+  );
+  if (
+    requestedFingerprint === null ||
+    !isBroadcastTranscriptRouteFingerprint(requestedFingerprint)
+  ) {
+    return {
+      ok: false,
+      response: jsonResponse(
+        400,
+        "INVALID_TRANSCRIPT_ROUTE",
+        "방송 대사 분석 경로 정보가 올바르지 않아요.",
+        origin,
+      ),
+    };
+  }
+
+  const providerResolution = resolveBroadcastTranscriptConnection(environment);
+  if (
+    !providerResolution.ok ||
+    providerResolution.connection.provider === "disabled" ||
+    (transport.mode === "free-r2" &&
+      providerResolution.connection.provider === "gemini")
+  ) {
+    return {
+      ok: false,
+      response: transcriptTransportUnavailableResponse(origin),
+    };
+  }
+  let route: BroadcastTranscriptRouteSelection;
+  try {
+    route = await createBroadcastTranscriptRouteSelection({
+      schemaVersion: BROADCAST_TRANSCRIPT_ROUTE_MANIFEST_SCHEMA_VERSION,
+      serviceVersion: BROADCAST_TRANSCRIPT_HEALTH_SERVICE_VERSION,
+      routingPolicyVersion: AI_PROVIDER_ROUTING_POLICY_VERSION,
+      providerConfigurationVersion:
+        BROADCAST_TRANSCRIPT_PROVIDER_CONFIGURATION_VERSION,
+      transportVersion: BROADCAST_TRANSCRIPT_TRANSPORT_VERSION,
+      transportMode: transport.mode,
+      maximumChunkDurationMs:
+        MAX_BROADCAST_TRANSCRIPT_QWEN_DURATION_MS,
+      primaryMediaType: BROADCAST_TRANSCRIPT_PRIMARY_MEDIA_TYPE,
+      provider: providerResolution.connection.provider,
+      modelId: providerResolution.connection.descriptor.modelId,
+      modelRevision:
+        providerResolution.connection.descriptor.modelRevision,
+      effectiveFallback: effectiveBroadcastTranscriptFallback(
+        environment,
+        transport.mode,
+        providerResolution.connection,
+      ),
+    });
+  } catch {
+    return {
+      ok: false,
+      response: transcriptTransportUnavailableResponse(origin),
+    };
+  }
+  if (route.fingerprint !== requestedFingerprint) {
+    return {
+      ok: false,
+      response: jsonResponse(
+        409,
+        "TRANSCRIPT_ROUTE_CHANGED",
+        "방송 대사 분석 모델 또는 전송 경로가 바뀌었어요. 이미 완료된 조각은 보존하고 새 경로를 확인한 뒤 이어가 주세요.",
+        origin,
+      ),
+    };
+  }
+  return { ok: true, route };
+}
+
 async function handleFreeR2BroadcastTranscriptStage(
   request: Request,
   environment: AiProxyEnvironment,
   transport: FreeR2BroadcastTranscriptTransport,
   origin: string,
+  route: BroadcastTranscriptRouteSelection,
 ): Promise<Response> {
   const fence = parseBroadcastTranscriptRawFence(request);
   if (fence === null) {
@@ -3789,6 +3788,7 @@ async function handleFreeR2BroadcastTranscriptStage(
     operationId: quotaLease.operationId,
     pool: "transcript",
     payloadDigest: quotaLease.payloadDigest,
+    routeManifestFingerprint: route.fingerprint,
     sourceStartMs: fence.sourceStartMs,
     durationMs: fence.durationMs,
     expectedByteLength: fence.expectedWavBytes,
@@ -3861,6 +3861,7 @@ async function handleFreeR2BroadcastTranscriptResolve(
   transport: FreeR2BroadcastTranscriptTransport,
   origin: string,
   dependencies: AiProxyDependencies,
+  route: BroadcastTranscriptRouteSelection,
 ): Promise<Response> {
   const providerConnection = freeR2TranscriptProvider(environment);
   if (
@@ -3883,6 +3884,76 @@ async function handleFreeR2BroadcastTranscriptResolve(
       origin,
     );
   }
+  let requestBytes: Uint8Array;
+  try {
+    requestBytes = await readBodyWithLimit(
+      request.body,
+      MAX_BROADCAST_TRANSCRIPT_MEDIA_RESOLVE_BYTES,
+      dependencies.requestBodyTimeoutMs ?? REQUEST_BODY_TIMEOUT_MS,
+      () => new RequestBodyTimeoutError(),
+    );
+  } catch (error) {
+    return error instanceof RequestBodyTimeoutError
+      ? jsonResponse(
+          408,
+          "REQUEST_BODY_TIMEOUT",
+          "방송 대사 분석 티켓 업로드가 너무 오래 걸렸어요.",
+          origin,
+        )
+      : jsonResponse(
+          error instanceof BodyTooLargeError ? 413 : 400,
+          error instanceof BodyTooLargeError
+            ? "PAYLOAD_TOO_LARGE"
+            : "INVALID_REQUEST",
+          "방송 대사 분석 티켓을 읽지 못했어요.",
+          origin,
+        );
+  }
+  let value: unknown;
+  try {
+    value = JSON.parse(
+      new TextDecoder("utf-8", { fatal: true }).decode(requestBytes),
+    );
+  } catch {
+    requestBytes.fill(0);
+    return jsonResponse(
+      400,
+      "INVALID_REQUEST",
+      "방송 대사 분석 티켓 형식을 확인해 주세요.",
+      origin,
+    );
+  }
+  requestBytes.fill(0);
+  const resolveRequest = parseBroadcastTranscriptMediaResolveRequest(value);
+  if (resolveRequest === null) {
+    return jsonResponse(
+      400,
+      "INVALID_REQUEST",
+      "방송 대사 분석 티켓 형식을 확인해 주세요.",
+      origin,
+    );
+  }
+  const verifiedTicket = await verifyBroadcastTranscriptMediaTicket(
+    resolveRequest.mediaTicket,
+    transport.signingKey,
+  );
+  if (verifiedTicket === null) {
+    return jsonResponse(
+      409,
+      "TRANSCRIPT_MEDIA_TICKET_INVALID",
+      "방송 오디오 준비 정보가 만료되었거나 현재 작업과 맞지 않아요.",
+      origin,
+    );
+  }
+  if (verifiedTicket.routeManifestFingerprint !== route.fingerprint) {
+    return jsonResponse(
+      409,
+      "TRANSCRIPT_ROUTE_CHANGED",
+      "준비한 방송 오디오의 모델 경로가 현재 경로와 달라요. 완료된 조각을 보존한 채 이 조각만 다시 준비합니다.",
+      origin,
+    );
+  }
+
   const quotaGuard = await precheckAiQuotaLease(
     request,
     environment,
@@ -3895,68 +3966,6 @@ async function handleFreeR2BroadcastTranscriptResolve(
     return transcriptTransportUnavailableResponse(origin);
   }
 
-  let requestBytes: Uint8Array;
-  try {
-    requestBytes = await readBodyWithLimit(
-      request.body,
-      MAX_BROADCAST_TRANSCRIPT_MEDIA_RESOLVE_BYTES,
-      dependencies.requestBodyTimeoutMs ?? REQUEST_BODY_TIMEOUT_MS,
-      () => new RequestBodyTimeoutError(),
-    );
-  } catch (error) {
-    return rejectUnusedQuotaLease(
-      environment,
-      quotaLease,
-      error instanceof RequestBodyTimeoutError
-        ? jsonResponse(
-            408,
-            "REQUEST_BODY_TIMEOUT",
-            "방송 대사 분석 티켓 업로드가 너무 오래 걸렸어요.",
-            origin,
-          )
-        : jsonResponse(
-            error instanceof BodyTooLargeError ? 413 : 400,
-            error instanceof BodyTooLargeError
-              ? "PAYLOAD_TOO_LARGE"
-              : "INVALID_REQUEST",
-            "방송 대사 분석 티켓을 읽지 못했어요.",
-            origin,
-          ),
-    );
-  }
-  let value: unknown;
-  try {
-    value = JSON.parse(
-      new TextDecoder("utf-8", { fatal: true }).decode(requestBytes),
-    );
-  } catch {
-    requestBytes.fill(0);
-    return rejectUnusedQuotaLease(
-      environment,
-      quotaLease,
-      jsonResponse(
-        400,
-        "INVALID_REQUEST",
-        "방송 대사 분석 티켓 형식을 확인해 주세요.",
-        origin,
-      ),
-    );
-  }
-  requestBytes.fill(0);
-  const resolveRequest = parseBroadcastTranscriptMediaResolveRequest(value);
-  if (resolveRequest === null) {
-    return rejectUnusedQuotaLease(
-      environment,
-      quotaLease,
-      jsonResponse(
-        400,
-        "INVALID_REQUEST",
-        "방송 대사 분석 티켓 형식을 확인해 주세요.",
-        origin,
-      ),
-    );
-  }
-
   let resolved: Awaited<
     ReturnType<typeof resolveBroadcastTranscriptMedia>
   >;
@@ -3966,6 +3975,7 @@ async function handleFreeR2BroadcastTranscriptResolve(
       signingKey: transport.signingKey,
       mediaTicket: resolveRequest.mediaTicket,
       expectedIdentity: quotaLease,
+      expectedRouteManifestFingerprint: route.fingerprint,
     });
   } catch {
     return rejectUnusedQuotaLease(
@@ -4095,6 +4105,7 @@ async function handleFreeR2BroadcastTranscriptResolve(
     [CANDIDATE_PASS_B_RESPONSE_MODEL_REVISION_HEADER]:
       attempt.connection.descriptor.modelRevision,
     [CANDIDATE_PASS_B_RESPONSE_FALLBACK_HEADER]: "false",
+    [BROADCAST_TRANSCRIPT_ROUTE_FINGERPRINT_HEADER]: route.fingerprint,
   });
 }
 
@@ -4104,6 +4115,7 @@ async function handleFreeR2BroadcastTranscriptRequest(
   transport: FreeR2BroadcastTranscriptTransport,
   origin: string,
   dependencies: AiProxyDependencies,
+  route: BroadcastTranscriptRouteSelection,
 ): Promise<Response> {
   if (
     aiQuotaMode(environment) !== "required" ||
@@ -4119,6 +4131,7 @@ async function handleFreeR2BroadcastTranscriptRequest(
       environment,
       transport,
       origin,
+      route,
     );
   }
   if (
@@ -4130,6 +4143,7 @@ async function handleFreeR2BroadcastTranscriptRequest(
       transport,
       origin,
       dependencies,
+      route,
     );
   }
   return jsonResponse(
@@ -4169,6 +4183,13 @@ export async function handleBroadcastTranscriptRequest(
   if (!transport.ok) {
     return transcriptTransportUnavailableResponse(origin);
   }
+  const routeGuard = await guardBroadcastTranscriptRoute(
+    request,
+    environment,
+    transport,
+    origin,
+  );
+  if (!routeGuard.ok) return routeGuard.response;
   if (transport.mode === "free-r2") {
     return handleFreeR2BroadcastTranscriptRequest(
       request,
@@ -4176,18 +4197,15 @@ export async function handleBroadcastTranscriptRequest(
       transport,
       origin,
       dependencies,
+      routeGuard.route,
     );
   }
   const requestMediaType = mediaType(request);
-  if (
-    requestMediaType !== "application/json" &&
-    requestMediaType !== "audio/wav" &&
-    requestMediaType !== BROADCAST_TRANSCRIPT_BASE64_CONTENT_TYPE
-  ) {
+  if (requestMediaType !== "audio/wav") {
     return jsonResponse(
       415,
       "UNSUPPORTED_MEDIA_TYPE",
-      "JSON 또는 audio/wav 형식으로 방송 오디오를 보내 주세요.",
+      "audio/wav 형식으로 방송 오디오를 보내 주세요.",
       origin,
     );
   }
@@ -4231,6 +4249,20 @@ export async function handleBroadcastTranscriptRequest(
     );
   }
   if (
+    providerConnection.provider !== routeGuard.route.manifest.provider ||
+    providerConnection.descriptor.modelId !==
+      routeGuard.route.manifest.modelId ||
+    providerConnection.descriptor.modelRevision !==
+      routeGuard.route.manifest.modelRevision
+  ) {
+    return jsonResponse(
+      409,
+      "TRANSCRIPT_ROUTE_CHANGED",
+      "방송 대사 분석 모델 또는 전송 경로가 바뀌었어요. 이미 완료된 조각은 보존하고 새 경로를 확인한 뒤 이어가 주세요.",
+      origin,
+    );
+  }
+  if (
     environment.RATE_LIMITER === undefined ||
     environment.IP_RATE_LIMITER === undefined
   ) {
@@ -4248,10 +4280,7 @@ export async function handleBroadcastTranscriptRequest(
   };
   let transcriptAudio: BroadcastTranscriptAudioPayload;
   let quotaLease: AiQuotaLeaseHeaders | null;
-  if (
-    requestMediaType === "audio/wav" ||
-    requestMediaType === BROADCAST_TRANSCRIPT_BASE64_CONTENT_TYPE
-  ) {
+  {
     const requestUrl = new URL(request.url);
     const startRaw = requestUrl.searchParams.get("startMs");
     const durationRaw = requestUrl.searchParams.get("durationMs");
@@ -4275,8 +4304,6 @@ export async function handleBroadcastTranscriptRequest(
       durationMs === null ||
       durationMs <= 0 ||
       durationMs > MAX_BROADCAST_TRANSCRIPT_QWEN_DURATION_MS ||
-      (requestMediaType === BROADCAST_TRANSCRIPT_BASE64_CONTENT_TYPE &&
-        durationMs > MAX_BROADCAST_TRANSCRIPT_DIRECT_DURATION_MS) ||
       sourceStartMs + durationMs > MAX_BROADCAST_TRANSCRIPT_SOURCE_DURATION_MS
     ) {
       return jsonResponse(
@@ -4292,10 +4319,7 @@ export async function handleBroadcastTranscriptRequest(
         (durationMs / 1_000) * CANDIDATE_PASS_B_SAMPLE_RATE_HZ,
       ) *
         PCM_BYTES_PER_SAMPLE;
-    const expectedRequestBytes =
-      requestMediaType === "audio/wav"
-        ? expectedWavBytes
-        : 4 * Math.ceil(expectedWavBytes / 3);
+    const expectedRequestBytes = expectedWavBytes;
     const declaredLength = request.headers.get("Content-Length");
     if (
       declaredLength !== null &&
@@ -4367,11 +4391,7 @@ export async function handleBroadcastTranscriptRequest(
       audioBytes.byteLength === expectedRequestBytes;
     const wavHeader = !hasExpectedBodyLength
       ? null
-      : requestMediaType === "audio/wav"
-        ? audioBytes.subarray(0, WAV_HEADER_BYTES)
-        : isStrictBase64Bytes(audioBytes, expectedWavBytes)
-          ? decodeBase64BytePrefix(audioBytes, WAV_HEADER_BYTES)
-          : null;
+      : audioBytes.subarray(0, WAV_HEADER_BYTES);
     if (
       wavHeader === null ||
       !isCanonicalBroadcastTranscriptWav(
@@ -4380,7 +4400,6 @@ export async function handleBroadcastTranscriptRequest(
         durationMs,
       )
     ) {
-      if (requestMediaType !== "audio/wav") wavHeader?.fill(0);
       audioBytes.fill(0);
       return rejectUnusedQuotaLease(
         environment,
@@ -4393,149 +4412,8 @@ export async function handleBroadcastTranscriptRequest(
         ),
       );
     }
-    if (requestMediaType !== "audio/wav") wavHeader.fill(0);
     transcriptTimes = { sourceStartMs, durationMs };
-    transcriptAudio =
-      requestMediaType === "audio/wav"
-        ? { kind: "wav-bytes", wavBytes: audioBytes }
-        : { kind: "base64-bytes", audioBase64Bytes: audioBytes };
-  } else {
-    const declaredLength = request.headers.get("Content-Length");
-    if (
-      declaredLength !== null &&
-      (!/^\d+$/u.test(declaredLength) ||
-        Number(declaredLength) > MAX_BROADCAST_TRANSCRIPT_REQUEST_BODY_BYTES)
-    ) {
-      return jsonResponse(
-        413,
-        "PAYLOAD_TOO_LARGE",
-        "방송 오디오 조각의 크기가 허용 범위를 넘었어요.",
-        origin,
-      );
-    }
-    const quotaGuard = await precheckAiQuotaLease(
-      request,
-      environment,
-      "transcript",
-      origin,
-    );
-    if (!quotaGuard.ok) return quotaGuard.response;
-    quotaLease = quotaGuard.lease;
-
-    let requestBytes: Uint8Array;
-    try {
-      requestBytes = await readBodyWithLimit(
-        request.body,
-        MAX_BROADCAST_TRANSCRIPT_REQUEST_BODY_BYTES,
-        dependencies.requestBodyTimeoutMs ?? REQUEST_BODY_TIMEOUT_MS,
-        () => new RequestBodyTimeoutError(),
-      );
-    } catch (error) {
-      return rejectUnusedQuotaLease(
-        environment,
-        quotaLease,
-        error instanceof RequestBodyTimeoutError
-          ? jsonResponse(
-              408,
-              "REQUEST_BODY_TIMEOUT",
-              "방송 오디오 업로드가 너무 오래 걸려 중단했어요. 다시 시도해 주세요.",
-              origin,
-            )
-          : error instanceof BodyTooLargeError
-            ? jsonResponse(
-                413,
-                "PAYLOAD_TOO_LARGE",
-                "방송 오디오 조각의 크기가 허용 범위를 넘었어요.",
-                origin,
-              )
-            : jsonResponse(
-                400,
-                "INVALID_REQUEST",
-                "방송 오디오 요청을 읽지 못했어요.",
-                origin,
-              ),
-      );
-    }
-    if (!(await quotaPayloadMatches(quotaLease, requestBytes))) {
-      requestBytes.fill(0);
-      return rejectUnusedQuotaLease(
-        environment,
-        quotaLease,
-        jsonResponse(
-          409,
-          "QUOTA_PAYLOAD_MISMATCH",
-          "배정받은 방송 대사 자료와 실제 요청이 일치하지 않아요.",
-          origin,
-        ),
-      );
-    }
-
-    let inputValue: unknown;
-    try {
-      inputValue = JSON.parse(
-        new TextDecoder("utf-8", { fatal: true }).decode(requestBytes),
-      );
-    } catch {
-      requestBytes.fill(0);
-      return rejectUnusedQuotaLease(
-        environment,
-        quotaLease,
-        jsonResponse(
-          400,
-          "INVALID_REQUEST",
-          "방송 오디오 요청 형식을 확인해 주세요.",
-          origin,
-        ),
-      );
-    }
-    requestBytes.fill(0);
-
-    const transcriptRequest = parseBroadcastTranscriptQwenProxyRequest(inputValue);
-    if (transcriptRequest === null) {
-      return rejectUnusedQuotaLease(
-        environment,
-        quotaLease,
-        jsonResponse(
-          400,
-          "INVALID_REQUEST",
-          "방송 오디오 요청 형식을 확인해 주세요.",
-          origin,
-        ),
-      );
-    }
-    const wavHeader = decodeStrictBase64Prefix(
-      transcriptRequest.audioBase64,
-      WAV_HEADER_BYTES,
-    );
-    if (
-      wavHeader === null ||
-      !isCanonicalBroadcastTranscriptWav(
-        wavHeader,
-        base64DecodedByteLength(transcriptRequest.audioBase64),
-        transcriptRequest.durationMs,
-      )
-    ) {
-      wavHeader?.fill(0);
-      return rejectUnusedQuotaLease(
-        environment,
-        quotaLease,
-        jsonResponse(
-          400,
-          "INVALID_AUDIO",
-          "16kHz 모노 WAV 방송 오디오를 확인해 주세요.",
-          origin,
-        ),
-      );
-    }
-    wavHeader.fill(0);
-    transcriptTimes = {
-      sourceStartMs: transcriptRequest.sourceStartMs,
-      durationMs: transcriptRequest.durationMs,
-    };
-    transcriptAudio = {
-      kind: "base64",
-      audioBase64: transcriptRequest.audioBase64,
-    };
+    transcriptAudio = { kind: "wav-bytes", wavBytes: audioBytes };
   }
 
   try {
@@ -4645,6 +4523,8 @@ export async function handleBroadcastTranscriptRequest(
     [CANDIDATE_PASS_B_RESPONSE_MODEL_REVISION_HEADER]:
       finalAttempt.connection.descriptor.modelRevision,
     [CANDIDATE_PASS_B_RESPONSE_FALLBACK_HEADER]: fallbackUsed ? "true" : "false",
+    [BROADCAST_TRANSCRIPT_ROUTE_FINGERPRINT_HEADER]:
+      routeGuard.route.fingerprint,
     ...(primaryFailureKind === null || !fallbackUsed
       ? {}
       : { [EXCLIPPER_FALLBACK_REASON_HEADER]: primaryFailureKind }),

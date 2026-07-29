@@ -7,7 +7,7 @@ import {
   parseBroadcastTranscriptMediaStagedResponse,
 } from "./broadcastTranscriptMediaProtocol";
 
-const TICKET = `v1.${"a".repeat(32)}.1999999999999.${"b".repeat(43)}`;
+const TICKET = `v2.${"a".repeat(80)}.${"b".repeat(43)}`;
 
 describe("broadcastTranscriptMediaProtocol", () => {
   it("accepts one exact source-fenced staged response", () => {
@@ -65,5 +65,18 @@ describe("broadcastTranscriptMediaProtocol", () => {
     expect(
       parseBroadcastTranscriptMediaResolveRequest({ ...request, startMs: 0 }),
     ).toBeNull();
+  });
+
+  it("rejects the retired v1 ticket format", () => {
+    const v1Ticket = `v1.${"a".repeat(80)}.${"b".repeat(43)}`;
+    expect(
+      parseBroadcastTranscriptMediaResolveRequest({
+        schemaVersion: BROADCAST_TRANSCRIPT_MEDIA_SCHEMA_VERSION,
+        mediaTicket: v1Ticket,
+      }),
+    ).toBeNull();
+    expect(() =>
+      createBroadcastTranscriptMediaResolveRequest(v1Ticket),
+    ).toThrow("invalid");
   });
 });

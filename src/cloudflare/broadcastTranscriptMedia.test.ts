@@ -24,6 +24,7 @@ import {
 } from "./broadcastTranscriptMedia";
 
 const SIGNING_KEY = "0123456789abcdef0123456789abcdef";
+const ROUTE_MANIFEST_FINGERPRINT = `sha256:${"a".repeat(64)}`;
 const NOW_MS = Date.UTC(2026, 6, 27, 12, 0, 0);
 
 interface StoredObject {
@@ -77,6 +78,15 @@ async function sha256Hex(bytes: Uint8Array): Promise<string> {
     .join("");
 }
 
+function encodeBase64Url(bytes: Uint8Array): string {
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary)
+    .replace(/\+/gu, "-")
+    .replace(/\//gu, "_")
+    .replace(/=+$/gu, "");
+}
+
 async function bindingFor(
   bytes: Uint8Array,
 ): Promise<BroadcastTranscriptMediaBinding> {
@@ -86,6 +96,7 @@ async function bindingFor(
     operationId: "operation-1",
     pool: "transcript",
     payloadDigest: `sha256:${await sha256Hex(bytes)}`,
+    routeManifestFingerprint: ROUTE_MANIFEST_FINGERPRINT,
     sourceStartMs: 120_000,
     durationMs: 30_000,
     expectedByteLength: bytes.byteLength,
@@ -202,6 +213,82 @@ function mediaBytes(byteLength = 100): Uint8Array<ArrayBuffer> {
     bytes[index] = index % 251;
   }
   return bytes;
+}
+
+async function stageLegacyV1Fixture(bucket: MemoryR2Bucket): Promise<{
+  readonly binding: BroadcastTranscriptMediaBinding;
+  readonly mediaTicket: string;
+}> {
+  const bytes = mediaBytes();
+  const binding = await bindingFor(bytes);
+  const objectKey =
+    "transcript/2026-07-27/0123456789abcdef0123456789abcdef.wav";
+  const expiresAtMs = NOW_MS + 10 * 60_000;
+  const bindingDigest = await sha256Hex(
+    new TextEncoder().encode(
+      JSON.stringify([
+        "1",
+        binding.participantId,
+        binding.runId,
+        binding.pool,
+        binding.payloadDigest,
+        binding.sourceStartMs,
+        binding.durationMs,
+        binding.expectedByteLength,
+      ]),
+    ),
+  );
+  const checksum = await crypto.subtle.digest(
+    "SHA-256",
+    exactArrayBuffer(bytes),
+  );
+  await bucket.put(objectKey, streamFor(bytes), {
+    onlyIf: { etagDoesNotMatch: "*" },
+    httpMetadata: {
+      contentType: BROADCAST_TRANSCRIPT_MEDIA_CONTENT_TYPE,
+      cacheControl: BROADCAST_TRANSCRIPT_MEDIA_CACHE_CONTROL,
+    },
+    customMetadata: {
+      schema: "1",
+      expiresAtMs: String(expiresAtMs),
+      byteLength: String(bytes.byteLength),
+      payloadSha256: binding.payloadDigest.slice("sha256:".length),
+      bindingSha256: bindingDigest,
+    },
+    sha256: checksum,
+    storageClass: "Standard",
+  });
+  const encodedPayload = encodeBase64Url(
+    new TextEncoder().encode(
+      JSON.stringify({
+        v: 1,
+        k: objectKey,
+        e: expiresAtMs,
+        s: bytes.byteLength,
+        b: bindingDigest,
+        a: binding.sourceStartMs,
+        d: binding.durationMs,
+      }),
+    ),
+  );
+  const signingKey = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(SIGNING_KEY),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+  const signature = await crypto.subtle.sign(
+    "HMAC",
+    signingKey,
+    new TextEncoder().encode(`v1.${encodedPayload}`),
+  );
+  return {
+    binding,
+    mediaTicket: `v1.${encodedPayload}.${encodeBase64Url(
+      new Uint8Array(signature),
+    )}`,
+  };
 }
 
 async function stageFixture(
@@ -334,6 +421,7 @@ describe("private transcript media staging", () => {
     expect(staged.objectKey).toMatch(
       /^transcript\/2026-07-27\/[a-f0-9]{32}\.wav$/u,
     );
+    expect(staged.mediaTicket).toMatch(/^v2\./u);
     expect(staged.mediaTicket).not.toContain(staged.objectKey);
 
     const stored = bucket.objects.get(staged.objectKey);
@@ -341,10 +429,48 @@ describe("private transcript media staging", () => {
       contentType: BROADCAST_TRANSCRIPT_MEDIA_CONTENT_TYPE,
       cacheControl: BROADCAST_TRANSCRIPT_MEDIA_CACHE_CONTROL,
     });
+    expect(stored?.object.customMetadata?.schema).toBe("2");
     const metadata = JSON.stringify(stored?.object.customMetadata);
     expect(metadata).not.toContain(binding.participantId);
     expect(metadata).not.toContain(binding.runId);
     expect(metadata).not.toContain(binding.operationId);
+  });
+
+  it("rejects a correctly signed v1 ticket backed by schema 1 metadata on every read path", async () => {
+    const bucket = new MemoryR2Bucket();
+    const legacy = await stageLegacyV1Fixture(bucket);
+
+    await expect(
+      verifyBroadcastTranscriptMediaTicket(
+        legacy.mediaTicket,
+        SIGNING_KEY,
+        { nowMs: NOW_MS + 1 },
+      ),
+    ).resolves.toBeNull();
+    await expect(
+      resolveBroadcastTranscriptMedia({
+        bucket,
+        signingKey: SIGNING_KEY,
+        mediaTicket: legacy.mediaTicket,
+        expectedBinding: legacy.binding,
+        nowMs: NOW_MS + 1,
+      }),
+    ).resolves.toBeNull();
+
+    const capabilityUrl =
+      `https://worker.example/v1/broadcast-transcript-media?mediaTicket=${
+        encodeURIComponent(legacy.mediaTicket)
+      }`;
+    const response = await serveBroadcastTranscriptMediaRequest(
+      new Request(capabilityUrl),
+      {
+        bucket,
+        signingKey: SIGNING_KEY,
+        nowMs: NOW_MS + 1,
+      },
+    );
+    expect(response.status).toBe(404);
+    expect(bucket.objects.size).toBe(1);
   });
 
   it("verifies the HMAC ticket, object metadata, checksum, and expected binding", async () => {
@@ -360,6 +486,7 @@ describe("private transcript media staging", () => {
       expiresAtMs: fixture.expiresAtMs,
       sourceStartMs: fixture.binding.sourceStartMs,
       durationMs: fixture.binding.durationMs,
+      routeManifestFingerprint: ROUTE_MANIFEST_FINGERPRINT,
     });
     expect(fixture.expiresAtMs - NOW_MS).toBe(10 * 60_000);
     const resolved = await resolveBroadcastTranscriptMedia({
@@ -394,9 +521,20 @@ describe("private transcript media staging", () => {
         signingKey: SIGNING_KEY,
         mediaTicket: fixture.mediaTicket,
         expectedIdentity: retriedOperationBinding,
+        expectedRouteManifestFingerprint: ROUTE_MANIFEST_FINGERPRINT,
         nowMs: NOW_MS + 1,
       }),
     ).resolves.toMatchObject({ objectKey: fixture.objectKey });
+    await expect(
+      resolveBroadcastTranscriptMedia({
+        bucket: fixture.bucket,
+        signingKey: SIGNING_KEY,
+        mediaTicket: fixture.mediaTicket,
+        expectedIdentity: retriedOperationBinding,
+        expectedRouteManifestFingerprint: `sha256:${"b".repeat(64)}`,
+        nowMs: NOW_MS + 1,
+      }),
+    ).resolves.toBeNull();
     await expect(
       resolveBroadcastTranscriptMedia({
         bucket: fixture.bucket,
@@ -406,6 +544,7 @@ describe("private transcript media staging", () => {
           ...retriedOperationBinding,
           participantId: "participant_0987654321",
         },
+        expectedRouteManifestFingerprint: ROUTE_MANIFEST_FINGERPRINT,
         nowMs: NOW_MS + 1,
       }),
     ).resolves.toBeNull();
@@ -422,6 +561,10 @@ describe("private transcript media staging", () => {
       {
         ...fixture.binding,
         payloadDigest: `sha256:${"f".repeat(64)}`,
+      },
+      {
+        ...fixture.binding,
+        routeManifestFingerprint: `sha256:${"b".repeat(64)}`,
       },
       {
         ...fixture.binding,

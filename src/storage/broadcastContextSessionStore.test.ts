@@ -369,17 +369,18 @@ function refinementPhaseLedgerJson(
 describe("broadcastContextSessionStore", () => {
   it("binds every successful transcript chapter to an exact provider route receipt", async () => {
     const routeManifest: BroadcastTranscriptRouteManifest = {
-      schemaVersion: "1.0.0",
-      serviceVersion: 5,
+      schemaVersion: "1.1.0",
+      serviceVersion: 6,
       routingPolicyVersion: "1.11.0",
       providerConfigurationVersion: "1.3.0",
-      transportVersion: 2,
+      transportVersion: 3,
       transportMode: "free-r2",
       maximumChunkDurationMs: 90_000,
       primaryMediaType: "audio/wav",
       provider: "qwen",
       modelId: BROADCAST_TRANSCRIPT_QWEN_OMNI_MODEL_ID,
       modelRevision: BROADCAST_TRANSCRIPT_QWEN_OMNI_MODEL_REVISION,
+      effectiveFallback: { mode: "disabled" },
     };
     const route = await createBroadcastTranscriptRouteSelection(routeManifest);
     const plannedCells = [
@@ -476,17 +477,23 @@ describe("broadcastContextSessionStore", () => {
 
   it("clones a settled mixed-provider transcript with primary, fallback, and no-speech cells", async () => {
     const route = await createBroadcastTranscriptRouteSelection({
-      schemaVersion: "1.0.0",
-      serviceVersion: 5,
+      schemaVersion: "1.1.0",
+      serviceVersion: 6,
       routingPolicyVersion: "1.11.0",
       providerConfigurationVersion: "1.3.0",
-      transportVersion: 2,
+      transportVersion: 3,
       transportMode: "paid-direct",
       maximumChunkDurationMs: 90_000,
       primaryMediaType: "audio/wav",
       provider: "qwen",
       modelId: BROADCAST_TRANSCRIPT_QWEN_OMNI_MODEL_ID,
       modelRevision: BROADCAST_TRANSCRIPT_QWEN_OMNI_MODEL_REVISION,
+      effectiveFallback: {
+        mode: "bounded",
+        provider: "gemini",
+        modelId: BROADCAST_TRANSCRIPT_GEMINI_MODEL_ID,
+        modelRevision: BROADCAST_TRANSCRIPT_GEMINI_MODEL_REVISION,
+      },
     });
     const plannedCells = [
       { chunkId: "asr-001", sourceStartMs: 0, sourceEndMs: 1_000 },

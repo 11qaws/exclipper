@@ -15,7 +15,7 @@ import {
 } from "./broadcastTranscriptRouteManifest";
 
 export const BROADCAST_TRANSCRIPT_PROVIDER_RECEIPT_CHECKPOINT_SCHEMA_VERSION =
-  "1.0.0" as const;
+  "1.1.0" as const;
 export const MAX_BROADCAST_TRANSCRIPT_PROVIDER_RECEIPT_CHECKPOINT_BYTES =
   512 * 1024;
 
@@ -143,7 +143,6 @@ function normalizePlannedCells(
 function normalizeReceipts(
   entries: readonly BroadcastTranscriptProviderReceiptEntry[],
   plannedCells: readonly BroadcastTranscriptProviderReceiptPlanCell[],
-  routeManifestFingerprint: string,
 ): readonly BroadcastTranscriptProviderReceiptEntry[] {
   if (entries.length > plannedCells.length) {
     throw new RangeError(
@@ -168,11 +167,10 @@ function normalizeReceipts(
       planned === undefined ||
       ids.has(entry.chunkId) ||
       entry.sourceStartMs !== planned.sourceStartMs ||
-      entry.sourceEndMs !== planned.sourceEndMs ||
-      entry.receipt.routeManifestFingerprint !== routeManifestFingerprint
+      entry.sourceEndMs !== planned.sourceEndMs
     ) {
       throw new RangeError(
-        "Each transcript provider receipt must match one exact planned cell and route.",
+        "Each transcript provider receipt must match one exact planned cell.",
       );
     }
     ids.add(entry.chunkId);
@@ -206,7 +204,6 @@ function normalizedCheckpoint(
   const receipts = normalizeReceipts(
     checkpoint.receipts,
     plannedCells,
-    checkpoint.routeManifestFingerprint,
   );
   return {
     schemaVersion:
@@ -327,6 +324,25 @@ export function recordBroadcastTranscriptProviderReceipt(
         receipt: result.providerReceipt,
       },
     ],
+  });
+}
+
+/**
+ * Moves only the unfinished dispatch boundary to a newly advertised route.
+ *
+ * Existing cell receipts remain immutable evidence of the provider that
+ * actually produced each paid result. Callers can therefore recover after a
+ * deployment or model switch without retranscribing successful cells.
+ */
+export function rebaseBroadcastTranscriptProviderReceiptCheckpointRoute(
+  checkpoint: BroadcastTranscriptProviderReceiptCheckpoint,
+  route: BroadcastTranscriptRouteSelection,
+): BroadcastTranscriptProviderReceiptCheckpoint {
+  const current = normalizedCheckpoint(checkpoint);
+  return normalizedCheckpoint({
+    ...current,
+    routeManifestFingerprint: route.fingerprint,
+    routeModelRevision: route.manifest.modelRevision,
   });
 }
 

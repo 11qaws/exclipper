@@ -40,7 +40,7 @@ export function isBroadcastTranscriptMediaTicket(value: unknown): value is strin
     typeof value === "string" &&
     value.length >= 64 &&
     value.length <= BROADCAST_TRANSCRIPT_MEDIA_TICKET_MAX_LENGTH &&
-    /^[A-Za-z0-9._-]+$/u.test(value)
+    /^v2\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]{43}$/u.test(value)
   );
 }
 

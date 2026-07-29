@@ -1,5 +1,13 @@
 # ExClipper 개인용 운영·배포·복구 계획
 
+## 2026-07-29 `0.8.9` 현재 단일 전사 계약
+
+- 정식 배포 전에는 rolling 호환 경로를 운영하지 않는다. 새 분석 유입을 멈춘 뒤 **Worker 배포 → plain `/healthz`의 service 6·transport 3과 OPTIONS 확인 → 같은 commit의 Pages 배포 → 새 분석 재개** 순서로 교체한다.
+- plain `/healthz` 하나만 현재 provider·model·transport·fallback manifest를 반환한다. 모든 전사 stage·resolve·direct 요청은 이 manifest의 route fingerprint header를 필수로 보내며, 누락·형식 오류·현재 경로 불일치는 quota·R2·provider 실행 전에 각각 400 또는 409로 거부한다.
+- Free R2 media는 schema 2·ticket v2만 읽고 쓴다. refinement checkpoint는 현재 v4 signature와 frozen plan이 정확히 같을 때만 열며, signature가 달라지면 과거 settlement를 이관하지 않고 새 checkpoint를 만든다. 같은 signature에서는 성공·무발화 결과를 보존하고 gap만 다시 보낸다.
+- route 변경이 연속되면 자동 재개 간격은 250ms부터 지수적으로 늘어나 최대 10초에서 고정된다. 재시도 횟수 상한은 없으며 정상 또는 다른 종류의 결과가 나오면 즉시 0으로 초기화한다. 대기 중 source 변경·취소는 `AbortSignal`로 타이머까지 정리한다.
+- 롤백도 새 분석 유입을 멈추고 Worker와 Pages를 같은 이전 artifact 쌍으로 교체한다. 현재 계약 밖 ticket·checkpoint를 bridge하지 않으므로 교체 전에 진행 중 분석을 명시적으로 종료하고, 롤백 뒤 새 route와 새 checkpoint로 다시 시작한다.
+
 ## 2026-07-29 Groq Whisper 준비 경로 — 기본 Qwen 유지
 
 - production 기본 전사 provider는 계속 `qwen`이다. `GROQ_API_KEY`가 존재한다는 이유만으로 Groq를 선택하거나 Qwen 실패를 Groq 과금으로 넘기지 않는다. Groq를 쓰려면 운영자가 Worker secret을 별도로 등록하고 `BROADCAST_TRANSCRIPT_PROVIDER=groq`를 명시해 Worker를 배포해야 한다.
@@ -22,7 +30,7 @@
 - 배포 전 regression은 최소 세 계약을 고정한다. 17개 ledger 입력은 context 17개를 모두 보존하고 detail 12개가 완성되면 pipeline gap 없이 끝나야 한다. detail 후보 하나가 실패해도 나머지는 저장·공개돼야 한다. 완전 검증 뒤 0개인 입력은 `completedEmpty`로 끝나야 한다.
 - Worker `/healthz`는 `candidateTransport.version`, `mode`, `configured`, required frame count 4와 staged schema를 보고한다. 일시적인 503은 Pages에 영구 cache하지 않고, 성공한 transport 판단도 60초 뒤 갱신한다.
 - 후보 media stage는 private `TRANSCRIPT_MEDIA` bucket의 `transcript/candidate/` prefix를 사용한다. public R2 access는 열지 않는다. 정상 실행 후 object 0개를 확인하고, 실패 smoke에서는 capability 만료 뒤 GET 404와 1일 lifecycle 범위를 확인한다.
-- 배포 순서는 호환 Worker → health/OPTIONS/R2 candidate smoke → Pages → cache 최대 10분과 진행 중 구 탭 정리 → 필요 시 호환 경로 축소 순서다. 새 Worker는 배포 전후 구 Pages JSON을 받아야 하고, 새 Pages는 구 Worker에서 `legacy` direct 경로로 동작해야 한다.
+- 배포 순서는 새 분석 유입 중지 → Worker → plain health/OPTIONS/R2 candidate smoke → 같은 commit의 Pages → 새 분석 재개다. current-only 계약이므로 서로 다른 릴리스의 Worker와 Pages를 섞어 운영하지 않는다.
 - Free R2 candidate smoke는 실제 후보 WAV와 서로 다른 JPEG 4장을 사용해 stage 202, resolve 200, Qwen model identity, 한국어 event/reaction/context 결과와 object cleanup을 확인한다. byte-counting transform 뒤에는 반드시 `FixedLengthStream(expectedByteLength)`을 두어 R2에 known length를 보존한다. 같은 payload retry는 object·ticket 하나를 재사용하고 재전송 body pump를 abort/cancel해 제한 시간 안에 202를 반환해야 한다. candidate manifest가 달라지면 기존 object를 보존한 채 provider 호출 전에 거부돼야 한다.
 - 합법적인 최대 candidate context도 provider 호출 전에 48KiB canonical packet으로 정리되어 Qwen shared prompt 80KiB와 최대 예약 94,180 token 안에 들어가야 한다. 필드가 줄면 `[중간 생략 / middle omitted]`과 앞·뒤가 남고, 원본 session artifact는 불변이어야 한다. Qwen·Gemini direct/proxy·quota fingerprint·verification receipt의 packet과 fingerprint가 byte-for-byte 같아야 하며, receipt의 candidate ID·source start/end·routing revision도 실제 provider 요청과 정확히 같아야 한다. 정상 입력이 크기 때문에 중단되거나 413 `TOKEN_BUDGET_TOO_LARGE`로 끝나면 배포하지 않는다. Free R2에서 Gemini fallback이 없다는 사실은 장애가 아니라 명시적 transport 제한으로 health에 유지한다.
 - candidate bundle smoke는 `Content-Length`가 있는 정상·초과·미달 입력뿐 아니라 헤더 없는 정상·초과 입력도 포함한다. 헤더 없는 초과 stream은 signed exact byte length 직후 413 `PAYLOAD_TOO_LARGE`로 끊기고 R2 object가 남지 않아야 한다.
@@ -43,13 +51,13 @@
 - 유료 전환은 Cloudflare 요금제 변경 뒤 Worker 변수만 `paid-direct`로 바꾸고 재배포한다. R2 binding과 cleanup 코드는 그대로 두어 롤백할 수 있게 하며, client/Pages를 먼저 바꾸지 않는다.
 - R2 무료 경계는 월 10GB-month, Class A 100만, Class B 1,000만이고 delete는 무료다. Worker 무료 경계는 일 100,000 요청이다. 12시간을 90초 단위로 전부 훑는 보수적 상한 480청크를 5명이 동시에 실행해도 약 2,400 put, 수만 회 미만의 R2 read/head, 약 1만 회 안팎의 Worker 요청으로 무료 한도보다 충분히 작다. 실제 기본 표본 계획은 이보다 작다. 운영 지표가 80%에 도달하면 새 분석 시작 전에 경고하며 자동으로 비용이 나는 storage class나 Workers Paid로 전환하지 않는다.
 
-## 2026-07-27 `0.8.5` 전사 CPU 초과 완화와 미해결 운영 gate
+## 역사 기록 · 2026-07-27 `0.8.5` 전사 CPU 초과 완화와 미해결 운영 gate
 
 - 2026-07-27 18:13:55~18:17:29 KST 운영 tail에서 `/v1/broadcast-transcript` 15건 중 6건이 HTTP 503, `outcome=exceededCpu`, `Worker exceeded CPU time limit`로 종료됐다. 요청은 모두 약 1,280,121 bytes였고 quota는 모두 200이었다. 브라우저의 CORS 오류는 Cloudflare가 대신 만든 503에 CORS 헤더가 없어서 생긴 2차 증상이다.
-- 기본 ingress는 Base64-only 전용 media type이다. Worker는 약 1.28MB envelope의 UTF-8 decode·`JSON.parse`, Base64 중복 grouped regex, provider용 대형 `JSON.stringify`를 제거하고 검증된 원본 Base64 bytes를 서버 고정 JSON prefix/suffix 사이에 넣는다.
-- 직접 Base64 ingress는 30초를 초과하면 본문을 읽거나 quota를 consume하기 전에 400으로 거부한다. 90초 raw/JSON은 구버전 호환 계약일 뿐 Free CPU 안전 경로가 아니며 운영 smoke의 기본값으로 쓰지 않는다.
-- 배포 순서는 ① protocol 4 Worker 배포 ② health의 `transcriptTransport.primaryMediaType`, OPTIONS·quota·직접 Base64 30초 smoke 확인 ③ Pages `0.8.5` 배포 ④ 공개 번들의 전용 media type 확인 ⑤ 음식 토크 missing-only 또는 전체 271구간 검증이다. `AI_QUOTA_MODE=required`는 낮추지 않는다.
-- 롤백은 Pages를 `0.8.4`로 되돌리기 전에 Worker의 JSON/raw 호환 경로가 살아 있는지 확인한다. 호환 기간에는 오래 열린 구버전 탭이 JSON 경로를 사용할 수 있으므로 운영 tail에서 transport별 CPU를 구분한다.
+- 당시 기본 ingress는 Base64-only 전용 media type이었다. Worker는 약 1.28MB envelope의 UTF-8 decode·`JSON.parse`, Base64 중복 grouped regex, provider용 대형 `JSON.stringify`를 제거하고 검증된 원본 Base64 bytes를 서버 고정 JSON prefix/suffix 사이에 넣었다.
+- 당시 직접 Base64 ingress는 30초를 초과하면 본문을 읽거나 quota를 consume하기 전에 400으로 거부했다. 이 Base64·JSON 경로는 현재 제거됐으며 운영 smoke나 롤백 대상으로 사용하지 않는다.
+- 당시 배포는 protocol 4 Worker와 Pages `0.8.5`를 순서대로 교체하고 직접 Base64 30초를 smoke했다. 현재 배포는 문서 맨 위의 `0.8.9` raw WAV 단일 계약을 따른다.
+- 당시 롤백은 JSON/raw 호환 경로를 유지해야 했지만 현재는 해당 bridge를 운영하지 않는다. 현재 롤백은 새 분석 유입을 중지한 뒤 Worker와 Pages를 같은 artifact 쌍으로 교체한다.
 - 완료 기준은 CORS 메시지가 잠시 사라지는 것이 아니라 전체 계획에서 `exceededCpu=0`, gap 0, quota 409/429 비정상 연쇄 0, provider body byte identity 유지다. 실제 tail p95/p99가 Free CPU를 계속 넘으면 동시성 숫자를 더 낮추는 것으로 숨기지 않고 Workers Paid 또는 URL 기반 ASR 전환을 승인받는다.
 - 후속 전체 실행 444건은 성공 438건·`exceededCpu` 6건이었고 성공 요청도 CPU p50 29ms·p95 38ms였다. 따라서 이 gate는 통과하지 못했다. provider body stream, single ingress timer, 15~20초 축소는 보조 최적화일 뿐 Free 10ms의 완료 조건으로 인정하지 않는다.
 - 운영 전환 선택지는 ① 명시적 승인 뒤 Workers Paid 월 최소 $5와 90초 청크를 사용해 현재 보안·quota 계약을 유지하는 단기 경로, ② private R2 stream upload·native checksum·짧은 media capability URL·URL/Filetrans ASR로 큰 본문을 Worker JavaScript에서 제거하는 Free 장기 경로다. 새 비용이나 bucket을 승인 없이 만들지 않는다.

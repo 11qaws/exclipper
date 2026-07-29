@@ -10,7 +10,6 @@ import {
   extractBroadcastTranscriptGroqResponse,
   extractBroadcastTranscriptQwenResponse,
   isCompatibleBroadcastTranscriptCheckpointModelRevision,
-  parseBroadcastTranscriptQwenProxyRequest,
   resolveBroadcastTranscriptCheckpointModelRevision,
 } from "./broadcastTranscriptQwen";
 
@@ -114,13 +113,6 @@ describe("broadcastTranscriptQwen", () => {
         audioUrl,
       }),
     ).toThrow(RangeError);
-  });
-
-  it("validates the exact browser-to-proxy envelope", () => {
-    const valid = { audioBase64: "UklGRg==", sourceStartMs: 600_000, durationMs: 90_000 };
-    expect(parseBroadcastTranscriptQwenProxyRequest(valid)).toEqual(valid);
-    expect(parseBroadcastTranscriptQwenProxyRequest({ ...valid, model: "other" })).toBeNull();
-    expect(parseBroadcastTranscriptQwenProxyRequest({ ...valid, durationMs: 90_001 })).toBeNull();
   });
 
   it("maps a validated provider response back onto the source timeline", () => {

@@ -47,6 +47,8 @@ export interface BroadcastTranscriptFragmentRecoveryResult {
   readonly noSpeechAbstentions: readonly NoSpeechBroadcastTranscriptAbstention[];
   /** Safe retries that still failed after the bounded automatic recovery waves. */
   readonly unresolvedRetryableGaps: readonly BroadcastTranscriptChunkGap[];
+  /** Non-billable route drift; caller reacquires health and resumes these cells. */
+  readonly routeChangedGaps: readonly BroadcastTranscriptChunkGap[];
   /** A request that may already have been billed; never blindly resent. */
   readonly outcomeUnknownGaps: readonly BroadcastTranscriptChunkGap[];
   readonly attemptedCount: number;
@@ -245,6 +247,7 @@ export async function recoverBroadcastTranscriptFragments(
       noAudioGaps: [],
       noSpeechAbstentions: [],
       unresolvedRetryableGaps: [],
+      routeChangedGaps: [],
       outcomeUnknownGaps: [],
       attemptedCount: 0,
       concurrencyOutcomes: [],
@@ -260,6 +263,7 @@ export async function recoverBroadcastTranscriptFragments(
   const successful = new Map<string, BroadcastTranscriptWorkerFragment>();
   const abstentions = new Map<string, BroadcastTranscriptChunkAbstention>();
   const outcomeUnknown = new Map<string, BroadcastTranscriptChunkGap>();
+  const routeChanged = new Map<string, BroadcastTranscriptChunkGap>();
   let pending = [...options.chunks];
   let unresolvedRetryable = new Map<string, BroadcastTranscriptChunkGap>();
   const concurrencyOutcomes: string[] = [];
@@ -324,6 +328,8 @@ export async function recoverBroadcastTranscriptFragments(
         });
       } else if (gap.reason === "outcome-unknown") {
         outcomeUnknown.set(gap.chunkId, gap);
+      } else if (gap.reason === "route-changed") {
+        routeChanged.set(gap.chunkId, gap);
       } else if (isAutomaticallyRetryableTranscriptGap(gap.reason)) {
         nextRetryable.set(gap.chunkId, gap);
       }
@@ -379,6 +385,7 @@ export async function recoverBroadcastTranscriptFragments(
       ),
     ),
     unresolvedRetryableGaps: byOriginalOrder(unresolvedRetryable.values()),
+    routeChangedGaps: byOriginalOrder(routeChanged.values()),
     outcomeUnknownGaps: byOriginalOrder(outcomeUnknown.values()),
     attemptedCount,
     concurrencyOutcomes,

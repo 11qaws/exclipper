@@ -67,6 +67,7 @@ export type StoredBroadcastTranscriptGapReason =
   | "decode-failed"
   | "transcription-failed"
   | "rate-limited"
+  | "route-changed"
   | "outcome-unknown";
 
 export interface StoredBroadcastTranscriptGap {
@@ -428,6 +429,7 @@ export function assertBroadcastContextSessionRecord(
         "decode-failed",
         "transcription-failed",
         "rate-limited",
+        "route-changed",
         "outcome-unknown",
       ].includes(typeof gap.reason === "string" ? gap.reason : "") ||
       !Number.isSafeInteger(gap.attemptCount) ||

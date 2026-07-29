@@ -26,9 +26,100 @@ export interface TranscriptStartInput {
   readonly broadcastTranscriptStatus: string;
 }
 
+const TRANSCRIPT_ROUTE_RECOVERY_INITIAL_DELAY_MS = 250;
+const TRANSCRIPT_ROUTE_RECOVERY_MAX_DELAY_MS = 10_000;
+
 /** Which portion of the sampling plan this pass is allowed to cover. */
 export function transcriptPhaseFor(analysisComplete: boolean): TranscriptPhase {
   return analysisComplete ? "event-boost" : "uniform";
+}
+
+/**
+ * Returns the bounded delay before the next automatic route recovery pass.
+ *
+ * The caller owns the consecutive-change counter: increment it only when a
+ * completed pass contains route-changed gaps, and reset it to zero after any
+ * non-route result. There is deliberately no retry ceiling; the delay reaches
+ * 10 seconds and stays there until the active Worker route converges.
+ */
+export function transcriptRouteRecoveryDelayMs(
+  consecutiveRouteChangeCount: number,
+): number {
+  if (
+    !Number.isSafeInteger(consecutiveRouteChangeCount) ||
+    consecutiveRouteChangeCount < 0
+  ) {
+    throw new RangeError(
+      "Transcript route recovery count must be a non-negative safe integer.",
+    );
+  }
+  if (consecutiveRouteChangeCount === 0) return 0;
+  if (consecutiveRouteChangeCount >= 7) {
+    return TRANSCRIPT_ROUTE_RECOVERY_MAX_DELAY_MS;
+  }
+  return Math.min(
+    TRANSCRIPT_ROUTE_RECOVERY_INITIAL_DELAY_MS *
+      2 ** (consecutiveRouteChangeCount - 1),
+    TRANSCRIPT_ROUTE_RECOVERY_MAX_DELAY_MS,
+  );
+}
+
+function transcriptRouteRecoveryAbortError(): Error {
+  const error = new Error("Transcript route recovery delay was aborted.");
+  error.name = "AbortError";
+  return error;
+}
+
+function transcriptRouteRecoveryAbortReason(signal: AbortSignal): Error {
+  return signal.reason instanceof Error
+    ? signal.reason
+    : transcriptRouteRecoveryAbortError();
+}
+
+/**
+ * Waits for the bounded route recovery delay without leaving a timer behind
+ * when the analysis run changes or the owning effect is disposed.
+ */
+export async function waitForTranscriptRouteRecoveryDelay(
+  consecutiveRouteChangeCount: number,
+  signal?: AbortSignal,
+): Promise<void> {
+  const delayMs = transcriptRouteRecoveryDelayMs(
+    consecutiveRouteChangeCount,
+  );
+  if (signal?.aborted) {
+    throw transcriptRouteRecoveryAbortReason(signal);
+  }
+  if (delayMs === 0) return;
+
+  await new Promise<void>((resolve, reject) => {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const cleanup = (): void => {
+      if (timer !== null) {
+        clearTimeout(timer);
+        timer = null;
+      }
+      signal?.removeEventListener("abort", onAbort);
+    };
+    const onAbort = (): void => {
+      cleanup();
+      reject(
+        signal === undefined
+          ? transcriptRouteRecoveryAbortError()
+          : transcriptRouteRecoveryAbortReason(signal),
+      );
+    };
+
+    signal?.addEventListener("abort", onAbort, { once: true });
+    if (signal?.aborted) {
+      onAbort();
+      return;
+    }
+    timer = setTimeout(() => {
+      cleanup();
+      resolve();
+    }, delayMs);
+  });
 }
 
 /**

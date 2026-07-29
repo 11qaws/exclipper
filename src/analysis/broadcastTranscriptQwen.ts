@@ -11,8 +11,6 @@ export const BROADCAST_TRANSCRIPT_GROQ_MODEL_ID =
   "whisper-large-v3-turbo" as const;
 export const BROADCAST_TRANSCRIPT_GROQ_MODEL_REVISION =
   "groq-whisper-large-v3-turbo-ko-segment-v1-2026-07-29" as const;
-export const BROADCAST_TRANSCRIPT_BASE64_CONTENT_TYPE =
-  "application/vnd.exclipper.transcript-base64" as const;
 export const BROADCAST_TRANSCRIPT_QWEN_MAX_OUTPUT_TOKENS = 1_024;
 export const BROADCAST_TRANSCRIPT_PREVIOUS_ACTIVE_MODEL_REVISION =
   "qwen3.5-omni-flash-audio-transcript-reviewed-2026-07-22" as const;
@@ -25,7 +23,6 @@ export const BROADCAST_TRANSCRIPT_ACTIVE_MODEL_REVISION =
 export const BROADCAST_TRANSCRIPT_CHECKPOINT_MIXED_REVISION_PREFIX =
   "broadcast-transcript-mixed-v1:" as const;
 export const MAX_BROADCAST_TRANSCRIPT_QWEN_DURATION_MS = 90_000;
-export const MAX_BROADCAST_TRANSCRIPT_DIRECT_DURATION_MS = 30_000;
 export const MAX_BROADCAST_TRANSCRIPT_QWEN_BASE64_LENGTH = 4_000_000;
 export const MAX_BROADCAST_TRANSCRIPT_QWEN_TEXT_LENGTH = 20_000;
 export const MAX_BROADCAST_TRANSCRIPT_QWEN_RESPONSE_BYTES = 128 * 1024;
@@ -41,8 +38,7 @@ export type BroadcastTranscriptLiveModelId =
   | typeof BROADCAST_TRANSCRIPT_QWEN_OMNI_MODEL_ID
   | typeof BROADCAST_TRANSCRIPT_GROQ_MODEL_ID;
 
-export interface BroadcastTranscriptQwenProxyRequest {
-  readonly audioBase64: string;
+interface BroadcastTranscriptSourceRange {
   readonly sourceStartMs: number;
   readonly durationMs: number;
 }
@@ -474,10 +470,7 @@ export function buildBroadcastTranscriptGroqRequestBody(
  */
 export function extractBroadcastTranscriptGroqResponse(
   value: unknown,
-  request: Pick<
-    BroadcastTranscriptQwenProxyRequest,
-    "sourceStartMs" | "durationMs"
-  >,
+  request: BroadcastTranscriptSourceRange,
 ): BroadcastTranscriptQwenResult | null {
   if (
     !isRecord(value) ||
@@ -595,7 +588,7 @@ export function buildBroadcastTranscriptQwenOmniUrlRequestBody(
 
 export function extractBroadcastTranscriptQwenOmniSseResponse(
   value: string,
-  request: Pick<BroadcastTranscriptQwenProxyRequest, "sourceStartMs" | "durationMs">,
+  request: BroadcastTranscriptSourceRange,
 ): BroadcastTranscriptQwenResult | null {
   if (typeof value !== "string" || value.length === 0) return null;
   let text = "";
@@ -639,7 +632,7 @@ export function extractBroadcastTranscriptQwenOmniSseResponse(
 
 export function extractBroadcastTranscriptGeminiResponse(
   value: unknown,
-  request: Pick<BroadcastTranscriptQwenProxyRequest, "sourceStartMs" | "durationMs">,
+  request: BroadcastTranscriptSourceRange,
 ): BroadcastTranscriptQwenResult | null {
   if (!isRecord(value) || !Array.isArray(value.candidates) || value.candidates.length !== 1) {
     return null;
@@ -678,33 +671,9 @@ export function extractBroadcastTranscriptGeminiResponse(
   };
 }
 
-export function parseBroadcastTranscriptQwenProxyRequest(
-  value: unknown,
-): BroadcastTranscriptQwenProxyRequest | null {
-  if (
-    !isRecord(value) ||
-    !hasExactKeys(value, ["audioBase64", "sourceStartMs", "durationMs"]) ||
-    typeof value.audioBase64 !== "string" ||
-    value.audioBase64.length === 0 ||
-    value.audioBase64.length > MAX_BROADCAST_TRANSCRIPT_QWEN_BASE64_LENGTH ||
-    !Number.isSafeInteger(value.sourceStartMs) ||
-    (value.sourceStartMs as number) < 0 ||
-    !Number.isSafeInteger(value.durationMs) ||
-    (value.durationMs as number) <= 0 ||
-    (value.durationMs as number) > MAX_BROADCAST_TRANSCRIPT_QWEN_DURATION_MS
-  ) {
-    return null;
-  }
-  return {
-    audioBase64: value.audioBase64,
-    sourceStartMs: value.sourceStartMs as number,
-    durationMs: value.durationMs as number,
-  };
-}
-
 export function extractBroadcastTranscriptQwenResponse(
   value: unknown,
-  request: Pick<BroadcastTranscriptQwenProxyRequest, "sourceStartMs" | "durationMs">,
+  request: BroadcastTranscriptSourceRange,
 ): BroadcastTranscriptQwenResult | null {
   const parsed = readDashscopeNativeResponse(value);
   if (parsed === null) return null;

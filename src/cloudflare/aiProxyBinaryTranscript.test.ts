@@ -5,7 +5,24 @@ import {
   encodeCandidatePassBPcm16Wav,
 } from "../analysis/candidatePassBGemini";
 import { CANDIDATE_PASS_B_SAMPLE_RATE_HZ } from "../analysis/candidatePassBWorkerProtocol";
-import { buildBroadcastTranscriptQwenOmniRequestBody } from "../analysis/broadcastTranscriptQwen";
+import {
+  MAX_BROADCAST_TRANSCRIPT_QWEN_DURATION_MS,
+  buildBroadcastTranscriptQwenOmniRequestBody,
+} from "../analysis/broadcastTranscriptQwen";
+import {
+  BROADCAST_TRANSCRIPT_HEALTH_SERVICE_VERSION,
+  BROADCAST_TRANSCRIPT_PRIMARY_MEDIA_TYPE,
+  BROADCAST_TRANSCRIPT_PROVIDER_CONFIGURATION_VERSION,
+  BROADCAST_TRANSCRIPT_ROUTE_MANIFEST_SCHEMA_VERSION,
+  BROADCAST_TRANSCRIPT_TRANSPORT_VERSION,
+  broadcastTranscriptRouteRequestHeaders,
+  createBroadcastTranscriptRouteSelection,
+} from "../analysis/broadcastTranscriptRouteManifest";
+import {
+  AI_PROVIDER_ROUTING_POLICY_VERSION,
+  resolveBroadcastTranscriptConnection,
+  resolveBroadcastTranscriptFallbackConnection,
+} from "./aiProviderConfiguration";
 import {
   handleBroadcastTranscriptRequest,
   type AiProxyEnvironment,
@@ -41,40 +58,74 @@ function silentWav(durationMs: number): Uint8Array {
   );
 }
 
-function binaryRequest(
+async function currentTranscriptRouteHeaders(
+  environment: AiProxyEnvironment,
+  headers: Readonly<Record<string, string>>,
+): Promise<Readonly<Record<string, string>>> {
+  const resolution = resolveBroadcastTranscriptConnection(environment);
+  if (
+    environment.BROADCAST_TRANSCRIPT_TRANSPORT_MODE !== "paid-direct" ||
+    !resolution.ok ||
+    resolution.connection.provider === "disabled"
+  ) {
+    throw new TypeError(
+      "Binary transcript test environment does not match its route.",
+    );
+  }
+  const primary = resolution.connection;
+  const fallback = resolveBroadcastTranscriptFallbackConnection(
+    environment,
+    primary.provider,
+  );
+  const route = await createBroadcastTranscriptRouteSelection({
+    schemaVersion: BROADCAST_TRANSCRIPT_ROUTE_MANIFEST_SCHEMA_VERSION,
+    serviceVersion: BROADCAST_TRANSCRIPT_HEALTH_SERVICE_VERSION,
+    routingPolicyVersion: AI_PROVIDER_ROUTING_POLICY_VERSION,
+    providerConfigurationVersion:
+      BROADCAST_TRANSCRIPT_PROVIDER_CONFIGURATION_VERSION,
+    transportVersion: BROADCAST_TRANSCRIPT_TRANSPORT_VERSION,
+    transportMode: "paid-direct",
+    maximumChunkDurationMs:
+      MAX_BROADCAST_TRANSCRIPT_QWEN_DURATION_MS,
+    primaryMediaType: BROADCAST_TRANSCRIPT_PRIMARY_MEDIA_TYPE,
+    provider: primary.provider,
+    modelId: primary.descriptor.modelId,
+    modelRevision: primary.descriptor.modelRevision,
+    effectiveFallback: fallback === null
+      ? { mode: "disabled" }
+      : {
+          mode: "bounded",
+          provider: fallback.provider,
+          modelId: fallback.descriptor.modelId,
+          modelRevision: fallback.descriptor.modelRevision,
+        },
+  });
+  return {
+    ...headers,
+    ...broadcastTranscriptRouteRequestHeaders(route),
+  };
+}
+
+async function binaryRequest(
   wav: Uint8Array,
   query: string,
-): Request {
+  environment: AiProxyEnvironment = createEnvironment(),
+): Promise<Request> {
   return new Request(`${ENDPOINT}${query}`, {
     method: "POST",
-    headers: {
+    headers: await currentTranscriptRouteHeaders(environment, {
       Origin: PRODUCTION_ORIGIN,
       "Content-Type": "audio/wav",
       "CF-Connecting-IP": "203.0.113.42",
-    },
+    }),
     body: wav as Uint8Array<ArrayBuffer>,
   });
 }
 
-function base64Request(
-  body: string,
-  query: string,
-): Request {
-  return new Request(`${ENDPOINT}${query}`, {
-    method: "POST",
-    headers: {
-      Origin: PRODUCTION_ORIGIN,
-      "Content-Type": "application/vnd.exclipper.transcript-base64",
-      "CF-Connecting-IP": "203.0.113.42",
-    },
-    body,
-  });
-}
-
-function fragmentedBinaryRequest(
+async function fragmentedBinaryRequest(
   wav: Uint8Array,
   query: string,
-): Request {
+): Promise<Request> {
   const boundaries = [0, 17, 44, Math.floor(wav.byteLength / 2), wav.byteLength];
   const body = new ReadableStream<Uint8Array>({
     start(controller) {
@@ -88,11 +139,11 @@ function fragmentedBinaryRequest(
   });
   return new Request(`${ENDPOINT}${query}`, {
     method: "POST",
-    headers: {
+    headers: await currentTranscriptRouteHeaders(createEnvironment(), {
       Origin: PRODUCTION_ORIGIN,
       "Content-Type": "audio/wav",
       "CF-Connecting-IP": "203.0.113.42",
-    },
+    }),
     body,
     duplex: "half",
   } as RequestInit & { duplex: "half" });
@@ -118,116 +169,7 @@ function capturedBodyText(init: RequestInit | undefined): string {
 }
 
 describe("binary transcript ingress", () => {
-  it("passes browser-prepared Base64 through without changing provider bytes", async () => {
-    const wav = silentWav(30_000);
-    const audioBase64 = encodeCandidatePassBBase64(wav);
-    const expected = JSON.stringify(
-      buildBroadcastTranscriptQwenOmniRequestBody(audioBase64),
-    );
-    let capturedBody = "";
-    let capturedUint8Array = false;
-    const response = await handleBroadcastTranscriptRequest(
-      base64Request(audioBase64, "?startMs=600000&durationMs=30000"),
-      createEnvironment(),
-      {
-        fetchImplementation: (_input, init) => {
-          capturedBody = capturedBodyText(init);
-          capturedUint8Array = init?.body instanceof Uint8Array;
-          return Promise.resolve(qwenSseSuccess("브라우저 직접 경로입니다."));
-        },
-      },
-    );
-
-    expect(response.status).toBe(200);
-    expect(capturedUint8Array).toBe(true);
-    expect(capturedBody).toBe(expected);
-  });
-
-  it.each([
-    ["quote", "\""],
-    ["backslash", "\\"],
-    ["newline", "\n"],
-    ["NUL", "\0"],
-    ["non-ASCII", "가"],
-    ["internal padding", "="],
-  ])("rejects %s in a direct Base64 body", async (_label, replacement) => {
-    const wav = silentWav(2_000);
-    const valid = encodeCandidatePassBBase64(wav);
-    const offset = Math.floor(valid.length / 2);
-    const invalid = `${valid.slice(0, offset)}${replacement}${valid.slice(offset + 1)}`;
-    const upstreamFetch = vi.fn();
-    const response = await handleBroadcastTranscriptRequest(
-      base64Request(invalid, "?startMs=0&durationMs=2000"),
-      createEnvironment(),
-      { fetchImplementation: upstreamFetch },
-    );
-
-    expect([400, 413]).toContain(response.status);
-    const payload = await response.json() as { error: { code: string } };
-    expect(["INVALID_AUDIO", "PAYLOAD_TOO_LARGE"]).toContain(
-      payload.error.code,
-    );
-    expect(upstreamFetch).not.toHaveBeenCalled();
-  });
-
-  it("rejects non-canonical unused Base64 pad bits", async () => {
-    const valid = encodeCandidatePassBBase64(silentWav(3));
-    expect(valid.endsWith("=")).toBe(true);
-    const invalid = `${valid.slice(0, -2)}B=`;
-    const upstreamFetch = vi.fn();
-    const response = await handleBroadcastTranscriptRequest(
-      base64Request(invalid, "?startMs=0&durationMs=3"),
-      createEnvironment(),
-      { fetchImplementation: upstreamFetch },
-    );
-
-    expect(response.status).toBe(400);
-    expect(await response.json()).toMatchObject({
-      error: { code: "INVALID_AUDIO" },
-    });
-    expect(upstreamFetch).not.toHaveBeenCalled();
-  });
-
-  it("limits the direct Base64 transport to the production 30-second chunk", async () => {
-    const upstreamFetch = vi.fn();
-    const response = await handleBroadcastTranscriptRequest(
-      base64Request(
-        encodeCandidatePassBBase64(silentWav(90_000)),
-        "?startMs=0&durationMs=90000",
-      ),
-      createEnvironment(),
-      { fetchImplementation: upstreamFetch },
-    );
-
-    expect(response.status).toBe(400);
-    expect(await response.json()).toMatchObject({
-      error: { code: "INVALID_REQUEST" },
-    });
-    expect(upstreamFetch).not.toHaveBeenCalled();
-  });
-
-  it.each([
-    ["duplicate start", "?startMs=0&startMs=1&durationMs=2000"],
-    ["duplicate duration", "?startMs=0&durationMs=2000&durationMs=2000"],
-    ["past 12 hours", "?startMs=43199001&durationMs=2000"],
-  ])("rejects direct Base64 query with %s", async (_label, query) => {
-    const response = await handleBroadcastTranscriptRequest(
-      base64Request(encodeCandidatePassBBase64(silentWav(2_000)), query),
-      createEnvironment(),
-      { fetchImplementation: vi.fn() },
-    );
-    expect(response.status).toBe(400);
-    expect(await response.json()).toMatchObject({
-      error: { code: "INVALID_REQUEST" },
-    });
-  });
-
-  /**
-   * The whole point of the transport change: the upstream provider must not
-   * be able to tell the difference. The raw-WAV path has to assemble a body
-   * that is byte-for-byte identical to what the base64-in-JSON path sent.
-   */
-  it("sends the exact same upstream body as the JSON path, for a full 90s chunk", async () => {
+  it("builds the exact provider body from a full 90-second raw WAV", async () => {
     const wav = silentWav(90_000);
     const expected = JSON.stringify(
       buildBroadcastTranscriptQwenOmniRequestBody(
@@ -244,7 +186,7 @@ describe("binary transcript ingress", () => {
     );
 
     const response = await handleBroadcastTranscriptRequest(
-      binaryRequest(wav, "?startMs=600000&durationMs=90000"),
+      await binaryRequest(wav, "?startMs=600000&durationMs=90000"),
       createEnvironment(),
       { fetchImplementation: upstreamFetch },
     );
@@ -269,7 +211,7 @@ describe("binary transcript ingress", () => {
     let capturedBody = "";
     let capturedUint8Array = false;
     const response = await handleBroadcastTranscriptRequest(
-      fragmentedBinaryRequest(wav, "?startMs=0&durationMs=2000"),
+      await fragmentedBinaryRequest(wav, "?startMs=0&durationMs=2000"),
       createEnvironment(),
       {
         fetchImplementation: (_input, init) => {
@@ -290,7 +232,7 @@ describe("binary transcript ingress", () => {
     wav[0] = 0x00; // break "RIFF"
     const upstreamFetch = vi.fn();
     const response = await handleBroadcastTranscriptRequest(
-      binaryRequest(wav, "?startMs=0&durationMs=2000"),
+      await binaryRequest(wav, "?startMs=0&durationMs=2000"),
       createEnvironment(),
       { fetchImplementation: upstreamFetch },
     );
@@ -303,7 +245,10 @@ describe("binary transcript ingress", () => {
 
   it("rejects audio whose declared duration does not match the bytes", async () => {
     const response = await handleBroadcastTranscriptRequest(
-      binaryRequest(silentWav(2_000), "?startMs=0&durationMs=5000"),
+      await binaryRequest(
+        silentWav(2_000),
+        "?startMs=0&durationMs=5000",
+      ),
       createEnvironment(),
       { fetchImplementation: vi.fn() },
     );
@@ -316,9 +261,14 @@ describe("binary transcript ingress", () => {
   it("sends paid-direct WAV to explicitly selected Groq without exposing its key", async () => {
     const wav = silentWav(2_000);
     let providerInit: RequestInit | undefined;
+    const environment = createEnvironment("groq");
     const response = await handleBroadcastTranscriptRequest(
-      binaryRequest(wav, "?startMs=5000&durationMs=2000"),
-      createEnvironment("groq"),
+      await binaryRequest(
+        wav,
+        "?startMs=5000&durationMs=2000",
+        environment,
+      ),
+      environment,
       {
         fetchImplementation: (_input, init) => {
           providerInit = init;
@@ -371,12 +321,17 @@ describe("binary transcript ingress", () => {
 
   it("redacts Groq authentication errors from the browser response", async () => {
     const upstreamSecret = "gsk_fixture_never_return";
+    const environment = {
+      ...createEnvironment("groq"),
+      AI_PROVIDER_FALLBACK_MODE: "disabled",
+    } satisfies AiProxyEnvironment;
     const response = await handleBroadcastTranscriptRequest(
-      binaryRequest(silentWav(2_000), "?startMs=0&durationMs=2000"),
-      {
-        ...createEnvironment("groq"),
-        AI_PROVIDER_FALLBACK_MODE: "disabled",
-      },
+      await binaryRequest(
+        silentWav(2_000),
+        "?startMs=0&durationMs=2000",
+        environment,
+      ),
+      environment,
       {
         fetchImplementation: () =>
           Promise.resolve(
@@ -406,7 +361,10 @@ describe("binary transcript ingress", () => {
     const wav = silentWav(2_000);
     const upstreamFetch = vi.fn();
     const response = await handleBroadcastTranscriptRequest(
-      binaryRequest(wav.slice(0, -2), "?startMs=0&durationMs=2000"),
+      await binaryRequest(
+        wav.slice(0, -2),
+        "?startMs=0&durationMs=2000",
+      ),
       createEnvironment(),
       { fetchImplementation: upstreamFetch },
     );
@@ -426,7 +384,7 @@ describe("binary transcript ingress", () => {
     ["an unknown query key", "?startMs=0&durationMs=2000&x=1"],
   ])("rejects %s", async (_label, query) => {
     const response = await handleBroadcastTranscriptRequest(
-      binaryRequest(silentWav(2_000), query),
+      await binaryRequest(silentWav(2_000), query),
       createEnvironment(),
       { fetchImplementation: vi.fn() },
     );
@@ -439,7 +397,7 @@ describe("binary transcript ingress", () => {
   it("rejects a body above the WAV ceiling with 413", async () => {
     const oversized = new Uint8Array(44 + 16_000 * 2 * 90 + 3);
     const response = await handleBroadcastTranscriptRequest(
-      binaryRequest(oversized, "?startMs=0&durationMs=90000"),
+      await binaryRequest(oversized, "?startMs=0&durationMs=90000"),
       createEnvironment(),
       { fetchImplementation: vi.fn() },
     );
@@ -473,7 +431,7 @@ describe("binary transcript ingress", () => {
     );
 
     const response = await handleBroadcastTranscriptRequest(
-      binaryRequest(wav, "?startMs=1000&durationMs=2000"),
+      await binaryRequest(wav, "?startMs=1000&durationMs=2000"),
       createEnvironment(),
       { fetchImplementation: upstreamFetch },
     );
@@ -516,7 +474,10 @@ describe("binary transcript ingress", () => {
         ),
     );
     const response = await handleBroadcastTranscriptRequest(
-      binaryRequest(silentWav(2_000), "?startMs=0&durationMs=2000"),
+      await binaryRequest(
+        silentWav(2_000),
+        "?startMs=0&durationMs=2000",
+      ),
       createEnvironment(),
       { fetchImplementation: upstreamFetch, upstreamTimeoutMs: 1 },
     );
@@ -527,29 +488,33 @@ describe("binary transcript ingress", () => {
     });
   });
 
-  it("keeps accepting the legacy JSON transport", async () => {
-    const wav = silentWav(2_000);
+  it.each([
+    ["application/json", JSON.stringify({ audioBase64: "UklGRg==" })],
+    [
+      "application/vnd.exclipper.transcript-base64",
+      encodeCandidatePassBBase64(silentWav(2_000)),
+    ],
+  ])("rejects retired %s transcript ingress", async (contentType, body) => {
     const upstreamFetch = vi.fn(() =>
-      Promise.resolve(qwenSseSuccess("기존 경로다.")),
+      Promise.resolve(qwenSseSuccess("호출되면 안 된다.")),
     );
     const response = await handleBroadcastTranscriptRequest(
       new Request(ENDPOINT, {
         method: "POST",
-        headers: {
+        headers: await currentTranscriptRouteHeaders(createEnvironment(), {
           Origin: PRODUCTION_ORIGIN,
-          "Content-Type": "application/json",
+          "Content-Type": contentType,
           "CF-Connecting-IP": "203.0.113.42",
-        },
-        body: JSON.stringify({
-          audioBase64: encodeCandidatePassBBase64(wav),
-          sourceStartMs: 0,
-          durationMs: 2_000,
         }),
+        body,
       }),
       createEnvironment(),
       { fetchImplementation: upstreamFetch },
     );
-    expect(response.status).toBe(200);
-    expect(await response.json()).toMatchObject({ textKo: "기존 경로다." });
+    expect(response.status).toBe(415);
+    expect(await response.json()).toMatchObject({
+      error: { code: "UNSUPPORTED_MEDIA_TYPE" },
+    });
+    expect(upstreamFetch).not.toHaveBeenCalled();
   });
 });

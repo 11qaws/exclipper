@@ -7,16 +7,18 @@
 - participant grounding의 terminal은 `sealed` 하나이고 그 안의 adapter receipt가 `completed | unavailable`을 가진다. `unavailable`은 검증된 reference manifest가 없는 현재의 정상 상태이며 실패가 아니다.
 - source prior와 `transcript-name-mention`은 실제 presence/speaker 상태를 만들지 않는다. visual/voice adapter의 `on-screen-name | visual-reference-match | spoken-self-identification | voice-reference-match`가 관측 근거를 반환하기 전에는 진행자 이름과 발화자를 `unknown`으로 유지한다.
 - session schema `1.11.0`의 `participantGroundingInputSignature`, sampling-plan fingerprint와 `participantGroundingCheckpointJson`은 source roster·transcript seal에 묶인 원자적인 집합이다. whole-context exact input JSON과 활성 refinement evidence ledger도 결과와 함께 저장한다. 대사 지도 재생성은 이 집합과 context/refinement 결과를 null로 되돌린다.
-- 자막 없는 의미 refinement의 전사 checkpoint는 `refinementTranscriptInputSignature`와 canonical `refinementTranscriptCheckpointJson`의 원자적인 쌍이다. checkpoint가 고정한 모든 chunk ID·source range·kind와 실제 성공 결과 범위가 정확히 일치해야 하며, `no-speech`는 exact source range·고정 VAD 모델·정책·완전 coverage를 가진 run receipt가 있을 때만 해결된 abstention이다. `no-audio`는 receipt가 없는 별도 decoder abstention이며, `in-flight | decode-failed | transcription-failed | rate-limited | outcome-unknown`은 attempt count를 가진 미해결 gap으로 보존한다. parent context invalidate/commit은 이 쌍과 active evidence ledger를 지우고, 같은 context input의 phase-ledger checkpoint만 그대로 보존한다.
+- 자막 없는 의미 refinement의 전사 checkpoint는 `refinementTranscriptInputSignature`와 canonical `refinementTranscriptCheckpointJson`의 원자적인 쌍이다. checkpoint가 고정한 모든 chunk ID·source range·kind와 실제 성공 결과 범위가 정확히 일치해야 하며, `no-speech`는 exact source range·고정 VAD 모델·정책·완전 coverage를 가진 run receipt가 있을 때만 해결된 abstention이다. `no-audio`는 receipt가 없는 별도 decoder abstention이며, `in-flight | decode-failed | transcription-failed | rate-limited | route-changed | outcome-unknown`은 attempt count를 가진 미해결 gap으로 보존한다. `route-changed`는 quota·R2 read·upstream보다 먼저 확인된 non-billable gap이므로 완료 셀을 보존한 채 새 route로 자동 재개하고, `outcome-unknown`만 편집자의 명시적 재결제를 기다린다. parent context invalidate/commit은 이 쌍과 active evidence ledger를 지우고, 같은 context input의 phase-ledger checkpoint만 그대로 보존한다.
+- refinement checkpoint는 현재 v4 input signature와 frozen plan이 정확히 같을 때만 재개한다. signature나 계획이 달라지면 과거 settlement를 이관하지 않고 새 checkpoint를 만들며, 같은 signature 안에서는 성공·abstention을 보존하고 gap만 다시 실행한다.
+- 연속 `route-changed` 전이는 `250ms -> 500ms -> 1s -> … -> 10s`의 bounded delay 뒤 다시 `pending`으로 열린다. 횟수 상한은 없고 non-route 결과 또는 source/run 교체가 count를 0으로 만든다.
 - Candidate Pass B receipt schema `1.4.0`은 후보 ID·원본 범위·routing revision·활성 refinement projection에 더해 `outputLanguage`와 nullable `castRosterId`를 source fence로 고정한다. 1.3 이하 영수증은 진단을 위해 읽을 수 있지만 현재 내구 결과나 최종 후보 근거로는 인정하지 않는다.
 - grounding 교체는 과거 context/refinement를 같은 record에서 무효화한다. context/refinement commit은 직전 durable snapshot과 exact match할 때만 성공하는 compare-and-swap이며, 늦은 operation은 새 transcript/session을 덮어쓰지 못한다.
 - 복구는 저장 당시 exact input, transcript seal, catalog version, grounding JSON으로 fingerprint를 다시 계산한다. legacy session의 grounding 또는 exact input이 없으면 저장된 유료 결과를 삭제하지 않지만 grounded whole-context 완료 상태로 복원하지 않는다.
 - 실제 visual/voice adapter가 연결된 뒤에는 모든 계획 cell이 modality에 맞는 정상 terminal이고 retryable gap이 0일 때만 `sealed`로 전이한다. transcript-name은 `identified | none`, visual은 `identified | none | unidentified`, voice는 `identified | unidentified | no-speech`만 허용한다.
 - voice runtime은 `clean speech turn receipt → source/PCM fingerprint → pinned WavLM Worker → normalized embedding → verified prototype score → open-set decision` 순서다. PCM과 embedding은 영속 상태가 아니며 receipt와 coverage만 남는다. 현재 18개 추출 파일은 모두 pending이고 전원 방송 30초 표본의 교차검증이 일부 불일치했으므로 production voice adapter는 계속 `unavailable`; runtime 존재만으로 `identified`로 전이하지 않는다.
 
-- 문서 버전: 0.8.8
+- 문서 버전: 0.8.9
 - 기준 제품 계획: PRODUCT_PLAN.md 현재 revision
-- 기준일: 2026-07-28 (Asia/Seoul)
+- 기준일: 2026-07-29 (Asia/Seoul)
 - 적용 범위: GitHub Pages에서 실행되는 개인 편집 어시스턴트와 선택형 CHZZK 동반 수집기
 - 문서 지위: 구현·회귀 테스트의 canonical 상태 문서
 
@@ -40,7 +42,7 @@
 - quota fragment identity는 `transcript-{uniform|event-boost|refinement}-g{durableOrdinal}-{stableChunkId}`다. 저장된 마지막 ordinal 다음의 manual generation을 계산해 새로고침 뒤에도 terminal operation을 재사용하지 않는다. `in-flight` 상태로 닫힌 탭은 provider 결과를 모르는 상태이므로 자동 재개하지 않고 편집자의 명시적 재시도를 기다린다.
 - `outcome-unknown`은 새 유료 operation을 자동 발급하지 않는다. 같은 lease와 operation의 transport replay로 “첫 요청이 coordinator에 도달하지 않음”만 안전하게 복구한다. 이미 consume됐을 수 있어 결과를 확정할 수 없는 경우에는 exact gap metadata와 성공 chapter를 보존하고 편집자의 명시적 재시도를 기다린다.
 - whole-context start gate는 `analysisComplete && transcript.status == completed && chapterCount > 0 && sealedOperationKey == requiredEventBoostOperationKey`다. 모델 응답을 저장하기 직전에도 저장된 transcript를 다시 compact해 실제 context 입력과 byte-equivalent인지 확인한다. seal 또는 입력이 바뀐 늦은 결과는 저장하지 않는다.
-- 새 브라우저의 전사 ingress 계약은 transport와 무관하게 `audio/wav`다. 브라우저 전사 Worker는 source fence가 정확한 최대 90초·16kHz·mono·PCM16 WAV를 만들고, quota payload digest는 이 raw WAV bytes에 대해 계산한다. Base64·JSON 전송은 `paid-direct`의 구버전 호환 입력일 뿐 `free-r2`에서는 실행하지 않는다.
+- 현재 전사 ingress 계약은 transport와 무관하게 `audio/wav` 하나다. 브라우저 전사 Worker는 source fence가 정확한 최대 90초·16kHz·mono·PCM16 WAV를 만들고, quota payload digest는 이 raw WAV bytes에 대해 계산한다. Base64·JSON 전사 ingress는 어느 transport에서도 받지 않는다.
 - 서버의 `BROADCAST_TRANSCRIPT_TRANSPORT_MODE`는 `free-r2 | paid-direct` 중 하나다. 이 값은 저장된 transcript chapter, context packet, 후보 ID, 재시도 generation을 바꾸지 않는다. 동일한 client request와 quota operation이 `free-r2`에서는 R2 media staging으로, `paid-direct`에서는 메모리 내 provider body 조립으로 갈라진다.
 - `free-r2` ingress는 `lease-inspected -> r2-streaming-put -> native-sha256-matched -> object-size-matched -> 44-byte-header-validated -> execution-waiting -> in-flight -> complete | gap` 순서다. Worker JavaScript는 본문 reader, 전체 digest, 전체 WAV scan, Base64 변환을 하지 않는다. R2가 request stream과 raw WAV digest를 직접 대조하고 Worker는 저장된 객체의 길이와 선행 44바이트만 읽는다.
 - 실제 HTTP 상태는 `raw POST + lease A -> 202 staged -> resolve POST + lease A -> provider terminal`이다. local/provider 429이면 lease A만 terminal로 닫고 `lease B -> 같은 ticket resolve`로 이어간다. stable ticket binding에는 participant, run, pool, raw payload digest, source fence, byte length만 들어가며 재시도를 위해 operation ID와 lease token은 포함하지 않는다.
@@ -50,7 +52,9 @@
 - quota lease는 upload ticket이면서 아직 provider 실행권은 아니다. R2 checksum·크기·WAV header 검증이 끝난 뒤에만 JIT consume을 요청한다. upload/checksum/header 실패는 `release-upload -> cancelled`, provider 결과 불명은 `outcome-unknown`, 명시적 rate-limit은 새 operation 재시도 규칙을 그대로 따른다.
 - transport 변경의 완료 조건은 한 번의 200이 아니다. 연속 전체 계획 2회 또는 600개 이상의 transcript 요청에서 `exceededCpu=0`, headerless CORS 오류 0, 누락 0, terminal quota 연쇄 오류 0을 확인하고 staged object가 terminal 뒤 남지 않는 것을 함께 확인해야 한다.
 
-## `0.8.5` 전사 transport와 failure-wave 상태
+## 역사 기록 · `0.8.5` 전사 transport와 failure-wave 상태
+
+이 절의 Base64·JSON ingress는 당시 장애 분석을 보존하기 위한 기록이며 현재 계약이 아니다. 현재 계약은 위 `0.8.6` 절과 `0.8.9` 단일 전사 계약을 따른다.
 
 - 전사 청크의 운영 ingress는 `application/vnd.exclipper.transcript-base64`다. 본문은 Base64 ASCII 하나이며 `startMs`·`durationMs`가 있는 정확한 source fence를 사용한다. 직접 경로의 duration 상한은 30초다. JSON과 최대 90초 raw WAV는 호환 상태이며 새 실행의 기본값이 아니다.
 - ingress는 `lease-inspected -> body-bounded -> digest-matched -> media-validated -> execution-waiting -> in-flight -> complete | gap` 순서다. digest·문자 집합·WAV·시간 fence 중 하나라도 실패하면 `execution-waiting`으로 가지 않고 token-bound upload lease를 반납한다.

@@ -21,17 +21,18 @@ import { createVerifiedNoSpeechRunReceiptForTest } from "../testSupport/broadcas
 
 const ROUTE: BroadcastTranscriptRouteSelection = {
   manifest: {
-    schemaVersion: "1.0.0",
-    serviceVersion: 5,
+    schemaVersion: "1.1.0",
+    serviceVersion: 6,
     routingPolicyVersion: "1.11.0",
     providerConfigurationVersion: "1.3.0",
-    transportVersion: 2,
+    transportVersion: 3,
     transportMode: "free-r2",
     maximumChunkDurationMs: 90_000,
     primaryMediaType: "audio/wav",
     provider: "qwen",
     modelId: "qwen3.5-omni-flash",
     modelRevision: BROADCAST_TRANSCRIPT_QWEN_OMNI_MODEL_REVISION,
+    effectiveFallback: { mode: "disabled" },
   },
   fingerprint: `sha256:${"1".repeat(64)}`,
 };

@@ -16,23 +16,30 @@ import {
   createBroadcastTranscriptProviderReceiptCheckpoint,
   inspectBroadcastTranscriptProviderReceiptSettlement,
   parseBroadcastTranscriptProviderReceiptCheckpointJson,
+  rebaseBroadcastTranscriptProviderReceiptCheckpointRoute,
   recordBroadcastTranscriptProviderReceipt,
   serializeBroadcastTranscriptProviderReceiptCheckpoint,
 } from "./broadcastTranscriptProviderReceiptCheckpoint";
 
 async function paidRoute() {
   const manifest: BroadcastTranscriptRouteManifest = {
-    schemaVersion: "1.0.0",
-    serviceVersion: 5,
+    schemaVersion: "1.1.0",
+    serviceVersion: 6,
     routingPolicyVersion: "1.11.0",
     providerConfigurationVersion: "1.3.0",
-    transportVersion: 2,
+    transportVersion: 3,
     transportMode: "paid-direct",
     maximumChunkDurationMs: 90_000,
     primaryMediaType: "audio/wav",
     provider: "qwen",
     modelId: BROADCAST_TRANSCRIPT_QWEN_OMNI_MODEL_ID,
     modelRevision: BROADCAST_TRANSCRIPT_QWEN_OMNI_MODEL_REVISION,
+    effectiveFallback: {
+      mode: "bounded",
+      provider: "gemini",
+      modelId: BROADCAST_TRANSCRIPT_GEMINI_MODEL_ID,
+      modelRevision: BROADCAST_TRANSCRIPT_GEMINI_MODEL_REVISION,
+    },
   };
   return createBroadcastTranscriptRouteSelection(manifest);
 }
@@ -115,6 +122,11 @@ describe("broadcastTranscriptProviderReceiptCheckpoint", () => {
     expect(
       broadcastTranscriptProviderReceiptCheckpointModelRevision(checkpoint),
     ).toContain("broadcast-transcript-mixed-v1:");
+    expect(
+      parseBroadcastTranscriptProviderReceiptCheckpointJson(
+        JSON.stringify({ ...checkpoint, schemaVersion: "1.0.0" }),
+      ),
+    ).toBeNull();
   });
 
   it("requires every plan cell to settle as receipt, resolved evidence, or gap", async () => {
@@ -169,7 +181,7 @@ describe("broadcastTranscriptProviderReceiptCheckpoint", () => {
     ).toThrow("Every provider receipt plan cell");
   });
 
-  it("rejects receipt ranges or route fingerprints that do not match the plan", async () => {
+  it("rejects mismatched ranges while preserving receipts from an earlier exact route", async () => {
     const route = await paidRoute();
     const checkpoint = createBroadcastTranscriptProviderReceiptCheckpoint({
       sourceFingerprint: "sha256:source",
@@ -210,6 +222,41 @@ describe("broadcastTranscriptProviderReceiptCheckpoint", () => {
           ],
         }),
       ),
-    ).toBeNull();
+    ).toMatchObject({
+      receipts: [
+        {
+          chunkId: "asr-001",
+          receipt: {
+            routeManifestFingerprint: `sha256:${"0".repeat(64)}`,
+          },
+        },
+      ],
+    });
+
+    const rebased = rebaseBroadcastTranscriptProviderReceiptCheckpointRoute(
+      {
+        ...checkpoint,
+        receipts: [
+          {
+            chunkId: "asr-001",
+            sourceStartMs: 0,
+            sourceEndMs: 1_000,
+            receipt: validReceipt,
+          },
+        ],
+      },
+      await createBroadcastTranscriptRouteSelection({
+        ...route.manifest,
+        effectiveFallback: { mode: "disabled" },
+      }),
+    );
+    expect(rebased.receipts).toEqual([
+      {
+        chunkId: "asr-001",
+        sourceStartMs: 0,
+        sourceEndMs: 1_000,
+        receipt: validReceipt,
+      },
+    ]);
   });
 });

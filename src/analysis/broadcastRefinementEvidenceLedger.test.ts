@@ -118,17 +118,18 @@ function captionInput(
 
 async function paidRoute(): Promise<BroadcastTranscriptRouteSelection> {
   const manifest: BroadcastTranscriptRouteManifest = {
-    schemaVersion: "1.0.0",
-    serviceVersion: 5,
+    schemaVersion: "1.1.0",
+    serviceVersion: 6,
     routingPolicyVersion: "1.11.0",
     providerConfigurationVersion: "1.3.0",
-    transportVersion: 2,
+    transportVersion: 3,
     transportMode: "paid-direct",
     maximumChunkDurationMs: 90_000,
     primaryMediaType: "audio/wav",
     provider: "qwen",
     modelId: BROADCAST_TRANSCRIPT_QWEN_OMNI_MODEL_ID,
     modelRevision: BROADCAST_TRANSCRIPT_QWEN_OMNI_MODEL_REVISION,
+    effectiveFallback: { mode: "disabled" },
   };
   return createBroadcastTranscriptRouteSelection(manifest);
 }

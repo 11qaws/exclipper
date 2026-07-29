@@ -77,6 +77,7 @@ function attempt(
     | "no-speech"
     | "transcription-failed"
     | "rate-limited"
+    | "route-changed"
     | "outcome-unknown",
 ): BroadcastTranscriptWorkerRunResult {
   const success = new Set(successfulIds);
@@ -295,6 +296,26 @@ describe("recoverBroadcastTranscriptFragments", () => {
     expect(result.outcomeUnknownGaps).toEqual([
       { chunkId: "asr-a", reason: "outcome-unknown" },
     ]);
+  });
+
+  it("returns route drift immediately so the caller can refresh health and resume", async () => {
+    const runAttempt = vi.fn(
+      (requested: readonly BroadcastContextTranscriptionChunk[]) =>
+        Promise.resolve(attempt(requested, [], "route-changed")),
+    );
+
+    const result = await recoverBroadcastTranscriptFragments({
+      chunks: [firstChunk],
+      manualAttemptGeneration: 0,
+      runAttempt,
+    });
+
+    expect(runAttempt).toHaveBeenCalledTimes(1);
+    expect(result.routeChangedGaps).toEqual([
+      { chunkId: "asr-a", reason: "route-changed" },
+    ]);
+    expect(result.unresolvedRetryableGaps).toEqual([]);
+    expect(result.outcomeUnknownGaps).toEqual([]);
   });
 
   it("awaits durable start and settlement hooks around every worker attempt", async () => {

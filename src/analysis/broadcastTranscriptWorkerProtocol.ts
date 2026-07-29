@@ -77,6 +77,8 @@ export type BroadcastTranscriptChunkGapReason =
   | "no-audio"
   | "transcription-failed"
   | "rate-limited"
+  /** Server route changed before provider billing; reacquire health and resume. */
+  | "route-changed"
   | "outcome-unknown";
 
 export interface BroadcastTranscriptChunkGap {

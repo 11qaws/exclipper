@@ -7,6 +7,7 @@ import {
   isAiQuotaOperationIdentity,
   type AiQuotaOperationIdentity,
 } from "../analysis/aiQuotaProtocol";
+import { isBroadcastTranscriptRouteFingerprint } from "../analysis/broadcastTranscriptRouteManifest";
 
 export { BROADCAST_TRANSCRIPT_MEDIA_ENDPOINT_PATH };
 
@@ -20,8 +21,8 @@ export const BROADCAST_TRANSCRIPT_MEDIA_TICKET_MAX_TTL_MS = 15 * 60_000;
 export const BROADCAST_TRANSCRIPT_MEDIA_TICKET_QUERY =
   "mediaTicket" as const;
 
-const BROADCAST_TRANSCRIPT_MEDIA_METADATA_SCHEMA = "1" as const;
-const BROADCAST_TRANSCRIPT_MEDIA_TICKET_VERSION = 1 as const;
+const BROADCAST_TRANSCRIPT_MEDIA_METADATA_SCHEMA = "2" as const;
+const BROADCAST_TRANSCRIPT_MEDIA_TICKET_VERSION = 2 as const;
 const MIN_SIGNING_KEY_BYTES = 32;
 const MAX_SIGNING_KEY_BYTES = 1_024;
 const SHA256_HEX_PATTERN = /^[a-f0-9]{64}$/u;
@@ -129,6 +130,7 @@ export interface BroadcastTranscriptMediaBucket {
 
 export interface BroadcastTranscriptMediaBinding
   extends AiQuotaOperationIdentity {
+  readonly routeManifestFingerprint: string;
   readonly sourceStartMs: number;
   readonly durationMs: number;
   readonly expectedByteLength: number;
@@ -139,6 +141,7 @@ export interface BroadcastTranscriptMediaStableBinding {
   readonly runId: string;
   readonly pool: "transcript";
   readonly payloadDigest: string;
+  readonly routeManifestFingerprint: string;
   readonly sourceStartMs: number;
   readonly durationMs: number;
   readonly expectedByteLength: number;
@@ -191,6 +194,7 @@ export interface VerifiedBroadcastTranscriptMediaTicket {
   readonly expiresAtMs: number;
   readonly byteLength: number;
   readonly bindingDigest: string;
+  readonly routeManifestFingerprint: string;
   readonly sourceStartMs: number;
   readonly durationMs: number;
 }
@@ -205,6 +209,7 @@ export interface ResolveBroadcastTranscriptMediaInput {
   readonly signingKey: string;
   readonly mediaTicket: string;
   readonly expectedIdentity?: AiQuotaOperationIdentity;
+  readonly expectedRouteManifestFingerprint?: string;
   readonly expectedBinding?: BroadcastTranscriptMediaBinding;
   readonly nowMs?: number;
   readonly cryptoImplementation?: Crypto;
@@ -223,6 +228,7 @@ interface BroadcastTranscriptMediaTicketPayload {
   readonly e: number;
   readonly s: number;
   readonly b: string;
+  readonly r: string;
   readonly a: number;
   readonly d: number;
 }
@@ -373,6 +379,9 @@ function isBroadcastTranscriptMediaBinding(
   return (
     isAiQuotaOperationIdentity(binding) &&
     binding.pool === "transcript" &&
+    isBroadcastTranscriptRouteFingerprint(
+      binding.routeManifestFingerprint,
+    ) &&
     Number.isSafeInteger(binding.sourceStartMs) &&
     binding.sourceStartMs >= 0 &&
     Number.isSafeInteger(binding.durationMs) &&
@@ -392,6 +401,7 @@ function stableBinding(
     runId: binding.runId,
     pool: "transcript",
     payloadDigest: binding.payloadDigest,
+    routeManifestFingerprint: binding.routeManifestFingerprint,
     sourceStartMs: binding.sourceStartMs,
     durationMs: binding.durationMs,
     expectedByteLength: binding.expectedByteLength,
@@ -413,6 +423,7 @@ function canonicalBinding(
     binding.runId,
     binding.pool,
     binding.payloadDigest,
+    binding.routeManifestFingerprint,
     binding.sourceStartMs,
     binding.durationMs,
     binding.expectedByteLength,
@@ -517,10 +528,12 @@ function parseStoredMetadata(
   };
 }
 
-function parseTicketPayload(value: unknown): BroadcastTranscriptMediaTicketPayload | null {
+function parseTicketPayload(
+  value: unknown,
+): BroadcastTranscriptMediaTicketPayload | null {
   if (
     !isRecord(value) ||
-    !hasExactKeys(value, ["v", "k", "e", "s", "b", "a", "d"]) ||
+    !hasExactKeys(value, ["v", "k", "e", "s", "b", "r", "a", "d"]) ||
     value.v !== BROADCAST_TRANSCRIPT_MEDIA_TICKET_VERSION ||
     typeof value.k !== "string" ||
     !OBJECT_KEY_PATTERN.test(value.k) ||
@@ -530,11 +543,12 @@ function parseTicketPayload(value: unknown): BroadcastTranscriptMediaTicketPaylo
     (value.s as number) > BROADCAST_TRANSCRIPT_MEDIA_MAX_BYTES ||
     typeof value.b !== "string" ||
     !SHA256_HEX_PATTERN.test(value.b) ||
-    !Number.isSafeInteger(value.a) ||
-    (value.a as number) < 0 ||
-    !Number.isSafeInteger(value.d) ||
-    (value.d as number) <= 0 ||
-    (value.d as number) > 90_000
+    !isBroadcastTranscriptRouteFingerprint(value.r)
+    || !Number.isSafeInteger(value.a)
+    || (value.a as number) < 0
+    || !Number.isSafeInteger(value.d)
+    || (value.d as number) <= 0
+    || (value.d as number) > 90_000
   ) {
     return null;
   }
@@ -544,6 +558,7 @@ function parseTicketPayload(value: unknown): BroadcastTranscriptMediaTicketPaylo
     e: value.e as number,
     s: value.s as number,
     b: value.b,
+    r: value.r,
     a: value.a as number,
     d: value.d as number,
   };
@@ -901,6 +916,7 @@ export async function stageBroadcastTranscriptMedia(
         e: expiresAtMs,
         s: input.binding.expectedByteLength,
         b: bindingDigest,
+        r: input.binding.routeManifestFingerprint,
         a: input.binding.sourceStartMs,
         d: input.binding.durationMs,
       },
@@ -946,6 +962,7 @@ export async function verifyBroadcastTranscriptMediaTicket(
     expiresAtMs: result.payload.e,
     byteLength: result.payload.s,
     bindingDigest: result.payload.b,
+    routeManifestFingerprint: result.payload.r,
     sourceStartMs: result.payload.a,
     durationMs: result.payload.d,
   };
@@ -963,6 +980,15 @@ export async function resolveBroadcastTranscriptMedia(
     implementation,
   );
   if (!ticket.ok) return null;
+  if (
+    input.expectedRouteManifestFingerprint !== undefined &&
+    (!isBroadcastTranscriptRouteFingerprint(
+      input.expectedRouteManifestFingerprint,
+    ) ||
+      input.expectedRouteManifestFingerprint !== ticket.payload.r)
+  ) {
+    return null;
+  }
 
   const object = await input.bucket.head(ticket.payload.k);
   if (
@@ -974,7 +1000,10 @@ export async function resolveBroadcastTranscriptMedia(
   if (input.expectedIdentity !== undefined) {
     if (
       !isAiQuotaOperationIdentity(input.expectedIdentity) ||
-      input.expectedIdentity.pool !== "transcript"
+      input.expectedIdentity.pool !== "transcript" ||
+      !isBroadcastTranscriptRouteFingerprint(
+        input.expectedRouteManifestFingerprint,
+      )
     ) {
       return null;
     }
@@ -983,6 +1012,7 @@ export async function resolveBroadcastTranscriptMedia(
       runId: input.expectedIdentity.runId,
       pool: "transcript",
       payloadDigest: input.expectedIdentity.payloadDigest,
+      routeManifestFingerprint: input.expectedRouteManifestFingerprint,
       sourceStartMs: ticket.payload.a,
       durationMs: ticket.payload.d,
       expectedByteLength: ticket.payload.s,
@@ -1011,6 +1041,7 @@ export async function resolveBroadcastTranscriptMedia(
     expiresAtMs: ticket.payload.e,
     byteLength: ticket.payload.s,
     bindingDigest: ticket.payload.b,
+    routeManifestFingerprint: ticket.payload.r,
     sourceStartMs: ticket.payload.a,
     durationMs: ticket.payload.d,
     object,

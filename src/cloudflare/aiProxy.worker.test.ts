@@ -4,6 +4,16 @@ import {
   encodeCandidatePassBPcm16Wav,
 } from "../analysis/candidatePassBGemini";
 import { CANDIDATE_PASS_B_SAMPLE_RATE_HZ } from "../analysis/candidatePassBWorkerProtocol";
+import {
+  BROADCAST_TRANSCRIPT_GEMINI_MODEL_ID,
+  BROADCAST_TRANSCRIPT_GEMINI_MODEL_REVISION,
+  BROADCAST_TRANSCRIPT_QWEN_OMNI_MODEL_ID,
+  BROADCAST_TRANSCRIPT_QWEN_OMNI_MODEL_REVISION,
+} from "../analysis/broadcastTranscriptQwen";
+import {
+  BROADCAST_TRANSCRIPT_ROUTE_FINGERPRINT_HEADER,
+  createBroadcastTranscriptRouteSelection,
+} from "../analysis/broadcastTranscriptRouteManifest";
 import { DEFAULT_CANDIDATE_PASS_B_CAST_ROSTER_ID } from "../analysis/participantRoster";
 import {
   handleBroadcastTranscriptRequest,
@@ -17,6 +27,33 @@ import {
 const ENDPOINT = "https://rettohighlight-gemini.example/v1/candidate-insights";
 const PRODUCTION_ORIGIN = "https://11qaws.github.io";
 const API_KEY = "test-secret-key-that-must-never-be-returned";
+
+async function paidQwenTranscriptRouteFingerprint(
+  fallbackEnabled: boolean,
+): Promise<string> {
+  const route = await createBroadcastTranscriptRouteSelection({
+    schemaVersion: "1.1.0",
+    serviceVersion: 6,
+    routingPolicyVersion: "1.11.0",
+    providerConfigurationVersion: "1.3.0",
+    transportVersion: 3,
+    transportMode: "paid-direct",
+    maximumChunkDurationMs: 90_000,
+    primaryMediaType: "audio/wav",
+    provider: "qwen",
+    modelId: BROADCAST_TRANSCRIPT_QWEN_OMNI_MODEL_ID,
+    modelRevision: BROADCAST_TRANSCRIPT_QWEN_OMNI_MODEL_REVISION,
+    effectiveFallback: fallbackEnabled
+      ? {
+          mode: "bounded",
+          provider: "gemini",
+          modelId: BROADCAST_TRANSCRIPT_GEMINI_MODEL_ID,
+          modelRevision: BROADCAST_TRANSCRIPT_GEMINI_MODEL_REVISION,
+        }
+      : { mode: "disabled" },
+  });
+  return route.fingerprint;
+}
 
 function createEnvironment(): AiProxyEnvironment {
   return {
@@ -86,6 +123,46 @@ function createRequest(
     init.body = typeof body === "string" ? body : JSON.stringify(body);
   }
   return new Request(options.url ?? ENDPOINT, init);
+}
+
+function createTranscriptWav(durationMs: number): Uint8Array<ArrayBuffer> {
+  const encoded = encodeCandidatePassBPcm16Wav(
+    new Float32Array(
+      Math.ceil(
+        (durationMs / 1_000) * CANDIDATE_PASS_B_SAMPLE_RATE_HZ,
+      ),
+    ),
+    CANDIDATE_PASS_B_SAMPLE_RATE_HZ,
+  );
+  const wav = new Uint8Array(encoded.byteLength);
+  wav.set(encoded);
+  return wav;
+}
+
+function createTranscriptWavRequest(
+  wav: Uint8Array<ArrayBuffer>,
+  sourceStartMs: number,
+  durationMs: number,
+  routeFingerprint?: string,
+): Request {
+  return new Request(
+    `https://rettohighlight-gemini.example/v1/broadcast-transcript?startMs=${sourceStartMs}&durationMs=${durationMs}`,
+    {
+      method: "POST",
+      headers: {
+        Origin: PRODUCTION_ORIGIN,
+        "Content-Type": "audio/wav",
+        "CF-Connecting-IP": "203.0.113.42",
+        ...(routeFingerprint === undefined
+          ? {}
+          : {
+              [BROADCAST_TRANSCRIPT_ROUTE_FINGERPRINT_HEADER]:
+                routeFingerprint,
+            }),
+      },
+      body: wav,
+    },
+  );
 }
 
 function createGeminiPayload(candidateDurationMs = 1_000): unknown {
@@ -818,12 +895,10 @@ describe("aiProxy.worker", () => {
 
   it("transcribes a bounded broadcast chunk through the fixed Qwen Omni adapter", async () => {
     const durationMs = 1_000;
-    const candidate = createCandidateBody(durationMs);
-    const body = {
-      audioBase64: candidate.audioBase64,
-      sourceStartMs: 600_000,
-      durationMs,
-    };
+    const wav = createTranscriptWav(durationMs);
+    const audioBase64 = encodeCandidatePassBBase64(wav);
+    const routeFingerprint =
+      await paidQwenTranscriptRouteFingerprint(false);
     const upstreamFetch = vi.fn(
       (input: RequestInfo | URL, init?: RequestInit) => {
         expect(input).toBe(
@@ -832,10 +907,15 @@ describe("aiProxy.worker", () => {
         expect(new Headers(init?.headers).get("Authorization")).toBe(
           "Bearer qwen-secret",
         );
-        if (typeof init?.body !== "string") {
+        const serializedBody = typeof init?.body === "string"
+          ? init.body
+          : init?.body instanceof Uint8Array
+            ? new TextDecoder().decode(init.body)
+            : null;
+        if (serializedBody === null) {
           throw new TypeError("Expected a serialized Qwen request body.");
         }
-        const requestBody = JSON.parse(init.body) as {
+        const requestBody = JSON.parse(serializedBody) as {
           model: string;
           messages: readonly [{ content: readonly [{ input_audio: { data: string } }] }];
           modalities: readonly string[];
@@ -843,7 +923,7 @@ describe("aiProxy.worker", () => {
         };
         expect(requestBody.model).toBe("qwen3.5-omni-flash");
         expect(requestBody.messages[0].content[0].input_audio.data).toBe(
-          `data:;base64,${candidate.audioBase64}`,
+          `data:;base64,${audioBase64}`,
         );
         expect(requestBody.modalities).toEqual(["text"]);
         expect(requestBody.stream).toBe(true);
@@ -867,10 +947,12 @@ describe("aiProxy.worker", () => {
       QWEN_API_KEY: "qwen-secret",
     };
     const response = await handleBroadcastTranscriptRequest(
-      createRequest(body, {
-        url: "https://rettohighlight-gemini.example/v1/broadcast-transcript",
-        headers: { "CF-Connecting-IP": "203.0.113.42" },
-      }),
+      createTranscriptWavRequest(
+        wav,
+        600_000,
+        durationMs,
+        routeFingerprint,
+      ),
       environment,
       { fetchImplementation: upstreamFetch },
     );
@@ -895,12 +977,9 @@ describe("aiProxy.worker", () => {
 
   it("uses Gemini once when Qwen transcript returns an explicit temporary failure", async () => {
     const durationMs = 1_000;
-    const candidate = createCandidateBody(durationMs);
-    const body = {
-      audioBase64: candidate.audioBase64,
-      sourceStartMs: 600_000,
-      durationMs,
-    };
+    const wav = createTranscriptWav(durationMs);
+    const routeFingerprint =
+      await paidQwenTranscriptRouteFingerprint(true);
     const upstreamFetch = vi
       .fn<(_input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>()
       .mockResolvedValueOnce(new Response("temporary", { status: 503 }))
@@ -916,11 +995,14 @@ describe("aiProxy.worker", () => {
           }),
           { status: 200 },
         ),
-      );
+    );
     const response = await handleBroadcastTranscriptRequest(
-      createRequest(body, {
-        url: "https://rettohighlight-gemini.example/v1/broadcast-transcript",
-      }),
+      createTranscriptWavRequest(
+        wav,
+        600_000,
+        durationMs,
+        routeFingerprint,
+      ),
       {
         ...createEnvironment(),
         BROADCAST_TRANSCRIPT_PROVIDER: "qwen",
@@ -950,7 +1032,9 @@ describe("aiProxy.worker", () => {
 
   it("does not replay duration-billed transcript work after an ambiguous timeout", async () => {
     const durationMs = 1_000;
-    const candidate = createCandidateBody(durationMs);
+    const wav = createTranscriptWav(durationMs);
+    const routeFingerprint =
+      await paidQwenTranscriptRouteFingerprint(true);
     const upstreamFetch = vi.fn(
       (_input: RequestInfo | URL, init?: RequestInit) =>
         new Promise<Response>((_resolve, reject) => {
@@ -960,13 +1044,11 @@ describe("aiProxy.worker", () => {
         }),
     );
     const response = await handleBroadcastTranscriptRequest(
-      createRequest(
-        {
-          audioBase64: candidate.audioBase64,
-          sourceStartMs: 0,
-          durationMs,
-        },
-        { url: "https://rettohighlight-gemini.example/v1/broadcast-transcript" },
+      createTranscriptWavRequest(
+        wav,
+        0,
+        durationMs,
+        routeFingerprint,
       ),
       {
         ...createEnvironment(),
@@ -983,16 +1065,16 @@ describe("aiProxy.worker", () => {
 
   it("logs only a bounded provider code when Qwen rejects transcript work", async () => {
     const durationMs = 1_000;
-    const candidate = createCandidateBody(durationMs);
+    const wav = createTranscriptWav(durationMs);
+    const routeFingerprint =
+      await paidQwenTranscriptRouteFingerprint(false);
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const response = await handleBroadcastTranscriptRequest(
-      createRequest(
-        {
-          audioBase64: candidate.audioBase64,
-          sourceStartMs: 0,
-          durationMs,
-        },
-        { url: "https://rettohighlight-gemini.example/v1/broadcast-transcript" },
+      createTranscriptWavRequest(
+        wav,
+        0,
+        durationMs,
+        routeFingerprint,
       ),
       {
         ...createEnvironment(),
@@ -1022,17 +1104,17 @@ describe("aiProxy.worker", () => {
     consoleError.mockRestore();
   });
 
-  it("rejects an overlong transcript chunk with structured JSON before upstream work", async () => {
-    const candidate = createCandidateBody(1_000);
+  it("rejects an overlong raw transcript chunk before upstream work", async () => {
+    const wav = createTranscriptWav(1_000);
+    const routeFingerprint =
+      await paidQwenTranscriptRouteFingerprint(false);
     const upstreamFetch = vi.fn();
     const response = await handleBroadcastTranscriptRequest(
-      createRequest(
-        {
-          audioBase64: candidate.audioBase64,
-          sourceStartMs: 0,
-          durationMs: 90_001,
-        },
-        { url: "https://rettohighlight-gemini.example/v1/broadcast-transcript" },
+      createTranscriptWavRequest(
+        wav,
+        0,
+        90_001,
+        routeFingerprint,
       ),
       {
         ...createEnvironment(),
@@ -1047,7 +1129,157 @@ describe("aiProxy.worker", () => {
     expect(upstreamFetch).not.toHaveBeenCalled();
   });
 
-  it("reports candidate transport unavailable without disclosing configuration", async () => {
+  it("rejects a headerless transcript request before limiter or provider work", async () => {
+    const candidate = createCandidateBody(1_000);
+    const environment: AiProxyEnvironment = {
+      ...createEnvironment(),
+      BROADCAST_TRANSCRIPT_PROVIDER: "qwen",
+      QWEN_API_KEY: "qwen-secret",
+    };
+    const upstreamFetch = vi.fn();
+    const response = await handleBroadcastTranscriptRequest(
+      createRequest(
+        {
+          audioBase64: candidate.audioBase64,
+          sourceStartMs: 0,
+          durationMs: 1_000,
+        },
+        {
+          url: "https://rettohighlight-gemini.example/v1/broadcast-transcript",
+        },
+      ),
+      environment,
+      { fetchImplementation: upstreamFetch },
+    );
+
+    expect(response.status).toBe(400);
+    expect(await responseErrorCode(response)).toBe(
+      "INVALID_TRANSCRIPT_ROUTE",
+    );
+    expect(environment.IP_RATE_LIMITER.limit).not.toHaveBeenCalled();
+    expect(environment.RATE_LIMITER.limit).not.toHaveBeenCalled();
+    expect(upstreamFetch).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["malformed", "not-a-fingerprint", 400, "INVALID_TRANSCRIPT_ROUTE"],
+  ] as const)(
+    "rejects a %s paid transcript route before limiter or provider work",
+    async (_label, routeFingerprint, expectedStatus, expectedCode) => {
+      const candidate = createCandidateBody(1_000);
+      const environment: AiProxyEnvironment = {
+        ...createEnvironment(),
+        BROADCAST_TRANSCRIPT_PROVIDER: "qwen",
+        QWEN_API_KEY: "qwen-secret",
+      };
+      const upstreamFetch = vi.fn();
+      const response = await handleBroadcastTranscriptRequest(
+        createRequest(
+          {
+            audioBase64: candidate.audioBase64,
+            sourceStartMs: 0,
+            durationMs: 1_000,
+          },
+          {
+            url: "https://rettohighlight-gemini.example/v1/broadcast-transcript",
+            headers: {
+              [BROADCAST_TRANSCRIPT_ROUTE_FINGERPRINT_HEADER]:
+                routeFingerprint,
+            },
+          },
+        ),
+        environment,
+        { fetchImplementation: upstreamFetch },
+      );
+
+      expect(response.status).toBe(expectedStatus);
+      expect(await responseErrorCode(response)).toBe(expectedCode);
+      expect(environment.IP_RATE_LIMITER.limit).not.toHaveBeenCalled();
+      expect(environment.RATE_LIMITER.limit).not.toHaveBeenCalled();
+      expect(upstreamFetch).not.toHaveBeenCalled();
+    },
+  );
+
+  it("rejects a stale paid fallback policy before limiter or provider work", async () => {
+    const candidate = createCandidateBody(1_000);
+    const staleFingerprint =
+      await paidQwenTranscriptRouteFingerprint(false);
+    const environment: AiProxyEnvironment = {
+      ...createEnvironment(),
+      BROADCAST_TRANSCRIPT_PROVIDER: "qwen",
+      AI_PROVIDER_FALLBACK_MODE: "bounded",
+      QWEN_API_KEY: "qwen-secret",
+    };
+    const upstreamFetch = vi.fn();
+    const response = await handleBroadcastTranscriptRequest(
+      createRequest(
+        {
+          audioBase64: candidate.audioBase64,
+          sourceStartMs: 0,
+          durationMs: 1_000,
+        },
+        {
+          url: "https://rettohighlight-gemini.example/v1/broadcast-transcript",
+          headers: {
+            [BROADCAST_TRANSCRIPT_ROUTE_FINGERPRINT_HEADER]:
+              staleFingerprint,
+          },
+        },
+      ),
+      environment,
+      { fetchImplementation: upstreamFetch },
+    );
+
+    expect(response.status).toBe(409);
+    expect(await responseErrorCode(response)).toBe(
+      "TRANSCRIPT_ROUTE_CHANGED",
+    );
+    expect(environment.IP_RATE_LIMITER.limit).not.toHaveBeenCalled();
+    expect(environment.RATE_LIMITER.limit).not.toHaveBeenCalled();
+    expect(upstreamFetch).not.toHaveBeenCalled();
+  });
+
+  it("reports the current transcript contract from the plain health endpoint", async () => {
+    const response = await handleCandidateInsightRequest(
+      new Request("https://rettohighlight-gemini.example/healthz"),
+      {
+        ...createEnvironment(),
+        CANDIDATE_INSIGHT_PROVIDER: "qwen",
+        BROADCAST_TRANSCRIPT_PROVIDER: "qwen",
+        QWEN_API_KEY: "qwen-secret",
+      },
+    );
+
+    expect(response.status).toBe(200);
+    const payload = (await response.json()) as {
+      readonly version?: unknown;
+      readonly transcriptTransport?: Record<string, unknown>;
+    };
+    expect(payload.version).toBe(6);
+    expect(payload.transcriptTransport).toMatchObject({
+      version: 3,
+      mode: "paid-direct",
+      configured: true,
+      effectiveFallback: { mode: "disabled" },
+    });
+  });
+
+  it.each(["2", "3"])(
+    "rejects the obsolete transcript health contract query %s",
+    async (contract) => {
+    const response = await handleCandidateInsightRequest(
+      new Request(
+          `https://rettohighlight-gemini.example/healthz?transcriptContract=${contract}`,
+      ),
+      createEnvironment(),
+    );
+
+    expect(response.status).toBe(404);
+    expect(await responseErrorCode(response)).toBe("NOT_FOUND");
+    },
+  );
+
+  it("reports current candidate and transcript health without disclosing configuration", async () => {
     const upstreamFetch = vi.fn();
     const response = await handleCandidateInsightRequest(
       new Request("https://rettohighlight-gemini.example/healthz"),
@@ -1059,21 +1291,18 @@ describe("aiProxy.worker", () => {
     expect(payload).toMatchObject({
       ok: false,
       service: "rettohighlight-gemini",
-      version: 5,
+      version: 6,
       routingPolicyVersion: "1.11.0",
       contextModelRevision:
         "qwen3.7-plus-context-editorial-jury-topic-balanced-2026-07-22",
       transcriptTransport: {
-        version: 2,
+        version: 3,
         mode: "paid-direct",
         configured: true,
         primaryMediaType: "audio/wav",
         maximumChunkDurationMs: 90_000,
+        effectiveFallback: { mode: "disabled" },
         stagedSchemaVersion: "1.0.0",
-        legacyMediaTypes: [
-          "application/json",
-          "application/vnd.exclipper.transcript-base64",
-        ],
       },
       candidateTransport: {
         version: 1,
@@ -1121,6 +1350,11 @@ describe("aiProxy.worker", () => {
     expect(
       response.headers.get("Access-Control-Allow-Headers")?.toLowerCase(),
     ).toContain("content-type");
+    expect(
+      response.headers.get("Access-Control-Allow-Headers")?.toLowerCase(),
+    ).toContain(
+      BROADCAST_TRANSCRIPT_ROUTE_FINGERPRINT_HEADER.toLowerCase(),
+    );
     expect(response.headers.get("Access-Control-Allow-Credentials")).toBeNull();
     expect(upstreamFetch).not.toHaveBeenCalled();
   });

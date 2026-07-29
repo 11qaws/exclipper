@@ -300,6 +300,174 @@ describe("runDurableBroadcastRefinementTranscriptPipeline", () => {
     ]);
   });
 
+  it("starts a fresh checkpoint when the exact input signature changes", async () => {
+    const previousSignature = "refinement-transcript-v3";
+    const currentSignature = "refinement-transcript-v4";
+    let previousCheckpoint =
+      createBroadcastRefinementTranscriptCheckpoint({
+        refinementInputSignature: previousSignature,
+        plannedChunks: chunks,
+      });
+    for (const chunk of chunks) {
+      previousCheckpoint = recordBroadcastRefinementTranscriptSuccess(
+        previousCheckpoint,
+        chunk.chunkId,
+        {
+          ...transcript(chunk),
+          textKo: "이전 입력에서 저장된 대사이므로 현재 실행에서 재사용하면 안 됩니다.",
+        },
+      );
+    }
+    const holder = storeFor(
+      session({
+        refinementTranscriptInputSignature: previousSignature,
+        refinementTranscriptCheckpointJson:
+          serializeBroadcastRefinementTranscriptCheckpoint(
+            previousCheckpoint,
+          ),
+      }),
+    );
+    const runAttempt = vi.fn(
+      (requested: readonly BroadcastContextTranscriptionChunk[]) => {
+        const currentCheckpoint = JSON.parse(
+          holder.current.refinementTranscriptCheckpointJson!,
+        ) as {
+          readonly refinementInputSignature: string;
+          readonly successfulFragments: readonly unknown[];
+          readonly gaps: readonly {
+            readonly chunkId: string;
+            readonly reason: string;
+          }[];
+        };
+        expect(holder.current.refinementTranscriptInputSignature).toBe(
+          currentSignature,
+        );
+        expect(currentCheckpoint.refinementInputSignature).toBe(
+          currentSignature,
+        );
+        expect(currentCheckpoint.successfulFragments).toEqual([]);
+        expect(currentCheckpoint.gaps).toEqual(
+          chunks.map(({ chunkId }) => ({
+            chunkId,
+            reason: "in-flight",
+            attemptCount: 1,
+          })),
+        );
+        return Promise.resolve(settled(requested));
+      },
+    );
+
+    const result = await runDurableBroadcastRefinementTranscriptPipeline({
+      store: holder.store,
+      initialSession: holder.current,
+      runId: "run-1",
+      refinementTranscriptInputSignature: currentSignature,
+      chunks,
+      editorRetryGeneration: 0,
+      allowOutcomeUnknownRetry: false,
+      runAttempt,
+    });
+
+    expect(result.status).toBe("completed");
+    expect(result.checkpoint.refinementInputSignature).toBe(currentSignature);
+    expect(runAttempt).toHaveBeenCalledTimes(1);
+    expect(
+      runAttempt.mock.calls[0]?.[0].map(({ chunkId }) => chunkId),
+    ).toEqual(["refine-a", "refine-b"]);
+    expect(
+      result.fragments.map(({ result: fragmentResult }) =>
+        fragmentResult.textKo,
+      ),
+    ).not.toContain(
+      "이전 입력에서 저장된 대사이므로 현재 실행에서 재사용하면 안 됩니다.",
+    );
+  });
+
+  it("preserves completed cells across route drift and recovers only the changed route on the next run", async () => {
+    const completedChunk =
+      chunks[0] as BroadcastContextTranscriptionChunk;
+    const routeChangedChunk =
+      chunks[1] as BroadcastContextTranscriptionChunk;
+    const holder = storeFor(session());
+    const firstResult = transcript(completedChunk);
+    const firstAttempt = vi.fn(
+      (
+        requested: readonly BroadcastContextTranscriptionChunk[],
+      ): Promise<BroadcastTranscriptWorkerRunResult> =>
+        Promise.resolve({
+          fragments: [
+            {
+              chunkId: completedChunk.chunkId,
+              result: firstResult,
+            },
+          ],
+          results: [firstResult],
+          abstentions: [],
+          abstainedChunkIds: [],
+          gaps: [
+            {
+              chunkId: routeChangedChunk.chunkId,
+              reason: "route-changed",
+            },
+          ],
+          gapChunkIds: [routeChangedChunk.chunkId],
+          requestedCount: requested.length,
+          concurrencyOutcome: "test",
+        }),
+    );
+
+    const interrupted =
+      await runDurableBroadcastRefinementTranscriptPipeline({
+        store: holder.store,
+        initialSession: holder.current,
+        runId: "run-1",
+        refinementTranscriptInputSignature: "refinement-transcript-v1",
+        chunks,
+        editorRetryGeneration: 0,
+        allowOutcomeUnknownRetry: false,
+        runAttempt: firstAttempt,
+      });
+
+    expect(interrupted.status).toBe("blocked-retryable-gap");
+    expect(
+      interrupted.fragments.map(({ chunkId }) => chunkId),
+    ).toEqual(["refine-a"]);
+    expect(interrupted.blockingGaps).toEqual([
+      {
+        chunkId: "refine-b",
+        reason: "route-changed",
+        attemptCount: 1,
+      },
+    ]);
+
+    const nextAttempt = vi.fn(
+      (requested: readonly BroadcastContextTranscriptionChunk[]) =>
+        Promise.resolve(settled(requested)),
+    );
+    const recovered =
+      await runDurableBroadcastRefinementTranscriptPipeline({
+        store: holder.store,
+        initialSession: holder.current,
+        runId: "run-1",
+        refinementTranscriptInputSignature: "refinement-transcript-v1",
+        chunks,
+        editorRetryGeneration: 0,
+        allowOutcomeUnknownRetry: false,
+        runAttempt: nextAttempt,
+      });
+
+    expect(firstAttempt).toHaveBeenCalledTimes(1);
+    expect(nextAttempt).toHaveBeenCalledTimes(1);
+    expect(
+      nextAttempt.mock.calls[0]?.[0].map(({ chunkId }) => chunkId),
+    ).toEqual(["refine-b"]);
+    expect(recovered.status).toBe("completed");
+    expect(
+      recovered.fragments.map(({ chunkId }) => chunkId),
+    ).toEqual(["refine-a", "refine-b"]);
+    expect(recovered.checkpoint.gaps).toEqual([]);
+  });
+
   it("does not silently resend an ambiguous paid chunk, then allows an editor retry", async () => {
     let checkpoint = createBroadcastRefinementTranscriptCheckpoint({
       refinementInputSignature: "refinement-transcript-v1",

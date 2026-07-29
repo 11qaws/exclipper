@@ -102,6 +102,7 @@ import {
   createBroadcastTranscriptProviderReceiptCheckpoint,
   inspectBroadcastTranscriptProviderReceiptSettlement,
   parseBroadcastTranscriptProviderReceiptCheckpointJson,
+  rebaseBroadcastTranscriptProviderReceiptCheckpointRoute,
   recordBroadcastTranscriptProviderReceipt,
   serializeBroadcastTranscriptProviderReceiptCheckpoint,
   type BroadcastTranscriptProviderReceiptCheckpoint,
@@ -484,6 +485,7 @@ import {
   transcriptNeedsExplicitRetry,
   transcriptOperationKey,
   transcriptPhaseFor,
+  waitForTranscriptRouteRecoveryDelay,
 } from "./app/transcriptPhase";
 import { buildCandidateSignalTiles } from "./app/candidateSignals";
 import { candidateStripPositionPercent } from "./app/positionStrip";
@@ -526,7 +528,7 @@ type AnalysisSelectionSummary = DurableAnalysisSelectionSummary;
 type AnalysisCoverageSummary = DurableAnalysisCoverageSummary;
 type AnalysisGapApprovalEvidence = DurableAnalysisGapApprovalEvidence;
 
-const APP_VERSION = "0.8.8";
+const APP_VERSION = "0.8.9";
 const PERSISTENCE_SCHEMA_VERSION = "0.3.0";
 const SIGNAL_ENGINE_VERSION =
   "streamer-reaction-fast-pass-v5-chat-fallback-music-confirmation";
@@ -864,9 +866,11 @@ function App() {
   const autoBroadcastTranscriptSourceRef = useRef<string | null>(null);
   const sealedBroadcastTranscriptSourceRef = useRef<string | null>(null);
   const allowAmbiguousTranscriptRetryRef = useRef(false);
+  const broadcastTranscriptRouteChangeCountRef = useRef(0);
   const autoBroadcastContextSourceRef = useRef<string | null>(null);
   const autoSemanticLeadRefinementSourceRef = useRef<string | null>(null);
   const allowAmbiguousSemanticRefinementRetryRef = useRef(false);
+  const semanticRefinementRouteChangeCountRef = useRef(0);
   const wholeContextRetryPendingRef = useRef(false);
   const recoveredContextRestoreEpoch = useRef(0);
   const runCandidatePassBRef = useRef<
@@ -2685,9 +2689,11 @@ function App() {
     autoBroadcastTranscriptSourceRef.current = null;
     sealedBroadcastTranscriptSourceRef.current = null;
     allowAmbiguousTranscriptRetryRef.current = false;
+    broadcastTranscriptRouteChangeCountRef.current = 0;
     autoBroadcastContextSourceRef.current = null;
     autoSemanticLeadRefinementSourceRef.current = null;
     allowAmbiguousSemanticRefinementRetryRef.current = false;
+    semanticRefinementRouteChangeCountRef.current = 0;
     setBroadcastTranscriptStatus("idle");
     setBroadcastTranscriptProgress(null);
     setBroadcastTranscriptRecoveryProgress(null);
@@ -3890,6 +3896,7 @@ function App() {
       autoBroadcastTranscriptSourceRef.current = null;
       sealedBroadcastTranscriptSourceRef.current = null;
       allowAmbiguousTranscriptRetryRef.current = false;
+      broadcastTranscriptRouteChangeCountRef.current = 0;
       setBroadcastTranscriptStatus("idle");
       setBroadcastTranscriptProgress(null);
       setBroadcastTranscriptRecoveryProgress(null);
@@ -5789,6 +5796,7 @@ function App() {
 
         autoSemanticLeadRefinementSourceRef.current = null;
         allowAmbiguousSemanticRefinementRetryRef.current = false;
+        semanticRefinementRouteChangeCountRef.current = 0;
         setSemanticLeadRefinementAttemptOrdinal((current) => current + 1);
         autoBroadcastContextSourceRef.current = null;
         setBroadcastContextAttemptOrdinal((current) => current + 1);
@@ -5801,6 +5809,7 @@ function App() {
         autoBroadcastTranscriptSourceRef.current = null;
         sealedBroadcastTranscriptSourceRef.current = null;
         allowAmbiguousTranscriptRetryRef.current = true;
+        broadcastTranscriptRouteChangeCountRef.current = 0;
         setBroadcastTranscriptAttemptOrdinal((current) => current + 1);
         setBroadcastTranscriptStatus("idle");
         setBroadcastTranscriptProgress(null);
@@ -5871,9 +5880,11 @@ function App() {
     autoBroadcastTranscriptSourceRef.current = null;
     sealedBroadcastTranscriptSourceRef.current = null;
     allowAmbiguousTranscriptRetryRef.current = false;
+    broadcastTranscriptRouteChangeCountRef.current = 0;
     autoBroadcastContextSourceRef.current = null;
     autoSemanticLeadRefinementSourceRef.current = null;
     allowAmbiguousSemanticRefinementRetryRef.current = false;
+    semanticRefinementRouteChangeCountRef.current = 0;
     setBroadcastTranscriptStatus("idle");
     setBroadcastTranscriptProgress(null);
     setBroadcastTranscriptRecoveryProgress(null);
@@ -7361,6 +7372,7 @@ function App() {
           : { ...current, candidateCount: nextCandidates.length },
       );
       resetCandidateRanking(nextCandidates);
+      semanticRefinementRouteChangeCountRef.current = 0;
       setSemanticLeadRefinementStatus("completed");
     };
 
@@ -7556,21 +7568,24 @@ function App() {
           );
         const refinementTranscriptInputSignature =
           await createContentFingerprint([
-            "exclipper.semantic-refinement-transcript-evidence.v3",
+            "exclipper.semantic-refinement-transcript-evidence.v4",
             currentAnalysisRunId,
             evidenceBinding.sourceFingerprint,
             JSON.stringify(plan),
             JSON.stringify(chunks),
-            refinementTranscriptRoute.fingerprint,
-            refinementTranscriptRoute.manifest.modelRevision,
             BROADCAST_TRANSCRIPT_WORKER_VERSION,
             BROADCAST_SPEECH_ACTIVITY_MODEL_REVISION,
             BROADCAST_SPEECH_ACTIVITY_POLICY_REVISION,
           ]);
-        const refinementTranscriptOperationScope =
-          refinementTranscriptInputSignature
-            .replace(/[^A-Za-z0-9_-]/gu, "_")
-            .slice(-24);
+        const refinementTranscriptOperationScope = (
+          await createContentFingerprint([
+            "exclipper.semantic-refinement-transcript-quota-scope.v1",
+            refinementTranscriptInputSignature,
+            refinementTranscriptRoute.fingerprint,
+          ])
+        )
+          .replace(/[^A-Za-z0-9_-]/gu, "_")
+          .slice(-24);
         const refinementRecovery =
           await runDurableBroadcastRefinementTranscriptPipeline({
             store,
@@ -7598,6 +7613,32 @@ function App() {
           });
         savedSession = refinementRecovery.session;
         if (!refinementRecovery.complete) {
+          const routeChangedCount =
+            refinementRecovery.blockingGaps.filter(
+              ({ reason }) => reason === "route-changed",
+            ).length;
+          if (
+            routeChangedCount > 0 &&
+            routeChangedCount === refinementRecovery.blockingGaps.length
+          ) {
+            const consecutiveRouteChanges =
+              semanticRefinementRouteChangeCountRef.current + 1;
+            semanticRefinementRouteChangeCountRef.current =
+              consecutiveRouteChanges;
+            await waitForTranscriptRouteRecoveryDelay(
+              consecutiveRouteChanges,
+              controller.signal,
+            );
+            if (controller.signal.aborted || !isMounted.current) return;
+            autoSemanticLeadRefinementSourceRef.current = null;
+            setSemanticLeadRefinementAttemptOrdinal(
+              (current) => current + 1,
+            );
+            setSemanticLeadRefinementStatus("idle");
+            setSemanticLeadRefinementError(null);
+            return;
+          }
+          semanticRefinementRouteChangeCountRef.current = 0;
           const retryableCount = refinementRecovery.blockingGaps.filter(
             ({ reason }) =>
               reason !== "in-flight" && reason !== "outcome-unknown",
@@ -7609,6 +7650,7 @@ function App() {
             `재시도 필요 ${retryableCount}개, 요청 결과 확인 필요 ${outcomeUnknownCount}개가 남았습니다.`,
           );
         }
+        semanticRefinementRouteChangeCountRef.current = 0;
         let providerReceiptCheckpoint =
           createBroadcastTranscriptProviderReceiptCheckpoint({
             sourceFingerprint: evidenceBinding.sourceFingerprint,
@@ -7940,6 +7982,7 @@ function App() {
     })()
       .catch((error: unknown) => {
         if (controller.signal.aborted || !isMounted.current) return;
+        semanticRefinementRouteChangeCountRef.current = 0;
         setSemanticLeadRefinementStatus("failed");
         setSemanticLeadRefinementError(
           error instanceof Error && error.message.trim().length > 0
@@ -8030,6 +8073,7 @@ function App() {
       broadcastContextSamplingPlan.samplingWindows,
     );
     if (chunks.length === 0) {
+      broadcastTranscriptRouteChangeCountRef.current = 0;
       sealedBroadcastTranscriptSourceRef.current = transcriptEffectKey;
       setBroadcastTranscriptStatus("completed");
       setBroadcastTranscriptChapters([]);
@@ -8316,6 +8360,7 @@ function App() {
           setBroadcastTranscriptChapters(matchedSaved.chapters);
           sealedBroadcastTranscriptSourceRef.current =
             matchedSaved.transcriptSealOperationKey;
+          broadcastTranscriptRouteChangeCountRef.current = 0;
           setBroadcastTranscriptStatus("completed");
         }
         return;
@@ -8377,6 +8422,7 @@ function App() {
               );
               setBroadcastTranscriptChapters(reopened.chapters);
               sealedBroadcastTranscriptSourceRef.current = captionOperationKey;
+              broadcastTranscriptRouteChangeCountRef.current = 0;
               setBroadcastTranscriptStatus("completed");
             }
             return;
@@ -8398,10 +8444,11 @@ function App() {
           transcriptRoute.fingerprint,
         ]);
       const matchingStoredTranscriptProviderReceiptCheckpoint =
-        storedTranscriptProviderReceiptMatchesSession &&
-        storedTranscriptProviderReceiptCheckpoint.routeManifestFingerprint ===
-          transcriptRoute.fingerprint
-          ? storedTranscriptProviderReceiptCheckpoint
+        storedTranscriptProviderReceiptMatchesSession
+          ? rebaseBroadcastTranscriptProviderReceiptCheckpointRoute(
+              storedTranscriptProviderReceiptCheckpoint,
+              transcriptRoute,
+            )
           : null;
       const operationKey =
         matchingStoredTranscriptProviderReceiptCheckpoint !== null &&
@@ -8419,6 +8466,7 @@ function App() {
         await createContentFingerprint([
           "exclipper.transcript-quota-operation-scope.v1",
           operationKey,
+          transcriptRoute.fingerprint,
         ])
       )
         .replace(/[^A-Za-z0-9_-]/gu, "_")
@@ -8525,6 +8573,7 @@ function App() {
           ),
         );
         sealedBroadcastTranscriptSourceRef.current = operationKey;
+        broadcastTranscriptRouteChangeCountRef.current = 0;
         setBroadcastTranscriptStatus("completed");
         setBroadcastTranscriptRecoveryProgress(null);
         return;
@@ -8802,6 +8851,7 @@ function App() {
       youtubeCaptionTrackRef.current = null;
       const unresolvedGaps = [
         ...recoveryResult.unresolvedRetryableGaps,
+        ...recoveryResult.routeChangedGaps,
         ...recoveryResult.outcomeUnknownGaps,
       ];
       const unresolvedFragmentGaps: readonly StoredBroadcastTranscriptGap[] =
@@ -8882,6 +8932,29 @@ function App() {
       if (!controller.signal.aborted && isMounted.current) {
         setBroadcastTranscriptChapters(reopened.chapters);
         setBroadcastTranscriptRecoveryProgress(null);
+        if (recoveryResult.routeChangedGaps.length > 0) {
+          /*
+           * Route drift is known to occur before provider billing. Keep every
+           * completed cell and its immutable receipt, reacquire `/healthz`,
+           * and dispatch only the route-changed cells under a fresh quota
+           * namespace on the next effect turn.
+           */
+          const consecutiveRouteChanges =
+            broadcastTranscriptRouteChangeCountRef.current + 1;
+          broadcastTranscriptRouteChangeCountRef.current =
+            consecutiveRouteChanges;
+          await waitForTranscriptRouteRecoveryDelay(
+            consecutiveRouteChanges,
+            controller.signal,
+          );
+          if (controller.signal.aborted || !isMounted.current) return;
+          autoBroadcastTranscriptSourceRef.current = null;
+          setBroadcastTranscriptAttemptOrdinal((current) => current + 1);
+          setBroadcastTranscriptStatus("idle");
+          setBroadcastTranscriptError(null);
+          return;
+        }
+        broadcastTranscriptRouteChangeCountRef.current = 0;
         if (unresolvedGaps.length > 0) {
           setBroadcastTranscriptStatus("failed");
           setBroadcastTranscriptError(
@@ -8892,6 +8965,7 @@ function App() {
           return;
         }
         sealedBroadcastTranscriptSourceRef.current = operationKey;
+        broadcastTranscriptRouteChangeCountRef.current = 0;
         setBroadcastTranscriptStatus("completed");
       }
     })()
@@ -8899,6 +8973,7 @@ function App() {
         if (controller.signal.aborted || !isMounted.current) {
           return;
         }
+        broadcastTranscriptRouteChangeCountRef.current = 0;
         sealedBroadcastTranscriptSourceRef.current = null;
         setBroadcastTranscriptStatus("failed");
         setBroadcastTranscriptError(
@@ -9907,6 +9982,7 @@ function App() {
                       } else if (semanticLeadRefinementStatus === "failed") {
                         autoSemanticLeadRefinementSourceRef.current = null;
                         allowAmbiguousSemanticRefinementRetryRef.current = true;
+                        semanticRefinementRouteChangeCountRef.current = 0;
                         setSemanticLeadRefinementAttemptOrdinal(
                           (current) => current + 1,
                         );

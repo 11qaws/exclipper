@@ -15,16 +15,29 @@ import {
 import { createContentFingerprint } from "../security/contentFingerprint";
 
 export const BROADCAST_TRANSCRIPT_ROUTE_MANIFEST_SCHEMA_VERSION =
-  "1.0.0" as const;
-export const BROADCAST_TRANSCRIPT_HEALTH_SERVICE_VERSION = 5 as const;
+  "1.1.0" as const;
+export const BROADCAST_TRANSCRIPT_HEALTH_SERVICE_VERSION = 6 as const;
 export const BROADCAST_TRANSCRIPT_PROVIDER_CONFIGURATION_VERSION =
   "1.3.0" as const;
-export const BROADCAST_TRANSCRIPT_TRANSPORT_VERSION = 2 as const;
+export const BROADCAST_TRANSCRIPT_TRANSPORT_VERSION = 3 as const;
 export const BROADCAST_TRANSCRIPT_PRIMARY_MEDIA_TYPE = "audio/wav" as const;
+export const BROADCAST_TRANSCRIPT_ROUTE_FINGERPRINT_HEADER =
+  "X-ExClipper-Transcript-Route-Fingerprint" as const;
 
 export type BroadcastTranscriptTransportMode =
   | "free-r2"
   | "paid-direct";
+
+export type BroadcastTranscriptEffectiveFallback =
+  | {
+      readonly mode: "disabled";
+    }
+  | {
+      readonly mode: "bounded";
+      readonly provider: BroadcastTranscriptProviderId;
+      readonly modelId: BroadcastTranscriptLiveModelId;
+      readonly modelRevision: string;
+    };
 
 export interface BroadcastTranscriptRouteManifest {
   readonly schemaVersion:
@@ -44,6 +57,7 @@ export interface BroadcastTranscriptRouteManifest {
   readonly provider: BroadcastTranscriptProviderId;
   readonly modelId: BroadcastTranscriptLiveModelId;
   readonly modelRevision: string;
+  readonly effectiveFallback: BroadcastTranscriptEffectiveFallback;
 }
 
 export interface BroadcastTranscriptRouteSelection {
@@ -109,11 +123,30 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function isRouteFingerprint(value: unknown): value is string {
+export function isBroadcastTranscriptRouteFingerprint(
+  value: unknown,
+): value is string {
   return (
     typeof value === "string" &&
     /^sha256:[a-f0-9]{64}$/u.test(value)
   );
+}
+
+export function broadcastTranscriptRouteRequestHeaders(
+  selection: BroadcastTranscriptRouteSelection,
+): Readonly<Record<
+  typeof BROADCAST_TRANSCRIPT_ROUTE_FINGERPRINT_HEADER,
+  string
+>> {
+  if (
+    !isBroadcastTranscriptRouteSelection(selection) ||
+    !isBroadcastTranscriptRouteFingerprint(selection.fingerprint)
+  ) {
+    throw new TypeError("Broadcast transcript route selection is invalid.");
+  }
+  return {
+    [BROADCAST_TRANSCRIPT_ROUTE_FINGERPRINT_HEADER]: selection.fingerprint,
+  };
 }
 
 function expectedLiveIdentity(
@@ -123,6 +156,48 @@ function expectedLiveIdentity(
   readonly modelRevision: string;
 } {
   return LIVE_MODEL_IDENTITIES[provider];
+}
+
+function normalizeEffectiveFallback(
+  value: unknown,
+  primaryProvider: BroadcastTranscriptProviderId,
+  transportMode: BroadcastTranscriptTransportMode,
+): BroadcastTranscriptEffectiveFallback {
+  if (!isRecord(value)) {
+    throw new TypeError("Broadcast transcript fallback route is invalid.");
+  }
+  if (
+    value.mode === "disabled" &&
+    Object.keys(value).length === 1
+  ) {
+    return { mode: "disabled" };
+  }
+  if (
+    transportMode !== "paid-direct" ||
+    value.mode !== "bounded" ||
+    Object.keys(value).sort().join(",") !==
+      "mode,modelId,modelRevision,provider" ||
+    (value.provider !== "qwen" && value.provider !== "gemini") ||
+    value.provider === primaryProvider ||
+    (value.modelId !== BROADCAST_TRANSCRIPT_QWEN_OMNI_MODEL_ID &&
+      value.modelId !== BROADCAST_TRANSCRIPT_GEMINI_MODEL_ID) ||
+    typeof value.modelRevision !== "string"
+  ) {
+    throw new TypeError("Broadcast transcript fallback route is invalid.");
+  }
+  const identity = expectedLiveIdentity(value.provider);
+  if (
+    value.modelId !== identity.modelId ||
+    value.modelRevision !== identity.modelRevision
+  ) {
+    throw new TypeError("Broadcast transcript fallback identity is invalid.");
+  }
+  return {
+    mode: "bounded",
+    provider: value.provider,
+    modelId: value.modelId,
+    modelRevision: value.modelRevision,
+  };
 }
 
 function parseHealthManifest(
@@ -182,6 +257,19 @@ function parseHealthManifest(
       "방송 대사 분석 서버가 알 수 없는 모델 경로를 안내했어요.",
     );
   }
+  let effectiveFallback: BroadcastTranscriptEffectiveFallback;
+  try {
+    effectiveFallback = normalizeEffectiveFallback(
+      value.transcriptTransport.effectiveFallback,
+      provider,
+      value.transcriptTransport.mode,
+    );
+  } catch {
+    throw new BroadcastTranscriptRouteManifestError(
+      "HEALTH_INVALID_RESPONSE",
+      "방송 대사 분석 서버의 대체 모델 경로를 확인하지 못했어요.",
+    );
+  }
 
   return {
     schemaVersion: BROADCAST_TRANSCRIPT_ROUTE_MANIFEST_SCHEMA_VERSION,
@@ -196,6 +284,7 @@ function parseHealthManifest(
     provider,
     modelId: identity.modelId,
     modelRevision: identity.modelRevision,
+    effectiveFallback,
   };
 }
 
@@ -226,6 +315,11 @@ export function normalizeBroadcastTranscriptRouteManifest(
     throw new TypeError("Broadcast transcript route manifest is invalid.");
   }
   const identity = expectedLiveIdentity(provider);
+  const effectiveFallback = normalizeEffectiveFallback(
+    value.effectiveFallback,
+    provider,
+    value.transportMode,
+  );
   if (
     value.modelId !== identity.modelId ||
     value.modelRevision !== identity.modelRevision ||
@@ -246,6 +340,7 @@ export function normalizeBroadcastTranscriptRouteManifest(
     provider,
     modelId: identity.modelId,
     modelRevision: identity.modelRevision,
+    effectiveFallback,
   };
 }
 
@@ -260,10 +355,10 @@ export async function createBroadcastTranscriptRouteSelection(
 ): Promise<BroadcastTranscriptRouteSelection> {
   const normalized = normalizeBroadcastTranscriptRouteManifest(manifest);
   const fingerprint = await createContentFingerprint([
-    "exclipper.broadcast-transcript-route.v1",
+    "exclipper.broadcast-transcript-route.v2",
     serializeBroadcastTranscriptRouteManifest(normalized),
   ]);
-  if (!isRouteFingerprint(fingerprint)) {
+  if (!isBroadcastTranscriptRouteFingerprint(fingerprint)) {
     throw new BroadcastTranscriptRouteManifestError(
       "ROUTE_FINGERPRINT_UNAVAILABLE",
       "방송 대사 분석 경로를 안전하게 고정하지 못했어요.",
@@ -280,7 +375,7 @@ export function isBroadcastTranscriptRouteSelection(
 ): value is BroadcastTranscriptRouteSelection {
   if (
     !isRecord(value) ||
-    !isRouteFingerprint(value.fingerprint)
+    !isBroadcastTranscriptRouteFingerprint(value.fingerprint)
   ) {
     return false;
   }
@@ -315,13 +410,13 @@ export function expectedBroadcastTranscriptFallbackIdentity(
   readonly modelRevision: string;
 } | null {
   const normalized = normalizeBroadcastTranscriptRouteManifest(manifest);
-  if (normalized.transportMode !== "paid-direct") return null;
-  const provider: BroadcastTranscriptProviderId =
-    normalized.provider === "qwen" ? "gemini" : "qwen";
-  return {
-    provider,
-    ...expectedLiveIdentity(provider),
-  };
+  return normalized.effectiveFallback.mode === "bounded"
+    ? {
+        provider: normalized.effectiveFallback.provider,
+        modelId: normalized.effectiveFallback.modelId,
+        modelRevision: normalized.effectiveFallback.modelRevision,
+      }
+    : null;
 }
 
 export function broadcastTranscriptProviderMatchesModel(
@@ -384,7 +479,7 @@ export function normalizeBroadcastTranscriptProviderReceipt(
     !isRecord(value) ||
     value.schemaVersion !==
       BROADCAST_TRANSCRIPT_PROVIDER_RECEIPT_SCHEMA_VERSION ||
-    !isRouteFingerprint(value.routeManifestFingerprint) ||
+    !isBroadcastTranscriptRouteFingerprint(value.routeManifestFingerprint) ||
     (value.provider !== "qwen" &&
       value.provider !== "gemini" &&
       value.provider !== "groq") ||

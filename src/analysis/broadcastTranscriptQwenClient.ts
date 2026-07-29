@@ -1,18 +1,14 @@
 import {
-  BROADCAST_TRANSCRIPT_BASE64_CONTENT_TYPE,
   BROADCAST_TRANSCRIPT_QWEN_SCHEMA_VERSION,
-  MAX_BROADCAST_TRANSCRIPT_QWEN_BASE64_LENGTH,
-  MAX_BROADCAST_TRANSCRIPT_DIRECT_DURATION_MS,
+  MAX_BROADCAST_TRANSCRIPT_GROQ_WAV_BYTES,
   MAX_BROADCAST_TRANSCRIPT_QWEN_DURATION_MS,
   MAX_BROADCAST_TRANSCRIPT_QWEN_RESPONSE_BYTES,
   MAX_BROADCAST_TRANSCRIPT_QWEN_TEXT_LENGTH,
   isBroadcastTranscriptModelId,
   type BroadcastTranscriptQwenResult,
 } from "./broadcastTranscriptQwen";
-export { BROADCAST_TRANSCRIPT_BASE64_CONTENT_TYPE } from "./broadcastTranscriptQwen";
 import {
   AiQuotaClientError,
-  fetchWithAiQuota,
   fetchWithPreparedAiQuota,
   type AiQuotaClientIdentity,
 } from "./aiQuotaClient";
@@ -23,6 +19,8 @@ import {
   CANDIDATE_PASS_B_RESPONSE_MODEL_REVISION_HEADER,
 } from "./candidatePassBWorkerProtocol";
 import {
+  BROADCAST_TRANSCRIPT_ROUTE_FINGERPRINT_HEADER,
+  broadcastTranscriptRouteRequestHeaders,
   createBroadcastTranscriptProviderReceipt,
   verifyBroadcastTranscriptRouteSelection,
   type BroadcastTranscriptRouteSelection,
@@ -44,6 +42,7 @@ export class BroadcastTranscriptQwenClientError extends Error {
       | "PROXY_UNAVAILABLE"
       | "PROXY_REJECTED"
       | "RATE_LIMITED"
+      | "ROUTE_CHANGED"
       | "OUTCOME_UNKNOWN"
       | "PROXY_INVALID_RESPONSE",
     message: string,
@@ -162,6 +161,12 @@ async function resolveBroadcastTranscriptProxyResponse(
         "방송 대사 요청의 처리 여부를 확인할 수 없어 자동 재요청하지 않았어요.",
       );
     }
+    if (errorCode === "TRANSCRIPT_ROUTE_CHANGED") {
+      throw new BroadcastTranscriptQwenClientError(
+        "ROUTE_CHANGED",
+        "방송 대사 분석 모델 경로가 바뀌었어요. 이미 완료된 조각은 보존하고 새 경로를 확인한 뒤 이어갈 수 있어요.",
+      );
+    }
     throw new BroadcastTranscriptQwenClientError(
       "PROXY_REJECTED",
       "방송 대사 분석 요청을 처리하지 못했어요.",
@@ -211,10 +216,14 @@ async function resolveBroadcastTranscriptProxyResponse(
   const responseFallbackUsed = response.headers.get(
     CANDIDATE_PASS_B_RESPONSE_FALLBACK_HEADER,
   );
+  const responseRouteFingerprint = response.headers.get(
+    BROADCAST_TRANSCRIPT_ROUTE_FINGERPRINT_HEADER,
+  );
   if (
     responseModelId === null ||
     responseModelRevision === null ||
     (responseFallbackUsed !== "true" && responseFallbackUsed !== "false") ||
+    responseRouteFingerprint !== route.fingerprint ||
     responseModelId !== result.modelId
   ) {
     throw new BroadcastTranscriptQwenClientError(
@@ -243,79 +252,6 @@ async function resolveBroadcastTranscriptProxyResponse(
   };
 }
 
-export async function requestBroadcastTranscriptQwenChunk(
-  audioBase64: string,
-  sourceStartMs: number,
-  durationMs: number,
-  options: {
-    readonly route: BroadcastTranscriptRouteSelection;
-    readonly signal?: AbortSignal;
-    readonly fetchImplementation?: FetchImplementation;
-    readonly quota?: Omit<AiQuotaClientIdentity, "pool">;
-  },
-): Promise<BroadcastTranscriptVerifiedResult> {
-  if (
-    typeof audioBase64 !== "string" ||
-    audioBase64.length === 0 ||
-    audioBase64.length > MAX_BROADCAST_TRANSCRIPT_QWEN_BASE64_LENGTH ||
-    !Number.isSafeInteger(sourceStartMs) ||
-    sourceStartMs < 0 ||
-    !Number.isSafeInteger(durationMs) ||
-    durationMs <= 0 ||
-    durationMs > MAX_BROADCAST_TRANSCRIPT_DIRECT_DURATION_MS
-  ) {
-    throw new BroadcastTranscriptQwenClientError(
-      "INVALID_INPUT",
-      "방송 대사 분석 구간을 준비하지 못했어요.",
-    );
-  }
-  let route: BroadcastTranscriptRouteSelection;
-  try {
-    route = await verifyBroadcastTranscriptRouteSelection(options.route);
-  } catch {
-    throw new BroadcastTranscriptQwenClientError(
-      "INVALID_INPUT",
-      "방송 대사 분석 모델 경로가 고정되지 않았어요.",
-    );
-  }
-
-  const requestInit: RequestInit = {
-    method: "POST",
-    headers: { "Content-Type": BROADCAST_TRANSCRIPT_BASE64_CONTENT_TYPE },
-    body: audioBase64,
-    credentials: "omit",
-    cache: "no-store",
-    referrerPolicy: "no-referrer",
-    ...(options.signal === undefined ? {} : { signal: options.signal }),
-  };
-  return resolveBroadcastTranscriptProxyResponse(
-    options.quota === undefined
-      ? (options.fetchImplementation ?? fetch)(
-          `${BROADCAST_TRANSCRIPT_PROXY_ENDPOINT}?startMs=${sourceStartMs}&durationMs=${durationMs}`,
-          requestInit,
-        )
-      : fetchWithAiQuota(
-          `${BROADCAST_TRANSCRIPT_PROXY_ENDPOINT}?startMs=${sourceStartMs}&durationMs=${durationMs}`,
-          requestInit,
-          {
-            ...options.quota,
-            pool: "transcript",
-            ...(options.signal === undefined ? {} : { signal: options.signal }),
-            ...(options.fetchImplementation === undefined
-              ? {}
-              : { fetchImplementation: options.fetchImplementation }),
-          },
-    ),
-    sourceStartMs,
-    durationMs,
-    route,
-  );
-}
-
-/** WAV byte ceiling shared by both server-selected transcript transports. */
-const MAX_BROADCAST_TRANSCRIPT_WAV_BYTES =
-  (MAX_BROADCAST_TRANSCRIPT_QWEN_BASE64_LENGTH / 4) * 3;
-
 /**
  * Sends one raw WAV contract and lets the server select its infrastructure.
  *
@@ -338,7 +274,7 @@ export async function requestBroadcastTranscriptChunkBinary(
   if (
     !(wavBytes instanceof Uint8Array) ||
     wavBytes.byteLength < 44 ||
-    wavBytes.byteLength > MAX_BROADCAST_TRANSCRIPT_WAV_BYTES ||
+    wavBytes.byteLength > MAX_BROADCAST_TRANSCRIPT_GROQ_WAV_BYTES ||
     !Number.isSafeInteger(sourceStartMs) ||
     sourceStartMs < 0 ||
     !Number.isSafeInteger(durationMs) ||
@@ -361,7 +297,10 @@ export async function requestBroadcastTranscriptChunkBinary(
   }
   const requestInit: RequestInit = {
     method: "POST",
-    headers: { "Content-Type": "audio/wav" },
+    headers: {
+      ...broadcastTranscriptRouteRequestHeaders(route),
+      "Content-Type": "audio/wav",
+    },
     body: wavBytes as Uint8Array<ArrayBuffer>,
     credentials: "omit",
     cache: "no-store",
@@ -381,6 +320,7 @@ export async function requestBroadcastTranscriptChunkBinary(
       const stagedOrDirect = await fetchImplementation(endpoint, {
         ...requestInit,
         headers: {
+          ...broadcastTranscriptRouteRequestHeaders(route),
           ...leaseHeaders,
           "Content-Type": "audio/wav",
         },
@@ -404,6 +344,7 @@ export async function requestBroadcastTranscriptChunkBinary(
     return fetchImplementation(BROADCAST_TRANSCRIPT_PROXY_ENDPOINT, {
       method: "POST",
       headers: {
+        ...broadcastTranscriptRouteRequestHeaders(route),
         ...leaseHeaders,
         "Content-Type": BROADCAST_TRANSCRIPT_MEDIA_RESOLVE_CONTENT_TYPE,
       },

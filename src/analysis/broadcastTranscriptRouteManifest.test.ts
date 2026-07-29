@@ -23,6 +23,7 @@ function healthBody(
   } = {},
 ): unknown {
   const provider = overrides.provider ?? "qwen";
+  const mode = overrides.mode ?? "free-r2";
   const identities = {
     qwen: {
       modelId: BROADCAST_TRANSCRIPT_QWEN_OMNI_MODEL_ID,
@@ -42,14 +43,31 @@ function healthBody(
   return {
     ok: true,
     service: "rettohighlight-gemini",
-    version: 5,
+    version: 6,
     routingPolicyVersion: "1.11.0",
     transcriptTransport: {
-      version: 2,
-      mode: overrides.mode ?? "free-r2",
+      version: 3,
+      mode,
       configured: true,
       primaryMediaType: "audio/wav",
       maximumChunkDurationMs: 90_000,
+      effectiveFallback:
+        mode === "paid-direct"
+          ? provider === "qwen"
+            ? {
+                mode: "bounded",
+                provider: "gemini",
+                modelId: BROADCAST_TRANSCRIPT_GEMINI_MODEL_ID,
+                modelRevision: BROADCAST_TRANSCRIPT_GEMINI_MODEL_REVISION,
+              }
+            : {
+                mode: "bounded",
+                provider: "qwen",
+                modelId: BROADCAST_TRANSCRIPT_QWEN_OMNI_MODEL_ID,
+                modelRevision:
+                  BROADCAST_TRANSCRIPT_QWEN_OMNI_MODEL_REVISION,
+              }
+          : { mode: "disabled" },
     },
     providers: {
       schemaVersion: "1.3.0",
@@ -70,17 +88,26 @@ async function selection(
   mode: "free-r2" | "paid-direct" = "free-r2",
 ): Promise<Awaited<ReturnType<typeof createBroadcastTranscriptRouteSelection>>> {
   const manifest: BroadcastTranscriptRouteManifest = {
-    schemaVersion: "1.0.0",
-    serviceVersion: 5,
+    schemaVersion: "1.1.0",
+    serviceVersion: 6,
     routingPolicyVersion: "1.11.0",
     providerConfigurationVersion: "1.3.0",
-    transportVersion: 2,
+    transportVersion: 3,
     transportMode: mode,
     maximumChunkDurationMs: 90_000,
     primaryMediaType: "audio/wav",
     provider: "qwen",
     modelId: BROADCAST_TRANSCRIPT_QWEN_OMNI_MODEL_ID,
     modelRevision: BROADCAST_TRANSCRIPT_QWEN_OMNI_MODEL_REVISION,
+    effectiveFallback:
+      mode === "paid-direct"
+        ? {
+            mode: "bounded",
+            provider: "gemini",
+            modelId: BROADCAST_TRANSCRIPT_GEMINI_MODEL_ID,
+            modelRevision: BROADCAST_TRANSCRIPT_GEMINI_MODEL_REVISION,
+          }
+        : { mode: "disabled" },
   };
   return createBroadcastTranscriptRouteSelection(manifest);
 }
@@ -165,6 +192,19 @@ describe("broadcastTranscriptRouteManifest", () => {
         },
       }),
     ).rejects.toThrow("fingerprint");
+  });
+
+  it("changes the route fingerprint when the effective paid fallback changes", async () => {
+    const bounded = await selection("paid-direct");
+    const disabled = await createBroadcastTranscriptRouteSelection({
+      ...bounded.manifest,
+      effectiveFallback: { mode: "disabled" },
+    });
+
+    expect(disabled.fingerprint).not.toBe(bounded.fingerprint);
+    expect(disabled.manifest.effectiveFallback).toEqual({
+      mode: "disabled",
+    });
   });
 
   it("accepts only the declared primary or bounded paid fallback identity", async () => {

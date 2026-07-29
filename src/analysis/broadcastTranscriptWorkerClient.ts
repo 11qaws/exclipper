@@ -448,6 +448,7 @@ export function runBroadcastTranscriptWorker(
               "no-audio",
               "transcription-failed",
               "rate-limited",
+              "route-changed",
               "outcome-unknown",
             ].includes(event.data.reason)
           ) {

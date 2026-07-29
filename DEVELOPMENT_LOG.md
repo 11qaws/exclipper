@@ -1,5 +1,58 @@
 # Development Log
 
+## 2026-07-29 v0.8.9 전사 경로 고정·체크포인트 복구
+
+### Before / After
+
+- 이전에는 `/healthz`에서 선택한 전사 provider·model·transport·fallback 정책이 실제
+  각 요청과 R2 ticket에 묶이지 않았다. 배포 중 경로가 바뀌면 오래된 요청이 새
+  Worker에 도착해 일반 실패로 기록되고, 완료한 셀까지 다시 처리할 위험이 있었다.
+- 이제 canonical route manifest의 SHA-256 fingerprint 하나를 모든 전사 요청과
+  서명된 R2 ticket에 넣는다. Worker는 quota·rate limit·R2 read·upstream 호출 전에
+  현재 경로와 비교하고, 성공 응답도 같은 fingerprint와 실제 provider receipt를
+  되돌려준다.
+- `route-changed`는 결제 여부가 모호한 실패가 아니라 비용 발생 전의 복구 가능한
+  gap이다. 이미 성공한 셀과 provider receipt는 그대로 두고, 새 `/healthz` 경로로
+  checkpoint를 rebase한 뒤 해당 gap만 자동 재개한다.
+- 같은 실행에서 첫 `route-changed`가 확인되면 아직 보내지 않은 셀은 네트워크
+  요청과 audio decode를 생략하고 같은 gap으로 정리한다. 따라서 배포 경계의
+  불필요한 409 묶음과 후속 재처리를 줄인다.
+- plain `/healthz` 하나가 service 6·transport 3의 현재 계약만 반환한다. 모든
+  전사 요청은 여기서 받은 route fingerprint를 반드시 보내며, 누락·malformed·stale
+  header는 quota·R2·provider 실행 전에 거부한다.
+- R2 media는 현재 schema 2·ticket v2만 읽고 쓴다. refinement checkpoint도 현재
+  v4 입력 signature가 정확히 같을 때만 열며, signature가 바뀌면 구 결과를
+  이관하지 않고 새 checkpoint에서 시작한다. 같은 signature 안의 성공·무발화
+  셀은 보존하고 누락 셀만 재개한다.
+- 브라우저에서 Worker로 들어오는 전사 형식은 `audio/wav` 하나로 줄였다.
+  호출자가 없던 JSON·Base64 ingress와 그 분기·파서를 삭제하고, Free R2는
+  WAV stage→v2 ticket resolve, paid-direct는 검증된 WAV 전달만 사용한다.
+
+### 효율·실패 경계
+
+- 정상 경로의 추가 비용은 작은 manifest에 대한 Web Crypto SHA-256 확인과 HTTP
+  header 하나뿐이다. 원본 audio를 다시 hash·serialize하거나 전체 checkpoint를
+  다시 계산하지 않는다.
+- 무료 운영 경로는 계속 `Qwen + free-r2`, quota coordinator 필수, 동시 사용자
+  최대 5명이다. Groq는 명시적으로 선택하기 전에는 호출하지 않는다.
+- 실제 provider 요청 이후 응답 여부가 불명확한 `outcome-unknown`만 자동 재결제를
+  막는다. route 변경·rate limit·확정 실패는 마지막 durable checkpoint에서 누락
+  셀만 이어간다.
+- 연속 route 변경은 250ms부터 최대 10초까지 예외 경로에서만 backoff한다. hard
+  retry cap은 두지 않아 자동으로 수렴하며, 정상 경로에는 대기나 추가 media
+  변환이 생기지 않는다.
+
+### 검증
+
+- route manifest, direct/stage/resolve header, signed R2 ticket, quota 선행 차단,
+  응답 receipt, fragment recovery, refinement resume, session migration을 집중
+  테스트했다.
+- 독립 최종 게이트에서 TypeScript와 ESLint warning 0, Vitest 140개 파일
+  1,689개 테스트, 음성 표본 CLI 9개 테스트가 통과했다.
+- production build와 Worker dry-run도 통과했다. Worker bundle은
+  479.10 KiB(90.72 KiB gzip)이며 production 기본값은 계속 Qwen·free-r2·quota
+  required다. 운영 smoke와 실제 배포 식별자는 배포 후 작업 보고에 남긴다.
+
 ## 2026-07-29 v0.8.8 파이프라인 내구성 릴리스
 
 ### 릴리스 범위

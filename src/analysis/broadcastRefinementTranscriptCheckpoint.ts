@@ -31,6 +31,7 @@ export type BroadcastRefinementTranscriptGapReason =
   | "decode-failed"
   | "transcription-failed"
   | "rate-limited"
+  | "route-changed"
   | "outcome-unknown";
 
 export interface BroadcastRefinementTranscriptPlannedChunk {
@@ -357,6 +358,7 @@ function normalizeCheckpoint(
         "decode-failed",
         "transcription-failed",
         "rate-limited",
+        "route-changed",
         "outcome-unknown",
       ].includes(typeof item.reason === "string" ? item.reason : "") ||
       !Number.isSafeInteger(item.attemptCount) ||

@@ -28,6 +28,16 @@ import {
   MAX_CANDIDATE_PASS_B_CONTEXT_TEXT_LENGTH,
   type CandidatePassBContextPacket,
 } from "../analysis/candidatePassBWorkerProtocol";
+import {
+  BROADCAST_TRANSCRIPT_GROQ_MODEL_ID,
+  BROADCAST_TRANSCRIPT_GROQ_MODEL_REVISION,
+  BROADCAST_TRANSCRIPT_QWEN_OMNI_MODEL_ID,
+  BROADCAST_TRANSCRIPT_QWEN_OMNI_MODEL_REVISION,
+} from "../analysis/broadcastTranscriptQwen";
+import {
+  BROADCAST_TRANSCRIPT_ROUTE_FINGERPRINT_HEADER,
+  createBroadcastTranscriptRouteSelection,
+} from "../analysis/broadcastTranscriptRouteManifest";
 import worker, {
   handleCandidateInsightRequest,
   handleBroadcastTranscriptRequest,
@@ -46,6 +56,27 @@ const TRANSCRIPT_ENDPOINT =
 const PRODUCTION_ORIGIN = "https://11qaws.github.io";
 const SIGNING_KEY = "0123456789abcdef0123456789abcdef";
 const PUBLIC_LEASE_TOKEN = `public_${"a".repeat(40)}`;
+const freeTranscriptRoute = (provider: "qwen" | "groq") =>
+  createBroadcastTranscriptRouteSelection({
+    schemaVersion: "1.1.0",
+    serviceVersion: 6,
+    routingPolicyVersion: "1.11.0",
+    providerConfigurationVersion: "1.3.0",
+    transportVersion: 3,
+    transportMode: "free-r2",
+    maximumChunkDurationMs: 90_000,
+    primaryMediaType: "audio/wav",
+    provider,
+    modelId:
+      provider === "qwen"
+        ? BROADCAST_TRANSCRIPT_QWEN_OMNI_MODEL_ID
+        : BROADCAST_TRANSCRIPT_GROQ_MODEL_ID,
+    modelRevision:
+      provider === "qwen"
+        ? BROADCAST_TRANSCRIPT_QWEN_OMNI_MODEL_REVISION
+        : BROADCAST_TRANSCRIPT_GROQ_MODEL_REVISION,
+    effectiveFallback: { mode: "disabled" },
+  });
 
 interface StoredObject {
   readonly bytes: Uint8Array<ArrayBuffer>;
@@ -491,6 +522,7 @@ function createEnvironment(options: {
 function stageRequest(
   wav: Uint8Array,
   lease: AiQuotaLeaseHeaders,
+  routeFingerprint?: string,
 ): Request {
   return new Request(
     `${TRANSCRIPT_ENDPOINT}?startMs=120000&durationMs=2000`,
@@ -500,6 +532,12 @@ function stageRequest(
         Origin: PRODUCTION_ORIGIN,
         "Content-Type": "audio/wav",
         "CF-Connecting-IP": "203.0.113.42",
+        ...(routeFingerprint === undefined
+          ? {}
+          : {
+              [BROADCAST_TRANSCRIPT_ROUTE_FINGERPRINT_HEADER]:
+                routeFingerprint,
+            }),
         ...leaseHeaders(lease),
       },
       body: wav as Uint8Array<ArrayBuffer>,
@@ -510,6 +548,7 @@ function stageRequest(
 function resolveRequest(
   mediaTicket: string,
   lease: AiQuotaLeaseHeaders,
+  routeFingerprint?: string,
 ): Request {
   return new Request(TRANSCRIPT_ENDPOINT, {
     method: "POST",
@@ -517,6 +556,12 @@ function resolveRequest(
       Origin: PRODUCTION_ORIGIN,
       "Content-Type": BROADCAST_TRANSCRIPT_MEDIA_RESOLVE_CONTENT_TYPE,
       "CF-Connecting-IP": "203.0.113.42",
+      ...(routeFingerprint === undefined
+        ? {}
+        : {
+            [BROADCAST_TRANSCRIPT_ROUTE_FINGERPRINT_HEADER]:
+              routeFingerprint,
+          }),
       ...leaseHeaders(lease),
     },
     body: JSON.stringify(
@@ -553,6 +598,7 @@ async function stageFixture(options: {
   readonly clientLimit: ReturnType<typeof vi.fn>;
   readonly globalLimit: ReturnType<typeof vi.fn>;
   readonly coordinator: ReturnType<typeof createCoordinator>;
+  readonly routeFingerprint: string;
 }> {
   const bucket = new MemoryR2Bucket();
   const wav = silentWav(2_000);
@@ -570,8 +616,11 @@ async function stageFixture(options: {
       ? {}
       : { transcriptProvider: options.transcriptProvider }),
   });
+  const route = await freeTranscriptRoute(
+    options.transcriptProvider ?? "qwen",
+  );
   const response = await handleBroadcastTranscriptRequest(
-    stageRequest(wav, lease),
+    stageRequest(wav, lease, route.fingerprint),
     fixture.environment,
   );
   expect(response.status).toBe(202);
@@ -584,6 +633,7 @@ async function stageFixture(options: {
     clientLimit: fixture.clientLimit,
     globalLimit: fixture.globalLimit,
     coordinator: fixture.coordinator,
+    routeFingerprint: route.fingerprint,
   };
 }
 
@@ -662,9 +712,11 @@ async function stageCandidateMediaFixture(): Promise<{
 describe("free R2 transcript Worker integration", () => {
   it("fails closed on a missing transport mode before reading media or calling a limiter/provider", async () => {
     const wav = silentWav(2_000);
+    const route = await freeTranscriptRoute("qwen");
     const request = stageRequest(
       wav,
       createLease(await payloadDigest(wav)),
+      route.fingerprint,
     );
     if (request.body === null) throw new Error("Expected request body.");
     const bodyReader = vi.spyOn(request.body, "getReader");
@@ -690,8 +742,9 @@ describe("free R2 transcript Worker integration", () => {
     expect(providerFetch).not.toHaveBeenCalled();
   });
 
-  it("rejects a Free-mode legacy body before reading it", async () => {
+  it("rejects non-WAV media before body/quota", async () => {
     const bucket = new MemoryR2Bucket();
+    const route = await freeTranscriptRoute("qwen");
     const request = new Request(
       `${TRANSCRIPT_ENDPOINT}?startMs=120000&durationMs=2000`,
       {
@@ -699,6 +752,8 @@ describe("free R2 transcript Worker integration", () => {
         headers: {
           Origin: PRODUCTION_ORIGIN,
           "Content-Type": "application/vnd.exclipper.transcript-base64",
+          [BROADCAST_TRANSCRIPT_ROUTE_FINGERPRINT_HEADER]:
+            route.fingerprint,
         },
         body: "UklGRg==",
       },
@@ -728,7 +783,8 @@ describe("free R2 transcript Worker integration", () => {
     const lease = createLease(await payloadDigest(wav));
     const { environment, clientLimit, globalLimit, coordinator } =
       createEnvironment({ bucket, mode: "free-r2" });
-    const request = stageRequest(wav, lease);
+    const route = await freeTranscriptRoute("qwen");
+    const request = stageRequest(wav, lease, route.fingerprint);
     const requestBody = request.body;
     const providerFetch = vi.fn();
 
@@ -755,6 +811,27 @@ describe("free R2 transcript Worker integration", () => {
     expect(providerFetch).not.toHaveBeenCalled();
   });
 
+  it("rejects a headerless Free R2 stage before quota or R2 work", async () => {
+    const bucket = new MemoryR2Bucket();
+    const wav = silentWav(2_000);
+    const lease = createLease(await payloadDigest(wav));
+    const { environment, coordinator } = createEnvironment({
+      bucket,
+      mode: "free-r2",
+    });
+
+    const response = await handleBroadcastTranscriptRequest(
+      stageRequest(wav, lease),
+      environment,
+    );
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({
+      error: { code: "INVALID_TRANSCRIPT_ROUTE" },
+    });
+    expect(coordinator.requests).toHaveLength(0);
+    expect(bucket.objects.size).toBe(0);
+  });
+
   it("resolves a staged ticket as a Qwen HTTPS URL and deletes media after success", async () => {
     const fixture = await stageFixture();
     let providerBody = "";
@@ -771,7 +848,11 @@ describe("free R2 transcript Worker integration", () => {
     );
 
     const response = await handleBroadcastTranscriptRequest(
-      resolveRequest(fixture.mediaTicket, fixture.lease),
+      resolveRequest(
+        fixture.mediaTicket,
+        fixture.lease,
+        fixture.routeFingerprint,
+      ),
       fixture.environment,
       { fetchImplementation: providerFetch },
     );
@@ -845,7 +926,11 @@ describe("free R2 transcript Worker integration", () => {
     );
 
     const response = await handleBroadcastTranscriptRequest(
-      resolveRequest(fixture.mediaTicket, fixture.lease),
+      resolveRequest(
+        fixture.mediaTicket,
+        fixture.lease,
+        fixture.routeFingerprint,
+      ),
       fixture.environment,
       { fetchImplementation: providerFetch },
     );
@@ -887,6 +972,57 @@ describe("free R2 transcript Worker integration", () => {
     expect(fixture.bucket.deletedKeys).toHaveLength(1);
   });
 
+  it("recovers route changes before quota, R2 reads, or provider work", async () => {
+    const fixture = await stageFixture();
+    const coordinatorCountAfterStage = fixture.coordinator.requests.length;
+    const head = vi.spyOn(fixture.bucket, "head");
+    const providerFetch = vi.fn();
+    const changedEnvironment: AiProxyEnvironment = {
+      ...fixture.environment,
+      BROADCAST_TRANSCRIPT_PROVIDER: "groq",
+    };
+
+    const staleHeaderResponse = await handleBroadcastTranscriptRequest(
+      resolveRequest(
+        fixture.mediaTicket,
+        fixture.lease,
+        fixture.routeFingerprint,
+      ),
+      changedEnvironment,
+      { fetchImplementation: providerFetch },
+    );
+    expect(staleHeaderResponse.status).toBe(409);
+    await expect(staleHeaderResponse.json()).resolves.toMatchObject({
+      error: { code: "TRANSCRIPT_ROUTE_CHANGED" },
+    });
+    expect(fixture.coordinator.requests).toHaveLength(
+      coordinatorCountAfterStage,
+    );
+    expect(head).not.toHaveBeenCalled();
+    expect(providerFetch).not.toHaveBeenCalled();
+
+    const groqRoute = await freeTranscriptRoute("groq");
+    const oldTicketResponse = await handleBroadcastTranscriptRequest(
+      resolveRequest(
+        fixture.mediaTicket,
+        fixture.lease,
+        groqRoute.fingerprint,
+      ),
+      changedEnvironment,
+      { fetchImplementation: providerFetch },
+    );
+    expect(oldTicketResponse.status).toBe(409);
+    await expect(oldTicketResponse.json()).resolves.toMatchObject({
+      error: { code: "TRANSCRIPT_ROUTE_CHANGED" },
+    });
+    expect(fixture.coordinator.requests).toHaveLength(
+      coordinatorCountAfterStage,
+    );
+    expect(head).not.toHaveBeenCalled();
+    expect(providerFetch).not.toHaveBeenCalled();
+    expect(fixture.bucket.objects.size).toBe(1);
+  });
+
   it.each(["local", "provider"] as const)(
     "retains staged media when %s rate limiting asks the client to retry",
     async (kind) => {
@@ -903,7 +1039,11 @@ describe("free R2 transcript Worker integration", () => {
           : vi.fn();
 
       const response = await handleBroadcastTranscriptRequest(
-        resolveRequest(fixture.mediaTicket, fixture.lease),
+        resolveRequest(
+          fixture.mediaTicket,
+          fixture.lease,
+          fixture.routeFingerprint,
+        ),
         fixture.environment,
         { fetchImplementation: providerFetch },
       );
@@ -922,7 +1062,11 @@ describe("free R2 transcript Worker integration", () => {
   it("retains staged transcript media when the provider outcome is unknown", async () => {
     const fixture = await stageFixture();
     const response = await handleBroadcastTranscriptRequest(
-      resolveRequest(fixture.mediaTicket, fixture.lease),
+      resolveRequest(
+        fixture.mediaTicket,
+        fixture.lease,
+        fixture.routeFingerprint,
+      ),
       fixture.environment,
       {
         fetchImplementation: vi.fn(() =>
@@ -947,7 +1091,11 @@ describe("free R2 transcript Worker integration", () => {
     const providerFetch = vi.fn();
 
     const response = await handleBroadcastTranscriptRequest(
-      resolveRequest(fixture.mediaTicket, fixture.lease),
+      resolveRequest(
+        fixture.mediaTicket,
+        fixture.lease,
+        fixture.routeFingerprint,
+      ),
       fixture.environment,
       { fetchImplementation: providerFetch },
     );

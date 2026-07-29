@@ -372,6 +372,69 @@ describe("AI quota browser client", () => {
     expect(preparedFetch).toHaveBeenCalledTimes(1);
   });
 
+  it("releases an unused transcript lease when the route changes before quota consumption", async () => {
+    const quotaActions: string[] = [];
+    const fetchImplementation = vi.fn(
+      (_input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+        const request = requestJsonBody(init) as {
+          readonly action: string;
+        };
+        quotaActions.push(request.action);
+        return Promise.resolve(
+          new Response(
+            JSON.stringify(
+              request.action === "cancel"
+                ? {
+                    schemaVersion: AI_QUOTA_SCHEMA_VERSION,
+                    status: "cancelled",
+                    retryAfterMs: 0,
+                    activeParticipantCount: 1,
+                    poolInFlightCount: 0,
+                  }
+                : {
+                    schemaVersion: AI_QUOTA_SCHEMA_VERSION,
+                    status: "granted",
+                    leaseToken:
+                      "lease_0000000000000000000000000000000000000001",
+                    leaseExpiresAtMs: Date.now() + 30_000,
+                    retryAfterMs: 0,
+                    activeParticipantCount: 1,
+                    poolInFlightCount: 0,
+                  },
+            ),
+            { status: 200 },
+          ),
+        );
+      },
+    );
+
+    const response = await fetchWithPreparedAiQuota(
+      new Uint8Array([82, 73, 70, 70]),
+      {
+        participantId: "participant_11111111111111111111111111111111",
+        runId: "analysis-run-1",
+        operationId: "transcript-route-change",
+        pool: "transcript",
+        fetchImplementation,
+      },
+      () =>
+        Promise.resolve(
+          new Response(
+            JSON.stringify({
+              error: { code: "TRANSCRIPT_ROUTE_CHANGED" },
+            }),
+            {
+              status: 409,
+              headers: { "Content-Type": "application/json" },
+            },
+          ),
+        ),
+    );
+
+    expect(response.status).toBe(409);
+    expect(quotaActions).toEqual(["lease", "cancel"]);
+  });
+
   it("replays the same lease once, then classifies a persistent connection loss as outcome unknown", async () => {
     const fetchImplementation = vi.fn(
       (_input: RequestInfo | URL, init?: RequestInit) => {
