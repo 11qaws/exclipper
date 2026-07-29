@@ -3,115 +3,115 @@ import type {
   BroadcastContextRequestInput,
   BroadcastContextResult,
 } from "./broadcastContextProtocol";
-import { MAX_BROADCAST_CONTEXT_CANDIDATES } from "./broadcastContextProtocol";
+import {
+  MAX_BROADCAST_CONTEXT_CANDIDATES,
+  MAX_BROADCAST_CONTEXT_DISCOVERED_LEADS,
+} from "./broadcastContextProtocol";
 
-export interface PersistedBroadcastContextEnvelope {
+export const BROADCAST_CONTEXT_PERSISTENCE_SCHEMA_VERSION = "1.2.0" as const;
+
+export interface CurrentPersistedBroadcastContextEnvelope {
   readonly resultPayload: unknown;
-  readonly refinementLeadIds: readonly string[] | null;
-  readonly fastRefinementLeadIds: readonly string[] | null;
-  readonly contextCandidateIds: readonly string[] | null;
+  readonly refinementLeadIds: readonly string[];
+  readonly fastRefinementLeadIds: readonly string[];
+  readonly contextCandidateIds: readonly string[];
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function boundedUniqueCandidateIds(value: unknown): readonly string[] | null {
-  const candidateIds = Array.isArray(value)
+function hasExactKeys(
+  value: Record<string, unknown>,
+  keys: readonly string[],
+): boolean {
+  const actual = Object.keys(value).sort();
+  const expected = [...keys].sort();
+  return (
+    actual.length === expected.length &&
+    actual.every((key, index) => key === expected[index])
+  );
+}
+
+function boundedUniqueIds(
+  value: unknown,
+  maximumCount: number,
+): readonly string[] | null {
+  const ids = Array.isArray(value)
     ? value as unknown[]
     : null;
   if (
-    candidateIds === null ||
-    candidateIds.length > MAX_BROADCAST_CONTEXT_CANDIDATES ||
-    !candidateIds.every(
-      (candidateId) =>
-        typeof candidateId === "string" &&
-        candidateId.length > 0 &&
-        candidateId.length <= 256,
+    ids === null ||
+    ids.length > maximumCount ||
+    !ids.every(
+      (id) =>
+        typeof id === "string" &&
+        id.length > 0 &&
+        id.length <= 256 &&
+        id.trim() === id &&
+        !/[\p{Cc}\p{Cf}]/u.test(id),
     ) ||
-    new Set(candidateIds).size !== candidateIds.length
+    new Set(ids).size !== ids.length
   ) {
     return null;
   }
-  return candidateIds.map((candidateId) => candidateId as string);
-}
-
-function legacyCandidateIds(resultPayload: unknown): readonly string[] | null {
-  if (!isRecord(resultPayload) || !Array.isArray(resultPayload.annotations)) {
-    return null;
-  }
-  const candidateIds = resultPayload.annotations.map((annotation) =>
-    isRecord(annotation) ? annotation.candidateId : null,
-  );
-  return boundedUniqueCandidateIds(candidateIds);
+  return ids.map((id) => id as string);
 }
 
 export function unpackPersistedBroadcastContext(
   payload: unknown,
-): PersistedBroadcastContextEnvelope {
+): CurrentPersistedBroadcastContextEnvelope | null {
   if (
-    isRecord(payload) &&
-    "result" in payload &&
-    "refinementLeadIds" in payload &&
-    Array.isArray(payload.refinementLeadIds) &&
-    payload.refinementLeadIds.every((value) => typeof value === "string")
+    !isRecord(payload) ||
+    !hasExactKeys(payload, [
+      "schemaVersion",
+      "result",
+      "refinementLeadIds",
+      "fastRefinementLeadIds",
+      "contextCandidateIds",
+    ]) ||
+    payload.schemaVersion !== BROADCAST_CONTEXT_PERSISTENCE_SCHEMA_VERSION ||
+    !isRecord(payload.result)
   ) {
-    const fastRefinementLeadIds = "fastRefinementLeadIds" in payload
-      ? payload.fastRefinementLeadIds
-      : [];
-    if (
-      !Array.isArray(fastRefinementLeadIds) ||
-      !fastRefinementLeadIds.every((value) => typeof value === "string")
-    ) {
-      return {
-        resultPayload: payload,
-        refinementLeadIds: null,
-        fastRefinementLeadIds: null,
-        contextCandidateIds: null,
-      };
-    }
-    const explicitContextCandidateIds =
-      "contextCandidateIds" in payload
-        ? boundedUniqueCandidateIds(payload.contextCandidateIds)
-        : null;
-    return {
-      resultPayload: payload.result,
-      refinementLeadIds: payload.refinementLeadIds,
-      fastRefinementLeadIds,
-      contextCandidateIds:
-        explicitContextCandidateIds ?? legacyCandidateIds(payload.result),
-    };
+    return null;
   }
-  return {
-    resultPayload: payload,
-    refinementLeadIds: null,
-    fastRefinementLeadIds: null,
-    contextCandidateIds: legacyCandidateIds(payload),
-  };
+  const refinementLeadIds = boundedUniqueIds(
+    payload.refinementLeadIds,
+    MAX_BROADCAST_CONTEXT_DISCOVERED_LEADS,
+  );
+  const fastRefinementLeadIds = boundedUniqueIds(
+    payload.fastRefinementLeadIds,
+    MAX_BROADCAST_CONTEXT_DISCOVERED_LEADS,
+  );
+  const contextCandidateIds = boundedUniqueIds(
+    payload.contextCandidateIds,
+    MAX_BROADCAST_CONTEXT_CANDIDATES,
+  );
+  if (
+    refinementLeadIds === null ||
+    fastRefinementLeadIds === null ||
+    contextCandidateIds === null ||
+    fastRefinementLeadIds.some(
+      (leadId) => !refinementLeadIds.includes(leadId),
+    )
+  ) {
+    return null;
+  }
+  return Object.freeze({
+    resultPayload: payload.result,
+    refinementLeadIds,
+    fastRefinementLeadIds,
+    contextCandidateIds,
+  });
 }
 
 /**
- * Revalidates a stored provider-shaped result against the exact source map.
- * Explicit legacy capability flags survive the validation pass; an old empty
- * array is not silently upgraded into proof that the feature ran and found 0.
+ * Revalidates the current stored provider result against the exact source map.
+ * Compatibility flags are intentionally not inferred or restored.
  */
 export function parsePersistedBroadcastContextResult(
   payload: unknown,
   input: BroadcastContextRequestInput,
 ): BroadcastContextResult | null {
-  const parsed = parseBroadcastContextProxyResult(payload, input);
-  if (parsed === null || !isRecord(payload)) {
-    return parsed;
-  }
-  return {
-    ...parsed,
-    semanticChaptersSupported:
-      typeof payload.semanticChaptersSupported === "boolean"
-        ? payload.semanticChaptersSupported
-        : parsed.semanticChaptersSupported,
-    discoveredLeadsSupported:
-      typeof payload.discoveredLeadsSupported === "boolean"
-        ? payload.discoveredLeadsSupported
-        : parsed.discoveredLeadsSupported,
-  };
+  return parseBroadcastContextProxyResult(payload, input);
 }

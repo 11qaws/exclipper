@@ -1,11 +1,9 @@
 import {
   MAX_CANDIDATE_PASS_B_RESPONSE_BYTES,
-  MAX_CANDIDATE_PASS_B_IDENTIFIED_PARTICIPANTS,
-  MAX_CANDIDATE_PASS_B_PARTICIPANT_EVIDENCE_LENGTH,
-  MAX_CANDIDATE_PASS_B_PARTICIPANT_NAME_LENGTH,
   CANDIDATE_PASS_B_MAX_OUTPUT_TOKENS,
   buildCandidatePassBPrompt,
   extractCandidatePassBGeminiResponse,
+  parseCandidatePassBGeminiAnalysis,
 } from "./candidatePassBGemini";
 import {
   CANDIDATE_PASS_B_QWEN_MODEL_ID,
@@ -15,11 +13,18 @@ import {
   type CandidatePassBContextPacket,
   type CandidatePassBVideoFrame,
 } from "./candidatePassBWorkerProtocol";
-import type { CandidatePassBCastRosterId } from "./participantRoster";
-import type { AnalysisLanguage } from "../domain/analysisLanguage";
+import {
+  isCandidatePassBCastRosterId,
+  type CandidatePassBCastRosterId,
+} from "./participantRoster";
+import {
+  isAnalysisLanguage,
+  type AnalysisLanguage,
+} from "../domain/analysisLanguage";
 import {
   canonicalizeCandidatePassBContextPacket,
 } from "./candidatePassBContextBudget";
+import { isCandidatePassBContextPacket } from "./candidateFinalVerification";
 
 const MAX_BASE64_WAV_LENGTH = 8 * 1024 * 1024;
 export const CANDIDATE_PASS_B_QWEN_MAX_OUTPUT_TOKENS =
@@ -95,40 +100,6 @@ export function buildCandidatePassBQwenOmniSharedPrompt(
   );
 }
 
-function normalizedNarrative(
-  value: unknown,
-  maximumLength: number,
-  outputLanguage: AnalysisLanguage,
-): string | null {
-  if (typeof value !== "string") return null;
-  const normalized = value
-    .normalize("NFKC")
-    .replace(/[\p{Cc}\p{Cf}]/gu, " ")
-    .replace(/\s+/gu, " ")
-    .trim();
-  if (
-    normalized.length === 0 ||
-    !(outputLanguage === "ko" ? /\p{Script=Hangul}/u : /\p{Script=Latin}/u).test(normalized) ||
-    /\p{Script=Han}/u.test(normalized)
-  ) return null;
-  return Array.from(normalized).slice(0, maximumLength).join("").trim();
-}
-
-function normalizedName(value: unknown): string | null {
-  if (typeof value !== "string") return null;
-  const normalized = value
-    .normalize("NFKC")
-    .replace(/[\p{Cc}\p{Cf}]/gu, " ")
-    .replace(/\s+/gu, " ")
-    .trim();
-  if (normalized.length === 0) return null;
-  const bounded = Array.from(normalized)
-    .slice(0, MAX_CANDIDATE_PASS_B_PARTICIPANT_NAME_LENGTH)
-    .join("")
-    .trim();
-  return bounded.length > 0 ? bounded : null;
-}
-
 function normalizedQwenJson(
   text: string,
   candidateDurationMs: number,
@@ -145,223 +116,89 @@ function normalizedQwenJson(
   } catch {
     return null;
   }
-  if (!isRecord(value) || !Array.isArray(value.segments)) return null;
-  const eventSummaryKo = normalizedNarrative(value.eventSummaryKo, 600, outputLanguage);
-  const reactionSummaryKo = normalizedNarrative(value.reactionSummaryKo, 600, outputLanguage);
-  const whyGoodClipKo = normalizedNarrative(value.whyGoodClipKo, 600, outputLanguage);
-  const participantPresence = [
-    "identified",
-    "present-unidentified",
-    "none-present",
-    "insufficient-evidence",
-  ].includes(value.participantPresence as string)
-    ? value.participantPresence as string
-    : null;
-  const participantSummaryKo = normalizedNarrative(value.participantSummaryKo, 600, outputLanguage);
-  const clipDecision = value.clipDecision === undefined
-    ? "uncertain"
-    : ["recommend", "reject", "uncertain"].includes(value.clipDecision as string)
-    ? value.clipDecision as "recommend" | "reject" | "uncertain"
-    : null;
-  const contextConsistency = value.contextConsistency === undefined
-    ? "insufficient"
-    : ["consistent", "conflict", "insufficient"].includes(
-        value.contextConsistency as string,
-      )
-    ? value.contextConsistency as "consistent" | "conflict" | "insufficient"
-    : null;
-  const programMaterial = value.programMaterial === undefined
-    ? "routine-or-unclear"
-    : [
-        "streamer-event",
-        "music-or-intermission",
-        "routine-or-unclear",
-      ].includes(value.programMaterial as string)
-    ? value.programMaterial as
-        | "streamer-event"
-        | "music-or-intermission"
-        | "routine-or-unclear"
-    : null;
   if (
-    eventSummaryKo === null ||
-    reactionSummaryKo === null ||
-    whyGoodClipKo === null ||
-    participantPresence === null ||
-    participantSummaryKo === null ||
-    clipDecision === null ||
-    contextConsistency === null ||
-    programMaterial === null
+    !parseCandidatePassBGeminiAnalysis(
+      value,
+      candidateDurationMs,
+      null,
+      outputLanguage,
+    ).ok
   ) {
     return null;
   }
-  const segments: Array<{
-    readonly relativeStartMs: number;
-    readonly relativeEndMs: number;
-    readonly text: string;
-  }> = [];
-  for (const raw of value.segments.slice(0, 128)) {
-    if (!isRecord(raw)) continue;
-    const start = typeof raw.relativeStartMs === "number"
-      ? Math.round(raw.relativeStartMs)
-      : null;
-    const end = typeof raw.relativeEndMs === "number"
-      ? Math.round(raw.relativeEndMs)
-      : null;
-    const textValue = raw.text === "[불명]"
-      ? "[불명]"
-      : normalizedNarrative(raw.text, 240, "ko");
-    if (start === null || end === null || textValue === null) continue;
-    const relativeStartMs = Math.max(0, Math.min(candidateDurationMs - 1, start));
-    const relativeEndMs = Math.max(
-      relativeStartMs + 1,
-      Math.min(candidateDurationMs, end),
-    );
-    segments.push({ relativeStartMs, relativeEndMs, text: textValue });
-  }
-  segments.sort(
-    (left, right) => left.relativeStartMs - right.relativeStartMs ||
-      left.relativeEndMs - right.relativeEndMs,
-  );
-  const nonOverlapping = segments.filter(
-    (segment, index) => index === 0 || segment.relativeStartMs >= segments[index - 1]!.relativeEndMs,
-  );
-  const uncertaintiesKo: string[] = [];
-  if (Array.isArray(value.uncertaintiesKo)) {
-    for (const raw of value.uncertaintiesKo.slice(0, 6)) {
-      const normalized = normalizedNarrative(raw, 300, outputLanguage);
-      if (normalized !== null && !uncertaintiesKo.includes(normalized)) {
-        uncertaintiesKo.push(normalized);
-      }
-    }
-  }
-  if (uncertaintiesKo.length === 0) {
-    uncertaintiesKo.push("대표 화면 사이의 움직임은 원본 재생으로 확인해야 합니다.");
-  }
-  const identifiedParticipants: Array<{
-    readonly displayName: string;
-    readonly role: "streamer" | "guest" | "unknown";
-    readonly evidenceBasis:
-      | "on-screen-name"
-      | "spoken-name"
-      | "provided-cast-reference";
-    readonly evidenceKo: string;
-    readonly confidence: number;
-    readonly relativeTimestampMs: number;
-    readonly observedFrameIndices: readonly number[];
-  }> = [];
-  const seenParticipantNames = new Set<string>();
-  if (Array.isArray(value.identifiedParticipants)) {
-    for (const raw of value.identifiedParticipants.slice(
-      0,
-      MAX_CANDIDATE_PASS_B_IDENTIFIED_PARTICIPANTS,
-    )) {
-      if (!isRecord(raw)) continue;
-      const displayName = normalizedName(raw.displayName);
-      const evidenceKo = normalizedNarrative(
-        raw.evidenceKo,
-        MAX_CANDIDATE_PASS_B_PARTICIPANT_EVIDENCE_LENGTH,
-        outputLanguage,
-      );
-      const role = ["streamer", "guest", "unknown"].includes(raw.role as string)
-        ? (raw.role as "streamer" | "guest" | "unknown")
-        : null;
-      const evidenceBasis = [
-        "on-screen-name",
-        "spoken-name",
-        "provided-cast-reference",
-      ].includes(raw.evidenceBasis as string)
-        ? (raw.evidenceBasis as
-            | "on-screen-name"
-            | "spoken-name"
-            | "provided-cast-reference")
-        : null;
-      const confidence = typeof raw.confidence === "number" && Number.isFinite(raw.confidence)
-        ? Math.max(0, Math.min(1, raw.confidence))
-        : null;
-      const timestamp = typeof raw.relativeTimestampMs === "number" && Number.isFinite(raw.relativeTimestampMs)
-        ? Math.round(Math.max(0, Math.min(candidateDurationMs, raw.relativeTimestampMs)))
-        : null;
-      const observedFrameIndices = Array.isArray(raw.observedFrameIndices)
-        ? [
-            ...new Set(
-              raw.observedFrameIndices.filter(
-                (frameIndex): frameIndex is number =>
-                  Number.isSafeInteger(frameIndex) &&
-                  frameIndex >= 0 &&
-                  frameIndex < MAX_CANDIDATE_PASS_B_VIDEO_FRAMES,
-              ),
-            ),
-          ].sort((left, right) => left - right)
-        : null;
-      const nameKey = displayName?.toLocaleLowerCase("ko-KR") ?? "";
-      if (
-        displayName === null ||
-        evidenceKo === null ||
-        role === null ||
-        evidenceBasis === null ||
-        confidence === null ||
-        timestamp === null ||
-        observedFrameIndices === null ||
-        seenParticipantNames.has(nameKey)
-      ) {
-        continue;
-      }
-      seenParticipantNames.add(nameKey);
-      identifiedParticipants.push({
-        displayName,
-        role,
-        evidenceBasis,
-        evidenceKo,
-        confidence,
-        relativeTimestampMs: timestamp,
-        observedFrameIndices,
-      });
-    }
-  }
-  return JSON.stringify({
-    segments: nonOverlapping,
-    eventSummaryKo,
-    reactionSummaryKo,
-    whyGoodClipKo,
-    uncertaintiesKo,
-    participantPresence,
-    participantSummaryKo,
-    identifiedParticipants,
-    clipDecision,
-    contextConsistency,
-    programMaterial,
-  });
+  return JSON.stringify(value);
 }
 
-function validFrames(
+function requiredCandidateFrames(
   frames: readonly CandidatePassBVideoFrame[],
-): readonly CandidatePassBVideoFrame[] {
+  candidateDurationMs: number,
+): readonly [
+  CandidatePassBVideoFrame,
+  CandidatePassBVideoFrame,
+  CandidatePassBVideoFrame,
+  CandidatePassBVideoFrame,
+] {
+  const values: readonly unknown[] =
+    Array.isArray(frames) &&
+    frames.length === MAX_CANDIDATE_PASS_B_VIDEO_FRAMES
+      ? frames
+      : [];
   const normalized: CandidatePassBVideoFrame[] = [];
-  for (const frame of frames) {
+  for (const value of values) {
+    if (!isRecord(value)) continue;
+    const timestampMs =
+      typeof value.timestampMs === "number" ? value.timestampMs : null;
+    const dataBase64 =
+      typeof value.dataBase64 === "string" ? value.dataBase64 : null;
     if (
-      normalized.length >= MAX_CANDIDATE_PASS_B_VIDEO_FRAMES ||
-      !Number.isSafeInteger(frame.timestampMs) ||
-      frame.timestampMs < 0 ||
-      frame.mimeType !== "image/jpeg" ||
-      typeof frame.dataBase64 !== "string" ||
-      frame.dataBase64.length === 0 ||
-      frame.dataBase64.length > MAX_CANDIDATE_PASS_B_VIDEO_FRAME_BASE64_LENGTH
+      timestampMs === null ||
+      !Number.isSafeInteger(timestampMs) ||
+      timestampMs < 0 ||
+      timestampMs >= candidateDurationMs ||
+      value.mimeType !== "image/jpeg" ||
+      dataBase64 === null ||
+      dataBase64.length === 0 ||
+      dataBase64.length > MAX_CANDIDATE_PASS_B_VIDEO_FRAME_BASE64_LENGTH
     ) {
-      continue;
+      throw new RangeError(
+        "Candidate analysis requires four valid source-bounded video frames.",
+      );
     }
-    normalized.push(frame);
+    normalized.push({
+      timestampMs,
+      mimeType: "image/jpeg",
+      dataBase64,
+    });
   }
-  // Qwen Omni's documented image-list contract requires at least two images.
-  return normalized.length >= 2 ? normalized : [];
+  if (
+    normalized.length !== MAX_CANDIDATE_PASS_B_VIDEO_FRAMES ||
+    new Set(normalized.map(({ timestampMs }) => timestampMs)).size !==
+    MAX_CANDIDATE_PASS_B_VIDEO_FRAMES
+  ) {
+    throw new RangeError(
+      "Candidate analysis requires four distinct source-bounded video frames.",
+    );
+  }
+  return normalized as unknown as readonly [
+    CandidatePassBVideoFrame,
+    CandidatePassBVideoFrame,
+    CandidatePassBVideoFrame,
+    CandidatePassBVideoFrame,
+  ];
 }
 
-export function buildCandidatePassBQwenOmniRequestBody(
+function buildQwenOmniRequestBody(
   audioBase64: string,
   candidateDurationMs: number,
-  videoFrames: readonly CandidatePassBVideoFrame[] = [],
-  castRosterId: CandidatePassBCastRosterId | null = null,
-  outputLanguage: AnalysisLanguage = "ko",
-  context: CandidatePassBContextPacket | null = null,
+  frames: readonly [
+    CandidatePassBVideoFrame,
+    CandidatePassBVideoFrame,
+    CandidatePassBVideoFrame,
+    CandidatePassBVideoFrame,
+  ],
+  castRosterId: CandidatePassBCastRosterId | null,
+  outputLanguage: AnalysisLanguage,
+  context: CandidatePassBContextPacket | null,
 ): CandidatePassBQwenOmniRequestBody {
   if (
     typeof audioBase64 !== "string" ||
@@ -369,14 +206,14 @@ export function buildCandidatePassBQwenOmniRequestBody(
     audioBase64.length > MAX_BASE64_WAV_LENGTH ||
     !Number.isSafeInteger(candidateDurationMs) ||
     candidateDurationMs <= 0 ||
-    candidateDurationMs > MAX_CANDIDATE_PASS_B_TARGET_DURATION_MS
+    candidateDurationMs > MAX_CANDIDATE_PASS_B_TARGET_DURATION_MS ||
+    (castRosterId !== null && !isCandidatePassBCastRosterId(castRosterId)) ||
+    !isAnalysisLanguage(outputLanguage)
   ) {
     throw new RangeError("Invalid Qwen Omni candidate input.");
   }
-  const frames = validFrames(videoFrames);
-  const qwenGroundingRules = frames.length === 0
-    ? "\n대표 화면이 제공되지 않았습니다. 화면 내용, 비명의 원인, 표정, 몸짓, 게임 상황을 추측하지 말고 시각 정보가 없다고 uncertaintiesKo에 적으세요."
-    : "\n대표 화면에서 실제로 확인되는 것만 서술하세요. 작아서 선명하게 읽히지 않는 글자는 인용하지 말고, 아바타 이미지의 프레임별 차이만으로 몸짓·행동·감정을 단정하지 마세요. 프레임 사이의 움직임과 인과관계는 보이지 않으므로 대사와 화면 양쪽에서 확인되지 않으면 uncertaintiesKo에 남기세요.";
+  const qwenGroundingRules =
+    "\n대표 화면에서 실제로 확인되는 것만 서술하세요. 작아서 선명하게 읽히지 않는 글자는 인용하지 말고, 아바타 이미지의 프레임별 차이만으로 몸짓·행동·감정을 단정하지 마세요. 프레임 사이의 움직임과 인과관계는 보이지 않으므로 대사와 화면 양쪽에서 확인되지 않으면 uncertaintiesKo에 남기세요.";
   const responseShape = `\n\n다음 JSON 형식만 출력하세요:\n{"segments":[{"relativeStartMs":0,"relativeEndMs":1000,"text":"실제 한국어 발화"}],"eventSummaryKo":"전체 흐름 속 화면 장면·사건·반응 200~300자","reactionSummaryKo":"관찰한 반응 과정","whyGoodClipKo":"클립 가치 또는 제외 이유","uncertaintiesKo":[],"participantPresence":"identified","participantSummaryKo":"확인된 인물 또는 등장인물 없음","identifiedParticipants":[{"displayName":"화면이나 호명으로 확인한 이름","role":"streamer","evidenceBasis":"on-screen-name","evidenceKo":"화면 자막에 이름이 표시됨","confidence":0.9,"relativeTimestampMs":5000,"observedFrameIndices":[0,1]}],"clipDecision":"recommend","contextConsistency":"consistent","programMaterial":"streamer-event"}`;
   return {
     model: CANDIDATE_PASS_B_QWEN_MODEL_ID,
@@ -415,6 +252,37 @@ export function buildCandidatePassBQwenOmniRequestBody(
   };
 }
 
+export function buildCandidatePassBQwenOmniRequestBody(
+  audioBase64: string,
+  candidateDurationMs: number,
+  videoFrames: readonly CandidatePassBVideoFrame[],
+  castRosterId: CandidatePassBCastRosterId | null,
+  outputLanguage: AnalysisLanguage,
+  context: CandidatePassBContextPacket,
+): CandidatePassBQwenOmniRequestBody {
+  if (
+    typeof audioBase64 !== "string" ||
+    audioBase64.length === 0 ||
+    audioBase64.length > MAX_BASE64_WAV_LENGTH ||
+    !Number.isSafeInteger(candidateDurationMs) ||
+    candidateDurationMs <= 0 ||
+    candidateDurationMs > MAX_CANDIDATE_PASS_B_TARGET_DURATION_MS ||
+    !isCandidatePassBContextPacket(context)
+  ) {
+    throw new RangeError("Invalid Qwen Omni candidate input.");
+  }
+  const frames = requiredCandidateFrames(videoFrames, candidateDurationMs);
+  const canonicalContext = canonicalizeCandidatePassBContextPacket(context);
+  return buildQwenOmniRequestBody(
+    audioBase64,
+    candidateDurationMs,
+    frames,
+    castRosterId,
+    outputLanguage,
+    canonicalContext,
+  );
+}
+
 function boundedHttpsMediaUrl(value: string): string {
   let parsed: URL;
   try {
@@ -442,15 +310,16 @@ function boundedHttpsMediaUrl(value: string): string {
  * staged transport from drifting away from the direct transport's analysis
  * semantics.
  */
-export function buildCandidatePassBQwenOmniUrlRequestBody(
-  audioUrl: string,
+function buildQwenOmniUrlRequestBody(
+  audioUrl: string | null,
   candidateDurationMs: number,
   videoFrames: readonly CandidatePassBQwenOmniUrlFrame[],
-  castRosterId: CandidatePassBCastRosterId | null = null,
-  outputLanguage: AnalysisLanguage = "ko",
-  context: CandidatePassBContextPacket | null = null,
+  castRosterId: CandidatePassBCastRosterId | null,
+  outputLanguage: AnalysisLanguage,
+  context: CandidatePassBContextPacket | null,
 ): CandidatePassBQwenOmniRequestBody {
-  const safeAudioUrl = boundedHttpsMediaUrl(audioUrl);
+  const safeAudioUrl =
+    audioUrl === null ? null : boundedHttpsMediaUrl(audioUrl);
   if (videoFrames.length !== 4) {
     throw new RangeError("Candidate staged media requires four frames.");
   }
@@ -458,22 +327,27 @@ export function buildCandidatePassBQwenOmniUrlRequestBody(
     timestampMs: frame.timestampMs,
     url: boundedHttpsMediaUrl(frame.url),
   }));
-  const base = buildCandidatePassBQwenOmniRequestBody(
-    "AAAA",
-    candidateDurationMs,
+  const placeholderFrames = requiredCandidateFrames(
     safeFrameUrls.map((frame) => ({
       timestampMs: frame.timestampMs,
       mimeType: "image/jpeg" as const,
       dataBase64: "AAAA",
     })),
+    candidateDurationMs,
+  );
+  const base = buildQwenOmniRequestBody(
+    "AAAA",
+    candidateDurationMs,
+    placeholderFrames,
     castRosterId,
     outputLanguage,
     context,
   );
   let frameIndex = 0;
-  const content = base.messages[0].content.map((part) => {
+  const content = base.messages[0].content.flatMap((part) => {
     if (!isRecord(part)) return part;
     if (part.type === "input_audio") {
+      if (safeAudioUrl === null) return [];
       return {
         type: "input_audio",
         input_audio: { data: safeAudioUrl, format: "wav" },
@@ -499,6 +373,52 @@ export function buildCandidatePassBQwenOmniUrlRequestBody(
     ...base,
     messages: [{ ...base.messages[0], content }],
   };
+}
+
+export function buildCandidatePassBQwenOmniUrlRequestBody(
+  audioUrl: string,
+  candidateDurationMs: number,
+  videoFrames: readonly CandidatePassBQwenOmniUrlFrame[],
+  castRosterId: CandidatePassBCastRosterId | null,
+  outputLanguage: AnalysisLanguage,
+  context: CandidatePassBContextPacket,
+): CandidatePassBQwenOmniRequestBody {
+  if (!isCandidatePassBContextPacket(context)) {
+    throw new RangeError("Invalid Qwen Omni candidate context.");
+  }
+  return buildQwenOmniUrlRequestBody(
+    boundedHttpsMediaUrl(audioUrl),
+    candidateDurationMs,
+    videoFrames,
+    castRosterId,
+    outputLanguage,
+    canonicalizeCandidatePassBContextPacket(context),
+  );
+}
+
+/**
+ * Pre-context visual inspection intentionally runs before a candidate context
+ * packet exists. It is a separate contract and cannot be used for Candidate
+ * Pass B publication.
+ */
+export function buildBroadcastTranscriptVisualQwenOmniUrlRequestBody(
+  audioUrl: string | null,
+  candidateDurationMs: number,
+  videoFrames: readonly CandidatePassBQwenOmniUrlFrame[],
+  castRosterId: CandidatePassBCastRosterId | null,
+  outputLanguage: AnalysisLanguage,
+  context: CandidatePassBContextPacket | null,
+): CandidatePassBQwenOmniRequestBody {
+  return buildQwenOmniUrlRequestBody(
+    audioUrl,
+    candidateDurationMs,
+    videoFrames,
+    castRosterId,
+    outputLanguage,
+    context === null
+      ? null
+      : canonicalizeCandidatePassBContextPacket(context),
+  );
 }
 
 /**

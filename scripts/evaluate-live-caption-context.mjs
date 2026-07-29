@@ -5,6 +5,10 @@ import {
   selectContextAwareCandidates,
 } from "../src/analysis/contextAwareCandidateSelection.ts";
 import { createBroadcastContextRequest } from "../src/analysis/broadcastContextProtocol.ts";
+import {
+  createBroadcastParticipantGrounding,
+  participantContextForBroadcastRange,
+} from "../src/analysis/broadcastParticipantGrounding.ts";
 import { mapWithConcurrency } from "../src/analysis/boundedAsyncMap.ts";
 import {
   MAX_TOPICAL_REFINEMENT_CONCURRENCY,
@@ -151,7 +155,25 @@ function buildFastPassCandidates(track) {
 }
 
 async function requestContext(input, analysisMode = "overview") {
-  const request = createBroadcastContextRequest(input);
+  const participantGrounding = createBroadcastParticipantGrounding({
+    sourceDurationMs: input.sourceDurationMs,
+    castRosterId: null,
+    chapters: input.chapters,
+  });
+  const request = createBroadcastContextRequest({
+    ...input,
+    castRosterId: null,
+    outputLanguage: "ko",
+    participantGrounding,
+    candidates: input.candidates.map((candidate) => ({
+      ...candidate,
+      participantContextKo: participantContextForBroadcastRange(
+        participantGrounding,
+        candidate.startMs,
+        candidate.endMs,
+      ),
+    })),
+  });
   const startedAt = performance.now();
   const response = await fetch(`${workerOrigin}/v1/broadcast-context`, {
     method: "POST",
@@ -163,6 +185,9 @@ async function requestContext(input, analysisMode = "overview") {
       sourceDurationMs: request.sourceDurationMs,
       chapters: request.chapters,
       candidates: request.candidates,
+      castRosterId: request.castRosterId,
+      participantGrounding: request.participantGrounding,
+      outputLanguage: request.outputLanguage,
       ...(analysisMode === "overview" ? {} : { analysisMode }),
     }),
     cache: "no-store",

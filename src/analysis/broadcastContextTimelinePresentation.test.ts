@@ -8,7 +8,7 @@ import {
 } from "./broadcastContextTimelinePresentation";
 
 const completeResult: BroadcastContextResult = {
-  schemaVersion: "1.4.0",
+  schemaVersion: "1.7.0",
   broadcastSummaryKo: "음식에 관해 이야기한다.",
   hostStreamerProfile: null,
   recurringThemesKo: [],
@@ -67,7 +67,7 @@ describe("buildBroadcastContextTimelinePresentation", () => {
     expect(view.noticeText).toBeNull();
   });
 
-  it("labels unsupported legacy dimensions with an em dash", () => {
+  it("keeps a partial mode result hidden until the final overview exists", () => {
     const view = buildBroadcastContextTimelinePresentation({
       status: "completed",
       result: {
@@ -78,10 +78,12 @@ describe("buildBroadcastContextTimelinePresentation", () => {
       recoveredAnalysis: true,
     });
 
-    expect(view.state).toBe("legacy-unsupported");
-    expect(view.topicMetric).toEqual({ value: "—", label: "주제 미지원" });
-    expect(view.leadMetric).toEqual({ value: "—", label: "단서 미지원" });
-    expect(view.noticeText).toContain("0개가 아니라 —");
+    expect(view.state).toBe("incomplete");
+    expect(view.topicMetric.value).toBe("—");
+    expect(view.leadMetric.value).toBe("—");
+    expect(view.topicEmptyText).toBe("최종 주제 구간 미확정");
+    expect(view.noticeText).toContain("중간 맥락 결과");
+    expect(view.noticeTone).toBe("warning");
   });
 
   it("limits empty claims to the observed range when context coverage is partial", () => {

@@ -15,7 +15,7 @@
  * `deleteOrphans` instead of needing one atomic transaction.
  */
 
-export const DEFAULT_SOURCE_HANDLE_DB_NAME = "retto-highlight-source-handles";
+export const DEFAULT_SOURCE_HANDLE_DB_NAME = "exclipper-source-handles-v1";
 export const SOURCE_HANDLE_DB_VERSION = 1;
 export const SOURCE_HANDLE_OBJECT_STORE = "sourceHandles";
 

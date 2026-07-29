@@ -239,6 +239,41 @@ describe("broadcastContextPhaseLedger", () => {
     });
   });
 
+  it("stores a deterministic failure as terminal non-retryable work", () => {
+    let ledger = start(createLedger(), "discovery", "chapter-1");
+    ledger = accepted(
+      reduceBroadcastContextPhaseLedger(ledger, {
+        type: "UNIT_FAILED",
+        ...unitIdentity(ledger, "discovery", "chapter-1"),
+        reasonCode: "local_context_contract_invalid",
+      }),
+    );
+
+    expect(
+      ledger.units.find(
+        ({ phase, unitId }) =>
+          phase === "discovery" && unitId === "chapter-1",
+      ),
+    ).toMatchObject({
+      status: "failed",
+      reasonCode: "local_context_contract_invalid",
+    });
+    expect(summarizeBroadcastContextPhaseLedger(ledger)).toMatchObject({
+      failedCount: 1,
+      complete: false,
+    });
+    expect(selectBroadcastContextPhaseRetryableUnits(ledger)).toEqual([]);
+    expect(
+      rejectedReason(
+        reduceBroadcastContextPhaseLedger(ledger, {
+          type: "UNIT_RETRY_PLANNED",
+          ...unitIdentity(ledger, "discovery", "chapter-1"),
+          nextOperationId: "must-not-run",
+        }),
+      ),
+    ).toBe("undefined_transition");
+  });
+
   it("plans a retry with a fresh billing identity and rejects delayed old events", () => {
     let ledger = createLedger();
     ledger = start(ledger, "discovery", "chapter-1");
@@ -271,7 +306,7 @@ describe("broadcastContextPhaseLedger", () => {
       attemptOrdinal: 1,
       inputDigest: "digest-discovery",
     });
-    expect(ledger.usedOperationIds).toContain("op-discovery-0");
+    expect(ledger.usedOperationIds).not.toContain("op-discovery-0");
     expect(ledger.usedOperationIds).toContain("op-discovery-1");
 
     expect(
@@ -329,6 +364,61 @@ describe("broadcastContextPhaseLedger", () => {
     expect(ledger.usedOperationIds).not.toContain("op-jury-1");
   });
 
+  it("persists exact-operation reconciliation and accepts only its terminal outcomes", () => {
+    let ledger = createLedger();
+    ledger = start(ledger, "jury", "candidate-1");
+    ledger = accepted(
+      reduceBroadcastContextPhaseLedger(ledger, {
+        type: "UNIT_OUTCOME_UNKNOWN",
+        ...unitIdentity(ledger, "jury", "candidate-1"),
+        reasonCode: "provider_response_lost",
+      }),
+    );
+    ledger = accepted(
+      reduceBroadcastContextPhaseLedger(ledger, {
+        type: "UNIT_RECONCILIATION_STARTED",
+        ...unitIdentity(ledger, "jury", "candidate-1"),
+      }),
+    );
+    expect(
+      ledger.units.find(({ unitId }) => unitId === "candidate-1"),
+    ).toMatchObject({
+      status: "reconciling",
+      operationId: "op-jury-0",
+      inputDigest: "digest-jury",
+    });
+    expect(summarizeBroadcastContextPhaseLedger(ledger)).toMatchObject({
+      reconcilingCount: 1,
+      outcomeUnknownCount: 0,
+    });
+
+    expect(
+      rejectedReason(
+        reduceBroadcastContextPhaseLedger(ledger, {
+          type: "UNIT_RECONCILIATION_SUCCEEDED",
+          ...unitIdentity(ledger, "jury", "candidate-1"),
+          operationId: "different-operation",
+          result: { summary: "stale" },
+        }),
+      ),
+    ).toBe("operation_id_mismatch");
+
+    ledger = accepted(
+      reduceBroadcastContextPhaseLedger(ledger, {
+        type: "UNIT_RECONCILIATION_NOT_DISPATCHED",
+        ...unitIdentity(ledger, "jury", "candidate-1"),
+        reasonCode: "coordinator_proved_not_dispatched",
+      }),
+    );
+    expect(
+      ledger.units.find(({ unitId }) => unitId === "candidate-1"),
+    ).toMatchObject({
+      status: "retryable-gap",
+      operationId: "op-jury-0",
+      reasonCode: "coordinator_proved_not_dispatched",
+    });
+  });
+
   it("replans an outcome-unknown unit only after an explicit editor confirmation", () => {
     let ledger = createLedger();
     ledger = start(ledger, "jury", "candidate-1");
@@ -375,7 +465,7 @@ describe("broadcastContextPhaseLedger", () => {
       operationId: "op-jury-confirmed-1",
       attemptOrdinal: 1,
     });
-    expect(ledger.usedOperationIds).toContain("op-jury-0");
+    expect(ledger.usedOperationIds).not.toContain("op-jury-0");
     expect(ledger.usedOperationIds).toContain("op-jury-confirmed-1");
   });
 
@@ -384,6 +474,13 @@ describe("broadcastContextPhaseLedger", () => {
     ledger = start(ledger, "discovery", "chapter-1");
     ledger = succeed(ledger, "discovery", "chapter-1");
     ledger = start(ledger, "jury", "candidate-1");
+    ledger = accepted(
+      reduceBroadcastContextPhaseLedger(ledger, {
+        type: "UNIT_OUTCOME_UNKNOWN",
+        ...unitIdentity(ledger, "jury", "candidate-1"),
+        reasonCode: "same_operation_reconciliation_unresolved",
+      }),
+    );
 
     const replanned = replanBroadcastContextPhaseLedgerAfterEditorRetry(
       ledger,
@@ -417,6 +514,25 @@ describe("broadcastContextPhaseLedger", () => {
       operationId: "op-detail-0",
       attemptOrdinal: 0,
     });
+  });
+
+  it("requires exact-operation reconciliation before an editor can replace an in-flight identity", () => {
+    let ledger = createLedger();
+    ledger = start(ledger, "jury", "candidate-1");
+
+    expect(() =>
+      replanBroadcastContextPhaseLedgerAfterEditorRetry(ledger, {
+        confirmationId: "editor-click-before-reconciliation",
+        nextOperationId: () => "must-not-be-allocated",
+      }),
+    ).toThrow("must reconcile its exact operation");
+    expect(
+      ledger.units.find(({ unitId }) => unitId === "candidate-1"),
+    ).toMatchObject({
+      status: "in-flight",
+      operationId: "op-jury-0",
+    });
+    expect(ledger.usedOperationIds).not.toContain("must-not-be-allocated");
   });
 
   it("does not reuse any operation identity from a prior attempt", () => {
@@ -768,7 +884,7 @@ describe("broadcastContextPhaseLedger", () => {
           phase: "jury",
           unitId: "jury-a",
           inputDigest: "jury-digest",
-          operationId: "jury-op",
+          operationId: "old-refinement-op",
           attemptOrdinal: 0,
           required: true,
         },
@@ -801,7 +917,7 @@ describe("broadcastContextPhaseLedger", () => {
     ).toThrow("must append a later phase");
   });
 
-  it("preserves operation history and rejects reused or duplicate extension identities", () => {
+  it("keeps only current operation fences and rejects current or duplicate extension identities", () => {
     let ledger = createBroadcastContextPhaseLedger({
       fence,
       units: [
@@ -837,7 +953,7 @@ describe("broadcastContextPhaseLedger", () => {
           phase: "jury",
           unitId: "jury-a",
           inputDigest: "jury-digest",
-          operationId: "discovery-op-0",
+          operationId: "discovery-op-1",
           attemptOrdinal: 0,
           required: true,
         },
@@ -863,13 +979,10 @@ describe("broadcastContextPhaseLedger", () => {
         },
       ]),
     ).toThrow("extension is invalid");
-    expect(ledger.usedOperationIds).toEqual([
-      "discovery-op-0",
-      "discovery-op-1",
-    ]);
+    expect(ledger.usedOperationIds).toEqual(["discovery-op-1"]);
   });
 
-  it("replaces only refinement work while retaining parent evidence and retired operation IDs", () => {
+  it("replaces only refinement work while retaining parent evidence and bounded current IDs", () => {
     const ledger = createBroadcastContextPhaseLedger({
       fence,
       units: [
@@ -931,7 +1044,6 @@ describe("broadcastContextPhaseLedger", () => {
       "discovery-op",
       "jury-op",
       "new-refinement-op",
-      "old-refinement-op",
     ]);
     expect(() =>
       replaceBroadcastContextRefinementPhaseLedgerPlan(ledger, [
@@ -939,7 +1051,7 @@ describe("broadcastContextPhaseLedger", () => {
           phase: "refinement",
           unitId: "lead:reused",
           inputDigest: "reused-digest",
-          operationId: "old-refinement-op",
+          operationId: "jury-op",
           attemptOrdinal: 0,
           required: true,
         },

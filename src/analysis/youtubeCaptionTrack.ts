@@ -35,6 +35,17 @@ export interface YouTubeCaptionTrackResult {
   readonly events: readonly YouTubeCaptionEvent[];
 }
 
+export interface YouTubeCaptionTranscriptPlanCell {
+  readonly chunkId: string;
+  readonly sourceStartMs: number;
+  readonly sourceEndMs: number;
+}
+
+export interface YouTubeCaptionTranscriptCellOutcome {
+  readonly chunkId: string;
+  readonly chapter: BroadcastContextChapterInput;
+}
+
 /**
  * 사용자가 붙여 넣은 것에서 영상 ID 를 꺼낸다.
  *
@@ -140,6 +151,81 @@ export function createYouTubeCaptionChapters(
     });
   }
   return chapters;
+}
+
+/**
+ * Projects a caption track onto the exact immutable transcript cells.
+ *
+ * A cell is covered only when the track contains usable text in that exact
+ * range. Empty cells are intentionally omitted so the caller must continue
+ * them through VAD and, when speech exists, ASR before sealing one combined
+ * transcript plan.
+ */
+export function createYouTubeCaptionTranscriptCellOutcomes(
+  track: YouTubeCaptionTrackResult,
+  plannedCells: readonly YouTubeCaptionTranscriptPlanCell[],
+  sourceDurationMs: number,
+): readonly YouTubeCaptionTranscriptCellOutcome[] {
+  if (
+    !Number.isSafeInteger(sourceDurationMs) ||
+    sourceDurationMs <= 0 ||
+    sourceDurationMs > MAX_CAPTION_TIME_MS
+  ) {
+    throw new RangeError("YouTube caption transcript source duration is invalid.");
+  }
+  const ordered = [...plannedCells].sort(
+    (left, right) =>
+      left.sourceStartMs - right.sourceStartMs ||
+      left.sourceEndMs - right.sourceEndMs ||
+      left.chunkId.localeCompare(right.chunkId),
+  );
+  const ids = new Set<string>();
+  let previousEndMs = -1;
+  return ordered.flatMap((cell, index) => {
+    if (
+      typeof cell.chunkId !== "string" ||
+      cell.chunkId.length === 0 ||
+      cell.chunkId.length > 96 ||
+      ids.has(cell.chunkId) ||
+      !Number.isSafeInteger(cell.sourceStartMs) ||
+      !Number.isSafeInteger(cell.sourceEndMs) ||
+      cell.sourceStartMs < 0 ||
+      cell.sourceEndMs <= cell.sourceStartMs ||
+      cell.sourceEndMs > sourceDurationMs ||
+      cell.sourceStartMs < previousEndMs
+    ) {
+      throw new RangeError(
+        "YouTube caption transcript cells must be unique, bounded, and non-overlapping.",
+      );
+    }
+    ids.add(cell.chunkId);
+    previousEndMs = cell.sourceEndMs;
+    const matchingText = track.events
+      .filter(
+        (event) =>
+          event.startMs < cell.sourceEndMs &&
+          event.startMs + event.durationMs > cell.sourceStartMs,
+      )
+      .map((event) => event.text);
+    if (matchingText.length === 0) return [];
+    const summaryKo = representativeCaptionText(
+      matchingText,
+      MAX_BROADCAST_CONTEXT_SUMMARY_LENGTH,
+    );
+    return summaryKo === "[대사 없음]"
+      ? []
+      : [{
+          chunkId: cell.chunkId,
+          chapter: {
+            chapterId: `youtube-cell-${String(index + 1).padStart(4, "0")}`,
+            startMs: cell.sourceStartMs,
+            endMs: cell.sourceEndMs,
+            evidenceMode: "complete-transcript",
+            evidenceCoverageRatio: 1,
+            summaryKo,
+          },
+        }];
+  });
 }
 
 /** Builds exact, free refinement cells from the already-fetched caption track. */

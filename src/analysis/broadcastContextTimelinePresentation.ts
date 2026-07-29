@@ -1,6 +1,7 @@
-import type {
-  BroadcastContextResult,
-  BroadcastContextSemanticChapterKind,
+import {
+  isFinalBroadcastContextResult,
+  type BroadcastContextResult,
+  type BroadcastContextSemanticChapterKind,
 } from "./broadcastContextProtocol";
 
 export type BroadcastContextSemanticFamily =
@@ -51,7 +52,7 @@ export type BroadcastContextTimelineState =
   | "restoring"
   | "running"
   | "failed"
-  | "legacy-unsupported"
+  | "incomplete"
   | "partial"
   | "complete";
 
@@ -79,7 +80,7 @@ interface BroadcastContextTimelinePresentationInput {
 function unavailablePresentation(
   state: Extract<
     BroadcastContextTimelineState,
-    "not-analyzed" | "restoring" | "running" | "failed"
+    "not-analyzed" | "restoring" | "running" | "failed" | "incomplete"
   >,
   topicEmptyText: string,
   leadEmptyText: string,
@@ -143,15 +144,21 @@ export function buildBroadcastContextTimelinePresentation(
     );
   }
 
+  if (!isFinalBroadcastContextResult(input.result)) {
+    return unavailablePresentation(
+      "incomplete",
+      "최종 주제 구간 미확정",
+      "최종 의미 단서 미확정",
+      "중간 맥락 결과는 최종 분석으로 표시하지 않아요. 전체 개요와 의미 단서가 모두 확정된 뒤 타임라인을 엽니다.",
+      "warning",
+    );
+  }
+
   const topicSupported = input.result.semanticChaptersSupported;
   const leadSupported = input.result.discoveredLeadsSupported;
   const partial = input.result.coverage.status === "partial";
   const state: BroadcastContextTimelineState =
-    !topicSupported || !leadSupported
-      ? "legacy-unsupported"
-      : partial
-        ? "partial"
-        : "complete";
+    partial ? "partial" : "complete";
   const topicEmptyText = !topicSupported
     ? "이 저장 결과는 주제 구간 기능 미지원"
     : input.result.semanticChapters.length > 0

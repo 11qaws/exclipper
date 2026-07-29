@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  ANALYSIS_JOB_RECORD_SCHEMA_VERSION,
+  ANALYSIS_RESULT_DB_VERSION,
   ANALYSIS_RESULT_OBJECT_STORES,
   AnalysisResultStoreError,
   checkpointBroadcastContextSessionRefinementEvidenceLedgerWithReadback,
@@ -8,9 +10,11 @@ import {
   checkpointBroadcastContextSessionPhaseLedgerIfUnchanged,
   checkpointBroadcastContextSessionRefinementTranscriptIfUnchanged,
   commitBroadcastContextSessionContextIfUnchanged,
+  DEFAULT_ANALYSIS_RESULT_DB_NAME,
   InMemoryAnalysisResultStore,
   IndexedDbAnalysisResultStore,
   invalidateBroadcastContextSessionContextIfUnchanged,
+  type AnalysisCompletionDurableSnapshot,
   type AnalysisFailureRecord,
   type AnalysisJobRecord,
   type AnalysisManifestRecord,
@@ -20,6 +24,7 @@ import {
   type SourceCapabilitySnapshotRecord,
 } from "./analysisResultStore";
 import { createAnalysisJob } from "../domain/analysisJob";
+import { createAnalysisPipelineHappyPathFixture } from "../testSupport/analysisPipelineHappyPathFixture";
 import type {
   DurableFinalResultPayload,
   DurableHighlightCandidate,
@@ -27,13 +32,14 @@ import type {
 import {
   BROADCAST_CONTEXT_SESSION_SCHEMA_VERSION,
   createBroadcastParticipantGroundingInputSignature,
+  serializeBroadcastParticipantPreContextCheckpoint,
   type BroadcastContextSessionRecord,
 } from "./broadcastContextSessionStore";
 import {
   CANDIDATE_PASS_B_INSIGHT_SCHEMA_VERSION,
   type CandidatePassBInsightsRecord,
 } from "./candidatePassBInsightStore";
-import { createBroadcastParticipantGrounding } from "../analysis/broadcastParticipantGrounding";
+import { orchestrateBroadcastParticipantPreContext } from "../analysis/broadcastParticipantPreContextOrchestration";
 import {
   createBroadcastContextPhaseLedger,
   serializeBroadcastContextPhaseLedger,
@@ -59,6 +65,114 @@ const RECORDED_AT = "2026-07-19T12:34:56.000Z";
 const INPUT_SIGNATURE = `sha256:${"a".repeat(64)}`;
 const SOURCE_FINGERPRINT = `local-file-sampled-sha256-v1:${"b".repeat(64)}`;
 
+async function makeAnalysisCompletionSnapshot(): Promise<AnalysisCompletionDurableSnapshot> {
+  const fixture = await createAnalysisPipelineHappyPathFixture();
+  return {
+    manifest: fixture.manifest,
+    fastResult: fixture.fastResult,
+    fastTerminal: fixture.fastTerminal,
+    session: fixture.session,
+    candidateRecord: fixture.candidateRecord,
+  };
+}
+
+function makeCompletionJobRecord(
+  snapshot: AnalysisCompletionDurableSnapshot,
+): AnalysisJobRecord {
+  const jobId = "job-analysis-completion";
+  return {
+    schemaVersion: ANALYSIS_JOB_RECORD_SCHEMA_VERSION,
+    jobId,
+    lastActivityAt: RECORDED_AT,
+    bytes: 1024,
+    job: {
+      ...createAnalysisJob({
+        jobId,
+        identity: {
+          scheme: "app-input-signature-v1",
+          key: INPUT_SIGNATURE,
+        },
+      }),
+      status: "running",
+      lastCommittedStage: "publication",
+      activeRunId: snapshot.manifest.runId,
+      runIds: [snapshot.manifest.runId],
+    },
+  };
+}
+
+function makeCompletedJobRecord(
+  original: AnalysisJobRecord,
+): AnalysisJobRecord {
+  return {
+    ...original,
+    lastActivityAt: "2026-07-29T00:00:01.000Z",
+    job: {
+      ...original.job,
+      status: "completed",
+      quality: "usable",
+      activeRunId: null,
+    },
+  };
+}
+
+async function seedAnalysisCompletionSnapshot(
+  store: InMemoryAnalysisResultStore,
+  snapshot: AnalysisCompletionDurableSnapshot,
+): Promise<void> {
+  await store.putManifest(snapshot.manifest);
+  await store.putFinalResult(snapshot.fastResult);
+  await store.putTerminalRecord(snapshot.fastTerminal);
+  await store.putBroadcastContextSession(snapshot.session);
+  if (snapshot.candidateRecord !== null) {
+    await store.putCandidatePassBInsights(snapshot.candidateRecord);
+  }
+}
+
+type AnalysisCompletionRecordName =
+  | "manifest"
+  | "fastResult"
+  | "fastTerminal"
+  | "session"
+  | "candidateRecord";
+
+function changeAnalysisCompletionRecord(
+  snapshot: AnalysisCompletionDurableSnapshot,
+  recordName: AnalysisCompletionRecordName,
+): AnalysisCompletionDurableSnapshot {
+  const recordedAt = "2026-07-29T00:00:02.000Z";
+  switch (recordName) {
+    case "manifest":
+      return {
+        ...snapshot,
+        manifest: { ...snapshot.manifest, recordedAt },
+      };
+    case "fastResult":
+      return {
+        ...snapshot,
+        fastResult: { ...snapshot.fastResult, recordedAt },
+      };
+    case "fastTerminal":
+      return {
+        ...snapshot,
+        fastTerminal: { ...snapshot.fastTerminal, recordedAt },
+      };
+    case "session":
+      return {
+        ...snapshot,
+        session: { ...snapshot.session, recordedAt },
+      };
+    case "candidateRecord":
+      if (snapshot.candidateRecord === null) {
+        throw new Error("The completion fixture must include candidate detail.");
+      }
+      return {
+        ...snapshot,
+        candidateRecord: { ...snapshot.candidateRecord, recordedAt },
+      };
+  }
+}
+
 function makeCandidatePassBInsights(
   recordedAt = RECORDED_AT,
 ): CandidatePassBInsightsRecord {
@@ -68,8 +182,25 @@ function makeCandidatePassBInsights(
     schemaVersion: CANDIDATE_PASS_B_INSIGHT_SCHEMA_VERSION,
     inputSignature: INPUT_SIGNATURE,
     modelManifestHash: "candidate-pass-b-cas-model",
+    planReceipt: {
+      schemaVersion: "1.0.0",
+      runId: "run-candidate-pass-b-cas",
+      inputSignature: INPUT_SIGNATURE,
+      contextInputSignature: "context-input-signature-cas",
+      refinementEvidenceProjectionFingerprint: null,
+      plannedCandidateIds: [],
+      plannedContextFingerprints: [],
+      planFingerprint: `sha256:${"a".repeat(64)}`,
+    },
+    contextByCandidateId: {},
     evidenceById: {},
     insightById: {},
+    modelByCandidateId: {},
+    thumbnailById: {},
+    attemptLedgerByCandidateId: {},
+    dispatchIntentByCandidateId: {},
+    settlementByCandidateId: {},
+    verificationReceiptById: {},
     recordedAt,
   };
 }
@@ -98,6 +229,7 @@ function makeBroadcastContextSession(
     fragmentGaps: [],
     transcriptEvidenceInputSignature: null,
     transcriptEvidenceCheckpointJson: null,
+    transcriptVisualInspectionCheckpointJson: null,
     transcriptProviderReceiptInputSignature: null,
     transcriptProviderReceiptCheckpointJson: null,
     modelRevision: "qwen3-asr-test",
@@ -168,30 +300,63 @@ function makeTranscriptEvidenceCheckpointJson(
   return serializeBroadcastTranscriptResolvedEvidenceCheckpoint(checkpoint);
 }
 
-function makeCompletedBroadcastContextSession(): BroadcastContextSessionRecord {
+async function createCompletedBroadcastContextSessionFixture(): Promise<BroadcastContextSessionRecord> {
   const session = makeBroadcastContextSession();
-  const participantGrounding = createBroadcastParticipantGrounding({
-    sourceDurationMs: session.sourceDurationMs,
-    castRosterId: session.sourceCastRosterId,
-    chapters: session.chapters,
-  });
+  const participantPreContext =
+    await orchestrateBroadcastParticipantPreContext({
+      sourceFingerprint: session.inputSignature,
+      sourceDurationMs: session.sourceDurationMs,
+      transcriptSeal: session.transcriptSealOperationKey!,
+      castRosterId: session.sourceCastRosterId,
+      dialogueChapters: session.chapters,
+      transcriptModelRevision: session.modelRevision,
+    });
+  const participantGroundingCheckpointJson =
+    await serializeBroadcastParticipantPreContextCheckpoint(
+      participantPreContext,
+      {
+        sourceDurationMs: session.sourceDurationMs,
+        sourceCastRosterId: session.sourceCastRosterId,
+        transcriptSealOperationKey: session.transcriptSealOperationKey!,
+        dialogueChapters: session.chapters,
+        participantGroundingPlanFingerprint:
+          participantPreContext.planFingerprint,
+      },
+    );
+  const participantGroundingInputSignature =
+    await createBroadcastParticipantGroundingInputSignature({
+      inputSignature: session.inputSignature,
+      transcriptSealOperationKey: session.transcriptSealOperationKey!,
+      participantGroundingPlanFingerprint:
+        participantPreContext.planFingerprint,
+      participantGroundingCheckpointJson,
+    });
   return {
     ...session,
-    participantGroundingInputSignature: "participant-signature",
-    participantGroundingPlanFingerprint: "participant-plan-fingerprint-v1",
-    participantGroundingCheckpointJson: JSON.stringify(participantGrounding),
+    participantGroundingInputSignature,
+    participantGroundingPlanFingerprint:
+      participantPreContext.planFingerprint,
+    participantGroundingCheckpointJson,
     contextInputSignature: "context-signature-v1",
     contextInputCheckpointJson: JSON.stringify({
       sourceDurationMs: session.sourceDurationMs,
       chapters: session.chapters,
       candidates: [],
-      participantGrounding,
+      participantGrounding: participantPreContext.grounding,
+      castRosterId: session.sourceCastRosterId,
       outputLanguage: "ko",
     }),
     contextResultJson: JSON.stringify({ schemaVersion: "1.7.0" }),
     refinementInputSignature: "refinement-signature-v1",
     refinementCandidatesJson: "[]",
   };
+}
+
+const completedBroadcastContextSessionFixture =
+  await createCompletedBroadcastContextSessionFixture();
+
+function makeCompletedBroadcastContextSession(): BroadcastContextSessionRecord {
+  return structuredClone(completedBroadcastContextSessionFixture);
 }
 
 async function makeRefinementEvidenceLedgerJson(
@@ -306,6 +471,7 @@ function makeFinalPayload(
       source: {
         sourceDefinitionId: "source-definition-1",
         contentFingerprint: SOURCE_FINGERPRINT,
+        captionVideoId: null,
         sizeBytes: 4_000_000,
         durationMs: 120_000,
         kind: "video",
@@ -326,6 +492,9 @@ function makeFinalPayload(
       outOfRangeChatMessageCount: 0,
       skippedChatMessageCount: 0,
       chatGapReasonCode: null,
+      plannedAudioWindowCount: 120,
+      analyzedAudioWindowCount: 120,
+      audioGapReasonCode: null,
       candidateCount: candidates.length,
     },
     coverage: {
@@ -336,7 +505,11 @@ function makeFinalPayload(
       chatProcessedMessageCount: 0,
       chatCoverageComplete: true,
       chatGapReasonCode: null,
-      chatGapApproval: null,
+      audioPlannedWindowCount: 120,
+      audioProcessedWindowCount: 120,
+      audioCoverageComplete: true,
+      audioGapReasonCode: null,
+      signalGapApproval: null,
       activeTaskCountAtCommit: 0,
     },
     candidates,
@@ -348,16 +521,16 @@ function makeManifest(runId = "run-1"): AnalysisManifestRecord {
     kind: "manifest",
     runId,
     artifactId: "manifest-artifact-1",
-    schemaVersion: "0.2.0",
+    schemaVersion: "0.3.0",
     inputSignature: INPUT_SIGNATURE,
-    modelManifestHash: "visual-chat-fast-pass-v1",
+    modelManifestHash: "streamer-reaction-fast-pass-v1",
     result: {
       input: makeFinalPayload().input,
-      chatGapPolicy: {
-        policyId: "local-chat-worker-degradation-v1",
+      signalGapPolicy: {
+        policyId: "local-available-signal-degradation-v2",
         disclosedBeforeStart: true,
         behavior:
-          "preserve-visual-result-and-complete-with-documented-chat-gap",
+          "complete-with-available-reaction-signals-and-documented-gaps",
       },
     },
     recordedAt: RECORDED_AT,
@@ -424,22 +597,8 @@ function makeReactionFinal(
 
 function makeReactionManifest(): AnalysisManifestRecord {
   return {
-    kind: "manifest",
-    runId: "run-reaction-1",
+    ...makeManifest("run-reaction-1"),
     artifactId: "manifest-reaction-1",
-    schemaVersion: "0.3.0",
-    inputSignature: INPUT_SIGNATURE,
-    modelManifestHash: "streamer-reaction-fast-pass-v1",
-    result: {
-      input: makeReactionPayload().input,
-      signalGapPolicy: {
-        policyId: "local-available-signal-degradation-v2",
-        disclosedBeforeStart: true,
-        behavior:
-          "complete-with-available-reaction-signals-and-documented-gaps",
-      },
-    },
-    recordedAt: RECORDED_AT,
   };
 }
 
@@ -481,9 +640,9 @@ function makeTerminal(
   return {
     kind: "terminalDisposition",
     runId,
-    schemaVersion: "0.2.0",
+    schemaVersion: "0.3.0",
     inputSignature: INPUT_SIGNATURE,
-    modelManifestHash: "visual-chat-fast-pass-v1",
+    modelManifestHash: "streamer-reaction-fast-pass-v1",
     outcome,
     resultRecordKind: completed ? "finalResult" : "failure",
     resultArtifactId: completed ? "result-artifact-1" : "failure-artifact-1",
@@ -499,11 +658,12 @@ function makeSourceSnapshot(
     sourceCheckId,
     sourceDefinitionId: "source-definition-1",
     bindingRevision: 3,
-    schemaVersion: "0.2.0",
+    schemaVersion: "0.3.0",
     browserCapabilitySignature: "wasm:1:1:0:0:0",
     preflightMetadata: {
       sourceDefinitionId: "source-definition-1",
       contentFingerprint: SOURCE_FINGERPRINT,
+      captionVideoId: null,
       sizeBytes: 4_000_000,
       durationMs: 120_000,
       kind: "video",
@@ -529,25 +689,40 @@ function expectStoreError(
   expect(error).toMatchObject({ code });
 }
 
+describe("current ExClipper storage namespace", () => {
+  it("opens a fresh namespace instead of the retired RettoHighlight database", () => {
+    expect(DEFAULT_ANALYSIS_RESULT_DB_NAME).toBe(
+      "exclipper-analysis-results-v1",
+    );
+    expect(ANALYSIS_RESULT_DB_VERSION).toBe(1);
+  });
+});
+
 describe("InMemoryAnalysisResultStore contract", () => {
-  it("keeps exact legacy 0.2.x records readable", async () => {
+  it("rejects every legacy 0.2.x record instead of migrating it", async () => {
     const store = new InMemoryAnalysisResultStore();
     const manifest = {
       ...makeManifest("run-legacy-patch"),
       schemaVersion: "0.2.9",
-    };
-    const final = { ...makeFinal("run-legacy-patch"), schemaVersion: "0.2.9" };
+    } as unknown as AnalysisManifestRecord;
+    const final = {
+      ...makeFinal("run-legacy-patch"),
+      schemaVersion: "0.2.9",
+    } as unknown as FinalAnalysisResultRecord;
     const terminal = {
       ...makeTerminal("run-legacy-patch"),
       schemaVersion: "0.2.9",
-    };
+    } as unknown as AnalysisTerminalRecord;
 
-    await expect(store.putManifest(manifest)).resolves.toBeUndefined();
-    await expect(store.putFinalResult(final)).resolves.toBeUndefined();
-    await expect(store.putTerminalRecord(terminal)).resolves.toBeUndefined();
-    await expect(store.getFinalResult("run-legacy-patch")).resolves.toEqual(
-      final,
-    );
+    await expect(store.putManifest(manifest)).rejects.toMatchObject({
+      code: "INVALID_PAYLOAD",
+    });
+    await expect(store.putFinalResult(final)).rejects.toMatchObject({
+      code: "INVALID_PAYLOAD",
+    });
+    await expect(store.putTerminalRecord(terminal)).rejects.toMatchObject({
+      code: "INVALID_PAYLOAD",
+    });
   });
 
   it("accepts reaction-first audio evidence and documented audio unavailability", async () => {
@@ -564,6 +739,46 @@ describe("InMemoryAnalysisResultStore contract", () => {
         makeReactionFinal(makeReactionPayload("NO_AUDIO_TRACK")),
       ),
     ).resolves.toBeUndefined();
+  });
+
+  it.each([
+    ["summary audio evidence", "summary", "plannedAudioWindowCount"],
+    ["audio coverage state", "coverage", "audioCoverageComplete"],
+  ] as const)(
+    "fails closed when current %s is missing",
+    async (_label, section, missingKey) => {
+      const store = new InMemoryAnalysisResultStore();
+      const payload = makeReactionPayload();
+      const incompleteSection = { ...payload[section] } as Record<string, unknown>;
+      delete incompleteSection[missingKey];
+      const incomplete = {
+        ...payload,
+        [section]: incompleteSection,
+      };
+
+      await expect(
+        store.putFinalResult(makeReactionFinal(incomplete)),
+      ).rejects.toMatchObject({ code: "INVALID_PAYLOAD" });
+    },
+  );
+
+  it("fails closed when an audio candidate omits its claimed reaction evidence", async () => {
+    const store = new InMemoryAnalysisResultStore();
+    const payload = makeReactionPayload();
+    const candidate = payload.candidates[0];
+    if (candidate === undefined) {
+      throw new Error("Expected an audio candidate fixture.");
+    }
+    const evidence = { ...candidate.evidence } as Record<string, unknown>;
+    delete evidence.audio;
+    const incomplete = {
+      ...payload,
+      candidates: [{ ...candidate, evidence }],
+    } as unknown as DurableFinalResultPayload;
+
+    await expect(
+      store.putFinalResult(makeReactionFinal(incomplete)),
+    ).rejects.toMatchObject({ code: "INVALID_PAYLOAD" });
   });
 
   it("rejects raw transcript fields added to otherwise safe audio evidence", async () => {
@@ -602,9 +817,9 @@ describe("InMemoryAnalysisResultStore contract", () => {
     await expect(store.getFinalResult("run-1")).resolves.toMatchObject({
       kind: "finalResult",
       runId: "run-1",
-      schemaVersion: "0.2.0",
+      schemaVersion: "0.3.0",
       inputSignature: INPUT_SIGNATURE,
-      modelManifestHash: "visual-chat-fast-pass-v1",
+      modelManifestHash: "streamer-reaction-fast-pass-v1",
       result: { summary: { candidateCount: 1 } },
     });
     await expect(store.getTerminalRecord("run-1")).resolves.toEqual(
@@ -642,26 +857,84 @@ describe("InMemoryAnalysisResultStore contract", () => {
     );
   });
 
-  it("binds manifest and final payload shapes to their declared schema versions", async () => {
+  it("atomically fills an absent fast-pass bundle and never replaces a conflicting writer", async () => {
+    const store = new InMemoryAnalysisResultStore();
+    const first = {
+      manifest: makeManifest("run-atomic-fast-pass"),
+      finalResult: makeFinal("run-atomic-fast-pass"),
+      terminal: makeTerminal("run-atomic-fast-pass"),
+    };
+    const conflictingFinal = {
+      ...first.finalResult,
+      artifactId: "conflicting-final",
+    };
+    const conflict = {
+      manifest: first.manifest,
+      finalResult: conflictingFinal,
+      terminal: {
+        ...first.terminal,
+        resultArtifactId: conflictingFinal.artifactId,
+      },
+    };
+
+    await expect(
+      store.commitFastPassResultBundleIfAbsent(first),
+    ).resolves.toBe(true);
+    await expect(
+      store.commitFastPassResultBundleIfAbsent(conflict),
+    ).resolves.toBe(false);
+    await expect(
+      store.commitFastPassResultBundleIfAbsent(first),
+    ).resolves.toBe(true);
+    await expect(
+      store.getFinalResult("run-atomic-fast-pass"),
+    ).resolves.toEqual(first.finalResult);
+    await expect(
+      store.getTerminalRecord("run-atomic-fast-pass"),
+    ).resolves.toEqual(first.terminal);
+  });
+
+  it("rejects legacy payload shapes even when relabeled with the current version", async () => {
     const store = new InMemoryAnalysisResultStore();
     const legacyManifestWithReactionVersion = {
       ...makeManifest("run-manifest-legacy-as-reaction"),
-      schemaVersion: "0.3.0",
-    };
-    const reactionManifestWithLegacyVersion = {
-      ...makeReactionManifest(),
-      runId: "run-manifest-reaction-as-legacy",
-      schemaVersion: "0.2.1",
-    };
+      result: {
+        input: makeFinalPayload().input,
+        chatGapPolicy: {
+          policyId: "local-chat-worker-degradation-v1",
+          disclosedBeforeStart: true,
+          behavior:
+            "preserve-visual-result-and-complete-with-documented-chat-gap",
+        },
+      },
+    } as unknown as AnalysisManifestRecord;
     const legacyFinalWithReactionVersion = {
       ...makeFinal("run-final-legacy-as-reaction"),
-      schemaVersion: "0.3.0",
-    };
-    const reactionFinalWithLegacyVersion = {
-      ...makeReactionFinal(),
-      runId: "run-final-reaction-as-legacy",
-      schemaVersion: "0.2.1",
-    };
+      result: {
+        ...makeFinalPayload(),
+        summary: {
+          plannedFrameCount: 4,
+          sampledFrameCount: 4,
+          analyzedTransitionCount: 3,
+          analyzedChatMessageCount: 0,
+          outOfRangeChatMessageCount: 0,
+          skippedChatMessageCount: 0,
+          chatGapReasonCode: null,
+          candidateCount: 1,
+        },
+        coverage: {
+          visualPlannedSampleCount: 4,
+          visualCompletedSampleCount: 4,
+          visualCoverageComplete: true,
+          chatPlannedMessageCount: 0,
+          chatProcessedMessageCount: 0,
+          chatCoverageComplete: true,
+          chatGapReasonCode: null,
+          chatGapApproval: null,
+          activeTaskCountAtCommit: 0,
+        },
+      },
+    } as unknown as FinalAnalysisResultRecord;
 
     await expect(
       store.putManifest(legacyManifestWithReactionVersion),
@@ -669,17 +942,7 @@ describe("InMemoryAnalysisResultStore contract", () => {
       code: "INVALID_PAYLOAD",
     });
     await expect(
-      store.putManifest(reactionManifestWithLegacyVersion),
-    ).rejects.toMatchObject({
-      code: "INVALID_PAYLOAD",
-    });
-    await expect(
       store.putFinalResult(legacyFinalWithReactionVersion),
-    ).rejects.toMatchObject({
-      code: "INVALID_PAYLOAD",
-    });
-    await expect(
-      store.putFinalResult(reactionFinalWithLegacyVersion),
     ).rejects.toMatchObject({
       code: "INVALID_PAYLOAD",
     });
@@ -689,16 +952,24 @@ describe("InMemoryAnalysisResultStore contract", () => {
     const store = new InMemoryAnalysisResultStore();
 
     await expect(
-      store.putManifest({ ...makeReactionManifest(), schemaVersion: "0.4.0" }),
-    ).rejects.toMatchObject({ code: "INVALID_PAYLOAD" });
-    await expect(
-      store.putFinalResult({ ...makeReactionFinal(), schemaVersion: "0.4.0" }),
-    ).rejects.toMatchObject({ code: "INVALID_PAYLOAD" });
-    await expect(
-      store.putTerminalRecord({
-        ...makeTerminal("run-future"),
+      store.putManifest({
+        ...makeReactionManifest(),
         schemaVersion: "0.4.0",
       }),
+    ).rejects.toMatchObject({ code: "INVALID_PAYLOAD" });
+    await expect(
+      store.putFinalResult({
+        ...makeReactionFinal(),
+        schemaVersion: "0.4.0",
+      }),
+    ).rejects.toMatchObject({ code: "INVALID_PAYLOAD" });
+    await expect(
+      store.putTerminalRecord(
+        {
+          ...makeTerminal("run-future"),
+          schemaVersion: "0.4.0",
+        },
+      ),
     ).rejects.toMatchObject({ code: "INVALID_PAYLOAD" });
   });
 
@@ -1381,41 +1652,68 @@ class ControlledTransaction {
   public request: ControlledRequest | null = null;
   public written: unknown = undefined;
   public writeOperation: "add" | "put" | null = null;
+  public readonly storeNames: readonly string[];
+  private readonly requestsByStore = new Map<
+    string,
+    ControlledRequest[]
+  >();
 
   public constructor(
     public readonly mode: IDBTransactionMode,
-    private readonly storeName: string,
-  ) {}
+    storeNames: string | readonly string[],
+  ) {
+    this.storeNames =
+      typeof storeNames === "string" ? [storeNames] : [...storeNames];
+  }
+
+  public requestsFor(storeName: string): readonly ControlledRequest[] {
+    return this.requestsByStore.get(storeName) ?? [];
+  }
+
+  private requestFor(storeName: string): ControlledRequest {
+    const request = new ControlledRequest();
+    const requests = this.requestsByStore.get(storeName) ?? [];
+    requests.push(request);
+    this.requestsByStore.set(storeName, requests);
+    this.request = request;
+    return request;
+  }
 
   public objectStore(requestedStoreName: string): IDBObjectStore {
-    if (requestedStoreName !== this.storeName) {
+    if (!this.storeNames.includes(requestedStoreName)) {
       throw new DOMException("Unknown object store", "NotFoundError");
     }
 
     const objectStore = {
       keyPath:
-        this.storeName === ANALYSIS_RESULT_OBJECT_STORES.sourceSnapshots
+        requestedStoreName === ANALYSIS_RESULT_OBJECT_STORES.sourceSnapshots
           ? "sourceCheckId"
-          : "runId",
+          : requestedStoreName === ANALYSIS_RESULT_OBJECT_STORES.jobs
+            ? "jobId"
+            : "runId",
       put: (value: unknown) => {
         this.written = value;
         this.writeOperation = "put";
-        this.request = new ControlledRequest();
-        return this.request as unknown as IDBRequest<IDBValidKey>;
+        return this.requestFor(
+          requestedStoreName,
+        ) as unknown as IDBRequest<IDBValidKey>;
       },
       add: (value: unknown) => {
         this.written = value;
         this.writeOperation = "add";
-        this.request = new ControlledRequest();
-        return this.request as unknown as IDBRequest<IDBValidKey>;
+        return this.requestFor(
+          requestedStoreName,
+        ) as unknown as IDBRequest<IDBValidKey>;
       },
       get: () => {
-        this.request = new ControlledRequest();
-        return this.request as unknown as IDBRequest<unknown>;
+        return this.requestFor(
+          requestedStoreName,
+        ) as unknown as IDBRequest<unknown>;
       },
       getAll: () => {
-        this.request = new ControlledRequest();
-        return this.request as unknown as IDBRequest<unknown[]>;
+        return this.requestFor(
+          requestedStoreName,
+        ) as unknown as IDBRequest<unknown[]>;
       },
     };
     return objectStore as unknown as IDBObjectStore;
@@ -1468,11 +1766,16 @@ class FakeIndexedDbHarness {
         this.keyPaths.set(storeName, keyPath);
         return { keyPath } as IDBObjectStore;
       },
-      transaction: (storeName: string, mode: IDBTransactionMode) => {
-        if (!this.createdStores.has(storeName)) {
+      transaction: (
+        storeNames: string | string[],
+        mode: IDBTransactionMode,
+      ) => {
+        const names =
+          typeof storeNames === "string" ? [storeNames] : storeNames;
+        if (names.some((storeName) => !this.createdStores.has(storeName))) {
           throw new DOMException("Unknown object store", "NotFoundError");
         }
-        const transaction = new ControlledTransaction(mode, storeName);
+        const transaction = new ControlledTransaction(mode, names);
         this.enqueueTransaction(transaction);
         return transaction as unknown as IDBTransaction;
       },
@@ -1601,6 +1904,53 @@ describe("IndexedDbAnalysisResultStore transaction contract", () => {
     await expect(retryOperation).resolves.toBeUndefined();
   });
 
+  it("commits a fast-pass bundle with insert-if-absent requests in one transaction", async () => {
+    const harness = new FakeIndexedDbHarness();
+    const store = new IndexedDbAnalysisResultStore({
+      dbName: "fast-pass-atomic-bundle-test",
+      factory: harness.factory,
+    });
+    const bundle = {
+      manifest: makeManifest("run-fast-pass-atomic"),
+      finalResult: makeFinal("run-fast-pass-atomic"),
+      terminal: makeTerminal("run-fast-pass-atomic"),
+    };
+
+    const operation = store.commitFastPassResultBundleIfAbsent(bundle);
+    const transaction = await harness.takeTransaction();
+    expect(transaction.mode).toBe("readwrite");
+    expect(new Set(transaction.storeNames)).toEqual(
+      new Set([
+        ANALYSIS_RESULT_OBJECT_STORES.manifests,
+        ANALYSIS_RESULT_OBJECT_STORES.finalResults,
+        ANALYSIS_RESULT_OBJECT_STORES.terminals,
+      ]),
+    );
+
+    transaction.requestsFor(
+      ANALYSIS_RESULT_OBJECT_STORES.manifests,
+    )[0]?.succeed(undefined);
+    transaction.requestsFor(
+      ANALYSIS_RESULT_OBJECT_STORES.finalResults,
+    )[0]?.succeed(undefined);
+    transaction.requestsFor(
+      ANALYSIS_RESULT_OBJECT_STORES.terminals,
+    )[0]?.succeed(undefined);
+    expect(transaction.writeOperation).toBe("add");
+    transaction.requestsFor(
+      ANALYSIS_RESULT_OBJECT_STORES.manifests,
+    )[1]?.succeed(bundle.manifest.runId);
+    transaction.requestsFor(
+      ANALYSIS_RESULT_OBJECT_STORES.finalResults,
+    )[1]?.succeed(bundle.finalResult.runId);
+    transaction.requestsFor(
+      ANALYSIS_RESULT_OBJECT_STORES.terminals,
+    )[1]?.succeed(bundle.terminal.runId);
+    transaction.complete();
+
+    await expect(operation).resolves.toBe(true);
+  });
+
   it("rejects a completed-to-failed terminal overwrite before issuing a write", async () => {
     const harness = new FakeIndexedDbHarness();
     const store = new IndexedDbAnalysisResultStore({
@@ -1699,6 +2049,98 @@ describe("IndexedDbAnalysisResultStore transaction contract", () => {
     expect(transaction.writeOperation).toBe("put");
     expect(transaction.written).toEqual(replacement);
     transaction.request?.succeed(original.runId);
+    transaction.complete();
+
+    await expect(operation).resolves.toBe(true);
+  });
+
+  it("performs analysis job compare-and-swap in one readwrite transaction", async () => {
+    const harness = new FakeIndexedDbHarness();
+    const store = new IndexedDbAnalysisResultStore({
+      dbName: "analysis-job-cas-test",
+      factory: harness.factory,
+    });
+    const original: AnalysisJobRecord = {
+      schemaVersion: ANALYSIS_JOB_RECORD_SCHEMA_VERSION,
+      jobId: "job-cas-1",
+      job: createAnalysisJob({
+        jobId: "job-cas-1",
+        identity: {
+          scheme: "local-file-sampled-sha256-v1",
+          key: "job-cas-key",
+        },
+      }),
+      lastActivityAt: RECORDED_AT,
+      bytes: 0,
+    };
+    const replacement = {
+      ...original,
+      lastActivityAt: "2026-07-19T12:35:00.000Z",
+    };
+    const operation = store.replaceJobIfUnchanged(original, replacement);
+    const transaction = await harness.takeTransaction();
+    expect(transaction.mode).toBe("readwrite");
+    transaction.request?.succeed(original);
+    expect(transaction.writeOperation).toBe("put");
+    expect(transaction.written).toEqual(replacement);
+    transaction.request?.succeed(original.jobId);
+    transaction.complete();
+
+    await expect(operation).resolves.toBe(true);
+  });
+
+  it("atomically compares all completion records and writes the job in one IndexedDB transaction", async () => {
+    const harness = new FakeIndexedDbHarness();
+    const store = new IndexedDbAnalysisResultStore({
+      dbName: "analysis-completion-cas-test",
+      factory: harness.factory,
+    });
+    const snapshot = await makeAnalysisCompletionSnapshot();
+    const original = makeCompletionJobRecord(snapshot);
+    const replacement = makeCompletedJobRecord(original);
+
+    const operation = store.replaceJobIfAnalysisSnapshotUnchanged(
+      original,
+      replacement,
+      snapshot,
+    );
+    const transaction = await harness.takeTransaction();
+    expect(transaction.mode).toBe("readwrite");
+    expect(new Set(transaction.storeNames)).toEqual(
+      new Set([
+        ANALYSIS_RESULT_OBJECT_STORES.jobs,
+        ANALYSIS_RESULT_OBJECT_STORES.manifests,
+        ANALYSIS_RESULT_OBJECT_STORES.finalResults,
+        ANALYSIS_RESULT_OBJECT_STORES.terminals,
+        ANALYSIS_RESULT_OBJECT_STORES.broadcastContextSessions,
+        ANALYSIS_RESULT_OBJECT_STORES.candidatePassBInsights,
+      ]),
+    );
+
+    transaction.requestsFor(ANALYSIS_RESULT_OBJECT_STORES.jobs)[0]?.succeed(
+      original,
+    );
+    transaction.requestsFor(
+      ANALYSIS_RESULT_OBJECT_STORES.manifests,
+    )[0]?.succeed(snapshot.manifest);
+    transaction.requestsFor(
+      ANALYSIS_RESULT_OBJECT_STORES.finalResults,
+    )[0]?.succeed(snapshot.fastResult);
+    transaction.requestsFor(
+      ANALYSIS_RESULT_OBJECT_STORES.terminals,
+    )[0]?.succeed(snapshot.fastTerminal);
+    transaction.requestsFor(
+      ANALYSIS_RESULT_OBJECT_STORES.broadcastContextSessions,
+    )[0]?.succeed(snapshot.session);
+    transaction.requestsFor(
+      ANALYSIS_RESULT_OBJECT_STORES.candidatePassBInsights,
+    )[0]?.succeed(snapshot.candidateRecord);
+
+    expect(transaction.writeOperation).toBe("put");
+    expect(transaction.written).toEqual(replacement);
+    transaction.requestsFor(ANALYSIS_RESULT_OBJECT_STORES.jobs)[1]?.succeed(
+      original.jobId,
+    );
     transaction.complete();
 
     await expect(operation).resolves.toBe(true);
@@ -1882,6 +2324,7 @@ describe("job records", () => {
     runIds: readonly string[] = ["run-1"],
   ): AnalysisJobRecord {
     return {
+      schemaVersion: ANALYSIS_JOB_RECORD_SCHEMA_VERSION,
       jobId,
       lastActivityAt: RECORDED_AT,
       bytes: 1024,
@@ -1905,10 +2348,161 @@ describe("job records", () => {
     expect(await store.listJobs()).toHaveLength(1);
   });
 
+  it("rejects a job record without the exact current schema version", async () => {
+    const store = new InMemoryAnalysisResultStore();
+    const current = makeJobRecord();
+    const legacy = {
+      jobId: current.jobId,
+      job: current.job,
+      lastActivityAt: current.lastActivityAt,
+      bytes: current.bytes,
+    };
+
+    await expect(
+      store.putJob(legacy as unknown as AnalysisJobRecord),
+    ).rejects.toMatchObject({
+      code: "INVALID_PAYLOAD",
+    });
+    await expect(
+      store.putJob({
+        ...current,
+        schemaVersion: "0.9.0",
+      } as unknown as AnalysisJobRecord),
+    ).rejects.toMatchObject({
+      code: "INVALID_PAYLOAD",
+    });
+    await expect(
+      store.putJob({
+        ...current,
+        legacyResumeToken: "old-token",
+      } as unknown as AnalysisJobRecord),
+    ).rejects.toMatchObject({
+      code: "INVALID_PAYLOAD",
+    });
+  });
+
+  it.each([
+    {
+      name: "an unsupported nested field",
+      mutate: (record: AnalysisJobRecord) => ({
+        ...record,
+        job: { ...record.job, legacyResumeToken: "old-token" },
+      }),
+    },
+    {
+      name: "an invalid lifecycle status",
+      mutate: (record: AnalysisJobRecord) => ({
+        ...record,
+        job: { ...record.job, status: "interrupted" },
+      }),
+    },
+    {
+      name: "an invalid active run fence",
+      mutate: (record: AnalysisJobRecord) => ({
+        ...record,
+        job: {
+          ...record.job,
+          status: "running",
+          activeRunId: "run-not-latest",
+        },
+      }),
+    },
+  ])("rejects a job record with $name", async ({ mutate }) => {
+    const store = new InMemoryAnalysisResultStore();
+    await expect(
+      store.putJob(
+        mutate(makeJobRecord()) as unknown as AnalysisJobRecord,
+      ),
+    ).rejects.toMatchObject({
+      code: "INVALID_PAYLOAD",
+    });
+  });
+
   it("returns null for a job that was never stored", async () => {
     const store = new InMemoryAnalysisResultStore();
     expect(await store.getJob("job-1")).toBeNull();
   });
+
+  it("compare-and-swaps a job only from the exact durable snapshot", async () => {
+    const store = new InMemoryAnalysisResultStore();
+    const original = makeJobRecord();
+    const replacement = {
+      ...original,
+      lastActivityAt: "2026-07-19T12:35:00.000Z",
+      bytes: 2048,
+    };
+
+    await expect(
+      store.replaceJobIfUnchanged(null, original),
+    ).resolves.toBe(true);
+    await expect(
+      store.replaceJobIfUnchanged(null, replacement),
+    ).resolves.toBe(false);
+    await expect(
+      store.replaceJobIfUnchanged(original, replacement),
+    ).resolves.toBe(true);
+    await expect(
+      store.replaceJobIfUnchanged(original, {
+        ...replacement,
+        bytes: 4096,
+      }),
+    ).resolves.toBe(false);
+    expect(await store.getJob("job-1")).toEqual(replacement);
+  });
+
+  it("atomically completes a job when all five durable records are exact", async () => {
+    const store = new InMemoryAnalysisResultStore();
+    const snapshot = await makeAnalysisCompletionSnapshot();
+    const original = makeCompletionJobRecord(snapshot);
+    const replacement = makeCompletedJobRecord(original);
+    await store.putJob(original);
+    await seedAnalysisCompletionSnapshot(store, snapshot);
+
+    await expect(
+      store.replaceJobIfAnalysisSnapshotUnchanged(
+        original,
+        replacement,
+        snapshot,
+      ),
+    ).resolves.toBe(true);
+    await expect(store.getJob(original.jobId)).resolves.toEqual(replacement);
+    await expect(
+      store.getAnalysisCompletionReadback(
+        original.jobId,
+        snapshot.manifest.runId,
+      ),
+    ).resolves.toEqual({ job: replacement, snapshot });
+  });
+
+  it.each<AnalysisCompletionRecordName>([
+    "manifest",
+    "fastResult",
+    "fastTerminal",
+    "session",
+    "candidateRecord",
+  ])(
+    "does not complete when the durable $name no longer matches",
+    async (recordName) => {
+      const store = new InMemoryAnalysisResultStore();
+      const expectedSnapshot = await makeAnalysisCompletionSnapshot();
+      const original = makeCompletionJobRecord(expectedSnapshot);
+      const replacement = makeCompletedJobRecord(original);
+      await store.putJob(original);
+      await seedAnalysisCompletionSnapshot(
+        store,
+        changeAnalysisCompletionRecord(expectedSnapshot, recordName),
+      );
+
+      await expect(
+        store.replaceJobIfAnalysisSnapshotUnchanged(
+          original,
+          replacement,
+          expectedSnapshot,
+        ),
+      ).resolves.toBe(false);
+      await expect(store.getJob(original.jobId)).resolves.toEqual(original);
+    },
+  );
 
   it("deletes the run results along with the job", async () => {
     // 결과만 남으면 어느 화면에도 나타나지 않으므로 사용자가 지울 수 없고,

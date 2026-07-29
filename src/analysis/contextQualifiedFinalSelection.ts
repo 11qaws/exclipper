@@ -30,14 +30,12 @@ export interface CandidateAiQueueItem {
 export function selectContextExcludedCandidateIds(
   candidates: readonly CandidateAiQueueItem[],
   projectionById: CandidateAiProjectionById,
-  explicitMusicOnlyCandidateIds: ReadonlySet<string>,
 ): readonly string[] {
   return candidates
     .filter(
       (candidate) =>
         candidate.reviewState !== "approved" &&
-        (projectionById[candidate.id] === "deprioritized" ||
-          explicitMusicOnlyCandidateIds.has(candidate.id)),
+        projectionById[candidate.id] === "deprioritized",
     )
     .map((candidate) => candidate.id);
 }
@@ -46,16 +44,12 @@ export function selectContextExcludedCandidateIds(
 export function selectCandidateDetailCandidateIds(
   candidates: readonly CandidateAiQueueItem[],
   projectionById: CandidateAiProjectionById,
-  explicitMusicOnlyCandidateIds: ReadonlySet<string>,
 ): readonly string[] {
   return candidates
     .filter((candidate) => {
       if (candidate.reviewState === "rejected") return false;
       if (candidate.reviewState === "approved") return true;
-      return (
-        projectionById[candidate.id] !== "deprioritized" &&
-        !explicitMusicOnlyCandidateIds.has(candidate.id)
-      );
+      return projectionById[candidate.id] !== "deprioritized";
     })
     .map((candidate) => candidate.id);
 }

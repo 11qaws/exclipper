@@ -18,27 +18,30 @@ import {
   DEFAULT_CANDIDATE_PASS_B_CAST_ROSTER_ID,
 } from "./participantRoster";
 
+const dummyChapters = [
+  {
+    chapterId: "c1",
+    startMs: 0,
+    endMs: 300000,
+    evidenceMode: "complete-transcript" as const,
+    evidenceCoverageRatio: 1,
+    summaryKo: "첫 번째 챕터 요약",
+  },
+  {
+    chapterId: "c2",
+    startMs: 300000,
+    endMs: 600000,
+    evidenceMode: "sampled-audio-video" as const,
+    evidenceCoverageRatio: 0.5,
+    summaryKo: "두 번째 챕터 요약",
+  },
+] as const;
+
 const dummyRequest: BroadcastContextRequest = createBroadcastContextRequest({
   sourceDurationMs: 3600000,
+  castRosterId: null,
   outputLanguage: "ko",
-  chapters: [
-    {
-      chapterId: "c1",
-      startMs: 0,
-      endMs: 300000,
-      evidenceMode: "complete-transcript",
-      evidenceCoverageRatio: 1,
-      summaryKo: "첫 번째 챕터 요약",
-    },
-    {
-      chapterId: "c2",
-      startMs: 300000,
-      endMs: 600000,
-      evidenceMode: "sampled-audio-video",
-      evidenceCoverageRatio: 0.5,
-      summaryKo: "두 번째 챕터 요약",
-    },
-  ],
+  chapters: dummyChapters,
   candidates: [
     {
       candidateId: "can1",
@@ -47,9 +50,16 @@ const dummyRequest: BroadcastContextRequest = createBroadcastContextRequest({
       transcriptKo: "대화 내용",
       eventSummaryKo: "사건 내용",
       reactionSummaryKo: "리액션 내용",
+      participantContextKo:
+        "등장인물 어댑터는 이 후보 구간에서 인물을 식별하지 못했다.",
       chatReactionSummaryKo: null,
     },
   ],
+  participantGrounding: createBroadcastParticipantGrounding({
+    sourceDurationMs: 3600000,
+    castRosterId: null,
+    chapters: dummyChapters,
+  }),
 });
 
 const EXCHANGE_CAST_NAMES = [
@@ -63,10 +73,19 @@ const EXCHANGE_CAST_NAMES = [
 
 describe("broadcastContextDeepseek", () => {
   it("adds the source-scoped closed cast to both context model prompts", () => {
-    const request: BroadcastContextRequest = {
-      ...dummyRequest,
+    const participantGrounding = createBroadcastParticipantGrounding({
+      sourceDurationMs: dummyRequest.sourceDurationMs,
       castRosterId: DEFAULT_CANDIDATE_PASS_B_CAST_ROSTER_ID,
-    };
+      chapters: dummyRequest.chapters,
+    });
+    const request: BroadcastContextRequest = createBroadcastContextRequest({
+      sourceDurationMs: dummyRequest.sourceDurationMs,
+      chapters: dummyRequest.chapters,
+      candidates: dummyRequest.candidates,
+      castRosterId: DEFAULT_CANDIDATE_PASS_B_CAST_ROSTER_ID,
+      participantGrounding,
+      outputLanguage: "ko",
+    });
     const prompts = [
       buildBroadcastContextDeepseekRequestBody(request).messages[1].content,
       buildBroadcastContextQwenRequestBody(request).messages[1].content,
@@ -81,7 +100,7 @@ describe("broadcastContextDeepseek", () => {
     }
     expect(
       buildBroadcastContextQwenRequestBody(dummyRequest).messages[1].content,
-    ).toContain("출처 prior 없음");
+    ).toContain("관찰 확인된 화면·목소리 인물 근거 없음");
     expect(
       buildBroadcastContextDeepseekRequestBody(dummyRequest).messages[0].content,
     ).toContain("명단은 이름 표기 교정용일 뿐 실제 등장 증거가 아닙니다");
@@ -128,6 +147,7 @@ describe("broadcastContextDeepseek", () => {
       candidates: dummyRequest.candidates,
       castRosterId: AMORETTO_CHANNEL_CAST_ROSTER_ID,
       participantGrounding,
+      outputLanguage: "ko",
     });
     const payload = {
       choices: [{
@@ -613,7 +633,21 @@ describe("broadcastContextDeepseek", () => {
           message: {
             content: JSON.stringify({
               summary: "음식 퀴즈를 진행하다 突然 당황하고 실수를 인정했다.",
+              host: {
+                name: null,
+                profile: "음식 퀴즈를 진행하며 채팅 반응에 응수하고 결과를 확인한 뒤 자신의 판단을 바로잡는다.",
+                evidence: ["음식 퀴즈 진행", "채팅 반응에 응수"],
+                uncertainty: ["화면·목소리 인물 식별 근거 없음"],
+              },
               themes: ["음식과 反應"],
+              chapters: [{
+                s: "c1",
+                e: "c2",
+                title: "음식 퀴즈",
+                desc: "음식 이름을 맞히며 채팅과 의견을 주고받는다.",
+                kind: "main-event",
+                sal: "primary",
+              }],
               candidates: [{
                 id: "can1",
                 d: "select",
@@ -644,7 +678,21 @@ describe("broadcastContextDeepseek", () => {
           message: {
             content: JSON.stringify({
               summary: "The food quiz suddenly changed after 突然 confusion.",
+              host: {
+                name: null,
+                profile: "The host runs a food quiz, responds to chat, and corrects a mistaken judgment after seeing the result.",
+                evidence: ["Runs the food quiz", "Responds to chat"],
+                uncertainty: ["No verified visual or voice identity"],
+              },
               themes: ["food and 反應"],
+              chapters: [{
+                s: "c1",
+                e: "c2",
+                title: "Food quiz",
+                desc: "The host compares food names and reactions with chat.",
+                kind: "main-event",
+                sal: "primary",
+              }],
               candidates: [{
                 id: "can1",
                 d: "select",
@@ -684,7 +732,21 @@ describe("broadcastContextDeepseek", () => {
       const payload = {
         choices: [{ message: { content: JSON.stringify({
           summary: "마인크래프트 건축 방송에서 자원 수집과 이동을 이어간다.",
+          host: {
+            name: null,
+            profile: "건축 목표를 설명하며 이동과 자원 수집 상황을 채팅에 전달하고 예상 밖 상황에는 크게 반응한다.",
+            evidence: ["건축 목표 설명", "추락 뒤 상황 설명"],
+            uncertainty: ["화면·목소리 인물 식별 근거 없음"],
+          },
           themes: ["건축"],
+          chapters: [{
+            s: "c1",
+            e: "c2",
+            title: "건축과 동굴 이동",
+            desc: "건축 자원을 모으고 동굴을 이동하는 일반적인 게임 진행이 이어진다.",
+            kind: "story-progress",
+            sal: "secondary",
+          }],
           candidates: [{
             id: "can1",
             d: "select",
@@ -712,6 +774,86 @@ describe("broadcastContextDeepseek", () => {
         });
         expect(parsed.result.discoveredLeads).toEqual([]);
       }
+    });
+
+    it("retries the whole overview unit instead of inventing a missing candidate verdict", () => {
+      const payload = {
+        choices: [{
+          message: {
+            content: JSON.stringify({
+              summary: "음식 토크 전체 흐름",
+              host: {
+                name: null,
+                profile: "음식 취향을 설명하고 채팅의 반박에 응수하며 결과를 확인한 뒤 판단을 정리한다.",
+                evidence: ["음식 취향 설명", "채팅 반박에 응수"],
+                uncertainty: ["인물 식별 근거 없음"],
+              },
+              themes: ["음식"],
+              chapters: [{
+                s: "c1",
+                e: "c2",
+                title: "음식 토크",
+                desc: "음식 이름과 취향을 두고 채팅과 대화한다.",
+                kind: "main-event",
+                sal: "primary",
+              }],
+              candidates: [],
+              leads: [],
+            }),
+          },
+        }],
+      };
+
+      expect(
+        extractBroadcastContextQwenOverviewResponse(payload, dummyRequest).ok,
+      ).toBe(false);
+    });
+
+    it("retries discovery when any returned lead is malformed", () => {
+      const payload = {
+        choices: [{
+          message: {
+            content: JSON.stringify({
+              summary: "주제 내부 사건 탐색",
+              leads: [{
+                s: "missing",
+                e: "missing",
+                c: "reaction",
+                p: 0.9,
+                event: "존재하지 않는 범위",
+                cue: "잘못된 챕터",
+              }],
+            }),
+          },
+        }],
+      };
+
+      expect(
+        extractBroadcastContextQwenDiscoveryResponse(payload, {
+          ...dummyRequest,
+          candidates: [],
+        }).ok,
+      ).toBe(false);
+    });
+
+    it("retries selection when one selected item violates the current schema", () => {
+      const payload = {
+        choices: [{
+          message: {
+            content: JSON.stringify({
+              summary: "최종 심사",
+              selected: [{
+                id: "can1",
+                p: 0.95,
+              }],
+            }),
+          },
+        }],
+      };
+
+      expect(
+        extractBroadcastContextQwenSelectionResponse(payload, dummyRequest).ok,
+      ).toBe(false);
     });
   });
 
@@ -742,6 +884,7 @@ describe("broadcastContextDeepseek", () => {
                     uncertaintiesKo: []
                   }
                 ],
+                discoveredLeads: [],
                 annotations: [
                   {
                     candidateId: "can1",
@@ -817,7 +960,7 @@ describe("broadcastContextDeepseek", () => {
       expect(extractBroadcastContextDeepseekResponse(payload, dummyRequest).ok).toBe(false);
     });
 
-    it("recovers valid semantic chapters while discarding malformed paid items", () => {
+    it("rejects the whole response when any required semantic chapter is malformed", () => {
       const payload = {
         choices: [
           {
@@ -866,14 +1009,11 @@ describe("broadcastContextDeepseek", () => {
         ],
       };
 
-      const parsed = extractBroadcastContextDeepseekResponse(payload, dummyRequest, {
-        recoverMalformedItems: true,
-      });
-      expect(parsed.ok).toBe(true);
-      if (parsed.ok) {
-        expect(parsed.result.semanticChapters).toHaveLength(1);
-        expect(parsed.result.semanticChapters[0]?.titleKo).toBe("정상 단락");
-      }
+      const parsed = extractBroadcastContextDeepseekResponse(
+        payload,
+        dummyRequest,
+      );
+      expect(parsed.ok).toBe(false);
     });
 
     it("rejects invalid category", () => {
@@ -914,8 +1054,16 @@ describe("broadcastContextDeepseek", () => {
             message: {
               content: JSON.stringify({
                 broadcastSummaryKo: "단편적인 진행만 이어져 독립적인 클립 사건이 없다.",
+                hostStreamerProfile: {
+                  displayNameKo: null,
+                  profileSummaryKo:
+                    "방송을 주도하며 평범한 진행을 이어간 스트리머다.",
+                  evidenceKo: ["방송 구간을 직접 진행했다."],
+                  uncertaintiesKo: ["화면 근거로 이름은 확인하지 못했다."],
+                },
                 recurringThemesKo: [],
                 semanticChapters: [],
+                discoveredLeads: [],
                 annotations: [
                   {
                     candidateId: "can1",
@@ -953,6 +1101,13 @@ describe("broadcastContextDeepseek", () => {
             message: {
               content: JSON.stringify({
                 broadcastSummaryKo: "조용히 목표를 달성한 뒤 결과를 확인한 방송이다.",
+                hostStreamerProfile: {
+                  displayNameKo: null,
+                  profileSummaryKo:
+                    "차분하게 목표를 수행하고 결과를 확인하는 진행자다.",
+                  evidenceKo: ["목표 달성과 결과 확인을 직접 설명했다."],
+                  uncertaintiesKo: ["화면 근거로 이름은 확인하지 못했다."],
+                },
                 recurringThemesKo: ["긴 도전의 마무리"],
                 semanticChapters: [],
                 discoveredLeads: [
@@ -1071,7 +1226,7 @@ describe("broadcastContextDeepseek", () => {
       expect(parsed.ok).toBe(false);
     });
 
-    it("recovers paid routing results while failing malformed items closed", () => {
+    it("rejects missing candidate judgments and malformed discovered leads", () => {
       const payload = {
         choices: [{
           message: {
@@ -1097,20 +1252,11 @@ describe("broadcastContextDeepseek", () => {
         }],
       };
 
-      const parsed = extractBroadcastContextDeepseekResponse(payload, dummyRequest, {
-        recoverMalformedItems: true,
-      });
-      expect(parsed.ok).toBe(true);
-      if (parsed.ok) {
-        expect(parsed.result.annotations).toEqual([
-          expect.objectContaining({
-            candidateId: "can1",
-            clipDecision: "reject",
-            rejectionReasons: ["uncertain-evidence"],
-          }),
-        ]);
-        expect(parsed.result.discoveredLeads).toEqual([]);
-      }
+      const parsed = extractBroadcastContextDeepseekResponse(
+        payload,
+        dummyRequest,
+      );
+      expect(parsed.ok).toBe(false);
     });
   });
 });

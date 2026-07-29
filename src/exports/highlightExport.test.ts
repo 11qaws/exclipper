@@ -47,6 +47,7 @@ const input: DurableAnalysisInputDescriptor = {
   source: {
     sourceDefinitionId: "source-1",
     contentFingerprint: `local-file-sampled-sha256-v1:${"a".repeat(64)}`,
+    captionVideoId: null,
     sizeBytes: 123_456,
     durationMs: 7_265_000,
     kind: "video",
@@ -237,7 +238,7 @@ describe("highlight export", () => {
   });
 
   it("preserves missing legacy audio analysis as unavailable instead of zero coverage", () => {
-    const legacySelection: DurableAnalysisSelectionSummary = {
+    const legacySelection = {
       plannedFrameCount: 100,
       sampledFrameCount: 100,
       analyzedTransitionCount: 99,
@@ -246,7 +247,7 @@ describe("highlight export", () => {
       skippedChatMessageCount: 0,
       chatGapReasonCode: null,
       candidateCount: 1,
-    };
+    } as unknown as DurableAnalysisSelectionSummary;
     const file = createHighlightExportFile("json", {
       ...request([candidate("legacy", 5_000)]),
       appVersion: "0.2.1",
@@ -267,7 +268,7 @@ describe("highlight export", () => {
   });
 
   it("rejects partially populated audio selection metadata", () => {
-    const partialSelection: DurableAnalysisSelectionSummary = {
+    const partialSelection = {
       plannedFrameCount: selection.plannedFrameCount,
       sampledFrameCount: selection.sampledFrameCount,
       analyzedTransitionCount: selection.analyzedTransitionCount,
@@ -278,7 +279,7 @@ describe("highlight export", () => {
       plannedAudioWindowCount: 7_265,
       audioGapReasonCode: null,
       candidateCount: selection.candidateCount,
-    };
+    } as unknown as DurableAnalysisSelectionSummary;
 
     expect(() =>
       createHighlightExportFile("json", {

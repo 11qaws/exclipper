@@ -7,29 +7,10 @@ import type {
   UnifiedVisualEvidence,
 } from "../analysis/highlightFusion";
 
-export const DURABLE_CHAT_GAP_POLICY_ID = "local-chat-worker-degradation-v1";
 export const DURABLE_CHAT_GAP_ID = "chat-signal-analysis";
 export const DURABLE_SIGNAL_GAP_POLICY_ID = "local-available-signal-degradation-v2";
 export const DURABLE_AUDIO_GAP_ID = "audio-reaction-analysis";
-
-export type DurableAnalysisSchemaFamily = "legacy" | "reaction";
-
-/**
- * Persistence schemas are intentionally closed. The 0.2 line remains readable,
- * while 0.3.0 is the only reaction-first shape currently implemented.
- */
-export function durableAnalysisSchemaFamily(
-  schemaVersion: string,
-  path = "$.schemaVersion",
-): DurableAnalysisSchemaFamily {
-  if (/^0\.2\.\d+$/u.test(schemaVersion)) {
-    return "legacy";
-  }
-  if (schemaVersion === "0.3.0") {
-    return "reaction";
-  }
-  throw invalid(path, "is not a supported durable analysis schema version.");
-}
+export const DURABLE_ANALYSIS_PERSISTENCE_SCHEMA_VERSION = "0.3.0" as const;
 
 export type DurableChatGapReasonCode =
   | "EVENT_FENCE_REJECTED"
@@ -59,6 +40,7 @@ export type DurablePreferredRuntimeTier = "webgpu" | "wasm" | "signals-only";
 export interface DurableSourceDescriptor {
   readonly sourceDefinitionId: string;
   readonly contentFingerprint: string;
+  readonly captionVideoId: string | null;
   readonly sizeBytes: number;
   readonly durationMs: number;
   readonly kind: DurableMediaKind;
@@ -77,29 +59,16 @@ export interface DurableAnalysisInputDescriptor {
   readonly candidateWindowMs: number;
 }
 
-export interface DurableChatGapPolicy {
-  readonly policyId: typeof DURABLE_CHAT_GAP_POLICY_ID;
-  readonly disclosedBeforeStart: true;
-  readonly behavior: "preserve-visual-result-and-complete-with-documented-chat-gap";
-}
-
 export interface DurableSignalGapPolicy {
   readonly policyId: typeof DURABLE_SIGNAL_GAP_POLICY_ID;
   readonly disclosedBeforeStart: true;
   readonly behavior: "complete-with-available-reaction-signals-and-documented-gaps";
 }
 
-export type DurableManifestPayload =
-  | {
-      readonly input: DurableAnalysisInputDescriptor;
-      readonly chatGapPolicy: DurableChatGapPolicy;
-      readonly signalGapPolicy?: never;
-    }
-  | {
-      readonly input: DurableAnalysisInputDescriptor;
-      readonly signalGapPolicy: DurableSignalGapPolicy;
-      readonly chatGapPolicy?: never;
-    };
+export interface DurableManifestPayload {
+  readonly input: DurableAnalysisInputDescriptor;
+  readonly signalGapPolicy: DurableSignalGapPolicy;
+}
 
 export interface DurableAnalysisSelectionSummary {
   readonly plannedFrameCount: number;
@@ -109,27 +78,20 @@ export interface DurableAnalysisSelectionSummary {
   readonly outOfRangeChatMessageCount: number;
   readonly skippedChatMessageCount: number;
   readonly chatGapReasonCode: DurableChatGapReasonCode | null;
-  /** Present on schema 0.3.0 reaction-first results. */
-  readonly plannedAudioWindowCount?: number;
-  /** Present on schema 0.3.0 reaction-first results. */
-  readonly analyzedAudioWindowCount?: number;
-  /** Present on schema 0.3.0 reaction-first results. */
-  readonly audioGapReasonCode?: DurableAudioGapReasonCode | null;
+  readonly plannedAudioWindowCount: number;
+  readonly analyzedAudioWindowCount: number;
+  readonly audioGapReasonCode: DurableAudioGapReasonCode | null;
   readonly candidateCount: number;
 }
 
 export interface DurableGapApprovalRecord {
   readonly gapId: typeof DURABLE_CHAT_GAP_ID | typeof DURABLE_AUDIO_GAP_ID;
   readonly reason: DurableSignalGapReasonCode;
-  readonly approvedBy:
-    | typeof DURABLE_CHAT_GAP_POLICY_ID
-    | typeof DURABLE_SIGNAL_GAP_POLICY_ID;
+  readonly approvedBy: typeof DURABLE_SIGNAL_GAP_POLICY_ID;
 }
 
 export interface DurableAnalysisGapApprovalEvidence {
-  readonly policyId:
-    | typeof DURABLE_CHAT_GAP_POLICY_ID
-    | typeof DURABLE_SIGNAL_GAP_POLICY_ID;
+  readonly policyId: typeof DURABLE_SIGNAL_GAP_POLICY_ID;
   readonly disclosedBeforeStart: true;
   readonly approvals: readonly DurableGapApprovalRecord[];
 }
@@ -142,18 +104,11 @@ export interface DurableAnalysisCoverageSummary {
   readonly chatProcessedMessageCount: number;
   readonly chatCoverageComplete: boolean;
   readonly chatGapReasonCode: DurableChatGapReasonCode | null;
-  /** Legacy schema 0.2.x gap approval. */
-  readonly chatGapApproval?: DurableAnalysisGapApprovalEvidence | null;
-  /** Present on schema 0.3.0 reaction-first results. */
-  readonly audioPlannedWindowCount?: number;
-  /** Present on schema 0.3.0 reaction-first results. */
-  readonly audioProcessedWindowCount?: number;
-  /** Present on schema 0.3.0 reaction-first results. */
-  readonly audioCoverageComplete?: boolean;
-  /** Present on schema 0.3.0 reaction-first results. */
-  readonly audioGapReasonCode?: DurableAudioGapReasonCode | null;
-  /** Schema 0.3.0 approval for every incomplete optional modality. */
-  readonly signalGapApproval?: DurableAnalysisGapApprovalEvidence | null;
+  readonly audioPlannedWindowCount: number;
+  readonly audioProcessedWindowCount: number;
+  readonly audioCoverageComplete: boolean;
+  readonly audioGapReasonCode: DurableAudioGapReasonCode | null;
+  readonly signalGapApproval: DurableAnalysisGapApprovalEvidence | null;
   readonly activeTaskCountAtCommit: number;
 }
 
@@ -171,8 +126,9 @@ export interface DurableFinalResultPayload {
 export function durableCoverageDisposition(
   coverage: DurableAnalysisCoverageSummary,
 ): "completed" | "completedWithGaps" {
-  const audioComplete = coverage.audioCoverageComplete ?? true;
-  return coverage.visualCoverageComplete && coverage.chatCoverageComplete && audioComplete
+  return coverage.visualCoverageComplete &&
+    coverage.chatCoverageComplete &&
+    coverage.audioCoverageComplete
     ? "completed"
     : "completedWithGaps";
 }
@@ -219,6 +175,7 @@ const AUDIO_GAP_REASON_CODES = new Set<DurableAudioGapReasonCode>([
 const SOURCE_KEYS = [
   "sourceDefinitionId",
   "contentFingerprint",
+  "captionVideoId",
   "sizeBytes",
   "durationMs",
   "kind",
@@ -226,7 +183,7 @@ const SOURCE_KEYS = [
 ] as const;
 const CHAT_INPUT_KEYS = ["timestampBasis", "importedRowCount", "offsetMs"] as const;
 const ANALYSIS_INPUT_KEYS = ["source", "chat", "candidateWindowMs"] as const;
-const LEGACY_SUMMARY_KEYS = [
+const SUMMARY_KEYS = [
   "plannedFrameCount",
   "sampledFrameCount",
   "analyzedTransitionCount",
@@ -235,25 +192,11 @@ const LEGACY_SUMMARY_KEYS = [
   "skippedChatMessageCount",
   "chatGapReasonCode",
   "candidateCount",
-] as const;
-const REACTION_SUMMARY_KEYS = [
-  ...LEGACY_SUMMARY_KEYS,
   "plannedAudioWindowCount",
   "analyzedAudioWindowCount",
   "audioGapReasonCode",
 ] as const;
-const LEGACY_COVERAGE_KEYS = [
-  "visualPlannedSampleCount",
-  "visualCompletedSampleCount",
-  "visualCoverageComplete",
-  "chatPlannedMessageCount",
-  "chatProcessedMessageCount",
-  "chatCoverageComplete",
-  "chatGapReasonCode",
-  "chatGapApproval",
-  "activeTaskCountAtCommit",
-] as const;
-const REACTION_COVERAGE_KEYS = [
+const COVERAGE_KEYS = [
   "visualPlannedSampleCount",
   "visualCompletedSampleCount",
   "visualCoverageComplete",
@@ -445,6 +388,16 @@ export function assertDurableSourceDescriptor(
   ) {
     throw invalid(`${path}.contentFingerprint`, "must be a versioned sampled SHA-256 fingerprint.");
   }
+  if (
+    record.captionVideoId !== null &&
+    (typeof record.captionVideoId !== "string" ||
+      !/^[A-Za-z0-9_-]{11}$/u.test(record.captionVideoId))
+  ) {
+    throw invalid(
+      `${path}.captionVideoId`,
+      "must be null or one exact YouTube video identifier.",
+    );
+  }
   assertSafeInteger(record.sizeBytes, `${path}.sizeBytes`);
   assertSafeInteger(record.durationMs, `${path}.durationMs`);
   assertOneOf(record.kind, `${path}.kind`, ["video", "audio", "unknown"]);
@@ -479,86 +432,42 @@ export function assertDurableAnalysisInputDescriptor(
 
 export function assertDurableManifestPayload(
   value: unknown,
-  schemaFamily: DurableAnalysisSchemaFamily,
   path = "$.result",
 ): asserts value is DurableManifestPayload {
   const record = asPlainRecord(value, path);
+  assertExactKeys(record, path, ["input", "signalGapPolicy"]);
   assertDurableAnalysisInputDescriptor(record.input, `${path}.input`);
-  const hasLegacyPolicy = Object.hasOwn(record, "chatGapPolicy");
-  const hasSignalPolicy = Object.hasOwn(record, "signalGapPolicy");
-  if (schemaFamily === "legacy" && (!hasLegacyPolicy || hasSignalPolicy)) {
-    throw invalid(path, "must use the legacy chat-gap policy for schema 0.2.x.");
-  }
-  if (schemaFamily === "reaction" && (!hasSignalPolicy || hasLegacyPolicy)) {
-    throw invalid(path, "must use the reaction signal-gap policy for schema 0.3.0.");
-  }
-  const policyKey = hasLegacyPolicy ? "chatGapPolicy" : "signalGapPolicy";
-  assertExactKeys(record, path, ["input", policyKey]);
-  const policy = asPlainRecord(record[policyKey], `${path}.${policyKey}`);
-  assertExactKeys(policy, `${path}.${policyKey}`, [
+  const policy = asPlainRecord(record.signalGapPolicy, `${path}.signalGapPolicy`);
+  assertExactKeys(policy, `${path}.signalGapPolicy`, [
     "policyId",
     "disclosedBeforeStart",
     "behavior",
   ]);
-  const validLegacyPolicy =
-    hasLegacyPolicy &&
-    policy.policyId === DURABLE_CHAT_GAP_POLICY_ID &&
-    policy.disclosedBeforeStart === true &&
-    policy.behavior === "preserve-visual-result-and-complete-with-documented-chat-gap";
   const validSignalPolicy =
-    hasSignalPolicy &&
     policy.policyId === DURABLE_SIGNAL_GAP_POLICY_ID &&
     policy.disclosedBeforeStart === true &&
     policy.behavior === "complete-with-available-reaction-signals-and-documented-gaps";
-  if (!validLegacyPolicy && !validSignalPolicy) {
-    throw invalid(`${path}.${policyKey}`, "does not match the disclosed local fallback policy.");
+  if (!validSignalPolicy) {
+    throw invalid(
+      `${path}.signalGapPolicy`,
+      "does not match the disclosed local signal-gap policy.",
+    );
   }
 }
 
 function assertSelectionSummary(
   value: unknown,
   path: string,
-  schemaFamily: DurableAnalysisSchemaFamily,
 ): asserts value is DurableAnalysisSelectionSummary {
   const record = asPlainRecord(value, path);
-  const hasReactionSummary = schemaFamily === "reaction";
-  const keys = schemaFamily === "reaction" ? REACTION_SUMMARY_KEYS : LEGACY_SUMMARY_KEYS;
-  assertExactKeys(record, path, keys);
-  for (const key of keys) {
-    if (key !== "chatGapReasonCode") {
-      if (key !== "audioGapReasonCode") {
-        assertSafeInteger(record[key], `${path}.${key}`);
-      }
+  assertExactKeys(record, path, SUMMARY_KEYS);
+  for (const key of SUMMARY_KEYS) {
+    if (key !== "chatGapReasonCode" && key !== "audioGapReasonCode") {
+      assertSafeInteger(record[key], `${path}.${key}`);
     }
   }
   assertGapReason(record.chatGapReasonCode, `${path}.chatGapReasonCode`);
-  if (hasReactionSummary) {
-    assertAudioGapReason(record.audioGapReasonCode, `${path}.audioGapReasonCode`);
-  }
-}
-
-function assertLegacyGapApproval(
-  value: unknown,
-  path: string,
-  expectedReason: DurableChatGapReasonCode,
-): asserts value is DurableAnalysisGapApprovalEvidence {
-  const record = asPlainRecord(value, path);
-  assertExactKeys(record, path, ["policyId", "disclosedBeforeStart", "approvals"]);
-  if (record.policyId !== DURABLE_CHAT_GAP_POLICY_ID || record.disclosedBeforeStart !== true) {
-    throw invalid(path, "does not match the disclosed local chat-gap policy.");
-  }
-  if (!Array.isArray(record.approvals) || record.approvals.length !== 1) {
-    throw invalid(`${path}.approvals`, "must contain exactly one documented approval.");
-  }
-  const approval = asPlainRecord(record.approvals[0], `${path}.approvals[0]`);
-  assertExactKeys(approval, `${path}.approvals[0]`, ["gapId", "reason", "approvedBy"]);
-  if (
-    approval.gapId !== DURABLE_CHAT_GAP_ID ||
-    approval.reason !== expectedReason ||
-    approval.approvedBy !== DURABLE_CHAT_GAP_POLICY_ID
-  ) {
-    throw invalid(`${path}.approvals[0]`, "does not match the documented chat gap.");
-  }
+  assertAudioGapReason(record.audioGapReasonCode, `${path}.audioGapReasonCode`);
 }
 
 function assertSignalGapApproval(
@@ -603,15 +512,9 @@ function assertSignalGapApproval(
 function assertCoverageSummary(
   value: unknown,
   path: string,
-  schemaFamily: DurableAnalysisSchemaFamily,
 ): asserts value is DurableAnalysisCoverageSummary {
   const record = asPlainRecord(value, path);
-  const hasAudioCoverage = schemaFamily === "reaction";
-  assertExactKeys(
-    record,
-    path,
-    hasAudioCoverage ? REACTION_COVERAGE_KEYS : LEGACY_COVERAGE_KEYS,
-  );
+  assertExactKeys(record, path, COVERAGE_KEYS);
   for (const key of [
     "visualPlannedSampleCount",
     "visualCompletedSampleCount",
@@ -652,24 +555,6 @@ function assertCoverageSummary(
   }
   if (record.activeTaskCountAtCommit !== 0) {
     throw invalid(`${path}.activeTaskCountAtCommit`, "must be zero at final commit.");
-  }
-
-  if (!hasAudioCoverage) {
-    if (record.chatCoverageComplete) {
-      if (record.chatGapReasonCode !== null || record.chatGapApproval !== null) {
-        throw invalid(path, "must not claim a gap when chat coverage is complete.");
-      }
-      return;
-    }
-    if (record.chatGapReasonCode === null || record.chatGapApproval === null) {
-      throw invalid(path, "must document and approve incomplete chat coverage.");
-    }
-    assertLegacyGapApproval(
-      record.chatGapApproval,
-      `${path}.chatGapApproval`,
-      record.chatGapReasonCode,
-    );
-    return;
   }
 
   for (const key of ["audioPlannedWindowCount", "audioProcessedWindowCount"] as const) {
@@ -792,16 +677,11 @@ function assertAudioEvidence(value: unknown, path: string): asserts value is Uni
 function signalKindsFor(
   value: unknown,
   path: string,
-  schemaFamily: DurableAnalysisSchemaFamily,
 ): readonly HighlightSignalKind[] {
   if (!Array.isArray(value)) {
     throw invalid(path, "must be an array.");
   }
   const candidateKinds: readonly unknown[] = value;
-  const isLegacyVisualChat =
-    candidateKinds.length === 2 &&
-    candidateKinds[0] === "visual" &&
-    candidateKinds[1] === "chat";
   const order: readonly HighlightSignalKind[] = ["audio", "chat", "visual"];
   const validCanonical =
     candidateKinds.length >= 1 &&
@@ -816,16 +696,7 @@ function signalKindsFor(
           order.indexOf(candidateKinds[index - 1] as HighlightSignalKind)
       );
     });
-  const containsAudio = candidateKinds.includes("audio");
-  const validLegacy =
-    (candidateKinds.length === 1 &&
-      (candidateKinds[0] === "visual" || candidateKinds[0] === "chat")) ||
-    isLegacyVisualChat;
-  const valid =
-    schemaFamily === "legacy"
-      ? !containsAudio && validLegacy
-      : !isLegacyVisualChat && validCanonical;
-  if (!valid) {
+  if (!validCanonical) {
     throw invalid(path, "must contain unique signal kinds in canonical order.");
   }
   return value as readonly HighlightSignalKind[];
@@ -868,7 +739,6 @@ function assertCandidate(
   value: unknown,
   path: string,
   sourceDurationMs: number,
-  schemaFamily: DurableAnalysisSchemaFamily,
 ): asserts value is DurableHighlightCandidate {
   const record = asPlainRecord(value, path);
   assertExactKeys(record, path, [
@@ -880,7 +750,7 @@ function assertCandidate(
     "signalKinds",
     "evidence",
   ]);
-  const signalKinds = signalKindsFor(record.signalKinds, `${path}.signalKinds`, schemaFamily);
+  const signalKinds = signalKindsFor(record.signalKinds, `${path}.signalKinds`);
   const signalId = signalKinds.join("-");
   if (
     typeof record.id !== "string" ||
@@ -911,7 +781,6 @@ function assertCandidate(
 
 export function assertDurableFinalResultPayload(
   value: unknown,
-  schemaFamily: DurableAnalysisSchemaFamily,
   path = "$.result",
 ): asserts value is DurableFinalResultPayload {
   const record = asPlainRecord(value, path);
@@ -920,15 +789,15 @@ export function assertDurableFinalResultPayload(
   if (record.input.source.kind !== "video") {
     throw invalid(`${path}.input.source.kind`, "must be video for a completed analysis.");
   }
-  assertSelectionSummary(record.summary, `${path}.summary`, schemaFamily);
-  assertCoverageSummary(record.coverage, `${path}.coverage`, schemaFamily);
+  assertSelectionSummary(record.summary, `${path}.summary`);
+  assertCoverageSummary(record.coverage, `${path}.coverage`);
   if (!Array.isArray(record.candidates) || record.candidates.length > 12) {
     throw invalid(`${path}.candidates`, "must be an array of at most 12 candidates.");
   }
   const durationMs = record.input.source.durationMs;
   const candidateIds = new Set<string>();
   record.candidates.forEach((candidate, index) => {
-    assertCandidate(candidate, `${path}.candidates[${index}]`, durationMs, schemaFamily);
+    assertCandidate(candidate, `${path}.candidates[${index}]`, durationMs);
     candidateIds.add(candidate.id);
   });
   if (candidateIds.size !== record.candidates.length) {
@@ -947,16 +816,10 @@ export function assertDurableFinalResultPayload(
   ) {
     throw invalid(path, "contains summary and coverage records that do not agree.");
   }
-  const hasReactionSummary = summary.plannedAudioWindowCount !== undefined;
-  const hasReactionCoverage = coverage.audioPlannedWindowCount !== undefined;
-  if (hasReactionSummary !== hasReactionCoverage) {
-    throw invalid(path, "mixes legacy and reaction-first coverage fields.");
-  }
   if (
-    hasReactionSummary &&
-    (summary.plannedAudioWindowCount !== coverage.audioPlannedWindowCount ||
-      summary.analyzedAudioWindowCount !== coverage.audioProcessedWindowCount ||
-      summary.audioGapReasonCode !== coverage.audioGapReasonCode)
+    summary.plannedAudioWindowCount !== coverage.audioPlannedWindowCount ||
+    summary.analyzedAudioWindowCount !== coverage.audioProcessedWindowCount ||
+    summary.audioGapReasonCode !== coverage.audioGapReasonCode
   ) {
     throw invalid(path, "contains audio summary and coverage records that do not agree.");
   }

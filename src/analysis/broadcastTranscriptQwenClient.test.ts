@@ -12,6 +12,7 @@ import {
   CANDIDATE_PASS_B_SAMPLE_RATE_HZ,
 } from "./candidatePassBWorkerProtocol";
 import {
+  BROADCAST_TRANSCRIPT_GROQ_MODEL_REVISION,
   BROADCAST_TRANSCRIPT_QWEN_OMNI_MODEL_REVISION,
 } from "./broadcastTranscriptQwen";
 import {
@@ -93,6 +94,7 @@ describe("broadcastTranscriptQwenClient", () => {
             JSON.stringify({
               schemaVersion: "1.0.0",
               modelId: "qwen3.5-omni-flash",
+              modelRevision: BROADCAST_TRANSCRIPT_QWEN_OMNI_MODEL_REVISION,
               sourceStartMs: 10_000,
               sourceEndMs: 11_000,
               textKo: "조용히 성공했다고 말한다.",
@@ -133,6 +135,7 @@ describe("broadcastTranscriptQwenClient", () => {
           JSON.stringify({
             schemaVersion: "1.0.0",
             modelId: "whisper-large-v3-turbo",
+            modelRevision: BROADCAST_TRANSCRIPT_GROQ_MODEL_REVISION,
             sourceStartMs: 0,
             sourceEndMs: 1_000,
             textKo: "안녕하세요.",
@@ -173,6 +176,7 @@ describe("broadcastTranscriptQwenClient", () => {
               JSON.stringify({
                 schemaVersion: "1.0.0",
                 modelId: "qwen3.5-omni-flash",
+                modelRevision: BROADCAST_TRANSCRIPT_QWEN_OMNI_MODEL_REVISION,
                 sourceStartMs: 0,
                 sourceEndMs: 1_000,
                 textKo: "헤더가 없는 응답",
@@ -198,6 +202,7 @@ describe("broadcastTranscriptQwenClient", () => {
           JSON.stringify({
             schemaVersion: "1.0.0",
             modelId: "qwen3.5-omni-flash",
+            modelRevision: BROADCAST_TRANSCRIPT_QWEN_OMNI_MODEL_REVISION,
             sourceStartMs: 0,
             sourceEndMs: 1_000,
             textKo: "다른 구간",
@@ -255,6 +260,7 @@ describe("broadcastTranscriptQwenClient", () => {
             JSON.stringify({
               schemaVersion: "1.0.0",
               modelId: "qwen3.5-omni-flash",
+              modelRevision: BROADCAST_TRANSCRIPT_QWEN_OMNI_MODEL_REVISION,
               sourceStartMs: 10_000,
               sourceEndMs: 100_000,
               textKo: "유료 직접 경로입니다.",
@@ -326,6 +332,7 @@ describe("broadcastTranscriptQwenClient", () => {
             JSON.stringify({
               schemaVersion: "1.0.0",
               modelId: "qwen3.5-omni-flash",
+              modelRevision: BROADCAST_TRANSCRIPT_QWEN_OMNI_MODEL_REVISION,
               sourceStartMs: 10_000,
               sourceEndMs: 100_000,
               textKo: "R2 URL 경로입니다.",
@@ -508,6 +515,7 @@ describe("broadcastTranscriptQwenClient", () => {
               JSON.stringify({
                 schemaVersion: "1.0.0",
                 modelId: "qwen3.5-omni-flash",
+                modelRevision: BROADCAST_TRANSCRIPT_QWEN_OMNI_MODEL_REVISION,
                 sourceStartMs: 10_000,
                 sourceEndMs: 100_000,
                 textKo: "같은 업로드로 재시도에 성공했습니다.",

@@ -6,7 +6,12 @@ import {
   type AnalysisJobEvent,
 } from "../domain/analysisJob";
 import type { AnalysisStage } from "../domain/analysisRun";
-import type { AnalysisJobRecord, AnalysisResultStore } from "../storage/analysisResultStore";
+import {
+  ANALYSIS_JOB_RECORD_SCHEMA_VERSION,
+  AnalysisResultStoreError,
+  type AnalysisJobRecord,
+  type AnalysisResultStore,
+} from "../storage/analysisResultStore";
 
 /**
  * Where the run pipeline meets the job layer.
@@ -21,10 +26,32 @@ import type { AnalysisJobRecord, AnalysisResultStore } from "../storage/analysis
  * of rules living in the app is exactly how the two would disagree.
  */
 
-/** 저장에 실패해도 분석은 계속돼야 한다. 작업 기록은 분석의 부산물이지 조건이 아니다. */
+/**
+ * A transition rejection is permanent for the captured run. A storage failure
+ * is recoverable from the same durable checkpoint and may be retried.
+ */
 export type JobBridgeOutcome =
   | { readonly ok: true; readonly job: AnalysisJob }
-  | { readonly ok: false; readonly reason: string };
+  | {
+      readonly ok: false;
+      readonly failure: "storage" | "transition" | "conflict";
+      readonly retryable: boolean;
+      readonly reason: string;
+    };
+
+function storageFailure(cause: unknown): JobBridgeOutcome {
+  const retryable =
+    !(cause instanceof AnalysisResultStoreError) ||
+    !["STORE_CLOSED", "INVALID_PAYLOAD", "SCHEMA_MISMATCH"].includes(
+      cause.code,
+    );
+  return {
+    ok: false,
+    failure: "storage",
+    retryable,
+    reason: String((cause as Error)?.message ?? cause),
+  };
+}
 
 /**
  * 같은 영상인지의 판정 키.
@@ -33,14 +60,26 @@ export type JobBridgeOutcome =
  * 알아본다. `scheme` 에 버전이 있으므로 나중에 오디오 지문(v2)으로 바꿔도 기존
  * 레코드와 공존한다.
  */
-export const JOB_IDENTITY_SCHEME = "app-input-signature-v1";
+export const JOB_IDENTITY_SCHEME = "exclipper-input-signature-v1";
 
 export function jobIdFor(inputSignature: string): string {
-  return `job-${inputSignature}`;
+  return `exclipper-job-${inputSignature}`;
 }
 
 function nowIso(): string {
   return new Date().toISOString();
+}
+
+function isCurrentJobIdentity(
+  job: AnalysisJob,
+  jobId: string,
+  inputSignature: string,
+): boolean {
+  return (
+    job.jobId === jobId &&
+    job.identity.scheme === JOB_IDENTITY_SCHEME &&
+    job.identity.key === inputSignature
+  );
 }
 
 /**
@@ -54,8 +93,9 @@ async function persist(
   store: AnalysisResultStore,
   job: AnalysisJob,
   previous: AnalysisJobRecord | null,
-): Promise<void> {
-  await store.putJob({
+): Promise<boolean> {
+  return store.replaceJobIfUnchanged(previous, {
+    schemaVersion: ANALYSIS_JOB_RECORD_SCHEMA_VERSION,
     jobId: job.jobId,
     job,
     lastActivityAt: nowIso(),
@@ -71,15 +111,40 @@ async function apply(
 ): Promise<JobBridgeOutcome> {
   try {
     const existing = await store.getJob(jobId);
-    const current = existing?.job ?? fallback();
+    const fresh = fallback();
+    if (
+      existing !== null &&
+      !isCurrentJobIdentity(existing.job, fresh.jobId, fresh.identity.key)
+    ) {
+      return {
+        ok: false,
+        failure: "transition",
+        retryable: false,
+        reason: "analysis_job_identity_mismatch",
+      };
+    }
+    const current = existing?.job ?? fresh;
     const outcome = transitionAnalysisJob(current, event);
     if (!outcome.accepted) {
-      return { ok: false, reason: outcome.reason };
+      return {
+        ok: false,
+        failure: "transition",
+        retryable: false,
+        reason: outcome.reason,
+      };
     }
-    await persist(store, outcome.job, existing);
+    const persisted = await persist(store, outcome.job, existing);
+    if (!persisted) {
+      return {
+        ok: false,
+        failure: "conflict",
+        retryable: false,
+        reason: "analysis_job_snapshot_changed",
+      };
+    }
     return { ok: true, job: outcome.job };
   } catch (cause) {
-    return { ok: false, reason: String((cause as Error)?.message ?? cause) };
+    return storageFailure(cause);
   }
 }
 
@@ -107,6 +172,17 @@ export async function startAnalysisJob(input: StartJobInput): Promise<JobBridgeO
 
   try {
     const existing = await input.store.getJob(jobId);
+    if (
+      existing !== null &&
+      !isCurrentJobIdentity(existing.job, jobId, input.inputSignature)
+    ) {
+      return {
+        ok: false,
+        failure: "transition",
+        retryable: false,
+        reason: "analysis_job_identity_mismatch",
+      };
+    }
     const current = existing?.job ?? fresh();
     // 멈춰 있던 작업은 RESUME 으로, 실패했던 것은 RETRY 로 이어야 전이표를
     // 통과한다. 새 작업만 START 다.
@@ -128,19 +204,37 @@ export async function startAnalysisJob(input: StartJobInput): Promise<JobBridgeO
           })
         : { accepted: true as const, job: current };
     if (!base.accepted) {
-      return { ok: false, reason: base.reason };
+      return {
+        ok: false,
+        failure: "transition",
+        retryable: false,
+        reason: base.reason,
+      };
     }
 
     const outcome = transitionAnalysisJob(base.job, event, {
       otherRunningJobCount: input.otherRunningJobCount ?? 0,
     });
     if (!outcome.accepted) {
-      return { ok: false, reason: outcome.reason };
+      return {
+        ok: false,
+        failure: "transition",
+        retryable: false,
+        reason: outcome.reason,
+      };
     }
-    await persist(input.store, outcome.job, existing);
+    const persisted = await persist(input.store, outcome.job, existing);
+    if (!persisted) {
+      return {
+        ok: false,
+        failure: "conflict",
+        retryable: false,
+        reason: "analysis_job_snapshot_changed",
+      };
+    }
     return { ok: true, job: outcome.job };
   } catch (cause) {
-    return { ok: false, reason: String((cause as Error)?.message ?? cause) };
+    return storageFailure(cause);
   }
 }
 
@@ -148,10 +242,11 @@ export async function startAnalysisJob(input: StartJobInput): Promise<JobBridgeO
 export function commitAnalysisStage(
   store: AnalysisResultStore,
   inputSignature: string,
+  runId: string,
   stage: AnalysisStage,
 ): Promise<JobBridgeOutcome> {
   const jobId = jobIdFor(inputSignature);
-  return apply(store, jobId, { type: "STAGE_COMMITTED", stage }, () =>
+  return apply(store, jobId, { type: "STAGE_COMMITTED", runId, stage }, () =>
     createAnalysisJob({
       jobId,
       identity: { scheme: JOB_IDENTITY_SCHEME, key: inputSignature },
@@ -169,6 +264,7 @@ export function commitAnalysisStage(
 export async function completeAnalysisJob(
   store: AnalysisResultStore,
   inputSignature: string,
+  runId: string,
   usable: boolean,
 ): Promise<JobBridgeOutcome> {
   const jobId = jobIdFor(inputSignature);
@@ -176,18 +272,34 @@ export async function completeAnalysisJob(
     const existing = await store.getJob(jobId);
     if (
       existing !== null &&
+      !isCurrentJobIdentity(existing.job, jobId, inputSignature)
+    ) {
+      return {
+        ok: false,
+        failure: "transition",
+        retryable: false,
+        reason: "analysis_job_identity_mismatch",
+      };
+    }
+    if (
+      existing !== null &&
+      existing.job.runIds.at(-1) === runId &&
       ((usable && existing.job.status === "completed") ||
         (!usable && existing.job.status === "completedEmpty"))
     ) {
       return { ok: true, job: existing.job };
     }
   } catch (cause) {
-    return { ok: false, reason: String((cause as Error)?.message ?? cause) };
+    return storageFailure(cause);
   }
   return apply(
     store,
     jobId,
-    { type: "ALL_STAGES_DONE", quality: usable ? "usable" : "empty" },
+    {
+      type: "ALL_STAGES_DONE",
+      runId,
+      quality: usable ? "usable" : "empty",
+    },
     () =>
       createAnalysisJob({
         jobId,
@@ -200,9 +312,10 @@ export async function completeAnalysisJob(
 export function pauseAnalysisJob(
   store: AnalysisResultStore,
   inputSignature: string,
+  runId: string,
 ): Promise<JobBridgeOutcome> {
   const jobId = jobIdFor(inputSignature);
-  return apply(store, jobId, { type: "PAUSE" }, () =>
+  return apply(store, jobId, { type: "PAUSE", runId }, () =>
     createAnalysisJob({
       jobId,
       identity: { scheme: JOB_IDENTITY_SCHEME, key: inputSignature },
@@ -213,6 +326,7 @@ export function pauseAnalysisJob(
 export function failAnalysisJob(
   store: AnalysisResultStore,
   inputSignature: string,
+  runId: string,
   reasonCode: string,
 ): Promise<JobBridgeOutcome> {
   const jobId = jobIdFor(inputSignature);
@@ -221,7 +335,11 @@ export function failAnalysisJob(
     jobId,
     // 사유 없는 실패는 전이표가 거부한다. 빈 문자열이 오면 최소한 무엇이었는지
     // 남긴다 — "실패함" 만 남은 기록은 아무 도움이 안 된다.
-    { type: "FATAL", reasonCode: reasonCode.length > 0 ? reasonCode : "unknown_failure" },
+    {
+      type: "FATAL",
+      runId,
+      reasonCode: reasonCode.length > 0 ? reasonCode : "unknown_failure",
+    },
     () =>
       createAnalysisJob({
         jobId,

@@ -9,7 +9,7 @@ const allCandidateIds = new Set(candidates.map(({ id }) => id));
 const paidDetailIds = new Set(candidates.slice(0, 12).map(({ id }) => id));
 
 describe("selectCandidateVerificationCohort", () => {
-  it("does not turn five deliberate detail-budget reserves into pipeline gaps", () => {
+  it("does not drop context-qualified candidates outside one detail batch", () => {
     const contextByCandidateId = Object.fromEntries(
       candidates.map(({ id }) => [id, { context: true }]),
     );
@@ -23,7 +23,7 @@ describe("selectCandidateVerificationCohort", () => {
     });
 
     expect(result.map(({ id }) => id)).toEqual(
-      candidates.slice(0, 12).map(({ id }) => id),
+      candidates.map(({ id }) => id),
     );
   });
 

@@ -34,10 +34,12 @@ export function createDurableSourceDescriptor(
   preflight: LocalMediaPreflightResult,
   sourceDefinitionId: string,
   contentFingerprint: string,
+  captionVideoId: string | null,
 ): DurableSourceDescriptor {
   return {
     sourceDefinitionId,
     contentFingerprint,
+    captionVideoId,
     sizeBytes: preflight.metadata.sizeBytes,
     durationMs: preflight.metadata.durationMs,
     kind: preflight.metadata.kind,

@@ -76,7 +76,6 @@ import {
   createBroadcastContextSamplingPlan,
   createBroadcastContextTranscriptionChunks,
   subtractBroadcastContextCoveredRanges,
-  type BroadcastContextTranscriptionChunk,
 } from "./analysis/broadcastContextSamplingPlan";
 import {
   createDistributedTimelineRevealOrder,
@@ -98,11 +97,19 @@ import {
   prepareBroadcastTranscriptEvidenceProjection,
 } from "./analysis/broadcastTranscriptEvidenceProjection";
 import {
+  createBroadcastTranscriptVisualInspectionPlan,
+} from "./analysis/broadcastTranscriptVisualInspectionQueue";
+import {
+  parseAndProjectBroadcastTranscriptVisualContext,
+  type BroadcastTranscriptVisualContextProjection,
+} from "./analysis/broadcastTranscriptVisualContextProjection";
+import {
   broadcastTranscriptProviderReceiptCheckpointModelRevision,
   createBroadcastTranscriptProviderReceiptCheckpoint,
   inspectBroadcastTranscriptProviderReceiptSettlement,
   parseBroadcastTranscriptProviderReceiptCheckpointJson,
   rebaseBroadcastTranscriptProviderReceiptCheckpointRoute,
+  recordBroadcastTranscriptCaptionReceipt,
   recordBroadcastTranscriptProviderReceipt,
   serializeBroadcastTranscriptProviderReceiptCheckpoint,
   type BroadcastTranscriptProviderReceiptCheckpoint,
@@ -120,6 +127,7 @@ import {
   parseBroadcastContextPhaseLedgerJson,
   replanBroadcastContextPhaseLedgerAfterEditorRetry,
   serializeBroadcastContextPhaseLedger,
+  type BroadcastContextPhaseLedger,
   type BroadcastContextPhaseLedgerFence,
 } from "./analysis/broadcastContextPhaseLedger";
 import {
@@ -139,11 +147,17 @@ import {
 import {
   nextTranscriptFragmentManualGeneration,
   recoverBroadcastTranscriptFragments,
-  transcriptFragmentQuotaAttemptOrdinal,
+  transcriptFragmentQuotaOperationId,
   type BroadcastTranscriptFragmentRecoveryProgress,
   type BroadcastTranscriptFragmentRecoveryResult,
 } from "./analysis/broadcastTranscriptFragmentRecovery";
 import { runDurableBroadcastContextPipeline } from "./app/durableBroadcastContextPipeline";
+import {
+  loadDurableBroadcastContextSession,
+  transformDurableBroadcastContextSession,
+  type DurableBroadcastContextSessionResult,
+} from "./app/durableBroadcastContextSession";
+import { runDurableBroadcastVisualInspectionPhase } from "./app/durableBroadcastVisualInspectionPhase";
 import {
   runDurableBroadcastRefinementPipeline,
   type DurableBroadcastRefinementLeadInput,
@@ -151,6 +165,7 @@ import {
 import { runDurableBroadcastRefinementTranscriptPipeline } from "./app/durableBroadcastRefinementTranscriptPipeline";
 import {
   BROADCAST_TRANSCRIPT_WORKER_VERSION,
+  type BroadcastTranscriptDispatchIntent,
   type BroadcastTranscriptWorkerProgress,
 } from "./analysis/broadcastTranscriptWorkerProtocol";
 import {
@@ -159,12 +174,11 @@ import {
   type BroadcastSpeechActivityRunReceipt,
 } from "./analysis/broadcastSpeechActivity";
 import {
-  BROADCAST_TRANSCRIPT_ACTIVE_MODEL_REVISION,
   type BroadcastTranscriptQwenResult,
 } from "./analysis/broadcastTranscriptQwen";
 import {
   YOUTUBE_CAPTION_MODEL_REVISION,
-  createYouTubeCaptionChapters,
+  createYouTubeCaptionTranscriptCellOutcomes,
   type YouTubeCaptionTrackResult,
   youtubeVideoIdFromSourceName,
   youtubeVideoIdFromUserInput,
@@ -178,7 +192,6 @@ import type { AnalysisLanguage } from "./domain/analysisLanguage";
 import {
   captionTextForRange,
   chapterTextForRange,
-  isExplicitMusicOnlyCaption,
 } from "./analysis/captionCandidateEvidence";
 import {
   produceCandidateVideoFrameBundles,
@@ -193,9 +206,15 @@ import {
   participantContextForBroadcastRange,
 } from "./analysis/broadcastParticipantGrounding";
 import {
-  orchestrateBroadcastParticipantPreContext,
+  completeBroadcastParticipantPreContext,
+  prepareBroadcastParticipantPreContext,
   type BroadcastParticipantPreContextResult,
 } from "./analysis/broadcastParticipantPreContextOrchestration";
+import { createBroadcastParticipantVisualTerminalReceiptFromSettlement } from "./analysis/broadcastParticipantGroundingBridge";
+import {
+  createBroadcastParticipantGroundingNoneObservedReceipt,
+} from "./analysis/broadcastParticipantGroundingPlan";
+import { BROADCAST_TRANSCRIPT_VISUAL_PROVIDER_MODEL_REVISION } from "./analysis/broadcastTranscriptVisualProviderClient";
 import { activeAccentCssVars } from "./app/streamerPaletteForRoster";
 import {
   mergeCandidatePassBEvidence,
@@ -213,7 +232,9 @@ import {
   type CandidatePassBWorkerIdentity,
 } from "./analysis/candidatePassBWorkerClient";
 import {
-  isCompatibleCandidatePassBRoutingModelRevision,
+  CANDIDATE_PASS_B_FRAME_EXTRACTION_REVISION,
+  type CandidatePassBDispatchIntent,
+  type CandidatePassBTerminalSettlement,
   type CandidatePassBVerificationSourceFence,
 } from "./analysis/candidatePassBWorkerProtocol";
 import {
@@ -233,6 +254,7 @@ import {
 } from "./analysis/contextQualifiedFinalSelection";
 import { buildCandidatePassBContextPackets } from "./analysis/candidateContextPackets";
 import {
+  candidatePassBContextFingerprint,
   createCandidatePassBVerificationReceipt,
   finalizeFullyVerifiedCandidates,
 } from "./analysis/candidateFinalVerification";
@@ -263,7 +285,6 @@ import {
   type CandidateRankingFingerprints,
 } from "./analysis/candidateRanking";
 import {
-  ANALYSIS_STAGES,
   createAnalysisRun,
   reduceAnalysisRun,
   type AnalysisRunState,
@@ -344,20 +365,35 @@ import {
 import {
   AnalysisResultStoreError,
   IndexedDbAnalysisResultStore,
-  checkpointBroadcastContextSessionTranscriptIfUnchanged,
   checkpointBroadcastContextSessionPhaseLedgerIfUnchanged,
-  checkpointBroadcastContextSessionRefinementEvidenceLedgerWithReadback,
-  commitBroadcastContextSessionContextIfUnchanged,
   invalidateBroadcastContextSessionContextIfUnchanged,
+  type AnalysisManifestRecord,
   type AnalysisResultStore,
+  type AnalysisTerminalRecord,
+  type FinalAnalysisResultRecord,
   type SourceCapabilitySnapshotRecord,
 } from "./storage/analysisResultStore";
 import {
   BROADCAST_CONTEXT_SESSION_SCHEMA_VERSION,
+  checkpointBroadcastContextSessionTranscript,
+  checkpointBroadcastContextSessionPhaseLedger,
+  checkpointBroadcastContextSessionRefinementEvidenceLedger,
   createBroadcastParticipantGroundingInputSignature,
+  partitionBroadcastContextSessionChapters,
+  restoreBroadcastParticipantPreContextCheckpoint,
+  serializeBroadcastParticipantPreContextCheckpoint,
   parseBroadcastContextSessionRefinementEvidenceLedger,
+  type BroadcastContextSessionRecord,
   type StoredBroadcastTranscriptGap,
 } from "./storage/broadcastContextSessionStore";
+import { commitDurableBroadcastTranscriptCheckpoint } from "./app/durableBroadcastTranscriptCheckpoint";
+import {
+  broadcastTranscriptGapCanAutomaticallyRetry,
+  broadcastTranscriptGapRequiresExplicitPaidRetry,
+  broadcastTranscriptSessionCheckpointIncludes,
+  mergeBroadcastTranscriptSessionCheckpoints,
+  selectRunnableBroadcastTranscriptChunks,
+} from "./app/broadcastTranscriptCheckpointMerge";
 import {
   durableCoverageDisposition,
   DURABLE_AUDIO_GAP_ID,
@@ -377,9 +413,22 @@ import {
 } from "./storage/recoverableAnalysisResults";
 import {
   CANDIDATE_PASS_B_INSIGHT_SCHEMA_VERSION,
+  createCandidatePassBPlanReceipt,
   persistCandidatePassBInsightsWithReadback,
+  recoverCandidatePassBArmedDispatchesAsOutcomeUnknown,
   type CandidatePassBInsightsRecord,
+  type CandidatePassBPlanReceipt,
 } from "./storage/candidatePassBInsightStore";
+import {
+  appendCandidatePassBArmedAttempt,
+  CANDIDATE_PASS_B_RETRY_GRANT_SCHEMA_VERSION,
+  candidatePassBAttemptLedgerState,
+  createCandidatePassBAttemptLedger,
+  issueCandidatePassBRetryGrant,
+  settleCandidatePassBAttempt,
+  type CandidatePassBAttemptLedger,
+  type CandidatePassBRetryGrantMode,
+} from "./analysis/candidatePassBAttemptLedger";
 import type {
   CandidatePassBVideoFrame,
 } from "./analysis/candidatePassBWorkerProtocol";
@@ -467,9 +516,12 @@ import {
 import { selectCandidateVerificationCohort } from "./app/candidateVerificationCohort";
 import { selectBroadcastContextCandidateCohort } from "./app/broadcastContextCandidateCohort";
 import {
-  selectCandidatePassBAnalysisOutstandingIds,
+  candidatePassBPlanContextCohortMatches,
+  scheduleCandidatePassBAutomaticTargetReadback,
+  selectCandidatePassBAutomaticTargets,
   selectCandidatePassBDurableIds,
   selectCandidatePassBDurabilityOutstandingIds,
+  selectEffectiveCandidatePassBContextById,
 } from "./app/candidatePassBDurability";
 import {
   activeRefinementEvidenceTranscripts,
@@ -479,15 +531,21 @@ import {
 } from "./app/semanticRefinementEvidence";
 import {
   canStartTranscriptRun,
-  createTranscriptSourceIdentityFence,
+  createCurrentProviderTranscriptSourceIdentityFence,
+  currentTranscriptSourceIdentityDescriptor,
+  isCurrentTranscriptSealOperationKey,
   transcriptContextReadiness,
-  transcriptGapRequiresExplicitBillingRetry,
   transcriptNeedsExplicitRetry,
   transcriptOperationKey,
   transcriptPhaseFor,
   waitForTranscriptRouteRecoveryDelay,
 } from "./app/transcriptPhase";
 import { buildCandidateSignalTiles } from "./app/candidateSignals";
+import {
+  freezeAnalysisCandidateCohort,
+  projectVerifiedReviewCandidates,
+  selectNonOverlappingDiscoveredCandidates,
+} from "./app/analysisCandidateCohort";
 import { candidateStripPositionPercent } from "./app/positionStrip";
 import {
   nextUnreviewedCandidateId,
@@ -506,13 +564,32 @@ import { buildReviewCandidates } from "./app/reviewSurfaceModel";
 import { computeProgressAxis, formatSingleRemaining } from "./app/analysisProgressAxis";
 import { formatStageTimingReport, StageTimer } from "./app/stageTiming";
 import {
-  commitAnalysisStage,
-  completeAnalysisJob,
-  failAnalysisJob,
-  jobIdFor,
-  pauseAnalysisJob,
-  startAnalysisJob,
-} from "./app/analysisJobBridge";
+  commitDurableAnalysisStage,
+  completeDurableAnalysisJob,
+  failDurableAnalysisJob,
+  pauseDurableAnalysisJob,
+  startDurableAnalysisJob,
+  type DurableAnalysisJobOperationResult,
+} from "./app/durableAnalysisJobBridge";
+import {
+  commitDurableFastPassManifest,
+  commitDurableFastPassResult,
+} from "./app/durableFastPassArtifacts";
+import {
+  CURRENT_FAST_PASS_MODEL_MANIFEST_HASH,
+  inspectCurrentTranscriptCheckpoint,
+  type AnalysisPipelineSuccessCertificate,
+  type AnalysisPipelineSuccessGap,
+} from "./app/analysisPipelineSuccess";
+import {
+  runDurableAnalysisPipelineCertification,
+  type AnalysisPipelineCertificationEvidence,
+} from "./app/durableAnalysisPipelineCertification";
+import {
+  planAnalysisPipelineRecovery,
+  type AnalysisPipelineRecoveryPlan,
+} from "./app/analysisPipelineRecoveryPlanner";
+import { executeAnalysisPipelineRecoveryInApp } from "./app/analysisPipelineRecoveryAppIntegration";
 import { AnalysisProgressPanel } from "./app/components/AnalysisProgressPanel";
 import { STREAMER_PROFILE_IMAGE_BY_NAME } from "./app/streamerProfiles";
 import { STREAMER_PALETTE_SEEDS } from "./app/streamerPalette";
@@ -524,14 +601,108 @@ import { paletteIdForCastRosterId } from "./app/streamerPaletteForRoster";
  */
 type DossierTab = "summary" | "clues" | "context";
 
+type BroadcastVisualInspectionUiStatus =
+  | "idle"
+  | "preparing"
+  | "analyzing"
+  | "completed"
+  | "blocked"
+  | "failed";
+
+type AnalysisPipelineCertificationState =
+  | {
+      readonly status: "idle";
+    }
+  | {
+      readonly status: "checking";
+      readonly inputToken: string;
+    }
+  | {
+      readonly status: "succeeded";
+      readonly inputToken: string;
+      readonly durableToken: string;
+      readonly certificate: AnalysisPipelineSuccessCertificate;
+    }
+  | {
+      readonly status: "failed";
+      readonly inputToken: string;
+      readonly failedStage: AnalysisStage;
+      readonly gaps: readonly AnalysisPipelineSuccessGap[];
+    };
+
+interface AnalysisPipelineRecoveryRequest {
+  readonly inputToken: string;
+  readonly plan: AnalysisPipelineRecoveryPlan;
+}
+
+const PIPELINE_CERTIFICATION_GAP_LABEL: Readonly<
+  Record<AnalysisPipelineSuccessGap["code"], { readonly ko: string; readonly en: string }>
+> = {
+  "current-schema-required": {
+    ko: "현재 분석 형식의 저장 결과를 모두 다시 열지 못했어요.",
+    en: "The complete current-format analysis could not be reopened.",
+  },
+  "fast-result-invalid": {
+    ko: "빠른 탐색 결과의 완료 기록을 다시 확인하지 못했어요.",
+    en: "The fast-scan completion record could not be verified.",
+  },
+  "run-fence-mismatch": {
+    ko: "서로 다른 분석 실행의 결과가 섞이지 않도록 완료를 멈췄어요.",
+    en: "Completion stopped because artifacts from different runs were detected.",
+  },
+  "source-fence-mismatch": {
+    ko: "분석 중 원본 식별 정보가 달라져 완료를 멈췄어요.",
+    en: "Completion stopped because the source identity changed.",
+  },
+  "transcript-unsettled": {
+    ko: "아직 복구되지 않은 대사 구간이 있어요.",
+    en: "Some transcript cells still need recovery.",
+  },
+  "participant-grounding-stale": {
+    ko: "등장인물 근거를 현재 대사와 다시 연결해야 해요.",
+    en: "Participant evidence must be rebound to the current transcript.",
+  },
+  "context-input-stale": {
+    ko: "방송 전체 맥락 입력을 현재 대사·등장인물 근거로 다시 확인해야 해요.",
+    en: "Whole-broadcast context must be checked against current evidence.",
+  },
+  "context-ledger-incomplete": {
+    ko: "끝나지 않은 방송 맥락 조각이 남아 있어요.",
+    en: "Some whole-broadcast context units are unfinished.",
+  },
+  "context-result-invalid": {
+    ko: "방송 맥락 결과와 현재 후보 구간이 정확히 맞지 않아요.",
+    en: "The broadcast context no longer matches the candidate ranges.",
+  },
+  "refinement-evidence-incomplete": {
+    ko: "의미 후보의 대사 근거가 아직 완전히 준비되지 않았어요.",
+    en: "Semantic-candidate transcript evidence is incomplete.",
+  },
+  "refinement-receipt-stale": {
+    ko: "의미 후보 AI 결과를 현재 대사 근거와 다시 연결해야 해요.",
+    en: "Semantic AI results must be rebound to current transcript evidence.",
+  },
+  "candidate-plan-invalid": {
+    ko: "최종 검토 대상 구성이 현재 맥락 결과와 맞지 않아요.",
+    en: "The final-detail plan does not match the current context result.",
+  },
+  "candidate-detail-not-durable": {
+    ko: "일부 후보의 화면·오디오 해석 결과를 저장소에서 다시 확인하지 못했어요.",
+    en: "Some multimodal candidate results could not be reopened.",
+  },
+  "candidate-verification-incomplete": {
+    ko: "완전한 판정을 받지 못한 후보가 남아 있어요.",
+    en: "Some candidates have not reached a complete judgement.",
+  },
+};
+
 type AnalysisSelectionSummary = DurableAnalysisSelectionSummary;
 type AnalysisCoverageSummary = DurableAnalysisCoverageSummary;
 type AnalysisGapApprovalEvidence = DurableAnalysisGapApprovalEvidence;
 
-const APP_VERSION = "0.8.9";
+const APP_VERSION = "0.9.0";
 const PERSISTENCE_SCHEMA_VERSION = "0.3.0";
-const SIGNAL_ENGINE_VERSION =
-  "streamer-reaction-fast-pass-v5-chat-fallback-music-confirmation";
+const SIGNAL_ENGINE_VERSION = CURRENT_FAST_PASS_MODEL_MANIFEST_HASH;
 const MAX_CHAT_FILE_BYTES = 32 * 1024 * 1024;
 const SIGNAL_GAP_POLICY_ID = DURABLE_SIGNAL_GAP_POLICY_ID;
 
@@ -555,6 +726,37 @@ function isContextDiscoveredCandidate(candidate: ReviewedCandidate): boolean {
     candidate.signalKinds[0] === "semantic" &&
     candidate.evidence.semantic !== undefined
   );
+}
+
+function automaticContextRetryDelayMs(
+  ledger: BroadcastContextPhaseLedger,
+): number | null {
+  const recoverableUnits = ledger.units.filter(
+    ({ status }) =>
+      status === "in-flight" ||
+      status === "reconciling" ||
+      status === "outcome-unknown" ||
+      status === "retryable-gap",
+  );
+  if (recoverableUnits.length === 0) {
+    return null;
+  }
+  const highestAttemptOrdinal = Math.max(
+    ...recoverableUnits.map(({ attemptOrdinal }) => attemptOrdinal),
+  );
+  return Math.min(
+    30_000,
+    1_000 * 2 ** Math.min(highestAttemptOrdinal, 5),
+  );
+}
+
+function withoutCandidateEntry<T>(
+  record: Readonly<Record<string, T>>,
+  candidateId: string,
+): Record<string, T> {
+  const next = { ...record };
+  delete next[candidateId];
+  return next;
 }
 
 function App() {
@@ -597,11 +799,7 @@ function App() {
     [pendingFileName, resolvedSourceChannelId, sourceDescriptor, sourceFile],
   );
   const transcriptSourceIdentityFence =
-    `cast-${sourceCastRosterId ?? "none"}` +
-    `:model-${BROADCAST_TRANSCRIPT_ACTIVE_MODEL_REVISION}` +
-    `:worker-${BROADCAST_TRANSCRIPT_WORKER_VERSION}` +
-    `:vad-${BROADCAST_SPEECH_ACTIVITY_MODEL_REVISION}` +
-    `:policy-${BROADCAST_SPEECH_ACTIVITY_POLICY_REVISION}`;
+    currentTranscriptSourceIdentityDescriptor(sourceCastRosterId);
   const [sourcePreviewUrl, setSourcePreviewUrl] = useState<string | null>(null);
   const [sourceCheck, setSourceCheck] = useState<SourceCheckState | null>(null);
   const [preflight, setPreflight] = useState<LocalMediaPreflightResult | null>(null);
@@ -622,6 +820,8 @@ function App() {
   const [analysisRun, setAnalysisRun] = useState<AnalysisRunState | null>(null);
   const [selectionResult, setSelectionResult] = useState<AnalysisSelectionSummary | null>(null);
   const [candidates, setCandidates] = useState<readonly ReviewedCandidate[]>([]);
+  const candidatesRef = useRef<readonly ReviewedCandidate[]>([]);
+  candidatesRef.current = candidates;
   const [boundarySessionId, setBoundarySessionId] = useState(() =>
     createOperationId("boundary-session"),
   );
@@ -649,6 +849,22 @@ function App() {
   /** 진행축이 뒤로 가지 않게 붙잡을 기준. 보여 준 값이어야 한다. */
   const [shownProgressRatio, setShownProgressRatio] = useState<number | null>(null);
   const [analysisError, setAnalysisError] = useState<string | null>(null);
+  const [pipelineCertification, setPipelineCertification] =
+    useState<AnalysisPipelineCertificationState>({ status: "idle" });
+  const [pipelineCertificationRetryEpoch, setPipelineCertificationRetryEpoch] =
+    useState(0);
+  const [pipelineRecoveryRequest, setPipelineRecoveryRequest] =
+    useState<AnalysisPipelineRecoveryRequest | null>(null);
+  const [pipelineFastRebuildPending, setPipelineFastRebuildPending] =
+    useState(false);
+  const pipelineRepairAttemptByInputTokenRef = useRef<Map<string, number>>(
+    new Map(),
+  );
+  const pipelineCertificationEvidenceRef =
+    useRef<AnalysisPipelineCertificationEvidence | null>(null);
+  const pipelineCertificationOperationRef = useRef(0);
+  const durableStageOperationRef = useRef(0);
+  const [durableStageRetryEpoch, setDurableStageRetryEpoch] = useState(0);
   const [candidatePassBRun, setCandidatePassBRun] =
     useState<CandidatePassBRunState | null>(null);
   const [candidatePassBEvidenceById, setCandidatePassBEvidenceById] =
@@ -657,7 +873,7 @@ function App() {
     useState<CandidateGeminiInsightById>({});
   const [candidateTimelineFramesById, setCandidateTimelineFramesById] =
     useState<CandidateTimelineFramesById>({});
-  const [candidatePassBVerificationReceiptById, setCandidatePassBVerificationReceiptById] =
+  const [, setCandidatePassBVerificationReceiptById] =
     useState<CandidatePassBVerificationReceiptById>({});
   const [candidateTimelineScorePoints, setCandidateTimelineScorePoints] =
     useState<readonly CandidateTimelineScorePoint[]>([]);
@@ -682,6 +898,34 @@ function App() {
     useState<readonly BroadcastTranscriptExplorationCell[]>([]);
   const [broadcastTranscriptChapters, setBroadcastTranscriptChapters] =
     useState<readonly BroadcastContextChapterInput[]>([]);
+  const [
+    broadcastVisualInspectionProjection,
+    setBroadcastVisualInspectionProjection,
+  ] = useState<BroadcastTranscriptVisualContextProjection | null>(null);
+  const [
+    broadcastVisualInspectionStatus,
+    setBroadcastVisualInspectionStatus,
+  ] = useState<BroadcastVisualInspectionUiStatus>("idle");
+  const [
+    broadcastVisualInspectionPlannedCellCount,
+    setBroadcastVisualInspectionPlannedCellCount,
+  ] = useState(0);
+  const [
+    broadcastVisualInspectionPreparedCellCount,
+    setBroadcastVisualInspectionPreparedCellCount,
+  ] = useState(0);
+  const [
+    broadcastVisualInspectionSettledCellCount,
+    setBroadcastVisualInspectionSettledCellCount,
+  ] = useState(0);
+  const [
+    broadcastVisualInspectionAttemptOrdinal,
+    setBroadcastVisualInspectionAttemptOrdinal,
+  ] = useState(0);
+  const [
+    broadcastVisualInspectionError,
+    setBroadcastVisualInspectionError,
+  ] = useState<string | null>(null);
   /**
    * 이미 받아 둔 자막을 다시 받지 않기 위한 거울.
    *
@@ -699,6 +943,8 @@ function App() {
    * 명시적으로 준 것을 추측보다 아래에 두면 고쳐 줄 방법이 없어진다.
    */
   const [manualVodInput, setManualVodInput] = useState("");
+  const [analysisCaptionVideoId, setAnalysisCaptionVideoId] =
+    useState<string | null>(null);
   /*
    * 이펙트가 읽는 쪽은 ref 다. 상태를 deps 에 넣으면 주소를 한 글자 칠 때마다
    * 전사가 처음부터 다시 시작한다. 값은 분석을 시작할 때 한 번 읽히면 되고,
@@ -753,8 +999,30 @@ function App() {
   const candidateTimelineFramesRef = useRef<CandidateTimelineFramesById>({});
   const candidatePassBVerificationReceiptRef =
     useRef<CandidatePassBVerificationReceiptById>({});
+  const candidatePassBDispatchIntentRef = useRef<
+    Readonly<Record<string, CandidatePassBDispatchIntent>>
+  >({});
+  const candidatePassBAttemptLedgerRef = useRef<
+    Readonly<Record<string, CandidatePassBAttemptLedger>>
+  >({});
+  const candidatePassBSettlementRef = useRef<
+    Readonly<Record<string, CandidatePassBTerminalSettlement>>
+  >({});
   const candidatePassBInsightWriteChainRef = useRef<Promise<void>>(Promise.resolve());
   const candidatePassBInsightWriteEpochRef = useRef(0);
+  const candidatePassBPlanReceiptRef =
+    useRef<CandidatePassBPlanReceipt | null>(null);
+  const candidatePassBPlanPreparationRef = useRef<{
+    operationKey: string | null;
+    promise: Promise<CandidatePassBInsightsRecord> | null;
+  }>({ operationKey: null, promise: null });
+  const candidatePassBPlanRetryRef = useRef<{
+    operationKey: string | null;
+    attempts: number;
+  }>({ operationKey: null, attempts: 0 });
+  const candidatePassBPlanReplacementRequiredRef = useRef(false);
+  const [candidatePassBPlanRetryEpoch, setCandidatePassBPlanRetryEpoch] =
+    useState(0);
   const [candidatePassBDurableInsights, setCandidatePassBDurableInsights] =
     useState<CandidatePassBInsightsRecord | null>(null);
   /*
@@ -831,7 +1099,7 @@ function App() {
    * User-edited candidate titles. View-only — never persisted to IndexedDB or
    * exports beyond the current session's downloads; a refresh reverts to the
    * AI headline. Only exports read this map, so an empty entry always falls
-   * back to the AI headline rather than needing a migration path.
+   * back to the AI headline without changing any durable analysis artifact.
    */
   const [candidateTitleById, setCandidateTitleById] = useState<Record<string, string>>({});
   const [editingCandidateTitle, setEditingCandidateTitle] = useState(false);
@@ -855,6 +1123,8 @@ function App() {
   const analysisAbortController = useRef<AbortController | null>(null);
   const candidatePassBAbortController = useRef<AbortController | null>(null);
   const broadcastTranscriptAbortController = useRef<AbortController | null>(null);
+  const broadcastVisualInspectionAbortController =
+    useRef<AbortController | null>(null);
   const broadcastContextAbortController = useRef<AbortController | null>(null);
   const semanticLeadRefinementAbortController = useRef<AbortController | null>(null);
   const candidateAudioEventAbortController = useRef<AbortController | null>(null);
@@ -863,8 +1133,24 @@ function App() {
   const candidatePassBOperationEpoch = useRef(initialAiAttemptOrdinal());
   const candidatePassBStartPendingRef = useRef(false);
   const autoCandidatePassBSourceRef = useRef<string | null>(null);
+  const candidatePassBAutoRetryRef = useRef<{
+    operationKey: string | null;
+    attempts: number;
+    timeout: ReturnType<typeof globalThis.setTimeout> | null;
+  }>({ operationKey: null, attempts: 0, timeout: null });
+  const [candidatePassBAutoRetryEpoch, setCandidatePassBAutoRetryEpoch] =
+    useState(0);
+  const candidatePassBPersistenceAutoRetryRef = useRef<{
+    runId: string | null;
+    attempts: number;
+  }>({ runId: null, attempts: 0 });
+  const [
+    candidatePassBPersistenceAutoRetryEpoch,
+    setCandidatePassBPersistenceAutoRetryEpoch,
+  ] = useState(0);
   const autoBroadcastTranscriptSourceRef = useRef<string | null>(null);
   const sealedBroadcastTranscriptSourceRef = useRef<string | null>(null);
+  const autoBroadcastVisualInspectionSourceRef = useRef<string | null>(null);
   const allowAmbiguousTranscriptRetryRef = useRef(false);
   const broadcastTranscriptRouteChangeCountRef = useRef(0);
   const autoBroadcastContextSourceRef = useRef<string | null>(null);
@@ -876,6 +1162,24 @@ function App() {
   const runCandidatePassBRef = useRef<
     (targetCandidateIds?: readonly string[], autoStartKey?: string) => Promise<void>
   >(() => Promise.resolve());
+  const retryWholeContextPhaseRef = useRef<
+    (forceBoundary?: "transcript" | "context") => void
+  >(() => undefined);
+  const runSignalAnalysisRef = useRef<() => Promise<void>>(
+    () => Promise.resolve(),
+  );
+  const retryCandidatePassBInsightPersistenceRef = useRef<
+    () => Promise<boolean>
+  >(() => Promise.resolve(false));
+  const ensureCandidatePassBPlanPersistenceRef = useRef<
+    (
+      plannedCandidateIds?: readonly string[],
+    ) => Promise<CandidatePassBInsightsRecord>
+  >(() =>
+    Promise.reject(
+      new Error("Candidate Pass B plan persistence is not ready."),
+    ),
+  );
   const candidatePassBMachine = useRef<CandidatePassBRunState | null>(null);
   const candidatePassBIdentity = useRef<CandidatePassBWorkerIdentity | null>(null);
   const candidateAudioEventOperationEpoch = useRef(0);
@@ -975,6 +1279,7 @@ function App() {
   useEffect(
     () => {
       isMounted.current = true;
+      const candidatePassBAutoRetry = candidatePassBAutoRetryRef.current;
       return () => {
         isMounted.current = false;
         sourceSelectionEpoch.current += 1;
@@ -988,8 +1293,14 @@ function App() {
         candidatePassBOperationEpoch.current += 1;
         candidatePassBAbortController.current?.abort();
         candidatePassBAbortController.current = null;
+        if (candidatePassBAutoRetry.timeout !== null) {
+          globalThis.clearTimeout(candidatePassBAutoRetry.timeout);
+          candidatePassBAutoRetry.timeout = null;
+        }
         broadcastTranscriptAbortController.current?.abort();
         broadcastTranscriptAbortController.current = null;
+        broadcastVisualInspectionAbortController.current?.abort();
+        broadcastVisualInspectionAbortController.current = null;
         broadcastContextAbortController.current?.abort();
         broadcastContextAbortController.current = null;
         semanticLeadRefinementAbortController.current?.abort();
@@ -1039,6 +1350,9 @@ function App() {
       candidateTimelineFramesRef.current = {};
       setCandidateTimelineFramesById({});
       candidatePassBVerificationReceiptRef.current = {};
+      candidatePassBDispatchIntentRef.current = {};
+      candidatePassBAttemptLedgerRef.current = {};
+      candidatePassBSettlementRef.current = {};
       setCandidatePassBVerificationReceiptById({});
       setCandidateTimelineScorePoints([]);
       setTimelineSemanticChapters([]);
@@ -1109,7 +1423,8 @@ function App() {
     [preflight?.metadata.durationMs],
   );
   const analysisComplete =
-    openedRecoveredResult !== null ||
+    (openedRecoveredResult !== null &&
+      pipelineCertification.status === "succeeded") ||
     analysisRun?.status === "completed" ||
     analysisRun?.status === "completedWithGaps";
   const { analysisBusy, analysisCanBeCancelled } = deriveAnalysisControlState({
@@ -1278,6 +1593,10 @@ function App() {
                         : "반응 종류 찾기를 마치지 못했어요. 기존 후보와 대사 단서는 그대로예요.";
   const currentAnalysisRunId =
     openedRecoveredResult?.terminal.runId ?? analysisRun?.runId ?? null;
+  const currentAnalysisInputSignature =
+    openedRecoveredResult?.terminal.inputSignature ??
+    analysisRun?.inputSignature ??
+    null;
   const candidatePassBRuntimeAvailable =
     preflight !== null &&
     preflight.capabilities.worker &&
@@ -1339,32 +1658,27 @@ function App() {
       openedRecoveredResult?.finalResult.result.input.source.durationMs ??
       0,
   );
-  const broadcastContextCandidateCohort = useMemo(
-    () => selectBroadcastContextCandidateCohort(candidates),
+  /*
+   * Review decisions are editor work, not analysis input. Keep the discovered
+   * cohort stable so approving or rejecting a card cannot change the paid
+   * detail plan or make that card disappear from the review list.
+   */
+  const pipelineCandidates = useMemo(
+    () => freezeAnalysisCandidateCohort(candidates),
     [candidates],
+  );
+  const broadcastContextCandidateCohort = useMemo(
+    () =>
+      selectBroadcastContextCandidateCohort(
+        pipelineCandidates.filter(
+          (candidate) => !isContextDiscoveredCandidate(candidate),
+        ),
+      ),
+    [pipelineCandidates],
   );
   const broadcastContextCandidateIdSet = useMemo(
     () => new Set(broadcastContextCandidateCohort.map(({ id }) => id)),
     [broadcastContextCandidateCohort],
-  );
-  const explicitMusicOnlyCandidateIds = useMemo(
-    () =>
-      new Set(
-        youtubeCaptionTrack === null
-          ? []
-          : candidates
-              .filter((candidate) =>
-                isExplicitMusicOnlyCaption(
-                  captionTextForRange(
-                    youtubeCaptionTrack.events,
-                    Math.round(candidate.startMs),
-                    Math.round(candidate.endMs),
-                  ),
-                ),
-              )
-              .map((candidate) => candidate.id),
-      ),
-    [candidates, youtubeCaptionTrack],
   );
   const semanticRefinementPlan = useMemo(() => {
     if (
@@ -1398,19 +1712,18 @@ function App() {
     () =>
       new Set(
         selectContextExcludedCandidateIds(
-          candidates,
+          pipelineCandidates,
           candidateAiProjectionById,
-          explicitMusicOnlyCandidateIds,
         ),
       ),
-    [candidateAiProjectionById, candidates, explicitMusicOnlyCandidateIds],
+    [candidateAiProjectionById, pipelineCandidates],
   );
-  const candidatePassBContextById = useMemo(
+  const computedCandidatePassBContextById = useMemo(
     () =>
       broadcastContextStatus === "completed" &&
       semanticLeadRefinementStatus === "completed"
         ? buildCandidatePassBContextPackets({
-            candidates,
+            candidates: pipelineCandidates,
             sourceDurationMs: boundarySourceDurationMs,
             broadcastContext: broadcastContextResult,
             transcriptChapters: broadcastTranscriptChapters,
@@ -1422,21 +1735,38 @@ function App() {
       broadcastContextResult,
       broadcastContextStatus,
       broadcastTranscriptChapters,
-      candidates,
+      pipelineCandidates,
       semanticLeadRefinementStatus,
       youtubeCaptionTrack,
+    ],
+  );
+  const candidatePassBContextById = useMemo(
+    () =>
+      selectEffectiveCandidatePassBContextById({
+        computedContextByCandidateId: computedCandidatePassBContextById,
+        durableRecord: candidatePassBDurableInsights,
+        runId: currentAnalysisRunId,
+        inputSignature: currentAnalysisInputSignature,
+        refinementEvidenceProjectionFingerprint:
+          semanticRefinementEvidenceProjectionFingerprint,
+      }),
+    [
+      candidatePassBDurableInsights,
+      computedCandidatePassBContextById,
+      currentAnalysisInputSignature,
+      currentAnalysisRunId,
+      semanticRefinementEvidenceProjectionFingerprint,
     ],
   );
   const candidateDetailCandidateIds = useMemo(
     () => {
       const queuedCandidateIds = new Set(
         selectCandidateDetailCandidateIds(
-          candidates,
+          pipelineCandidates,
           candidateAiProjectionById,
-          explicitMusicOnlyCandidateIds,
         ),
       );
-      return candidates
+      return pipelineCandidates
         .filter(
           (candidate) =>
             queuedCandidateIds.has(candidate.id) &&
@@ -1444,20 +1774,16 @@ function App() {
         )
         .sort(
           (left, right) =>
-            Number(right.reviewState === "approved") -
-              Number(left.reviewState === "approved") ||
             right.score - left.score ||
             left.peakMs - right.peakMs ||
             left.id.localeCompare(right.id),
         )
-        .slice(0, 12)
         .map(({ id }) => id);
     },
     [
       candidateAiProjectionById,
       candidatePassBContextById,
-      candidates,
-      explicitMusicOnlyCandidateIds,
+      pipelineCandidates,
     ],
   );
   const candidateDetailCandidateIdSet = useMemo(
@@ -1469,7 +1795,7 @@ function App() {
   > = useMemo(
     () =>
       Object.fromEntries(
-        candidates.map(({ id, startMs, endMs }) => [
+        pipelineCandidates.map(({ id, startMs, endMs }) => [
           id,
           {
             candidateId: id,
@@ -1485,26 +1811,31 @@ function App() {
       ),
     [
       analysisLanguage,
-      candidates,
+      pipelineCandidates,
       semanticRefinementEvidenceProjectionFingerprint,
       sourceCastRosterId,
     ],
   );
-  const automaticCandidateDetailIds = useMemo(() => {
-    return selectCandidatePassBAnalysisOutstandingIds({
+  const candidatePassBAutomaticTargets = useMemo(() => {
+    const durableRecord = candidatePassBDurableInsights;
+    return selectCandidatePassBAutomaticTargets({
       candidateIds: candidateDetailCandidateIds,
-      insightByCandidateId: candidateGeminiInsightById,
-      receiptByCandidateId: candidatePassBVerificationReceiptById,
-      contextByCandidateId: candidatePassBContextById,
-      sourceFenceByCandidateId: candidatePassBSourceFenceById,
+      attemptLedgerByCandidateId:
+        durableRecord?.attemptLedgerByCandidateId ?? {},
+      dispatchIntentByCandidateId:
+        durableRecord?.dispatchIntentByCandidateId ?? {},
+      settlementByCandidateId:
+        durableRecord?.settlementByCandidateId ?? {},
     });
   }, [
     candidateDetailCandidateIds,
-    candidateGeminiInsightById,
-    candidatePassBContextById,
-    candidatePassBSourceFenceById,
-    candidatePassBVerificationReceiptById,
+    candidatePassBDurableInsights,
   ]);
+  const automaticCandidateDetailIds = useMemo(
+    () =>
+      candidatePassBAutomaticTargets.map(({ candidateId }) => candidateId),
+    [candidatePassBAutomaticTargets],
+  );
   const candidatePassBDurabilityOutstandingIds = useMemo(
     () =>
       selectCandidatePassBDurabilityOutstandingIds({
@@ -1545,11 +1876,24 @@ function App() {
   );
   const candidatePassBPersistenceRetryNeeded =
     candidatePassBInsightPersistenceStatus === "failed" &&
-    automaticCandidateDetailIds.length === 0 &&
     candidatePassBDurabilityOutstandingIds.length > 0;
+  const candidatePassBRetryableIds = useMemo(
+    () =>
+      candidateDetailCandidateIds.filter((candidateId) => {
+        const ledger =
+          candidatePassBDurableInsights?.attemptLedgerByCandidateId[
+            candidateId
+          ];
+        if (ledger === undefined) return false;
+        const state = candidatePassBAttemptLedgerState(ledger);
+        return state === "blocked" || state === "retry-granted";
+      }),
+    [candidateDetailCandidateIds, candidatePassBDurableInsights],
+  );
   const candidatePassBActionIds = selectCandidateDetailActionIds({
     candidateIds: candidateDetailCandidateIds,
     outstandingIds: automaticCandidateDetailIds,
+    retryableIds: candidatePassBRetryableIds,
     runStatus: candidatePassBRun?.status ?? null,
   });
   const candidatePassBNeedsRecovery =
@@ -1559,7 +1903,7 @@ function App() {
   const finalVerificationCandidates = useMemo(
     () =>
       selectCandidateVerificationCohort({
-        candidates,
+        candidates: pipelineCandidates,
         contextScheduledCandidateIds: broadcastContextCandidateIdSet,
         contextExcludedCandidateIds,
         detailScheduledCandidateIds: candidateDetailCandidateIdSet,
@@ -1569,8 +1913,8 @@ function App() {
       broadcastContextCandidateIdSet,
       candidateDetailCandidateIdSet,
       candidatePassBContextById,
-      candidates,
       contextExcludedCandidateIds,
+      pipelineCandidates,
     ],
   );
   const finalCandidateVerification = useMemo(
@@ -1600,10 +1944,12 @@ function App() {
     ],
   );
   const orderedCandidates = useMemo(
-    () => [...finalCandidateVerification.candidates].sort(
-      (left, right) => left.peakMs - right.peakMs,
-    ),
-    [finalCandidateVerification.candidates],
+    () =>
+      projectVerifiedReviewCandidates(
+        candidates,
+        new Set(finalCandidateVerification.candidates.map(({ id }) => id)),
+      ),
+    [candidates, finalCandidateVerification.candidates],
   );
   const broadcastSummaryCitationPresentation = useMemo(
     () =>
@@ -1865,26 +2211,206 @@ function App() {
     () => compactBroadcastContextChapters(broadcastTranscriptChapters),
     [broadcastTranscriptChapters],
   );
+  const boundedBroadcastTranscriptDialogueChapters = useMemo(() => {
+    const visualChapterIds = new Set(
+      broadcastVisualInspectionProjection?.chapters.map(
+        ({ chapterId }) => chapterId,
+      ) ?? [],
+    );
+    return compactBroadcastContextChapters(
+      broadcastTranscriptChapters.filter(
+        ({ chapterId }) => !visualChapterIds.has(chapterId),
+      ),
+    );
+  }, [
+    broadcastTranscriptChapters,
+    broadcastVisualInspectionProjection,
+  ]);
   const baselineBroadcastParticipantGrounding = useMemo(
     () =>
       createBroadcastParticipantGrounding({
         sourceDurationMs: boundarySourceDurationMs,
         castRosterId: sourceCastRosterId,
-        chapters: boundedBroadcastContextChapters,
+        chapters: boundedBroadcastTranscriptDialogueChapters,
       }),
     [
       boundarySourceDurationMs,
-      boundedBroadcastContextChapters,
+      boundedBroadcastTranscriptDialogueChapters,
       sourceCastRosterId,
     ],
   );
   useEffect(() => {
+    const runId = currentAnalysisRunId;
+    const inputSignature = currentAnalysisInputSignature;
+    const transcriptSeal =
+      broadcastTranscriptStatus === "completed"
+        ? sealedBroadcastTranscriptSourceRef.current
+        : null;
+    if (
+      !analysisComplete ||
+      runId === null ||
+      inputSignature === null ||
+      transcriptSeal === null ||
+      sourceContentFingerprint === null ||
+      boundarySourceDurationMs <= 0
+    ) {
+      return;
+    }
+
+    const sourceFileFence =
+      sourceFile === null
+        ? "source-detached"
+        : `${sourceContentFingerprint}:${sourceFile.size}:${boundarySourceDurationMs}`;
+    const operationKey =
+      `${runId}:${inputSignature}:${transcriptSeal}` +
+      `:visual-attempt-${broadcastVisualInspectionAttemptOrdinal}` +
+      `:${sourceFileFence}`;
+    if (autoBroadcastVisualInspectionSourceRef.current === operationKey) {
+      return;
+    }
+    autoBroadcastVisualInspectionSourceRef.current = operationKey;
+    broadcastVisualInspectionAbortController.current?.abort();
+    const controller = new AbortController();
+    let automaticRetryTimeout: ReturnType<typeof globalThis.setTimeout> | null =
+      null;
+    broadcastVisualInspectionAbortController.current = controller;
+    const operationIsCurrent = (): boolean =>
+      isMounted.current &&
+      !controller.signal.aborted &&
+      broadcastVisualInspectionAbortController.current === controller &&
+      autoBroadcastVisualInspectionSourceRef.current === operationKey;
+
+    setBroadcastVisualInspectionStatus("preparing");
+    setBroadcastVisualInspectionError(null);
+    void runDurableBroadcastVisualInspectionPhase({
+      store: getResultStore(),
+      runId,
+      inputSignature,
+      operationToken: operationKey,
+      transcriptSeal,
+      sourceDurationMs: boundarySourceDurationMs,
+      sourceFile,
+      participantId: aiQuotaParticipantId,
+      castRosterId: sourceCastRosterId,
+      outputLanguage: analysisLanguage,
+      signal: controller.signal,
+      isCurrent: operationIsCurrent,
+      onProgress: (progress) => {
+        if (!operationIsCurrent()) return;
+        setBroadcastVisualInspectionStatus(progress.status);
+        setBroadcastVisualInspectionPlannedCellCount(
+          progress.plannedCellCount,
+        );
+        setBroadcastVisualInspectionPreparedCellCount(
+          progress.preparedCellCount,
+        );
+        setBroadcastVisualInspectionSettledCellCount(
+          progress.settledCellCount,
+        );
+        setBroadcastVisualInspectionProjection(progress.projection);
+        setBroadcastTranscriptChapters(progress.chapters);
+      },
+    })
+      .then((result) => {
+        if (!operationIsCurrent()) return;
+        setBroadcastVisualInspectionProjection(result.projection);
+        setBroadcastVisualInspectionPlannedCellCount(
+          result.plan.cells.length,
+        );
+        setBroadcastVisualInspectionPreparedCellCount(
+          result.projection?.runnerCheckpoint.preparedFrameReceipts.length ??
+            0,
+        );
+        setBroadcastVisualInspectionSettledCellCount(
+          result.projection === null
+            ? 0
+            : result.projection.publication.completedCellIds.length +
+                result.projection.publication.excludedMusicOnlyCellIds.length,
+        );
+        setBroadcastTranscriptChapters(result.session.chapters);
+        if (result.status === "completed") {
+          setBroadcastVisualInspectionStatus("completed");
+          setBroadcastVisualInspectionError(null);
+          return;
+        }
+        setBroadcastVisualInspectionStatus("blocked");
+        if (result.reason === "source-file-required") {
+          setBroadcastVisualInspectionError(
+            analysisLanguage === "ko"
+              ? "저장된 화면 분석을 이어가려면 같은 방송 원본을 다시 연결해 주세요."
+              : "Reconnect the same broadcast source to resume the saved visual analysis.",
+          );
+          return;
+        }
+        const retryDelayMs = Math.min(
+          30_000,
+          1_000 *
+            2 ** Math.min(broadcastVisualInspectionAttemptOrdinal, 5),
+        );
+        setBroadcastVisualInspectionError(
+          analysisLanguage === "ko"
+            ? `완료한 화면 근거는 보존했어요. 남은 조각은 ${Math.ceil(retryDelayMs / 1_000)}초 뒤 자동으로 이어서 분석합니다.`
+            : `Completed visual evidence is preserved. Remaining pieces resume automatically in ${Math.ceil(retryDelayMs / 1_000)} seconds.`,
+        );
+        automaticRetryTimeout = globalThis.setTimeout(() => {
+          automaticRetryTimeout = null;
+          if (!operationIsCurrent()) return;
+          setBroadcastVisualInspectionStatus("preparing");
+          setBroadcastVisualInspectionError(null);
+          setBroadcastVisualInspectionAttemptOrdinal(
+            (current) => current + 1,
+          );
+        }, retryDelayMs);
+      })
+      .catch((error: unknown) => {
+        if (
+          !operationIsCurrent() ||
+          (error instanceof DOMException && error.name === "AbortError")
+        ) {
+          return;
+        }
+        setBroadcastVisualInspectionStatus("failed");
+        setBroadcastVisualInspectionError(
+          error instanceof Error && error.message.trim().length > 0
+            ? error.message
+            : analysisLanguage === "ko"
+              ? "화면 증거 단계를 검증하지 못했습니다."
+              : "The visual-evidence phase could not be verified.",
+        );
+      });
+
+    return () => {
+      if (broadcastVisualInspectionAbortController.current === controller) {
+        controller.abort();
+        broadcastVisualInspectionAbortController.current = null;
+      }
+      if (automaticRetryTimeout !== null) {
+        globalThis.clearTimeout(automaticRetryTimeout);
+      }
+    };
+  }, [
+    aiQuotaParticipantId,
+    analysisComplete,
+    analysisLanguage,
+    boundarySourceDurationMs,
+    broadcastTranscriptStatus,
+    broadcastVisualInspectionAttemptOrdinal,
+    currentAnalysisInputSignature,
+    currentAnalysisRunId,
+    getResultStore,
+    sourceCastRosterId,
+    sourceContentFingerprint,
+    sourceFile,
+  ]);
+  useEffect(() => {
     const transcriptSeal = sealedBroadcastTranscriptSourceRef.current;
+    const inputSignature = currentAnalysisInputSignature;
     if (
       broadcastTranscriptStatus !== "completed" ||
+      broadcastVisualInspectionStatus !== "completed" ||
       transcriptSeal === null ||
       currentAnalysisRunId === null ||
-      sourceContentFingerprint === null ||
+      inputSignature === null ||
       boundarySourceDurationMs <= 0
     ) {
       setBroadcastParticipantPreContext(null);
@@ -1901,24 +2427,133 @@ function App() {
         session === null ||
         session.transcriptSealOperationKey !== transcriptSeal ||
         session.sourceDurationMs !== boundarySourceDurationMs ||
-        session.inputSignature !==
-          (openedRecoveredResult?.terminal.inputSignature ??
-            analysisRun?.inputSignature ??
-            sourceContentFingerprint)
+        session.inputSignature !== inputSignature
       ) {
         throw new Error(
           analysisLanguage === "ko"
             ? "등장인물 맥락에 연결할 전사 결과를 다시 확인하지 못했어요."
-            : "The transcript result for participant context could not be verified.",
+          : "The transcript result for participant context could not be verified.",
         );
       }
-      return orchestrateBroadcastParticipantPreContext({
-        sourceContentFingerprint,
+      const { transcriptChapters } =
+        partitionBroadcastContextSessionChapters(session);
+      const restored =
+        await restoreBroadcastParticipantPreContextCheckpoint(session);
+      if (restored !== null) {
+        return restored;
+      }
+      if (
+        session.participantGroundingInputSignature !== null ||
+        session.participantGroundingPlanFingerprint !== null ||
+        session.participantGroundingCheckpointJson !== null
+      ) {
+        throw new Error(
+          analysisLanguage === "ko"
+            ? "저장된 등장인물 근거 묶음이 현재 화면·대사와 일치하지 않아요."
+            : "The saved participant evidence packet does not match the current frames and dialogue.",
+        );
+      }
+
+      const visualProjection = broadcastVisualInspectionProjection;
+      if (
+        visualProjection !== null &&
+        (!visualProjection.publication.publicationReady ||
+          visualProjection.plan.sourceFence.sourceFingerprint !==
+            inputSignature ||
+          visualProjection.plan.sourceFence.sourceDurationMs !==
+            boundarySourceDurationMs)
+      ) {
+        throw new Error(
+          analysisLanguage === "ko"
+            ? "화면 증거가 모두 준비되고 저장되기 전에는 등장인물을 판정할 수 없어요."
+            : "Participant grounding cannot start before every visual evidence cell is prepared and saved.",
+        );
+      }
+      const prepared = await prepareBroadcastParticipantPreContext({
+        sourceFingerprint: session.inputSignature,
         sourceDurationMs: boundarySourceDurationMs,
         transcriptSeal,
         castRosterId: sourceCastRosterId,
-        dialogueChapters: boundedBroadcastContextChapters,
+        dialogueChapters: compactBroadcastContextChapters(
+          transcriptChapters,
+        ),
         transcriptModelRevision: session.modelRevision,
+        /*
+         * The roster is text metadata, not a cast-image reference bundle.
+         * Visual inspection may still use on-screen names, but appearance
+         * matching remains disabled until real reference media is persisted.
+         */
+        visualReferenceManifest: null,
+        visualRuntime:
+          visualProjection === null
+            ? null
+            : {
+                adapterRevision:
+                  "broadcast-transcript-visual-identity-current",
+                modelRevision:
+                  BROADCAST_TRANSCRIPT_VISUAL_PROVIDER_MODEL_REVISION,
+                cells: visualProjection.plan.cells.map((cell) => ({
+                  sourceStartMs: cell.sourceStartMs,
+                  sourceEndMs: cell.sourceEndMs,
+                  sourceUnitId: cell.cellId,
+                  frameTimestampsMs: cell.frameTimestampsMs,
+                })),
+              },
+      });
+      const visualAdapter = prepared.plan.adapters.find(
+        ({ adapter }) => adapter === "visual-identity",
+      );
+      const visualTerminalReceipts =
+        visualProjection === null ||
+        visualAdapter === undefined ||
+        visualAdapter.availability !== "enabled"
+          ? []
+          : visualAdapter.cells.map((participantCell) => {
+              const settlement =
+                visualProjection.runnerCheckpoint.providerLedger.settlements.find(
+                  (candidate) =>
+                    candidate.cellId === participantCell.sourceUnitId &&
+                    (candidate.outcome === "completed" ||
+                      candidate.outcome === "excluded-music-only"),
+                );
+              if (settlement === undefined) {
+                throw new Error(
+                  `The terminal participant settlement is missing for ${participantCell.sourceUnitId ?? participantCell.cellId}.`,
+                );
+              }
+              return createBroadcastParticipantVisualTerminalReceiptFromSettlement(
+                {
+                  participantPlan: prepared.plan,
+                  participantCellId: participantCell.cellId,
+                  visualInspectionPlan: visualProjection.plan,
+                  settlement,
+                },
+              );
+            });
+      const unavailableMediaReceipts = prepared.plan.adapters.flatMap(
+        (adapter) =>
+          adapter.adapter === "transcript-names" ||
+          adapter.availability !== "unavailable" ||
+          prepared.plan.expectedParticipantIds.length === 0
+            ? []
+            : [
+                createBroadcastParticipantGroundingNoneObservedReceipt({
+                  plan: prepared.plan,
+                  adapter: adapter.adapter,
+                  operationId:
+                    `pre-context.${adapter.adapter}.none-observed`,
+                  attemptOrdinal: 0,
+                }),
+              ],
+      );
+      return completeBroadcastParticipantPreContext(prepared, {
+        visualTerminalReceipts,
+        visualNoneObservedReceipt: unavailableMediaReceipts.find(
+          ({ adapter }) => adapter === "visual-identity",
+        ),
+        voiceNoneObservedReceipt: unavailableMediaReceipts.find(
+          ({ adapter }) => adapter === "voice-identity",
+        ),
       });
     })()
       .then((result) => {
@@ -1939,16 +2574,16 @@ function App() {
       active = false;
     };
   }, [
+    analysisLanguage,
     boundarySourceDurationMs,
-    boundedBroadcastContextChapters,
+    broadcastContextAttemptOrdinal,
     broadcastTranscriptStatus,
+    broadcastVisualInspectionProjection,
+    broadcastVisualInspectionStatus,
+    currentAnalysisInputSignature,
     currentAnalysisRunId,
     getResultStore,
-    openedRecoveredResult,
-    analysisRun?.inputSignature,
     sourceCastRosterId,
-    sourceContentFingerprint,
-    analysisLanguage,
   ]);
   const broadcastParticipantGrounding =
     broadcastParticipantPreContext?.grounding ??
@@ -2010,7 +2645,7 @@ function App() {
     ],
   );
   const candidateDetailCostEstimate = useMemo(() => {
-    const detailIds = new Set(candidateDetailCandidateIds.slice(0, 12));
+    const detailIds = new Set(candidateDetailCandidateIds);
     const detailCandidates = candidates.filter((candidate) => detailIds.has(candidate.id));
     const totalDurationMs = detailCandidates.reduce(
       (total, candidate) => total + candidate.endMs - candidate.startMs,
@@ -2109,6 +2744,21 @@ function App() {
       gap === "verification-receipt-missing" ||
       gap === "evidence-incomplete",
   );
+  const durableCandidatePlanReceipt =
+    candidatePassBDurableInsights?.planReceipt ?? null;
+  const activeCandidatePlanReceipt = candidatePassBPlanReceiptRef.current;
+  const candidatePlanDurable =
+    durableCandidatePlanReceipt !== null &&
+    activeCandidatePlanReceipt !== null &&
+    JSON.stringify(durableCandidatePlanReceipt) ===
+      JSON.stringify(activeCandidatePlanReceipt) &&
+    durableCandidatePlanReceipt.runId === currentAnalysisRunId &&
+    durableCandidatePlanReceipt.inputSignature ===
+      currentAnalysisInputSignature &&
+    durableCandidatePlanReceipt.refinementEvidenceProjectionFingerprint ===
+      semanticRefinementEvidenceProjectionFingerprint &&
+    JSON.stringify(durableCandidatePlanReceipt.plannedCandidateIds) ===
+      JSON.stringify(candidateDetailCandidateIds);
   const emptyResultReason: "analysis-incomplete" | "no-verified-candidates" =
     wholeContextPhaseFailed ||
     broadcastContextResult === null ||
@@ -2123,10 +2773,11 @@ function App() {
    * published the final list while detail analysis had not yet started, and
    * every candidate was dropped for a result that was still seconds away.
    */
-  const { finalSelectionReady: finalSelectionPhaseReady } =
+  const { finalSelectionReady: artifactSelectionReady } =
     deriveCandidatePublicationGate({
       candidateDetailOutstandingCount:
         candidateDetailPipelineOutstandingIds.length,
+      candidatePlanDurable,
       candidatePassBStatus: candidatePassBRun?.status ?? null,
       candidatePassBBusy,
       semanticLeadRefinementStatus,
@@ -2138,40 +2789,288 @@ function App() {
       wholeContextComplete: wholeContextPhaseComplete,
       wholeContextFailed: wholeContextPhaseFailed,
     });
-  const contextualCandidatePublicationReady =
-    finalSelectionPhaseReady && timelineTopicRevealComplete;
+  const jobInputSignature = currentAnalysisInputSignature;
+  const jobRunId = currentAnalysisRunId;
+  const pipelineCertificationInputToken = useMemo(() => {
+    if (
+      !artifactSelectionReady ||
+      jobInputSignature === null ||
+      jobRunId === null
+    ) {
+      return null;
+    }
+    const durableCandidateSnapshot =
+      candidatePassBDurableInsights === null
+        ? null
+        : {
+            schemaVersion: candidatePassBDurableInsights.schemaVersion,
+            inputSignature: candidatePassBDurableInsights.inputSignature,
+            modelManifestHash:
+              candidatePassBDurableInsights.modelManifestHash,
+            recordedAt: candidatePassBDurableInsights.recordedAt,
+            evidenceCandidateIds: Object.keys(
+              candidatePassBDurableInsights.evidenceById,
+            ).sort(),
+            insightCandidateIds: Object.keys(
+              candidatePassBDurableInsights.insightById,
+            ).sort(),
+            modelByCandidateId:
+              candidatePassBDurableInsights.modelByCandidateId ?? {},
+            verificationReceiptById:
+              candidatePassBDurableInsights.verificationReceiptById ?? {},
+            contextByCandidateId:
+              candidatePassBDurableInsights.contextByCandidateId,
+          };
+    return JSON.stringify({
+      runId: jobRunId,
+      inputSignature: jobInputSignature,
+      candidates: pipelineCandidates,
+      durableCandidateSnapshot,
+      broadcastTranscriptStatus,
+      broadcastTranscriptAttemptOrdinal,
+      broadcastVisualInspectionStatus,
+      broadcastVisualInspectionPlannedCellCount,
+      broadcastVisualInspectionPreparedCellCount,
+      broadcastVisualInspectionSettledCellCount,
+      broadcastContextStatus,
+      broadcastContextAttemptOrdinal,
+      broadcastContextResult,
+      semanticLeadRefinementStatus,
+      semanticLeadRefinementAttemptOrdinal,
+      refinementEvidenceProjectionFingerprint:
+        semanticRefinementEvidenceProjectionFingerprint,
+    });
+  }, [
+    artifactSelectionReady,
+    broadcastContextAttemptOrdinal,
+    broadcastContextResult,
+    broadcastContextStatus,
+    broadcastTranscriptAttemptOrdinal,
+    broadcastTranscriptStatus,
+    broadcastVisualInspectionPreparedCellCount,
+    broadcastVisualInspectionPlannedCellCount,
+    broadcastVisualInspectionSettledCellCount,
+    broadcastVisualInspectionStatus,
+    candidatePassBDurableInsights,
+    jobInputSignature,
+    jobRunId,
+    pipelineCandidates,
+    semanticLeadRefinementAttemptOrdinal,
+    semanticLeadRefinementStatus,
+    semanticRefinementEvidenceProjectionFingerprint,
+  ]);
+  pipelineCertificationEvidenceRef.current =
+    pipelineCertificationInputToken === null
+      ? null
+      : {
+          candidates: pipelineCandidates,
+        };
+
+  useEffect(() => {
+    const operation = pipelineCertificationOperationRef.current + 1;
+    pipelineCertificationOperationRef.current = operation;
+    if (
+      pipelineCertificationInputToken === null ||
+      jobInputSignature === null ||
+      jobRunId === null
+    ) {
+      setPipelineCertification({ status: "idle" });
+      return;
+    }
+    const evidence = pipelineCertificationEvidenceRef.current;
+    if (evidence === null) {
+      setPipelineCertification({ status: "idle" });
+      return;
+    }
+    const controller = new AbortController();
+    let retryTimeout: ReturnType<typeof globalThis.setTimeout> | null = null;
+    let cancelled = false;
+    setPipelineCertification({
+      status: "checking",
+      inputToken: pipelineCertificationInputToken,
+    });
+
+    void (async () => {
+      const operationToken =
+        `pipeline-certification:${jobRunId}:${pipelineCertificationInputToken}`;
+      const isCurrent = (identity: {
+        readonly runId: string;
+        readonly operationToken: string;
+      }): boolean =>
+        !cancelled &&
+        !controller.signal.aborted &&
+        isMounted.current &&
+        operation === pipelineCertificationOperationRef.current &&
+        identity.runId === jobRunId &&
+        identity.operationToken === operationToken;
+      const result = await runDurableAnalysisPipelineCertification({
+        identity: { runId: jobRunId, operationToken },
+        store: getResultStore(),
+        evidence,
+        isCurrent,
+        signal: controller.signal,
+      });
+      if (!isCurrent({ runId: jobRunId, operationToken })) {
+        return;
+      }
+      switch (result.status) {
+        case "succeeded":
+          pipelineRepairAttemptByInputTokenRef.current.clear();
+          setPipelineRecoveryRequest(null);
+          setPipelineCertification({
+            status: "succeeded",
+            inputToken: pipelineCertificationInputToken,
+            durableToken: result.durableToken,
+            certificate: result.certificate,
+          });
+          return;
+        case "certificate-rejected": {
+          const priorAttemptCount =
+            pipelineRepairAttemptByInputTokenRef.current.get(
+              pipelineCertificationInputToken,
+            ) ?? 0;
+          const recoveryPlan = planAnalysisPipelineRecovery({
+            failedStage: result.failedStage,
+            gaps: result.gaps,
+            priorAttemptCount,
+          });
+          if (recoveryPlan.kind !== "terminal") {
+            pipelineRepairAttemptByInputTokenRef.current.set(
+              pipelineCertificationInputToken,
+              recoveryPlan.repairGeneration,
+            );
+            setPipelineRecoveryRequest({
+              inputToken: pipelineCertificationInputToken,
+              plan: recoveryPlan,
+            });
+            setPipelineCertification({
+              status: "checking",
+              inputToken: pipelineCertificationInputToken,
+            });
+            return;
+          }
+          setPipelineRecoveryRequest(null);
+          setPipelineCertification({
+            status: "failed",
+            inputToken: pipelineCertificationInputToken,
+            failedStage: result.failedStage,
+            gaps: result.gaps,
+          });
+          return;
+        }
+        case "retry-exhausted":
+          console.warn(
+            "Pipeline certification will resume from the durable readback checkpoint.",
+            result.reasonCode,
+          );
+          retryTimeout = globalThis.setTimeout(() => {
+            retryTimeout = null;
+            if (isCurrent({ runId: jobRunId, operationToken })) {
+              setPipelineCertificationRetryEpoch((epoch) => epoch + 1);
+            }
+          }, 2_000);
+          return;
+        case "permanent":
+          setPipelineCertification({
+            status: "failed",
+            inputToken: pipelineCertificationInputToken,
+            failedStage: "publication",
+            gaps: [
+              {
+                code: "current-schema-required",
+                detail: result.reasonCode,
+              },
+            ],
+          });
+          return;
+        case "stale":
+        case "aborted":
+          return;
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      controller.abort();
+      if (retryTimeout !== null) {
+        globalThis.clearTimeout(retryTimeout);
+      }
+    };
+  }, [
+    getResultStore,
+    jobInputSignature,
+    jobRunId,
+    pipelineCertificationRetryEpoch,
+    pipelineCertificationInputToken,
+  ]);
+  const currentPipelineCertificate =
+    pipelineCertification.status === "succeeded" &&
+    pipelineCertification.inputToken === pipelineCertificationInputToken
+      ? pipelineCertification.certificate
+      : null;
+  const currentPipelineDurableToken =
+    pipelineCertification.status === "succeeded" &&
+    pipelineCertification.inputToken === pipelineCertificationInputToken
+      ? pipelineCertification.durableToken
+      : null;
+  const currentPipelineCertificationChecking =
+    pipelineCertification.status === "checking" &&
+    pipelineCertification.inputToken === pipelineCertificationInputToken;
+  const currentPipelineCertificationFailure =
+    pipelineCertification.status === "failed" &&
+    pipelineCertification.inputToken === pipelineCertificationInputToken
+      ? pipelineCertification
+      : null;
+  const projectedFinalCandidateIds = orderedCandidates
+    .map(({ id }) => id)
+    .sort();
+  const certifiedFinalCandidateIds =
+    currentPipelineCertificate === null
+      ? []
+      : [...currentPipelineCertificate.finalCandidateIds].sort();
+  const certificateMatchesFinalCandidates =
+    currentPipelineCertificate !== null &&
+    certifiedFinalCandidateIds.length === projectedFinalCandidateIds.length &&
+    certifiedFinalCandidateIds.every(
+      (candidateId, index) =>
+        candidateId === projectedFinalCandidateIds[index],
+    );
+  const finalSelectionPhaseReady =
+    artifactSelectionReady &&
+    currentPipelineCertificate !== null &&
+    certificateMatchesFinalCandidates;
+  /*
+   * Candidate readiness follows durable analysis artifacts only. Topic reveal
+   * is a timeline animation and may continue visually after the final
+   * judgement is already safe to review.
+   */
+  const contextualCandidatePublicationReady = finalSelectionPhaseReady;
   const candidateStageCommitGate = useMemo(
     () =>
       deriveCandidateStageCommitGate({
         wholeContextComplete: wholeContextPhaseComplete,
         finalSelectionReady: finalSelectionPhaseReady,
-        publicationReady: contextualCandidatePublicationReady,
         hasPipelineGap: blockedByPipelineGap,
       }),
     [
       blockedByPipelineGap,
-      contextualCandidatePublicationReady,
       finalSelectionPhaseReady,
       wholeContextPhaseComplete,
     ],
   );
 
   /*
-   * 남은 세 스테이지는 `runSignalAnalysis` 밖에서 끝난다 — 전체 맥락 탐색, 후보
-   * 정밀 분석, 공개 게이트는 각자 다른 흐름이고 완료를 알리는 것은 플래그뿐이다.
-   * 그래서 그 플래그가 참이 되는 순간을 이펙트로 잡는다.
-   *
-   * 이미 확정한 것은 다시 부르지 않는다. 전이표가 중복을 거부하므로 동작은
-   * 안전하지만, 렌더마다 저장소에 쓰기를 날리게 된다.
-  */
+   * The final three job stages advance only from one exact success
+   * certificate. The context session remains the recovery checkpoint while
+   * those stages are pending, so moving the job cursor early buys nothing and
+   * can incorrectly turn a partial run into a completed one.
+   */
   const committedStagesRef = useRef<Set<string>>(new Set());
-  const stageCommitChainRef = useRef<Promise<void>>(Promise.resolve());
   /**
    * 스테이지 실측. `STAGE_WEIGHTS` 는 추정이고, 추정으로 최적화하면 엉뚱한 데를
    * 판다. 확정 지점이 이미 경계이므로 그 사이 시간을 재는 것으로 충분하다.
    */
   const stageTimerRef = useRef<StageTimer | null>(null);
-  const jobInputSignature = analysisRun?.inputSignature ?? null;
   /**
    * 진행축이 읽는 값 — 마지막으로 **확정된** 스테이지.
    *
@@ -2182,49 +3081,175 @@ function App() {
     useState<AnalysisStage | null>(null);
 
   useEffect(() => {
-    if (jobInputSignature === null) {
+    if (
+      jobInputSignature === null ||
+      jobRunId === null ||
+      currentPipelineCertificate === null ||
+      currentPipelineDurableToken === null ||
+      !candidateStageCommitGate.completion
+    ) {
       return;
     }
+    const operation = durableStageOperationRef.current + 1;
+    durableStageOperationRef.current = operation;
+    const controller = new AbortController();
     const store = getResultStore();
-    const resultIsUsable = orderedCandidates.length > 0;
-    stageCommitChainRef.current = stageCommitChainRef.current
-      .catch(() => undefined)
-      .then(async () => {
-        const commitOnce = async (
-          stage: AnalysisStage,
-          done: boolean,
-        ): Promise<boolean> => {
-          const key = `${jobInputSignature}:${stage}`;
-          if (committedStagesRef.current.has(key)) return true;
-          if (!done) return false;
-          const outcome = await commitAnalysisStage(store, jobInputSignature, stage);
-          if (!outcome.ok) {
-            const persisted = await store.getJob(jobIdFor(jobInputSignature));
-            const persistedStage = persisted?.job.lastCommittedStage ?? null;
-            const persistedStageIndex =
-              persistedStage === null ? -1 : ANALYSIS_STAGES.indexOf(persistedStage);
-            if (persistedStageIndex < ANALYSIS_STAGES.indexOf(stage)) return false;
-          }
-          committedStagesRef.current.add(key);
-          stageTimerRef.current?.mark(stage, Date.now());
-          if (isMounted.current) setCommittedAnalysisStage(stage);
-          return true;
-        };
+    let retryTimeout: ReturnType<typeof globalThis.setTimeout> | null = null;
+    let cancelled = false;
 
+    const scheduleRetry = (): void => {
+      if (retryTimeout === null && !cancelled) {
+        retryTimeout = globalThis.setTimeout(() => {
+          retryTimeout = null;
+          if (
+            isMounted.current &&
+            !cancelled &&
+            operation === durableStageOperationRef.current
+          ) {
+            setDurableStageRetryEpoch((epoch) => epoch + 1);
+          }
+        }, 2_000);
+      }
+    };
+    const operationIsCurrent = (operationToken: string) =>
+      (identity: { readonly runId: string; readonly operationToken: string }) =>
+        isMounted.current &&
+        !cancelled &&
+        !controller.signal.aborted &&
+        operation === durableStageOperationRef.current &&
+        identity.runId === jobRunId &&
+        identity.operationToken === operationToken;
+    const reopenCertifiedSnapshot = async () => {
+      const evidence = pipelineCertificationEvidenceRef.current;
+      if (evidence === null) {
+        return null;
+      }
+      const operationToken =
+        `analysis-stage-snapshot:${jobRunId}:${currentPipelineDurableToken}`;
+      const reopened = await runDurableAnalysisPipelineCertification({
+        identity: { runId: jobRunId, operationToken },
+        store,
+        evidence,
+        isCurrent: operationIsCurrent(operationToken),
+        signal: controller.signal,
+      });
+      switch (reopened.status) {
+        case "succeeded":
+          return {
+            durableToken: reopened.durableToken,
+            durableSnapshot: reopened.durableSnapshot,
+          };
+        case "certificate-rejected":
+        case "stale":
+        case "aborted":
+          return null;
+        case "retry-exhausted":
+        case "permanent":
+          throw new Error(reopened.reasonCode);
+      }
+    };
+    const handleFailure = (
+      result: DurableAnalysisJobOperationResult,
+      label: string,
+    ): false => {
+      if (result.status === "retry-exhausted") {
+        console.warn(
+          `Durable analysis ${label} checkpoint will continue from the same stage.`,
+          result.reasonCode,
+        );
+        scheduleRetry();
+      } else if (result.status === "permanent-failure") {
+        setAnalysisError(
+          "분석 체크포인트를 저장하지 못했어요. 현재 결과는 완료 처리하지 않았습니다.",
+        );
+        console.error(
+          `Durable analysis ${label} checkpoint was rejected.`,
+          result.reasonCode,
+        );
+      }
+      return false;
+    };
+    const commitStage = async (
+      stage: AnalysisStage,
+      ready: boolean,
+      recordTiming = true,
+    ): Promise<boolean> => {
+      if (!ready) {
+        return false;
+      }
+      const key =
+        `${jobInputSignature}:${jobRunId}:${currentPipelineDurableToken}:${stage}`;
+      if (committedStagesRef.current.has(key)) {
+        return true;
+      }
+      const operationToken =
+        `analysis-stage:${jobRunId}:${currentPipelineDurableToken}:${stage}`;
+      const result = await commitDurableAnalysisStage({
+        store,
+        inputSignature: jobInputSignature,
+        runId: jobRunId,
+        operationToken,
+        isCurrent: operationIsCurrent(operationToken),
+        signal: controller.signal,
+        stage,
+      });
+      if (result.status !== "succeeded") {
+        return handleFailure(result, stage);
+      }
+      committedStagesRef.current.add(key);
+      if (recordTiming) {
+        stageTimerRef.current?.mark(stage, Date.now());
+      }
+      if (isMounted.current && !cancelled) {
+        setCommittedAnalysisStage(stage);
+      }
+      return true;
+    };
+
+    void (async () => {
+      try {
         /*
-         * Stage transitions are serialized. A recovered session can make all
-         * three flags true in one render; firing three IndexedDB transitions in
-         * parallel would let deepPass/publication race ahead of their parent.
+         * Another tab may have replaced the context or candidate snapshot
+         * after certification. Reopen the small durable fence before moving
+         * the job cursor; a mismatch restarts certification, not the analysis.
          */
+        const initialReopened = await reopenCertifiedSnapshot();
         if (
-          !(await commitOnce(
+          initialReopened?.durableToken !== currentPipelineDurableToken
+        ) {
+          if (!cancelled) {
+            setPipelineCertificationRetryEpoch((epoch) => epoch + 1);
+          }
+          return;
+        }
+        for (const prerequisite of [
+          "preflight",
+          "fastPass",
+          "seedClustering",
+          "commitFastResult",
+        ] as const) {
+          if (!(await commitStage(prerequisite, true, false))) {
+            return;
+          }
+        }
+        if (
+          !(await commitStage(
             "broadcastContext",
             candidateStageCommitGate.broadcastContext,
           ))
-        ) return;
-        if (!(await commitOnce("deepPass", candidateStageCommitGate.deepPass))) return;
+        ) {
+          return;
+        }
         if (
-          !(await commitOnce(
+          !(await commitStage(
+            "deepPass",
+            candidateStageCommitGate.deepPass,
+          ))
+        ) {
+          return;
+        }
+        if (
+          !(await commitStage(
             "publication",
             candidateStageCommitGate.publication,
           ))
@@ -2232,36 +3257,70 @@ function App() {
           return;
         }
 
-        /*
-         * Pipeline gaps remain unfinished. A fully verified empty broadcast is
-         * a valid terminal result and is recorded separately from a positive
-         * result by the job state machine. The completion key is written only
-         * after durable acceptance.
-         */
-        const completionKey = `${jobInputSignature}:complete`;
+        const completionSnapshot = await reopenCertifiedSnapshot();
         if (
-          !candidateStageCommitGate.completion ||
-          committedStagesRef.current.has(completionKey)
+          completionSnapshot?.durableToken !==
+          currentPipelineDurableToken
         ) {
+          if (!cancelled) {
+            setPipelineCertificationRetryEpoch((epoch) => epoch + 1);
+          }
           return;
         }
-        const completion = await completeAnalysisJob(
+
+        const completionKey =
+          `${jobInputSignature}:${jobRunId}:${currentPipelineDurableToken}:complete`;
+        if (committedStagesRef.current.has(completionKey)) {
+          return;
+        }
+        const completionToken =
+          `analysis-complete:${jobRunId}:${currentPipelineDurableToken}`;
+        const completion = await completeDurableAnalysisJob({
           store,
-          jobInputSignature,
-          resultIsUsable,
-        );
-        if (!completion.ok) return;
+          inputSignature: jobInputSignature,
+          runId: jobRunId,
+          operationToken: completionToken,
+          isCurrent: operationIsCurrent(completionToken),
+          signal: controller.signal,
+          quality: currentPipelineCertificate.quality,
+          expectedDurableSnapshot: completionSnapshot.durableSnapshot,
+        });
+        if (completion.status !== "succeeded") {
+          handleFailure(completion, "completion");
+          return;
+        }
         committedStagesRef.current.add(completionKey);
         const timer = stageTimerRef.current;
         if (timer !== null) {
           console.info(formatStageTimingReport(timer.report()));
         }
-      });
+      } catch (cause) {
+        if (cancelled || controller.signal.aborted) {
+          return;
+        }
+        console.warn(
+          "Durable analysis stage checkpoint readback will be retried.",
+          cause,
+        );
+        scheduleRetry();
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      controller.abort();
+      if (retryTimeout !== null) {
+        globalThis.clearTimeout(retryTimeout);
+      }
+    };
   }, [
-    jobInputSignature,
     candidateStageCommitGate,
-    orderedCandidates.length,
+    currentPipelineCertificate,
+    currentPipelineDurableToken,
+    durableStageRetryEpoch,
     getResultStore,
+    jobInputSignature,
+    jobRunId,
   ]);
   const liveAnalysisStageNumber =
     !analysisComplete
@@ -2468,18 +3527,21 @@ function App() {
   const chatOffsetLocked =
     analysisStartPending || analysisRun !== null || openedRecoveredResult !== null;
   const sourceFileActionLabel = analysisBusy || candidateRefinementBusy
-    ? "AI 분석 중 변경 잠금"
+    ? ui("AI 분석 중 변경 잠금", "Locked during AI analysis")
     : sourceCheck?.status === "checking"
-      ? "확인 중…"
+      ? ui("확인 중…", "Checking…")
       : openedRecoveredResult !== null
         ? sourceReady
-          ? "연결한 원본 바꾸기"
+          ? ui("연결한 원본 바꾸기", "Change connected source")
           : candidates.length === 0
-            ? "원하면 원래 파일 고르기"
-            : "원래 파일 다시 고르기"
+            ? ui(
+                "원하면 원래 파일 고르기",
+                "Choose the original file if needed",
+              )
+            : ui("원래 파일 다시 고르기", "Reconnect original file")
         : sourceReady
-          ? "다른 영상 고르기"
-          : "영상 파일 고르기";
+          ? ui("다른 영상 고르기", "Choose another video")
+          : ui("영상 파일 고르기", "Choose video file");
 
   useEffect(() => {
     if (
@@ -2581,8 +3643,29 @@ function App() {
 
   const resetCandidatePassB = useCallback((): void => {
     autoCandidatePassBSourceRef.current = null;
+    const autoRetry = candidatePassBAutoRetryRef.current;
+    if (autoRetry.timeout !== null) {
+      globalThis.clearTimeout(autoRetry.timeout);
+    }
+    autoRetry.operationKey = null;
+    autoRetry.attempts = 0;
+    autoRetry.timeout = null;
+    candidatePassBPersistenceAutoRetryRef.current = {
+      runId: null,
+      attempts: 0,
+    };
     candidatePassBOperationEpoch.current += 1;
     candidatePassBInsightWriteEpochRef.current += 1;
+    candidatePassBPlanReceiptRef.current = null;
+    candidatePassBPlanPreparationRef.current = {
+      operationKey: null,
+      promise: null,
+    };
+    candidatePassBPlanRetryRef.current = {
+      operationKey: null,
+      attempts: 0,
+    };
+    candidatePassBPlanReplacementRequiredRef.current = true;
     candidatePassBAbortController.current?.abort();
     candidatePassBAbortController.current = null;
     candidatePassBMachine.current = null;
@@ -2593,6 +3676,9 @@ function App() {
     candidateGeminiInsightRef.current = {};
     candidatePassBModelByIdRef.current = {};
     candidatePassBVerificationReceiptRef.current = {};
+    candidatePassBDispatchIntentRef.current = {};
+    candidatePassBAttemptLedgerRef.current = {};
+    candidatePassBSettlementRef.current = {};
     candidateTimelineFramesRef.current = {};
     setCandidatePassBEvidenceById({});
     setCandidateGeminiInsightById({});
@@ -2682,12 +3768,15 @@ function App() {
     setBroadcastTranscriptExplorationCells([]);
     broadcastTranscriptAbortController.current?.abort();
     broadcastTranscriptAbortController.current = null;
+    broadcastVisualInspectionAbortController.current?.abort();
+    broadcastVisualInspectionAbortController.current = null;
     broadcastContextAbortController.current?.abort();
     broadcastContextAbortController.current = null;
     semanticLeadRefinementAbortController.current?.abort();
     semanticLeadRefinementAbortController.current = null;
     autoBroadcastTranscriptSourceRef.current = null;
     sealedBroadcastTranscriptSourceRef.current = null;
+    autoBroadcastVisualInspectionSourceRef.current = null;
     allowAmbiguousTranscriptRetryRef.current = false;
     broadcastTranscriptRouteChangeCountRef.current = 0;
     autoBroadcastContextSourceRef.current = null;
@@ -2699,6 +3788,14 @@ function App() {
     setBroadcastTranscriptRecoveryProgress(null);
     setBroadcastTranscriptExplorationCells([]);
     setBroadcastTranscriptChapters([]);
+    setBroadcastVisualInspectionProjection(null);
+    setBroadcastVisualInspectionStatus("idle");
+    setBroadcastVisualInspectionPlannedCellCount(0);
+    setBroadcastVisualInspectionPreparedCellCount(0);
+    setBroadcastVisualInspectionSettledCellCount(0);
+    setBroadcastVisualInspectionAttemptOrdinal(0);
+    setBroadcastVisualInspectionError(null);
+    setAnalysisCaptionVideoId(null);
     setYouTubeCaptionTrack(null);
     youtubeCaptionTrackRef.current = null;
     setBroadcastTranscriptError(null);
@@ -2718,6 +3815,10 @@ function App() {
     setAnalysisProgress(null);
     setAudioAnalysisProgress(null);
     setAnalysisError(null);
+    setPipelineCertification({ status: "idle" });
+    setPipelineRecoveryRequest(null);
+    setPipelineFastRebuildPending(false);
+    pipelineRepairAttemptByInputTokenRef.current.clear();
     setLastExportFormat(null);
     setCopyStatus("idle");
     setExportError(null);
@@ -2821,6 +3922,10 @@ function App() {
           result,
           machine.sourceDefinitionId,
           fingerprint.value,
+          recoveryTarget !== null
+            ? recoveryTarget.finalResult.result.input.source.captionVideoId
+            : youtubeVideoIdFromUserInput(manualVodInputRef.current) ??
+              youtubeVideoIdFromSourceName(file.name),
         );
         if (
           recoveryTarget !== null &&
@@ -2830,6 +3935,8 @@ function App() {
               recoveryTarget.finalResult.result.input.source.sizeBytes ||
             sourceDescriptor.durationMs !==
               recoveryTarget.finalResult.result.input.source.durationMs ||
+            sourceDescriptor.captionVideoId !==
+              recoveryTarget.finalResult.result.input.source.captionVideoId ||
             sourceDescriptor.kind !== recoveryTarget.finalResult.result.input.source.kind)
         ) {
           throw new SourceRebindMismatchError();
@@ -3086,6 +4193,7 @@ function App() {
     resetCandidateRanking();
     resetBoundarySession();
     setAnalysisError(null);
+    setPipelineCertification({ status: "idle" });
     setAnalysisCancelPending(false);
     setAnalysisCommitPending(false);
     setAnalysisProgress({
@@ -3113,6 +4221,10 @@ function App() {
     const chatTaskId = createOperationId("chat-task");
     const audioWorkerInstanceId = createOperationId("audio-worker");
     const audioTaskId = createOperationId("audio-task");
+    const selectedCaptionVideoId =
+      youtubeVideoIdFromUserInput(manualVodInputRef.current) ??
+      youtubeVideoIdFromSourceName(sourceFile.name);
+    setAnalysisCaptionVideoId(selectedCaptionVideoId);
     let inputSignature = "pending";
     let machine: AnalysisRunState | null = null;
     let activeAnalysisTasks: readonly Promise<unknown>[] = [];
@@ -3129,6 +4241,7 @@ function App() {
         preflight,
         sourceCheck.sourceDefinitionId,
         sourceContentFingerprint,
+        selectedCaptionVideoId,
       ),
       chat: {
         timestampBasis: chatImport?.timestampBasis ?? "unknown",
@@ -3139,6 +4252,159 @@ function App() {
     };
     analysisStartOperation.current = operationEpoch;
     setAnalysisStartPending(true);
+    const waitForDurableCheckpointRetry = (): Promise<void> =>
+      new Promise((resolve, reject) => {
+        let timer: ReturnType<typeof globalThis.setTimeout> | null =
+          globalThis.setTimeout(() => {
+            timer = null;
+            controller.signal.removeEventListener("abort", onAbort);
+            resolve();
+          }, 2_000);
+        const onAbort = (): void => {
+          if (timer !== null) {
+            globalThis.clearTimeout(timer);
+            timer = null;
+          }
+          controller.signal.removeEventListener("abort", onAbort);
+          reject(
+            new LocalVideoVisualAnalysisError(
+              "ABORTED",
+              "사용자가 영상 분석을 취소했어요.",
+            ),
+          );
+        };
+        controller.signal.addEventListener("abort", onAbort, { once: true });
+      });
+    const runDurableCheckpoint = async (
+      checkpoint: string,
+      run: (
+        operationToken: string,
+        isCurrent: (identity: {
+          readonly runId: string;
+          readonly operationToken: string;
+        }) => boolean,
+      ) => Promise<DurableAnalysisJobOperationResult>,
+    ): Promise<void> => {
+      let retryCycle = 0;
+      for (;;) {
+        if (!assertActiveOperation()) {
+          throw new AnalysisResultStoreError(
+            "TRANSACTION_FAILED",
+            `The ${checkpoint} checkpoint became stale.`,
+          );
+        }
+        const operationToken =
+          `analysis-job:${runId}:${checkpoint}:${retryCycle}`;
+        const isCurrent = (identity: {
+          readonly runId: string;
+          readonly operationToken: string;
+        }): boolean =>
+          isMounted.current &&
+          operationEpoch === analysisOperationEpoch.current &&
+          !controller.signal.aborted &&
+          identity.runId === runId &&
+          identity.operationToken === operationToken;
+        const result = await run(operationToken, isCurrent);
+        if (result.status === "succeeded") {
+          return;
+        }
+        if (result.status === "retry-exhausted") {
+          retryCycle += 1;
+          await waitForDurableCheckpointRetry();
+          continue;
+        }
+        if (result.status === "aborted") {
+          assertActiveOperation();
+        }
+        throw new AnalysisResultStoreError(
+          "TRANSACTION_FAILED",
+          `The ${checkpoint} checkpoint failed: ${
+            "reasonCode" in result ? result.reasonCode : result.status
+          }`,
+        );
+      }
+    };
+    const runDurableArtifactCheckpoint = async <Value,>(
+      checkpoint: string,
+      run: (
+        operationToken: string,
+        isCurrent: (identity: {
+          readonly runId: string;
+          readonly operationToken: string;
+        }) => boolean,
+      ) => Promise<
+        | { readonly status: "succeeded"; readonly value: Value }
+        | {
+            readonly status: "retry-exhausted";
+            readonly reasonCode: string;
+          }
+        | { readonly status: "aborted" }
+        | { readonly status: "stale"; readonly reasonCode: string }
+        | {
+            readonly status: "permanent-failure";
+            readonly reasonCode: string;
+          }
+      >,
+    ): Promise<Value> => {
+      let retryCycle = 0;
+      for (;;) {
+        if (!assertActiveOperation()) {
+          throw new AnalysisResultStoreError(
+            "TRANSACTION_FAILED",
+            `The ${checkpoint} artifact checkpoint became stale.`,
+          );
+        }
+        const operationToken =
+          `fast-artifact:${runId}:${checkpoint}:${retryCycle}`;
+        const isCurrent = (identity: {
+          readonly runId: string;
+          readonly operationToken: string;
+        }): boolean =>
+          isMounted.current &&
+          operationEpoch === analysisOperationEpoch.current &&
+          !controller.signal.aborted &&
+          identity.runId === runId &&
+          identity.operationToken === operationToken;
+        const result = await run(operationToken, isCurrent);
+        if (result.status === "succeeded") {
+          return result.value;
+        }
+        if (result.status === "retry-exhausted") {
+          retryCycle += 1;
+          await waitForDurableCheckpointRetry();
+          continue;
+        }
+        if (result.status === "aborted") {
+          assertActiveOperation();
+        }
+        throw new AnalysisResultStoreError(
+          "TRANSACTION_FAILED",
+          `The ${checkpoint} artifact checkpoint failed: ${
+            "reasonCode" in result ? result.reasonCode : result.status
+          }`,
+        );
+      }
+    };
+    const commitDurableJobStage = async (
+      stage: AnalysisStage,
+      recordTiming = true,
+    ): Promise<void> => {
+      await runDurableCheckpoint(stage, (operationToken, isCurrent) =>
+        commitDurableAnalysisStage({
+          store,
+          inputSignature,
+          runId,
+          operationToken,
+          isCurrent,
+          signal: controller.signal,
+          stage,
+        }),
+      );
+      if (recordTiming) {
+        stageTimerRef.current?.mark(stage, Date.now());
+      }
+      setCommittedAnalysisStage(stage);
+    };
 
     try {
       inputSignature = await createContentFingerprint([
@@ -3149,6 +4415,7 @@ function App() {
         String(durableInput.chat.offsetMs),
         durableInput.chat.timestampBasis,
         SIGNAL_ENGINE_VERSION,
+        durableInput.source.captionVideoId ?? "no-caption",
       ]);
       if (!assertActiveOperation()) {
         return;
@@ -3157,18 +4424,25 @@ function App() {
       /*
        * 작업 층에 이 실행을 등록한다.
        *
-       * 이 호출들은 절대 던지지 않는다(`analysisJobBridge`). 결과를 분석 흐름의
-       * 조건으로 쓰지도 않는다 — 작업 기록은 분석의 부산물이지 조건이 아니라,
-       * 기록이 실패했다고 분석을 멈추면 부산물이 본체를 인질로 잡는다.
+       * The durable job cursor is the resume point, so the next phase may not
+       * start until this run-fenced transition has survived a store readback.
+       * Transient storage failures recover at this boundary instead of
+       * discarding the analysis that produced it.
        */
       committedStagesRef.current.clear();
       setCommittedAnalysisStage(null);
       stageTimerRef.current = new StageTimer(durableInput.source.durationMs);
       stageTimerRef.current.begin(Date.now());
-      await startAnalysisJob({ store, inputSignature, runId });
-      stageTimerRef.current?.mark("preflight", Date.now());
-      setCommittedAnalysisStage("preflight");
-      await commitAnalysisStage(store, inputSignature, "preflight");
+      await runDurableCheckpoint("start", (operationToken, isCurrent) =>
+        startDurableAnalysisJob({
+          store,
+          inputSignature,
+          runId,
+          operationToken,
+          isCurrent,
+          signal: controller.signal,
+        }),
+      );
 
       machine = createAnalysisRun({
         runId,
@@ -3182,7 +4456,7 @@ function App() {
       machine = applyAnalysisEvent(machine, { type: "RUN_START_REQUESTED" });
       setAnalysisRun(machine);
 
-      await store.putManifest({
+      const manifestRecord: AnalysisManifestRecord = {
         kind: "manifest",
         runId,
         artifactId: createOperationId("manifest"),
@@ -3198,7 +4472,19 @@ function App() {
           },
         },
         recordedAt: new Date().toISOString(),
-      });
+      };
+      await runDurableArtifactCheckpoint(
+        "manifest",
+        (operationToken, isCurrent) =>
+          commitDurableFastPassManifest({
+            store,
+            runId,
+            operationToken,
+            isCurrent,
+            signal: controller.signal,
+            manifest: manifestRecord,
+          }),
+      );
       if (!assertActiveOperation()) {
         return;
       }
@@ -3207,6 +4493,7 @@ function App() {
         workerEpoch: workerEpochValue,
       });
       setAnalysisRun(machine);
+      await commitDurableJobStage("preflight");
 
       const visualPromise = trackAnalysisTask(
         analyzeLocalVideoVisuals(sourceFile, {
@@ -3369,11 +4656,7 @@ function App() {
           allowUnanchoredVisualExploration: false,
         },
       );
-
-      // 방송 전체를 훑는 구간이 끝났다. 여기까지가 재개의 첫 절약 지점이다.
       stageTimerRef.current?.mark("fastPass", Date.now());
-      setCommittedAnalysisStage("fastPass");
-      await commitAnalysisStage(store, inputSignature, "fastPass");
 
       const fastPassEventEpisodes = buildEventEpisodes(rawFusedCandidates);
       const densityResult = calculateTemporalEventDensity(
@@ -3389,10 +4672,7 @@ function App() {
         [],
         { detailAnalysisBudget: 12, explorationShare: 0.15, qualityLambda: 0.75 },
       );
-
       stageTimerRef.current?.mark("seedClustering", Date.now());
-      setCommittedAnalysisStage("seedClustering");
-      await commitAnalysisStage(store, inputSignature, "seedClustering");
 
       const fusedCandidates = selectionResult.candidates;
       setCandidateTimelineScorePoints(
@@ -3488,22 +4768,72 @@ function App() {
         coverage,
         candidates: fusedCandidates.map(toDurableCandidate),
       };
-
-      await store.putProvisionalResult({
-        kind: "provisionalResult",
+      const coverageDisposition = durableCoverageDisposition(coverage);
+      setAnalysisCommitPending(true);
+      const finalResultCommitId = createOperationId("result");
+      const finalResultRecord: FinalAnalysisResultRecord = {
+        kind: "finalResult",
         runId,
-        artifactId: createOperationId("provisional"),
+        artifactId: finalResultCommitId,
         schemaVersion: PERSISTENCE_SCHEMA_VERSION,
         inputSignature,
         modelManifestHash: SIGNAL_ENGINE_VERSION,
         result: finalPayload,
         recordedAt: new Date().toISOString(),
-      });
+      };
+      const terminalOutcome = coverageDisposition;
+      const plannedCoverageComplete =
+        terminalOutcome === "completed" &&
+        coverage.visualCoverageComplete &&
+        coverage.visualCompletedSampleCount ===
+          coverage.visualPlannedSampleCount &&
+        coverage.chatCoverageComplete &&
+        coverage.chatProcessedMessageCount ===
+          coverage.chatPlannedMessageCount &&
+        coverage.audioCoverageComplete === true &&
+        coverage.audioProcessedWindowCount ===
+          coverage.audioPlannedWindowCount;
+      const reopenedGapCount =
+        (coverage.chatCoverageComplete ? 0 : 1) +
+        (coverage.audioCoverageComplete === false ? 1 : 0);
+      const gappedCoverageExplained =
+        terminalOutcome === "completedWithGaps" &&
+        reopenedGapCount > 0 &&
+        coverage.signalGapApproval?.policyId === SIGNAL_GAP_POLICY_ID &&
+        coverage.signalGapApproval.disclosedBeforeStart &&
+        coverage.signalGapApproval.approvals.length === reopenedGapCount;
+      const terminalRecord: AnalysisTerminalRecord = {
+        kind: "terminalDisposition" as const,
+        runId,
+        schemaVersion: PERSISTENCE_SCHEMA_VERSION,
+        inputSignature,
+        modelManifestHash: SIGNAL_ENGINE_VERSION,
+        outcome: terminalOutcome,
+        resultRecordKind: "finalResult" as const,
+        resultArtifactId: finalResultCommitId,
+        recordedAt: new Date().toISOString(),
+      };
+      const durableFastResult = await runDurableArtifactCheckpoint(
+        "result-bundle",
+        (operationToken, isCurrent) =>
+          commitDurableFastPassResult({
+            store,
+            runId,
+            operationToken,
+            isCurrent,
+            signal: controller.signal,
+            manifest: manifestRecord,
+            finalResult: finalResultRecord,
+            terminal: terminalRecord,
+          }),
+      );
       if (!assertActiveOperation()) {
         return;
       }
+
+      const reopenedPayload = durableFastResult.finalResult.result;
+      const reopenedCoverage = reopenedPayload.coverage;
       machine = applyAnalysisEvent(machine, { type: "CHUNK_COMMIT_SUCCEEDED" });
-      const coverageDisposition = durableCoverageDisposition(coverage);
       if (coverageDisposition === "completed") {
         machine = applyAnalysisEvent(machine, {
           type: "ALL_PLANNED_INTERVALS_COVERED",
@@ -3523,104 +4853,18 @@ function App() {
           approvals: signalGapApproval?.approvals ?? [],
         });
       }
-      setAnalysisCommitPending(true);
-      setAnalysisRun(machine);
-      if (analysisAbortController.current === controller) {
-        analysisAbortController.current = null;
-      }
-
-      const finalResultCommitId = createOperationId("result");
-      await store.putFinalResult({
-        kind: "finalResult",
-        runId,
-        artifactId: finalResultCommitId,
-        schemaVersion: PERSISTENCE_SCHEMA_VERSION,
-        inputSignature,
-        modelManifestHash: SIGNAL_ENGINE_VERSION,
-        result: finalPayload,
-        recordedAt: new Date().toISOString(),
-      });
-      if (!isMounted.current || operationEpoch !== analysisOperationEpoch.current) {
-        return;
-      }
-      // 저장이 확정된 뒤에 기록한다. 쓰기 전에 표시하면 실패한 저장이 확정으로
-      // 남아 다음 실행이 없는 결과를 건너뛴다.
-      stageTimerRef.current?.mark("commitFastResult", Date.now());
-      setCommittedAnalysisStage("commitFastResult");
-      await commitAnalysisStage(store, inputSignature, "commitFastResult");
-
       machine = applyAnalysisEvent(machine, {
         type: "FINAL_RESULT_COMMITTED",
         commitId: finalResultCommitId,
       });
-      setAnalysisRun(machine);
-
-      const reopened = await store.getFinalResult(runId);
-      if (
-        reopened === null ||
-        reopened.artifactId !== finalResultCommitId ||
-        reopened.inputSignature !== inputSignature ||
-        reopened.modelManifestHash !== SIGNAL_ENGINE_VERSION ||
-        JSON.stringify(reopened.result) !== JSON.stringify(finalPayload)
-      ) {
-        throw new AnalysisResultStoreError(
-          "TRANSACTION_FAILED",
-          "The committed analysis result could not be reopened and verified.",
-        );
-      }
-      if (!isMounted.current || operationEpoch !== analysisOperationEpoch.current) {
-        return;
-      }
-
-      const reopenedPayload = reopened.result;
-      const reopenedCoverage = reopenedPayload.coverage;
-      const terminalOutcome = durableCoverageDisposition(reopenedCoverage);
-      const plannedCoverageComplete =
-        terminalOutcome === "completed" &&
-        reopenedCoverage.visualCoverageComplete &&
-        reopenedCoverage.visualCompletedSampleCount ===
-          reopenedCoverage.visualPlannedSampleCount &&
-        reopenedCoverage.chatCoverageComplete &&
-        reopenedCoverage.chatProcessedMessageCount ===
-          reopenedCoverage.chatPlannedMessageCount &&
-        reopenedCoverage.audioCoverageComplete === true &&
-        reopenedCoverage.audioProcessedWindowCount ===
-          reopenedCoverage.audioPlannedWindowCount;
-      const reopenedGapCount =
-        (reopenedCoverage.chatCoverageComplete ? 0 : 1) +
-        (reopenedCoverage.audioCoverageComplete === false ? 1 : 0);
-      const gappedCoverageExplained =
-        terminalOutcome === "completedWithGaps" &&
-        reopenedGapCount > 0 &&
-        reopenedCoverage.signalGapApproval?.policyId === SIGNAL_GAP_POLICY_ID &&
-        reopenedCoverage.signalGapApproval.disclosedBeforeStart &&
-        reopenedCoverage.signalGapApproval.approvals.length === reopenedGapCount;
-      const terminalRecord = {
-        kind: "terminalDisposition" as const,
-        runId,
-        schemaVersion: PERSISTENCE_SCHEMA_VERSION,
-        inputSignature,
-        modelManifestHash: SIGNAL_ENGINE_VERSION,
-        outcome: terminalOutcome,
-        resultRecordKind: "finalResult" as const,
-        resultArtifactId: finalResultCommitId,
-        recordedAt: new Date().toISOString(),
-      };
-      await store.putTerminalRecord(terminalRecord);
-      const reopenedTerminal = await store.getTerminalRecord(runId);
-      if (
-        reopenedTerminal === null ||
-        JSON.stringify(reopenedTerminal) !== JSON.stringify(terminalRecord)
-      ) {
-        throw new AnalysisResultStoreError(
-          "TRANSACTION_FAILED",
-          "The terminal analysis disposition could not be reopened and verified.",
-        );
-      }
-      if (!isMounted.current || operationEpoch !== analysisOperationEpoch.current) {
-        return;
-      }
-
+      /*
+       * The job cursor is only a resume promise. No stage may move beyond work
+       * that cannot be reopened, so all three fast stages advance only after
+       * manifest + final result + terminal disposition passed exact readback.
+       */
+      await commitDurableJobStage("fastPass", false);
+      await commitDurableJobStage("seedClustering", false);
+      await commitDurableJobStage("commitFastResult");
       machine = plannedCoverageComplete
         ? applyAnalysisEvent(machine, {
             type: "FULL_RESULT_REOPEN_VERIFIED",
@@ -3638,6 +4882,9 @@ function App() {
           "TRANSACTION_FAILED",
           "The reopened analysis result did not prove complete coverage.",
         );
+      }
+      if (analysisAbortController.current === controller) {
+        analysisAbortController.current = null;
       }
       const reopenedCandidates = reopenedPayload.candidates.map((candidate) => ({
           ...hydrateDurableCandidate(candidate),
@@ -3745,7 +4992,7 @@ function App() {
               },
               recordedAt: new Date().toISOString(),
             });
-            const terminalRecord = {
+            const terminalRecord: AnalysisTerminalRecord = {
               kind: "terminalDisposition" as const,
               runId,
               schemaVersion: PERSISTENCE_SCHEMA_VERSION,
@@ -3800,7 +5047,26 @@ function App() {
            * 일이 다르다 — 실패는 다시 시도할 것이고, 취소는 사용자가 미룬 것이다.
            * 같은 상태로 묶으면 시트가 둘에게 같은 버튼을 준다.
            */
-          void failAnalysisJob(store, inputSignature, "LOCAL_ANALYSIS_FAILED");
+          const failureJobToken =
+            `analysis-failure:${runId}:LOCAL_ANALYSIS_FAILED`;
+          const durableFailureJob = await failDurableAnalysisJob({
+            store,
+            inputSignature,
+            runId,
+            operationToken: failureJobToken,
+            isCurrent: (identity) =>
+              isMounted.current &&
+              operationEpoch === analysisOperationEpoch.current &&
+              identity.runId === runId &&
+              identity.operationToken === failureJobToken,
+            reasonCode: "LOCAL_ANALYSIS_FAILED",
+          });
+          if (durableFailureJob.status !== "succeeded") {
+            console.warn(
+              "The failed analysis job checkpoint could not be confirmed.",
+              durableFailureJob,
+            );
+          }
           try {
             const failureArtifactId = createOperationId("failure");
             await store.putFailureRecord({
@@ -3813,7 +5079,7 @@ function App() {
               result: { outcome: "failed", reasonCode: "LOCAL_ANALYSIS_FAILED" },
               recordedAt: new Date().toISOString(),
             });
-            const terminalRecord = {
+            const terminalRecord: AnalysisTerminalRecord = {
               kind: "terminalDisposition" as const,
               runId,
               schemaVersion: PERSISTENCE_SCHEMA_VERSION,
@@ -3874,6 +5140,7 @@ function App() {
       }
     }
   };
+  runSignalAnalysisRef.current = runSignalAnalysis;
 
   const cancelAnalysis = (): void => {
     const controller = analysisAbortController.current;
@@ -3885,7 +5152,24 @@ function App() {
     // 멈춤은 폐기가 아니다. 확정된 스테이지를 남겨 두는 것이 그 차이이며,
     // 그래서 취소는 작업을 지우지 않고 `paused` 로 보낸다.
     if (analysisRun !== null) {
-      void pauseAnalysisJob(getResultStore(), analysisRun.inputSignature);
+      const pausedRun = analysisRun;
+      const pauseToken = `analysis-pause:${pausedRun.runId}`;
+      void pauseDurableAnalysisJob({
+        store: getResultStore(),
+        inputSignature: pausedRun.inputSignature,
+        runId: pausedRun.runId,
+        operationToken: pauseToken,
+        isCurrent: (identity) =>
+          identity.runId === pausedRun.runId &&
+          identity.operationToken === pauseToken,
+      }).then((result) => {
+        if (result.status !== "succeeded" && result.status !== "stale") {
+          console.warn(
+            "The paused analysis checkpoint could not be confirmed.",
+            result,
+          );
+        }
+      });
     }
     // The uniform transcript prefetch spends against the same consent as the
     // run, so cancelling the run stops it too. The fence stays cleared and the
@@ -3921,7 +5205,256 @@ function App() {
     [],
   );
 
+  const ensureCandidatePassBPlanPersistence = async (
+    plannedCandidateIds: readonly string[] = candidateDetailCandidateIds,
+  ): Promise<CandidatePassBInsightsRecord> => {
+    const runId = currentAnalysisRunId;
+    const inputSignature = currentAnalysisInputSignature;
+    if (
+      runId === null ||
+      inputSignature === null ||
+      broadcastContextStatus !== "completed" ||
+      semanticLeadRefinementStatus !== "completed"
+    ) {
+      throw new Error(
+        "Candidate detail planning requires the completed current broadcast context.",
+      );
+    }
+    if (
+      plannedCandidateIds.length > 12 ||
+      new Set(plannedCandidateIds).size !== plannedCandidateIds.length ||
+      plannedCandidateIds.some(
+        (candidateId) => candidatePassBContextById[candidateId] === undefined,
+      )
+    ) {
+      throw new Error(
+        "Candidate detail planning requires one complete context packet per planned candidate.",
+      );
+    }
+
+    const store = getResultStore();
+    const session = await store.getBroadcastContextSession(runId);
+    if (
+      session === null ||
+      session.inputSignature !== inputSignature ||
+      session.contextInputSignature === null ||
+      session.contextPhaseLedgerJson === null ||
+      session.transcriptSealOperationKey === null ||
+      session.participantGroundingInputSignature === null ||
+      session.contextResultJson === null
+    ) {
+      throw new Error(
+        "The exact durable broadcast context is not ready for candidate detail planning.",
+      );
+    }
+    const contextLedger = parseBroadcastContextPhaseLedgerJson(
+      session.contextPhaseLedgerJson,
+    );
+    if (
+      contextLedger === null ||
+      !broadcastContextPhaseLedgerMatchesFence(contextLedger, {
+        parentContextSignature: session.contextInputSignature,
+        transcriptSignature: session.transcriptSealOperationKey,
+        groundingSignature: session.participantGroundingInputSignature,
+      }) ||
+      contextLedger.units.some(
+        (unit) => unit.required && unit.status !== "succeeded",
+      )
+    ) {
+      throw new Error(
+        "The current broadcast context ledger is not fully settled.",
+      );
+    }
+    if (semanticRefinementEvidenceProjectionFingerprint === null) {
+      if (
+        session.refinementTranscriptInputSignature !== null ||
+        session.refinementTranscriptCheckpointJson !== null ||
+        session.refinementEvidenceLedgerJson !== null ||
+        session.refinementInputSignature !== null ||
+        session.refinementCandidatesJson !== null ||
+        contextLedger.units.some(
+          (unit) => unit.required && unit.phase === "refinement",
+        )
+      ) {
+        throw new Error(
+          "The zero-refinement plan retained stale refinement artifacts.",
+        );
+      }
+    } else {
+      const refinementLedger =
+        await parseBroadcastContextSessionRefinementEvidenceLedger(session);
+      const activeProjection =
+        refinementLedger === null
+          ? null
+          : projectBroadcastRefinementActiveEvidenceRoute(refinementLedger);
+      if (
+        refinementLedger === null ||
+        !broadcastRefinementEvidenceLedgerCanPublish(refinementLedger) ||
+        activeProjection === null ||
+        !activeProjection.publicationEligible ||
+        activeProjection.projectionFingerprint !==
+          semanticRefinementEvidenceProjectionFingerprint
+      ) {
+        throw new Error(
+          "The active refinement evidence does not match the candidate detail plan.",
+        );
+      }
+    }
+    const plannedContextByCandidateId = Object.fromEntries(
+      plannedCandidateIds.map((candidateId) => [
+        candidateId,
+        candidatePassBContextById[candidateId]!,
+      ]),
+    );
+    const planReceipt = await createCandidatePassBPlanReceipt({
+      runId,
+      inputSignature,
+      contextInputSignature: session.contextInputSignature,
+      refinementEvidenceProjectionFingerprint:
+        semanticRefinementEvidenceProjectionFingerprint,
+      plannedCandidateIds,
+      contextByCandidateId: plannedContextByCandidateId,
+    });
+    const operationKey = planReceipt.planFingerprint;
+    const preparation = candidatePassBPlanPreparationRef.current;
+    if (
+      preparation.operationKey === operationKey &&
+      preparation.promise !== null
+    ) {
+      return preparation.promise;
+    }
+
+    const durableSnapshot =
+      candidatePassBDurableInsightsRef.current?.runId === runId
+        ? candidatePassBDurableInsightsRef.current
+        : null;
+    if (
+      !candidatePassBPlanReplacementRequiredRef.current &&
+      durableSnapshot !== null &&
+      JSON.stringify(durableSnapshot.planReceipt) ===
+        JSON.stringify(planReceipt)
+    ) {
+      candidatePassBPlanReceiptRef.current = planReceipt;
+      setCandidatePassBDurableInsights(durableSnapshot);
+      setCandidatePassBInsightPersistenceStatus("verified");
+      return durableSnapshot;
+    }
+
+    const writeEpoch = candidatePassBInsightWriteEpochRef.current;
+    const planOnlyRecord: CandidatePassBInsightsRecord = {
+      kind: "candidatePassBInsights",
+      runId,
+      schemaVersion: CANDIDATE_PASS_B_INSIGHT_SCHEMA_VERSION,
+      inputSignature,
+      modelManifestHash: CANDIDATE_PASS_B_ROUTING_MODEL_REVISION,
+      planReceipt,
+      contextByCandidateId: plannedContextByCandidateId,
+      evidenceById: {},
+      insightById: {},
+      modelByCandidateId: {},
+      thumbnailById: {},
+      attemptLedgerByCandidateId: {},
+      dispatchIntentByCandidateId: {},
+      settlementByCandidateId: {},
+      verificationReceiptById: {},
+      recordedAt: new Date().toISOString(),
+    };
+    if (isMounted.current) {
+      setCandidatePassBInsightPersistenceStatus("pending");
+    }
+    const writePromise = candidatePassBInsightWriteChainRef.current
+      .catch(() => undefined)
+      .then(async () => {
+        if (candidatePassBInsightWriteEpochRef.current !== writeEpoch) {
+          throw new Error("The candidate detail plan was superseded.");
+        }
+        const latestSnapshot =
+          await store.getCandidatePassBInsights(runId);
+        if (
+          latestSnapshot !== null &&
+          latestSnapshot.inputSignature !== inputSignature
+        ) {
+          throw new Error(
+            "A different source owns the durable candidate detail slot.",
+          );
+        }
+        const restored = await persistCandidatePassBInsightsWithReadback(
+          store,
+          latestSnapshot,
+          planOnlyRecord,
+          undefined,
+          (current, pending) =>
+            current.runId === pending.runId &&
+            current.inputSignature === pending.inputSignature
+              ? pending
+              : null,
+        );
+        if (
+          candidatePassBInsightWriteEpochRef.current !== writeEpoch ||
+          JSON.stringify(restored.planReceipt) !== JSON.stringify(planReceipt)
+        ) {
+          throw new Error(
+            "The candidate detail plan could not be verified after persistence.",
+          );
+        }
+        candidatePassBPlanReceiptRef.current = restored.planReceipt;
+        candidatePassBPlanReplacementRequiredRef.current = false;
+        candidatePassBDurableInsightsRef.current = restored;
+        if (isMounted.current) {
+          setCandidatePassBDurableInsights(restored);
+          setCandidatePassBInsightPersistenceStatus("verified");
+        }
+        return restored;
+      })
+      .catch((error: unknown) => {
+        if (
+          isMounted.current &&
+          candidatePassBInsightWriteEpochRef.current === writeEpoch
+        ) {
+          setCandidatePassBInsightPersistenceStatus("failed");
+          setCandidatePassBError(
+            "후보 상세 분석 계획을 저장하고 다시 확인하지 못했어요. 저장된 지점부터 자동으로 다시 시도합니다.",
+          );
+        }
+        throw error;
+      });
+    candidatePassBInsightWriteChainRef.current = writePromise.then(
+      () => undefined,
+      () => undefined,
+    );
+    candidatePassBPlanPreparationRef.current = {
+      operationKey,
+      promise: writePromise,
+    };
+    void writePromise.then(
+      () => {
+        if (
+          candidatePassBPlanPreparationRef.current.operationKey === operationKey
+        ) {
+          candidatePassBPlanPreparationRef.current = {
+            operationKey,
+            promise: null,
+          };
+        }
+      },
+      () => {
+        if (
+          candidatePassBPlanPreparationRef.current.operationKey === operationKey
+        ) {
+          candidatePassBPlanPreparationRef.current = {
+            operationKey,
+            promise: null,
+          };
+        }
+      },
+    );
+    return writePromise;
+  };
+  ensureCandidatePassBPlanPersistenceRef.current =
+    ensureCandidatePassBPlanPersistence;
+
   const queueCandidatePassBInsightPersistence = (
+    planReceipt: CandidatePassBPlanReceipt,
     evidenceById: CandidatePassBEvidenceById,
     insightById: CandidateGeminiInsightById,
     thumbnailById: CandidateTimelineThumbnailById = firstTimelineFrameById(
@@ -3931,15 +5464,80 @@ function App() {
       candidatePassBModelByIdRef.current,
     verificationReceiptById: CandidatePassBVerificationReceiptById =
       candidatePassBVerificationReceiptRef.current,
-  ): void => {
+    dispatchIntentByCandidateId: Readonly<
+      Record<string, CandidatePassBDispatchIntent>
+    > = candidatePassBDispatchIntentRef.current,
+    settlementByCandidateId: Readonly<
+      Record<string, CandidatePassBTerminalSettlement>
+    > = candidatePassBSettlementRef.current,
+    attemptLedgerByCandidateId: Readonly<
+      Record<string, CandidatePassBAttemptLedger>
+    > = candidatePassBAttemptLedgerRef.current,
+  ): Promise<CandidatePassBInsightsRecord | null> => {
     const runId = currentAnalysisRunId;
-    const inputSignature =
-      openedRecoveredResult?.terminal.inputSignature ??
-      analysisRun?.inputSignature ??
-      sourceContentFingerprint;
+    const inputSignature = currentAnalysisInputSignature;
     if (runId === null || inputSignature === null) {
-      return;
+      return Promise.resolve(null);
     }
+    const activePlanReceipt = candidatePassBPlanReceiptRef.current;
+    if (
+      activePlanReceipt === null ||
+      JSON.stringify(activePlanReceipt) !== JSON.stringify(planReceipt) ||
+      planReceipt.runId !== runId ||
+      planReceipt.inputSignature !== inputSignature
+    ) {
+      return Promise.reject(
+        new CandidatePassBInsightPersistenceError(
+          new Error(
+            "The exact Candidate Pass B plan must be durable before candidate artifacts.",
+          ),
+        ),
+      );
+    }
+    const plannedCandidateIdSet = new Set(planReceipt.plannedCandidateIds);
+    const artifactMaps = [
+      evidenceById,
+      insightById,
+      thumbnailById,
+      modelByCandidateId,
+      verificationReceiptById,
+      dispatchIntentByCandidateId,
+      settlementByCandidateId,
+      attemptLedgerByCandidateId,
+    ];
+    if (
+      artifactMaps.some((entries) =>
+        Object.keys(entries).some(
+          (candidateId) => !plannedCandidateIdSet.has(candidateId),
+        ),
+      )
+    ) {
+      return Promise.reject(
+        new CandidatePassBInsightPersistenceError(
+          new Error(
+            "Candidate artifacts do not belong to the exact durable plan.",
+          ),
+        ),
+      );
+    }
+    const missingContextCandidateId = planReceipt.plannedCandidateIds.find(
+      (candidateId) => candidatePassBContextById[candidateId] === undefined,
+    );
+    if (missingContextCandidateId !== undefined) {
+      return Promise.reject(
+        new CandidatePassBInsightPersistenceError(
+          new Error(
+            "A planned candidate is missing its exact broadcast context packet.",
+          ),
+        ),
+      );
+    }
+    const plannedContextByCandidateId = Object.fromEntries(
+      planReceipt.plannedCandidateIds.map((candidateId) => [
+        candidateId,
+        candidatePassBContextById[candidateId]!,
+      ]),
+    );
     const writeEpoch = candidatePassBInsightWriteEpochRef.current;
     const record: CandidatePassBInsightsRecord = {
       kind: "candidatePassBInsights",
@@ -3947,13 +5545,16 @@ function App() {
       schemaVersion: CANDIDATE_PASS_B_INSIGHT_SCHEMA_VERSION,
       inputSignature,
       modelManifestHash: CANDIDATE_PASS_B_ROUTING_MODEL_REVISION,
+      planReceipt,
+      contextByCandidateId: plannedContextByCandidateId,
       evidenceById,
       insightById,
-      ...(Object.keys(modelByCandidateId).length > 0 ? { modelByCandidateId } : {}),
-      ...(Object.keys(thumbnailById).length > 0 ? { thumbnailById } : {}),
-      ...(Object.keys(verificationReceiptById).length > 0
-        ? { verificationReceiptById }
-        : {}),
+      modelByCandidateId,
+      thumbnailById,
+      attemptLedgerByCandidateId,
+      dispatchIntentByCandidateId,
+      settlementByCandidateId,
+      verificationReceiptById,
       recordedAt: new Date().toISOString(),
     };
     if (
@@ -3962,11 +5563,11 @@ function App() {
     ) {
       setCandidatePassBInsightPersistenceStatus("pending");
     }
-    candidatePassBInsightWriteChainRef.current = candidatePassBInsightWriteChainRef.current
+    const writePromise = candidatePassBInsightWriteChainRef.current
       .catch(() => undefined)
       .then(async () => {
         if (candidatePassBInsightWriteEpochRef.current !== writeEpoch) {
-          return;
+          return null;
         }
         const expectedSnapshot =
           candidatePassBDurableInsightsRef.current?.runId === runId
@@ -3987,6 +5588,7 @@ function App() {
             setCandidatePassBInsightPersistenceStatus("verified");
           }
         }
+        return restored;
       })
       .catch((error: unknown) => {
         if (isMounted.current && candidatePassBIdentity.current?.analysisRunId === runId) {
@@ -3997,27 +5599,134 @@ function App() {
         }
         throw new CandidatePassBInsightPersistenceError(error);
       });
+    candidatePassBInsightWriteChainRef.current = writePromise.then(
+      () => undefined,
+      () => undefined,
+    );
+    return writePromise;
   };
 
   const flushCandidatePassBInsightPersistence = async (): Promise<void> => {
     await candidatePassBInsightWriteChainRef.current;
   };
 
-  const retryCandidatePassBInsightPersistence = async (): Promise<void> => {
-    queueCandidatePassBInsightPersistence(
-      candidatePassBEvidenceRef.current,
-      candidateGeminiInsightRef.current,
-      firstTimelineFrameById(candidateTimelineFramesRef.current),
-      candidatePassBModelByIdRef.current,
-      candidatePassBVerificationReceiptRef.current,
-    );
+  const retryCandidatePassBInsightPersistence = async (): Promise<boolean> => {
     try {
-      await flushCandidatePassBInsightPersistence();
+      const planReceipt =
+        candidatePassBPlanReceiptRef.current ??
+        (
+          await ensureCandidatePassBPlanPersistence(
+            candidateDetailCandidateIds,
+          )
+        ).planReceipt;
+      await queueCandidatePassBInsightPersistence(
+        planReceipt,
+        candidatePassBEvidenceRef.current,
+        candidateGeminiInsightRef.current,
+        firstTimelineFrameById(candidateTimelineFramesRef.current),
+        candidatePassBModelByIdRef.current,
+        candidatePassBVerificationReceiptRef.current,
+      );
       if (isMounted.current) {
         setCandidatePassBError(null);
       }
+      return true;
     } catch {
       // The queued write already records a visible, retryable persistence error.
+      return false;
+    }
+  };
+  retryCandidatePassBInsightPersistenceRef.current =
+    retryCandidatePassBInsightPersistence;
+
+  const ensureCandidatePassBRetryGrant = async (
+    candidateId: string,
+    mode: CandidatePassBRetryGrantMode,
+    planReceipt: CandidatePassBPlanReceipt,
+  ): Promise<boolean> => {
+    const durableRecord = candidatePassBDurableInsightsRef.current;
+    if (durableRecord === null) return true;
+    const currentLedger =
+      durableRecord.attemptLedgerByCandidateId[candidateId];
+    if (currentLedger === undefined) return true;
+    const state = candidatePassBAttemptLedgerState(currentLedger);
+    if (state === "auto-eligible") return true;
+    const activeAttempt = currentLedger.attempts.at(-1);
+    const durableDispatch =
+      durableRecord.dispatchIntentByCandidateId[candidateId];
+    const durableSettlement =
+      durableRecord.settlementByCandidateId[candidateId];
+    if (
+      JSON.stringify(durableRecord.planReceipt) !==
+        JSON.stringify(planReceipt) ||
+      activeAttempt === undefined ||
+      activeAttempt.settlement === null ||
+      activeAttempt.settlement.status !== "outcome-unknown" ||
+      JSON.stringify(activeAttempt.dispatchIntent) !==
+        JSON.stringify(durableDispatch) ||
+      JSON.stringify(activeAttempt.settlement) !==
+        JSON.stringify(durableSettlement) ||
+      (mode === "automatic-free-tier" &&
+        activeAttempt.dispatchIntent.transportMode !== "free-r2") ||
+      (mode === "editor-approved-paid" &&
+        activeAttempt.dispatchIntent.transportMode !== "paid-direct")
+    ) {
+      return false;
+    }
+    const consumedGrantIds = new Set(
+      currentLedger.attempts.flatMap(({ retryGrantId }) =>
+        retryGrantId === null ? [] : [retryGrantId],
+      ),
+    );
+    const pendingGrant = currentLedger.retryGrants.find(
+      ({ grantId }) => !consumedGrantIds.has(grantId),
+    );
+    if (state === "retry-granted") {
+      return pendingGrant?.mode === mode;
+    }
+    if (state !== "blocked") return false;
+    let nextLedger: CandidatePassBAttemptLedger;
+    try {
+      nextLedger = issueCandidatePassBRetryGrant(currentLedger, {
+        schemaVersion: CANDIDATE_PASS_B_RETRY_GRANT_SCHEMA_VERSION,
+        grantId: createOperationId("candidate-pass-b-retry-grant"),
+        candidateId,
+        replacesOperationId:
+          activeAttempt.dispatchIntent.operationId,
+        nextAttemptOrdinal: currentLedger.attempts.length,
+        mode,
+      });
+    } catch {
+      return false;
+    }
+    const nextLedgers = {
+      ...durableRecord.attemptLedgerByCandidateId,
+      [candidateId]: nextLedger,
+    };
+    try {
+      const restored = await queueCandidatePassBInsightPersistence(
+        planReceipt,
+        durableRecord.evidenceById,
+        durableRecord.insightById,
+        durableRecord.thumbnailById,
+        durableRecord.modelByCandidateId,
+        durableRecord.verificationReceiptById,
+        durableRecord.dispatchIntentByCandidateId,
+        durableRecord.settlementByCandidateId,
+        nextLedgers,
+      );
+      if (
+        restored === null ||
+        JSON.stringify(restored.attemptLedgerByCandidateId[candidateId]) !==
+          JSON.stringify(nextLedger)
+      ) {
+        return false;
+      }
+      candidatePassBAttemptLedgerRef.current =
+        restored.attemptLedgerByCandidateId;
+      return true;
+    } catch {
+      return false;
     }
   };
 
@@ -4025,11 +5734,12 @@ function App() {
     targetCandidateIds?: readonly string[],
     /**
      * Set by the automatic trigger so the "already handled" guard can be
-     * claimed at the commit point below rather than when the run was merely
-     * scheduled. A run that bails out in the checks above leaves the key free,
-     * so the trigger retries once the blocking condition clears.
+     * claimed only after the worker is prepared. The lease is retained after
+     * exact durable readback, or released with backoff when evidence remains
+     * outstanding.
      */
     autoStartKey?: string,
+    paidRetryApproved = false,
   ): Promise<void> => {
     const requestedCandidateIds =
       targetCandidateIds === undefined ? null : new Set(targetCandidateIds);
@@ -4037,7 +5747,7 @@ function App() {
       requestedCandidateIds === null
         ? candidates
         : candidates.filter((candidate) => requestedCandidateIds.has(candidate.id));
-    const candidatePool = requestedCandidatePool.filter(
+    let candidatePool = requestedCandidatePool.filter(
       (candidate) => candidatePassBContextById[candidate.id] !== undefined,
     );
     const sourceBindingId =
@@ -4049,7 +5759,6 @@ function App() {
       preflight === null ||
       currentAnalysisRunId === null ||
       sourceBindingId === null ||
-      candidatePool.length === 0 ||
       analysisBusy ||
       candidatePassBBusy ||
       candidateAudioEventBusy ||
@@ -4065,10 +5774,60 @@ function App() {
     }
 
     candidatePassBStartPendingRef.current = true;
-    if (autoStartKey !== undefined) {
-      autoCandidatePassBSourceRef.current = autoStartKey;
-    }
     setCandidatePassBStartPending(true);
+    let planLease: CandidatePassBPlanReceipt;
+    try {
+      const plannedRecord = await ensureCandidatePassBPlanPersistence(
+        candidateDetailCandidateIds,
+      );
+      planLease = plannedRecord.planReceipt;
+    } catch {
+      candidatePassBStartPendingRef.current = false;
+      setCandidatePassBStartPending(false);
+      return;
+    }
+    if (candidatePool.length === 0) {
+      candidatePassBStartPendingRef.current = false;
+      setCandidatePassBStartPending(false);
+      return;
+    }
+    const retryEligibleCandidates = [];
+    for (const candidate of candidatePool) {
+      const ledger =
+        candidatePassBDurableInsightsRef.current
+          ?.attemptLedgerByCandidateId[candidate.id];
+      if (
+        ledger === undefined ||
+        candidatePassBAttemptLedgerState(ledger) === "auto-eligible" ||
+        candidatePassBAttemptLedgerState(ledger) === "retry-granted"
+      ) {
+        retryEligibleCandidates.push(candidate);
+        continue;
+      }
+      const activeAttempt = ledger.attempts.at(-1);
+      const retryMode: CandidatePassBRetryGrantMode | null =
+        activeAttempt?.dispatchIntent.transportMode === "free-r2"
+          ? "automatic-free-tier"
+          : paidRetryApproved
+            ? "editor-approved-paid"
+            : null;
+      if (
+        retryMode !== null &&
+        await ensureCandidatePassBRetryGrant(
+          candidate.id,
+          retryMode,
+          planLease,
+        )
+      ) {
+        retryEligibleCandidates.push(candidate);
+      }
+    }
+    candidatePool = retryEligibleCandidates;
+    if (candidatePool.length === 0) {
+      candidatePassBStartPendingRef.current = false;
+      setCandidatePassBStartPending(false);
+      return;
+    }
     candidatePassBOperationEpoch.current += 1;
     const operationEpoch = candidatePassBOperationEpoch.current;
     const runtimeDevice = "remote" as const;
@@ -4093,7 +5852,6 @@ function App() {
       setCandidatePassBStartPending(false);
       return;
     }
-
     candidatePassBAbortController.current?.abort();
     const controller = new AbortController();
     candidatePassBAbortController.current = controller;
@@ -4147,6 +5905,9 @@ function App() {
     setCandidatePassBActiveCandidateIds([]);
     setCandidatePassBError(null);
     if (!applyCandidatePassBEvent({ type: "START_REQUESTED" })) {
+      candidatePassBMachine.current = null;
+      candidatePassBIdentity.current = null;
+      setCandidatePassBRun(null);
       setCandidatePassBError("AI 후보 분석을 시작하지 못했어요. 다시 시도해 주세요.");
       return;
     }
@@ -4157,6 +5918,12 @@ function App() {
         type: "WORKER_PREPARED",
       })
     ) {
+      applyCandidatePassBEvent({
+        ...identity,
+        eventId: createOperationId("pass-b-event"),
+        type: "RUN_FAILED",
+        reasonCode: "protocol_error",
+      });
       setCandidatePassBError("AI 후보 분석 작업을 준비하지 못했어요. 다시 시도해 주세요.");
       return;
     }
@@ -4178,6 +5945,18 @@ function App() {
         ...event,
       });
     };
+    if (autoStartKey !== undefined) {
+      autoCandidatePassBSourceRef.current = autoStartKey;
+      const autoRetry = candidatePassBAutoRetryRef.current;
+      if (autoRetry.operationKey !== autoStartKey) {
+        if (autoRetry.timeout !== null) {
+          globalThis.clearTimeout(autoRetry.timeout);
+        }
+        autoRetry.operationKey = autoStartKey;
+        autoRetry.attempts = 0;
+        autoRetry.timeout = null;
+      }
+    }
 
     try {
       const frameBundleResolvers = new Map<
@@ -4264,11 +6043,6 @@ function App() {
                   timelineFrame === undefined ? [] : [timelineFrame],
               };
               setCandidateTimelineFramesById(candidateTimelineFramesRef.current);
-              queueCandidatePassBInsightPersistence(
-                candidatePassBEvidenceRef.current,
-                candidateGeminiInsightRef.current,
-                firstTimelineFrameById(candidateTimelineFramesRef.current),
-              );
             }
             if (frameBundle.status !== "ready") {
               if (
@@ -4291,40 +6065,173 @@ function App() {
             }
             const sourceFence =
               candidatePassBSourceFenceById[target.candidateId];
-            if (
-              sourceFence === undefined ||
+             if (
+               sourceFence === undefined ||
               sourceFence.sourceStartMs !== target.decodeStartMs ||
               sourceFence.sourceEndMs !== target.decodeEndMs
             ) {
               throw new Error(
-                "The candidate source fence no longer matches its decode target.",
-              );
-            }
+                 "The candidate source fence no longer matches its decode target.",
+               );
+             }
+             const currentAttemptLedger =
+               candidatePassBAttemptLedgerRef.current[target.candidateId] ??
+               createCandidatePassBAttemptLedger(target.candidateId);
+             const candidateAttemptOrdinal =
+               currentAttemptLedger.attempts.length;
+             const consumedRetryGrantIds = new Set(
+               currentAttemptLedger.attempts.flatMap(({ retryGrantId }) =>
+                 retryGrantId === null ? [] : [retryGrantId],
+               ),
+             );
+             const retryGrantId =
+               currentAttemptLedger.retryGrants.find(
+                 ({ grantId }) => !consumedRetryGrantIds.has(grantId),
+               )?.grantId ?? null;
             /*
              * 후보 하나당 한 번. `addSpan` 이 같은 이름을 합산하므로 결과는
              * 후보 전체의 총합이 된다 — 한 번의 시간이 아니라 총합이 궁금하다.
              */
             return await runCandidatePassBWorker(sourceFile, {
         identity,
-        quota: {
-          participantId: aiQuotaParticipantId,
-          runId: identity.analysisRunId,
-          attemptOrdinal: operationEpoch,
-        },
+         quota: {
+           participantId: aiQuotaParticipantId,
+           runId: identity.analysisRunId,
+           attemptOrdinal: candidateAttemptOrdinal,
+           retryGrantId,
+         },
+        sourceFingerprint: sourceBindingId,
         sourceDurationMs,
         device: runtimeDevice,
         targets: [{
           candidateId: target.candidateId,
           startMs: target.decodeStartMs,
-          endMs: target.decodeEndMs,
-          videoFrames: videoFramesByCandidateId.get(target.candidateId) ?? [],
-          context: candidatePassBContextById[target.candidateId]!,
+           endMs: target.decodeEndMs,
+           videoFrames: videoFramesByCandidateId.get(target.candidateId) ?? [],
+           frameExtractionRevision:
+             CANDIDATE_PASS_B_FRAME_EXTRACTION_REVISION,
+           context: candidatePassBContextById[target.candidateId]!,
+          contextFingerprint: candidatePassBContextFingerprint(
+             candidatePassBContextById[target.candidateId]!,
+           ),
           outputLanguage: sourceFence.outputLanguage,
-          ...(sourceFence.castRosterId === null
-            ? {}
-            : { castRosterId: sourceFence.castRosterId }),
+          castRosterId: sourceFence.castRosterId,
         }],
-        signal: controller.signal,
+         signal: controller.signal,
+          onDispatchIntent: async (intent) => {
+            if (!isCurrentOperation()) return false;
+            const currentLedger =
+              candidatePassBAttemptLedgerRef.current[intent.candidateId] ??
+              createCandidatePassBAttemptLedger(intent.candidateId);
+            const existingAttempt = currentLedger.attempts.find(
+              ({ dispatchIntent }) =>
+                dispatchIntent.operationId === intent.operationId,
+            );
+            const consumedGrantIds = new Set(
+              currentLedger.attempts.flatMap(({ retryGrantId }) =>
+                retryGrantId === null ? [] : [retryGrantId],
+              ),
+            );
+            const pendingGrant = currentLedger.retryGrants.find(
+              ({ grantId }) => !consumedGrantIds.has(grantId),
+            );
+            let nextLedger: CandidatePassBAttemptLedger;
+            try {
+              nextLedger = appendCandidatePassBArmedAttempt(currentLedger, {
+                dispatchIntent: intent,
+                retryGrantId:
+                  existingAttempt?.retryGrantId ??
+                  pendingGrant?.grantId ??
+                  null,
+              });
+            } catch {
+              return false;
+            }
+            const nextDispatchIntents = {
+              ...candidatePassBDispatchIntentRef.current,
+              [intent.candidateId]: intent,
+            };
+            const nextAttemptLedgers = {
+              ...candidatePassBAttemptLedgerRef.current,
+              [intent.candidateId]: nextLedger,
+            };
+            const replacesPriorAttempt =
+              currentLedger.attempts.at(-1)?.dispatchIntent.operationId !==
+                undefined &&
+              currentLedger.attempts.at(-1)?.dispatchIntent.operationId !==
+                intent.operationId;
+            const nextEvidence = replacesPriorAttempt
+              ? withoutCandidateEntry(
+                  candidatePassBEvidenceRef.current,
+                  intent.candidateId,
+                )
+              : candidatePassBEvidenceRef.current;
+            const nextInsights = replacesPriorAttempt
+              ? withoutCandidateEntry(
+                  candidateGeminiInsightRef.current,
+                  intent.candidateId,
+                )
+              : candidateGeminiInsightRef.current;
+            const nextThumbnails = replacesPriorAttempt
+              ? withoutCandidateEntry(
+                  firstTimelineFrameById(candidateTimelineFramesRef.current),
+                  intent.candidateId,
+                )
+              : firstTimelineFrameById(candidateTimelineFramesRef.current);
+            const nextModels = replacesPriorAttempt
+              ? withoutCandidateEntry(
+                  candidatePassBModelByIdRef.current,
+                  intent.candidateId,
+                )
+              : candidatePassBModelByIdRef.current;
+            const nextReceipts = replacesPriorAttempt
+              ? withoutCandidateEntry(
+                  candidatePassBVerificationReceiptRef.current,
+                  intent.candidateId,
+                )
+              : candidatePassBVerificationReceiptRef.current;
+            const nextSettlements = replacesPriorAttempt
+              ? withoutCandidateEntry(
+                  candidatePassBSettlementRef.current,
+                  intent.candidateId,
+                )
+              : candidatePassBSettlementRef.current;
+            const restored = await queueCandidatePassBInsightPersistence(
+              planLease,
+              nextEvidence,
+              nextInsights,
+              nextThumbnails,
+              nextModels,
+              nextReceipts,
+              nextDispatchIntents,
+              nextSettlements,
+              nextAttemptLedgers,
+            );
+            const accepted =
+              restored !== null &&
+              JSON.stringify(
+                restored.dispatchIntentByCandidateId[intent.candidateId],
+              ) === JSON.stringify(intent) &&
+              JSON.stringify(
+                restored.attemptLedgerByCandidateId[intent.candidateId],
+              ) === JSON.stringify(nextLedger);
+            if (accepted) {
+              candidatePassBDispatchIntentRef.current =
+                restored.dispatchIntentByCandidateId;
+              candidatePassBSettlementRef.current =
+                restored.settlementByCandidateId;
+              candidatePassBAttemptLedgerRef.current =
+                restored.attemptLedgerByCandidateId;
+              candidatePassBEvidenceRef.current = nextEvidence;
+              candidateGeminiInsightRef.current = nextInsights;
+              candidatePassBModelByIdRef.current = nextModels;
+              candidatePassBVerificationReceiptRef.current = nextReceipts;
+              setCandidatePassBEvidenceById(nextEvidence);
+              setCandidateGeminiInsightById(nextInsights);
+              setCandidatePassBVerificationReceiptById(nextReceipts);
+            }
+            return accepted;
+          },
         onModelProgress: (progress) => {
           if (!isCurrentOperation()) {
             return;
@@ -4347,10 +6254,12 @@ function App() {
             });
           }
         },
-        onPartialResult: (result: CandidatePassBTranscriptResult) => {
+        onPartialResult: async (
+          result: CandidatePassBTranscriptResult,
+        ): Promise<boolean> => {
           const target = targetById.get(result.candidateId);
           if (!isCurrentOperation() || target === undefined) {
-            return;
+            return false;
           }
           const evidence = buildCandidatePassBEvidence(
             target,
@@ -4359,27 +6268,44 @@ function App() {
               relativeEndMs: segment.endMs - target.decodeStartMs,
               text: segment.text,
             })),
-          );
-          const context = candidatePassBContextById[result.candidateId];
-          const frames = videoFramesByCandidateId.get(result.candidateId) ?? [];
-          const thumbnail =
+           );
+           const context = candidatePassBContextById[result.candidateId];
+           const thumbnail =
             candidateTimelineFramesRef.current[result.candidateId]?.[0];
-          const resultMatchesSourceFence =
-            result.candidateId === sourceFence.candidateId &&
-            result.sourceStartMs === sourceFence.sourceStartMs &&
-            result.sourceEndMs === sourceFence.sourceEndMs;
-          const receipt =
-            context === undefined ||
-            thumbnail === undefined ||
-            !resultMatchesSourceFence
-              ? null
-              : createCandidatePassBVerificationReceipt(
-                  context,
-                  frames,
-                  thumbnail.timestampMs,
-                  sourceFence,
-                );
-          if (receipt === null) {
+           const resultMatchesSourceFence =
+             result.candidateId === sourceFence.candidateId &&
+             result.sourceStartMs === sourceFence.sourceStartMs &&
+             result.sourceEndMs === sourceFence.sourceEndMs;
+           const dispatchIntent =
+              candidatePassBDispatchIntentRef.current[result.candidateId];
+           const currentAttemptLedger =
+             candidatePassBAttemptLedgerRef.current[result.candidateId];
+           let settledAttemptLedger: CandidatePassBAttemptLedger | null = null;
+           if (currentAttemptLedger !== undefined) {
+             try {
+               settledAttemptLedger = settleCandidatePassBAttempt(
+                 currentAttemptLedger,
+                 result.settlement,
+               );
+             } catch {
+               settledAttemptLedger = null;
+             }
+           }
+           const receipt =
+              context === undefined ||
+              thumbnail === undefined ||
+              !resultMatchesSourceFence ||
+              dispatchIntent === undefined ||
+              settledAttemptLedger === null
+               ? null
+               : createCandidatePassBVerificationReceipt(
+                   context,
+                   thumbnail.timestampMs,
+                   sourceFence,
+                   dispatchIntent,
+                   result.settlement,
+                 );
+           if (receipt === null || settledAttemptLedger === null) {
             candidateFailureReasonById.set(
               result.candidateId,
               "visual_evidence_incomplete",
@@ -4403,10 +6329,57 @@ function App() {
               revision: result.model.revision,
             },
           };
-          const nextReceipts = {
+           const nextReceipts = {
             ...candidatePassBVerificationReceiptRef.current,
-            [result.candidateId]: receipt,
-          };
+             [result.candidateId]: receipt,
+           };
+           const nextSettlements = {
+              ...candidatePassBSettlementRef.current,
+              [result.candidateId]: result.settlement,
+            };
+           const nextAttemptLedgers = {
+             ...candidatePassBAttemptLedgerRef.current,
+             [result.candidateId]: settledAttemptLedger,
+           };
+          const nextThumbnails = firstTimelineFrameById(
+            candidateTimelineFramesRef.current,
+          );
+          const restored = await queueCandidatePassBInsightPersistence(
+            planLease,
+            nextEvidence,
+            nextInsights,
+            nextThumbnails,
+            nextModels,
+            nextReceipts,
+            candidatePassBDispatchIntentRef.current,
+            nextSettlements,
+            nextAttemptLedgers,
+          );
+          if (
+            !isCurrentOperation() ||
+            restored === null ||
+            JSON.stringify(restored.evidenceById[result.candidateId]) !==
+              JSON.stringify(evidence) ||
+            JSON.stringify(restored.insightById[result.candidateId]) !==
+              JSON.stringify(result.insight) ||
+            JSON.stringify(restored.modelByCandidateId[result.candidateId]) !==
+              JSON.stringify(nextModels[result.candidateId]) ||
+            JSON.stringify(restored.thumbnailById[result.candidateId]) !==
+              JSON.stringify(nextThumbnails[result.candidateId]) ||
+            JSON.stringify(
+              restored.verificationReceiptById[result.candidateId],
+            ) !== JSON.stringify(receipt) ||
+            JSON.stringify(
+              restored.dispatchIntentByCandidateId[result.candidateId],
+            ) !== JSON.stringify(dispatchIntent) ||
+            JSON.stringify(restored.settlementByCandidateId[result.candidateId]) !==
+              JSON.stringify(result.settlement) ||
+            JSON.stringify(
+              restored.attemptLedgerByCandidateId[result.candidateId],
+            ) !== JSON.stringify(settledAttemptLedger)
+          ) {
+            return false;
+          }
           const accepted =
             evidence.status !== "fast-pass-fallback"
               ? applyCurrentWorkerEvent({
@@ -4426,22 +6399,90 @@ function App() {
             throw new Error("The Pass B candidate result was rejected.");
           }
           if (isCurrentOperation()) {
-            candidatePassBEvidenceRef.current = nextEvidence;
-            candidateGeminiInsightRef.current = nextInsights;
-            candidatePassBModelByIdRef.current = nextModels;
-            candidatePassBVerificationReceiptRef.current = nextReceipts;
-            setCandidatePassBEvidenceById(nextEvidence);
-            setCandidateGeminiInsightById(nextInsights);
-            setCandidatePassBVerificationReceiptById(nextReceipts);
-            queueCandidatePassBInsightPersistence(
-              nextEvidence,
-              nextInsights,
-              firstTimelineFrameById(candidateTimelineFramesRef.current),
-              nextModels,
-              nextReceipts,
+            candidatePassBEvidenceRef.current = restored.evidenceById;
+            candidateGeminiInsightRef.current = restored.insightById;
+            candidatePassBModelByIdRef.current = restored.modelByCandidateId;
+            candidatePassBVerificationReceiptRef.current =
+              restored.verificationReceiptById;
+            candidatePassBDispatchIntentRef.current =
+              restored.dispatchIntentByCandidateId;
+            candidatePassBSettlementRef.current =
+              restored.settlementByCandidateId;
+            candidatePassBAttemptLedgerRef.current =
+              restored.attemptLedgerByCandidateId;
+            setCandidatePassBEvidenceById(restored.evidenceById);
+            setCandidateGeminiInsightById(restored.insightById);
+            setCandidatePassBVerificationReceiptById(
+              restored.verificationReceiptById,
             );
           }
+          return true;
         },
+         onOutcomeUnknown: async (outcome): Promise<boolean> => {
+           const target = targetById.get(outcome.candidateId);
+           if (!isCurrentOperation() || target === undefined) return false;
+           const currentAttemptLedger =
+             candidatePassBAttemptLedgerRef.current[outcome.candidateId];
+           if (currentAttemptLedger === undefined) {
+             throw new Error(
+               "The outcome-unknown settlement has no armed attempt ledger.",
+             );
+           }
+           const settledAttemptLedger = settleCandidatePassBAttempt(
+             currentAttemptLedger,
+             outcome.settlement,
+           );
+           const nextSettlements = {
+              ...candidatePassBSettlementRef.current,
+              [outcome.candidateId]: outcome.settlement,
+           };
+           const nextAttemptLedgers = {
+             ...candidatePassBAttemptLedgerRef.current,
+             [outcome.candidateId]: settledAttemptLedger,
+           };
+           const restored = await queueCandidatePassBInsightPersistence(
+             planLease,
+             candidatePassBEvidenceRef.current,
+             candidateGeminiInsightRef.current,
+             firstTimelineFrameById(candidateTimelineFramesRef.current),
+             candidatePassBModelByIdRef.current,
+             candidatePassBVerificationReceiptRef.current,
+             candidatePassBDispatchIntentRef.current,
+             nextSettlements,
+             nextAttemptLedgers,
+           );
+           if (
+             !isCurrentOperation() ||
+             restored === null ||
+             JSON.stringify(
+               restored.settlementByCandidateId[outcome.candidateId],
+             ) !== JSON.stringify(outcome.settlement) ||
+             JSON.stringify(
+               restored.attemptLedgerByCandidateId[outcome.candidateId],
+             ) !== JSON.stringify(settledAttemptLedger)
+           ) {
+             return false;
+           }
+           if (
+             !applyCurrentWorkerEvent({
+               type: "CANDIDATE_FAILED",
+               candidateId: outcome.candidateId,
+               expectedProposalRevision: 0,
+               reasonCode: "worker_candidate_failed",
+             })
+           ) {
+             throw new Error(
+               "The outcome-unknown candidate disposition was rejected.",
+             );
+           }
+           candidatePassBDispatchIntentRef.current =
+             restored.dispatchIntentByCandidateId;
+           candidatePassBSettlementRef.current =
+             restored.settlementByCandidateId;
+           candidatePassBAttemptLedgerRef.current =
+             restored.attemptLedgerByCandidateId;
+           return true;
+          },
         onCandidateGap: (gap: CandidatePassBCandidateGap) => {
           const target = targetById.get(gap.candidateId);
           if (!isCurrentOperation() || target === undefined) {
@@ -4459,40 +6500,6 @@ function App() {
             })
           ) {
             throw new Error("The Pass B model-bypass event was rejected.");
-          }
-          if (gap.reasonCode === "EMPTY_AUDIO") {
-            const evidence = buildCandidatePassBEvidence(target, [
-              {
-                relativeStartMs: 0,
-                relativeEndMs: Math.min(1_000, target.decodeEndMs - target.decodeStartMs),
-                text: "",
-                isSilence: true,
-              },
-            ]);
-            if (
-              !applyCurrentWorkerEvent({
-                type: "CANDIDATE_NO_CLEAR_SPEECH",
-                candidateId: gap.candidateId,
-                expectedProposalRevision: 0,
-                reasonCode: "no_speech",
-                workerDisposition: "gap",
-              })
-            ) {
-              throw new Error("The Pass B no-speech result was rejected.");
-            }
-            if (isCurrentOperation()) {
-              const nextEvidence = mergeCandidatePassBEvidence(
-                candidatePassBEvidenceRef.current,
-                evidence,
-              );
-              candidatePassBEvidenceRef.current = nextEvidence;
-              setCandidatePassBEvidenceById(nextEvidence);
-              queueCandidatePassBInsightPersistence(
-                nextEvidence,
-                candidateGeminiInsightRef.current,
-              );
-            }
-            return;
           }
           if (
             !applyCurrentWorkerEvent({
@@ -4631,10 +6638,97 @@ function App() {
         setCandidatePassBError(explainCandidatePassBError(error));
       }
     } finally {
+      let persistenceVerified = true;
       try {
         await flushCandidatePassBInsightPersistence();
       } catch {
-        // Completion already failed closed above; keep cleanup deterministic.
+        persistenceVerified = false;
+      }
+      if (
+        autoStartKey !== undefined &&
+        isCurrentOperation() &&
+        autoCandidatePassBSourceRef.current === autoStartKey
+      ) {
+        const durableIds = selectCandidatePassBDurableIds({
+          candidateIds: targets.map(({ candidateId }) => candidateId),
+          record: candidatePassBDurableInsightsRef.current,
+          contextByCandidateId: candidatePassBContextById,
+          sourceFenceByCandidateId: candidatePassBSourceFenceById,
+        });
+        const allTargetsDurable =
+          persistenceVerified &&
+          targets.every(({ candidateId }) => durableIds.has(candidateId));
+        const retryCandidateIds = targets.map(({ candidateId }) => candidateId);
+        const durableRecord = candidatePassBDurableInsightsRef.current;
+        const automaticRetryTargets = persistenceVerified
+          ? selectCandidatePassBAutomaticTargets({
+              candidateIds: retryCandidateIds,
+              attemptLedgerByCandidateId:
+                durableRecord?.attemptLedgerByCandidateId ?? {},
+              dispatchIntentByCandidateId:
+                durableRecord?.dispatchIntentByCandidateId ?? {},
+              settlementByCandidateId:
+                durableRecord?.settlementByCandidateId ?? {},
+            })
+          : [];
+        const autoRetry = candidatePassBAutoRetryRef.current;
+        if (allTargetsDurable) {
+          if (autoRetry.timeout !== null) {
+            globalThis.clearTimeout(autoRetry.timeout);
+          }
+          autoRetry.operationKey = autoStartKey;
+          autoRetry.attempts = 0;
+          autoRetry.timeout = null;
+        } else if (
+          automaticRetryTargets.length > 0 &&
+          !controller.signal.aborted &&
+          autoRetry.timeout === null
+        ) {
+          autoRetry.operationKey = autoStartKey;
+          const delayMs = Math.min(
+            30_000,
+            1_000 * 2 ** Math.min(autoRetry.attempts, 5),
+          );
+          autoRetry.attempts += 1;
+          autoRetry.timeout = scheduleCandidatePassBAutomaticTargetReadback({
+            candidateIds: retryCandidateIds,
+            delayMs,
+            readDurableInput: () => {
+              const currentRecord = candidatePassBDurableInsightsRef.current;
+              return {
+                attemptLedgerByCandidateId:
+                  currentRecord?.attemptLedgerByCandidateId ?? {},
+                dispatchIntentByCandidateId:
+                  currentRecord?.dispatchIntentByCandidateId ?? {},
+                settlementByCandidateId:
+                  currentRecord?.settlementByCandidateId ?? {},
+              };
+            },
+            onReady: (retryTargets) => {
+              autoRetry.timeout = null;
+              if (retryTargets.length === 0) {
+                autoRetry.attempts = 0;
+                return;
+              }
+              if (
+                isMounted.current &&
+                autoCandidatePassBSourceRef.current === autoStartKey
+              ) {
+                autoCandidatePassBSourceRef.current = null;
+                setCandidatePassBAutoRetryEpoch((epoch) => epoch + 1);
+              }
+            },
+          });
+        } else {
+          autoRetry.operationKey = autoStartKey;
+          autoRetry.timeout = null;
+          if (
+            !persistenceVerified &&
+            autoCandidatePassBSourceRef.current === autoStartKey
+          ) {
+            autoCandidatePassBSourceRef.current = null;
+          }
+        }
       }
       if (isMounted.current) {
         setCandidatePassBActiveCandidateIds([]);
@@ -5625,13 +7719,19 @@ function App() {
   }, [reviewUndo]);
 
   /** Re-runs whichever whole-context stage stopped, keeping fast candidates. */
-  const retryWholeContextPhase = (): void => {
+  const retryWholeContextPhase = (
+    forceBoundary?: "transcript" | "context",
+  ): void => {
     if (wholeContextRetryPendingRef.current) return;
-    const transcriptNeedsRetry = transcriptNeedsExplicitRetry(
-      broadcastTranscriptStatus,
-      broadcastTranscriptChapters.length,
-    );
+    const transcriptNeedsRetry =
+      forceBoundary === "transcript" ||
+      transcriptNeedsExplicitRetry(
+        broadcastTranscriptStatus,
+        broadcastTranscriptChapters.length,
+      );
     const contextNeedsRetry =
+      forceBoundary === "context" ||
+      forceBoundary === "transcript" ||
       broadcastContextStatus === "failed" ||
       broadcastContextResult === null ||
       transcriptNeedsRetry;
@@ -5640,6 +7740,7 @@ function App() {
     wholeContextRetryPendingRef.current = true;
 
     void (async () => {
+      let resumeCurrentContextOperation = false;
       if (contextNeedsRetry) {
         broadcastContextAbortController.current?.abort();
         broadcastContextAbortController.current = null;
@@ -5675,7 +7776,6 @@ function App() {
         // packet is reopened, every old insight and verification receipt is
         // stale in memory and in the durable analysis session.
         resetCandidatePassB();
-        queueCandidatePassBInsightPersistence({}, {}, {}, {}, {});
         setCandidateAiProjectionById({});
         setBroadcastContextResult(null);
         setBroadcastContextRefinementLeadIds(null);
@@ -5703,8 +7803,39 @@ function App() {
                 savedSession.contextInputCheckpointJson !== null &&
                 savedSession.contextResultJson === null &&
                 storedLedger !== null;
+              resumeCurrentContextOperation =
+                canResumeExactContext &&
+                storedLedger.units.some(
+                  ({ status }) =>
+                    status === "in-flight" ||
+                    status === "outcome-unknown" ||
+                    status === "reconciling",
+                );
 
-              if (canResumeExactContext) {
+              if (resumeCurrentContextOperation) {
+                /*
+                 * A possibly billed request already owns this operation ID.
+                 * The current pipeline re-enters with the unchanged ledger and
+                 * reconciles that exact operation. Issuing a retry grant or a
+                 * fresh operation here would create duplicate-billing risk.
+                 */
+                const reopened =
+                  await store.getBroadcastContextSession(runId);
+                if (
+                  reopened === null ||
+                  reopened.contextInputSignature !==
+                    savedSession.contextInputSignature ||
+                  reopened.contextInputCheckpointJson !==
+                    savedSession.contextInputCheckpointJson ||
+                  reopened.contextPhaseLedgerJson !==
+                    savedSession.contextPhaseLedgerJson ||
+                  reopened.contextResultJson !== null
+                ) {
+                  throw new Error(
+                    "The interrupted context operation changed before reconciliation.",
+                  );
+                }
+              } else if (canResumeExactContext) {
                 const retryNonce =
                   globalThis.crypto?.randomUUID?.() ??
                   `${Date.now()}-${broadcastContextAttemptOrdinal + 1}`;
@@ -5797,9 +7928,13 @@ function App() {
         autoSemanticLeadRefinementSourceRef.current = null;
         allowAmbiguousSemanticRefinementRetryRef.current = false;
         semanticRefinementRouteChangeCountRef.current = 0;
-        setSemanticLeadRefinementAttemptOrdinal((current) => current + 1);
+        if (!resumeCurrentContextOperation) {
+          setSemanticLeadRefinementAttemptOrdinal((current) => current + 1);
+        }
         autoBroadcastContextSourceRef.current = null;
-        setBroadcastContextAttemptOrdinal((current) => current + 1);
+        if (!resumeCurrentContextOperation) {
+          setBroadcastContextAttemptOrdinal((current) => current + 1);
+        }
         setBroadcastContextStatus("idle");
       }
 
@@ -5820,6 +7955,129 @@ function App() {
       wholeContextRetryPendingRef.current = false;
     });
   };
+  retryWholeContextPhaseRef.current = retryWholeContextPhase;
+
+  useEffect(() => {
+    const request = pipelineRecoveryRequest;
+    if (request === null) return;
+    if (request.inputToken !== pipelineCertificationInputToken) {
+      setPipelineRecoveryRequest(null);
+      return;
+    }
+    if (request.plan.kind === "terminal") {
+      setPipelineRecoveryRequest(null);
+      return;
+    }
+    if (
+      (request.plan.kind === "candidate" ||
+        request.plan.kind === "candidate-plan") &&
+      (analysisBusy ||
+        candidatePassBBusy ||
+        candidateAudioEventBusy ||
+        candidatePassBStartPending)
+    ) {
+      return;
+    }
+    if (
+      (request.plan.kind === "transcript" ||
+        request.plan.kind === "context") &&
+      wholeContextRetryPendingRef.current
+    ) {
+      return;
+    }
+
+    setPipelineRecoveryRequest(null);
+    const recoveryCompletion = executeAnalysisPipelineRecoveryInApp(
+      request.plan,
+      {
+        rebuildDownstream: () => {
+          resetDownstream();
+          setPipelineFastRebuildPending(true);
+        },
+        retryWholeContext: (boundary) => {
+          retryWholeContextPhaseRef.current(boundary);
+        },
+        restartRefinement: () => {
+        semanticLeadRefinementAbortController.current?.abort();
+        semanticLeadRefinementAbortController.current = null;
+        resetCandidatePassB();
+        autoSemanticLeadRefinementSourceRef.current = null;
+        allowAmbiguousSemanticRefinementRetryRef.current = true;
+        semanticRefinementRouteChangeCountRef.current = 0;
+        setSemanticLeadRefinementError(null);
+        setSemanticLeadRefinementAttemptOrdinal((current) => current + 1);
+        setSemanticLeadRefinementStatus("idle");
+        },
+        resetCandidatePlanArtifacts: resetCandidatePassB,
+        persistCurrentCandidatePlan: () =>
+          ensureCandidatePassBPlanPersistenceRef.current(
+            candidateDetailCandidateIds,
+          ),
+        repairCandidateDetails: (candidateIds) =>
+          runCandidatePassBRef.current(candidateIds),
+      },
+    );
+    if (recoveryCompletion === null) return;
+    if (request.plan.kind === "candidate-plan") {
+      void recoveryCompletion.then(
+        () => {
+          if (isMounted.current) {
+            setPipelineCertificationRetryEpoch((epoch) => epoch + 1);
+          }
+        },
+        () => {
+          if (isMounted.current) {
+            candidatePassBPlanRetryRef.current.attempts += 1;
+            setCandidatePassBPlanRetryEpoch((epoch) => epoch + 1);
+          }
+        },
+      );
+      return;
+    }
+    void recoveryCompletion.finally(() => {
+      if (isMounted.current) {
+        setPipelineCertificationRetryEpoch((epoch) => epoch + 1);
+      }
+    });
+  }, [
+    analysisBusy,
+    candidateAudioEventBusy,
+    candidateDetailCandidateIds,
+    candidatePassBBusy,
+    candidatePassBStartPending,
+    pipelineCertificationInputToken,
+    pipelineRecoveryRequest,
+    resetCandidatePassB,
+    resetDownstream,
+  ]);
+
+  useEffect(() => {
+    if (
+      !pipelineFastRebuildPending ||
+      !sourceReady ||
+      preflight === null ||
+      sourceFile === null ||
+      sourceCheck === null ||
+      sourceContentFingerprint === null ||
+      analysisBusy ||
+      analysisStartPending ||
+      chatImportStatus === "reading"
+    ) {
+      return;
+    }
+    setPipelineFastRebuildPending(false);
+    void runSignalAnalysisRef.current();
+  }, [
+    analysisBusy,
+    analysisStartPending,
+    chatImportStatus,
+    pipelineFastRebuildPending,
+    preflight,
+    sourceCheck,
+    sourceContentFingerprint,
+    sourceFile,
+    sourceReady,
+  ]);
 
   const focusSourceSection = (): void => {
     if (sourceHeading.current === null && reconnectSourceInput.current !== null) {
@@ -5869,16 +8127,22 @@ function App() {
     const restoreEpoch = recoveredContextRestoreEpoch.current + 1;
     recoveredContextRestoreEpoch.current = restoreEpoch;
     resetCandidatePassB();
+    setAnalysisCaptionVideoId(
+      recovered.finalResult.result.input.source.captionVideoId,
+    );
     resetCandidateAudioEvent();
     resetBoundarySession();
     broadcastTranscriptAbortController.current?.abort();
     broadcastTranscriptAbortController.current = null;
+    broadcastVisualInspectionAbortController.current?.abort();
+    broadcastVisualInspectionAbortController.current = null;
     broadcastContextAbortController.current?.abort();
     broadcastContextAbortController.current = null;
     semanticLeadRefinementAbortController.current?.abort();
     semanticLeadRefinementAbortController.current = null;
     autoBroadcastTranscriptSourceRef.current = null;
     sealedBroadcastTranscriptSourceRef.current = null;
+    autoBroadcastVisualInspectionSourceRef.current = null;
     allowAmbiguousTranscriptRetryRef.current = false;
     broadcastTranscriptRouteChangeCountRef.current = 0;
     autoBroadcastContextSourceRef.current = null;
@@ -5889,6 +8153,13 @@ function App() {
     setBroadcastTranscriptProgress(null);
     setBroadcastTranscriptRecoveryProgress(null);
     setBroadcastTranscriptChapters([]);
+    setBroadcastVisualInspectionProjection(null);
+    setBroadcastVisualInspectionStatus("idle");
+    setBroadcastVisualInspectionPlannedCellCount(0);
+    setBroadcastVisualInspectionPreparedCellCount(0);
+    setBroadcastVisualInspectionSettledCellCount(0);
+    setBroadcastVisualInspectionAttemptOrdinal(0);
+    setBroadcastVisualInspectionError(null);
     setYouTubeCaptionTrack(null);
     youtubeCaptionTrackRef.current = null;
     setBroadcastTranscriptError(null);
@@ -5918,6 +8189,7 @@ function App() {
     setAnalysisProgress(null);
     setAudioAnalysisProgress(null);
     setAnalysisError(null);
+    setPipelineCertification({ status: "idle" });
     setChatImport(null);
     setChatContentFingerprint(null);
     setChatFileName(null);
@@ -5932,9 +8204,8 @@ function App() {
       }));
     /*
      * Semantic candidates are reconstructed only from the canonical active
-     * refinement ledger below. A legacy terminal result may contain one
-     * without the projection receipt that now proves it, so never expose that
-     * copy during the asynchronous restore window.
+     * refinement ledger below. Never expose an unproved terminal-result copy
+     * during the asynchronous restore window.
      */
     const recoveredCandidates = recoveredPublishedCandidates.filter(
       (candidate) => !isContextDiscoveredCandidate(candidate),
@@ -5949,56 +8220,22 @@ function App() {
         { signalKind: "fused", candidates: recoveredCandidates },
       ]),
     );
-    const recoveredCandidateIds = new Set(recoveredCandidates.map((candidate) => candidate.id));
-    // Context-discovered candidates are restored a little later from the paid
-    // broadcast-context session. Keep their already-paid Pass B artifacts now so
-    // reconnecting does not schedule the same Gemini verification again.
-    const isRecoverablePassBCandidate = (candidateId: string) =>
-      recoveredCandidateIds.has(candidateId) || candidateId.startsWith("semantic-");
-    const recoveredPassBInsights = isCompatibleCandidatePassBRoutingModelRevision(
-      recovered.candidatePassBInsights?.modelManifestHash,
-    )
+    const storedRecoveredPassBInsights =
+      recovered.candidatePassBInsights?.modelManifestHash ===
+      CANDIDATE_PASS_B_ROUTING_MODEL_REVISION
       ? recovered.candidatePassBInsights
       : null;
-    const recoveredEvidence = Object.fromEntries(
-      Object.entries(recoveredPassBInsights?.evidenceById ?? {}).filter(([candidateId]) =>
-        isRecoverablePassBCandidate(candidateId),
-      ),
-    ) as CandidatePassBEvidenceById;
-    const recoveredGeminiInsights = Object.fromEntries(
-      Object.entries(recoveredPassBInsights?.insightById ?? {}).filter(([candidateId]) =>
-        isRecoverablePassBCandidate(candidateId),
-      ),
-    ) as CandidateGeminiInsightById;
-    const recoveredModels = Object.fromEntries(
-      Object.entries(recoveredPassBInsights?.modelByCandidateId ?? {}).filter(
-        ([candidateId]) => isRecoverablePassBCandidate(candidateId),
-      ),
-    ) as CandidatePassBModelById;
-    const recoveredTimelineFrames = Object.fromEntries(
-      Object.entries(recoveredPassBInsights?.thumbnailById ?? {})
-        .filter(([candidateId]) => isRecoverablePassBCandidate(candidateId))
-        .map(([candidateId, frame]) => [candidateId, [frame]]),
-    ) as CandidateTimelineFramesById;
-    const recoveredVerificationReceipts = Object.fromEntries(
-      Object.entries(
-        recoveredPassBInsights?.verificationReceiptById ?? {},
-      ).filter(([candidateId]) => isRecoverablePassBCandidate(candidateId)),
-    ) as CandidatePassBVerificationReceiptById;
-    candidatePassBEvidenceRef.current = recoveredEvidence;
-    candidateGeminiInsightRef.current = recoveredGeminiInsights;
-    candidatePassBModelByIdRef.current = recoveredModels;
-    candidateTimelineFramesRef.current = recoveredTimelineFrames;
-    candidatePassBVerificationReceiptRef.current = recoveredVerificationReceipts;
-    candidatePassBDurableInsightsRef.current = recoveredPassBInsights;
-    setCandidatePassBEvidenceById(recoveredEvidence);
-    setCandidateGeminiInsightById(recoveredGeminiInsights);
-    setCandidateTimelineFramesById(recoveredTimelineFrames);
-    setCandidatePassBVerificationReceiptById(recoveredVerificationReceipts);
-    setCandidatePassBDurableInsights(recoveredPassBInsights);
-    setCandidatePassBInsightPersistenceStatus(
-      recoveredPassBInsights === null ? "idle" : "verified",
-    );
+    const recoveredPassBInsights =
+      storedRecoveredPassBInsights === null
+        ? null
+        : recoverCandidatePassBArmedDispatchesAsOutcomeUnknown(
+            storedRecoveredPassBInsights,
+          );
+    // Keep recovered paid artifacts local until every current-only context
+    // checkpoint below has been reproduced. Nothing from Pass B is visible
+    // during this validation window.
+    candidatePassBDurableInsightsRef.current = null;
+    candidatePassBPlanReceiptRef.current = null;
     resetCandidateRanking(recoveredCandidates);
     setLastExportFormat(null);
     setCopyStatus("idle");
@@ -6008,15 +8245,56 @@ function App() {
 
     void (async () => {
       const store = getResultStore();
-      const savedSession = await store.getBroadcastContextSession(
-        recovered.terminal.runId,
-      );
       const restoreIsCurrent = (): boolean =>
         isMounted.current &&
         recoveredContextRestoreEpoch.current === restoreEpoch;
+      const restoreOperationToken =
+        `recovered-context:${recovered.terminal.runId}:${restoreEpoch}`;
+      let restoreRetryCycle = 0;
+      let savedSession;
+      for (;;) {
+        if (!restoreIsCurrent()) return;
+        const reopened =
+          await loadDurableBroadcastContextSession({
+            store,
+            identity: {
+              runId: recovered.terminal.runId,
+              operationToken: restoreOperationToken,
+              inputSignature: recovered.terminal.inputSignature,
+            },
+            isCurrent: (identity) =>
+              restoreIsCurrent() &&
+              identity.runId === recovered.terminal.runId &&
+              identity.operationToken === restoreOperationToken &&
+              identity.inputSignature ===
+                recovered.terminal.inputSignature,
+          });
+        if (reopened.status === "succeeded") {
+          savedSession = reopened.value;
+          break;
+        }
+        if (reopened.status === "retry-exhausted") {
+          restoreRetryCycle += 1;
+          await new Promise<void>((resolve) => {
+            globalThis.setTimeout(
+              resolve,
+              Math.min(
+                30_000,
+                1_000 * 2 ** Math.min(restoreRetryCycle - 1, 5),
+              ),
+            );
+          });
+          continue;
+        }
+        if (reopened.status === "stale" || reopened.status === "aborted") {
+          return;
+        }
+        throw new Error(
+          `저장된 분석 세션을 다시 열지 못했어요. ${reopened.reasonCode}`,
+        );
+      }
       if (!restoreIsCurrent()) return;
       if (
-        savedSession === null ||
         savedSession.inputSignature !== recovered.terminal.inputSignature ||
         savedSession.sourceDurationMs !==
           recovered.finalResult.result.input.source.durationMs
@@ -6030,8 +8308,25 @@ function App() {
         setBroadcastContextStatus("idle");
         return;
       }
-      if (savedSession.contextResultJson === null) {
+      if (
+        !(await inspectCurrentTranscriptCheckpoint({
+          session: savedSession,
+          sourceContentFingerprint:
+            recovered.finalResult.result.input.source.contentFingerprint,
+          expectedCaptionVideoId:
+            recovered.finalResult.result.input.source.captionVideoId,
+        }))
+      ) {
         setBroadcastTranscriptStatus("idle");
+        setBroadcastContextStatus("idle");
+        return;
+      }
+      if (savedSession.contextResultJson === null) {
+        autoBroadcastTranscriptSourceRef.current =
+          savedSession.transcriptSealOperationKey;
+        sealedBroadcastTranscriptSourceRef.current =
+          savedSession.transcriptSealOperationKey;
+        setBroadcastTranscriptStatus("completed");
         setBroadcastContextStatus("idle");
         return;
       }
@@ -6044,11 +8339,52 @@ function App() {
         savedSession.contextInputCheckpointJson === null ||
         savedSession.contextPhaseLedgerJson === null
       ) {
-        // Legacy paid context remains stored, but it predates the participant
-        // grounding contract and must not be presented as a grounded result.
-        setBroadcastTranscriptStatus("completed");
-        setBroadcastContextStatus("idle");
-        return;
+        throw new Error(
+          "The current broadcast context is missing its participant evidence or phase ledger.",
+        );
+      }
+      const restoredParticipantPreContext =
+        await restoreBroadcastParticipantPreContextCheckpoint(savedSession);
+      if (restoredParticipantPreContext === null) {
+        throw new Error(
+          "The saved participant plan, receipts, grounding, or signature is invalid.",
+        );
+      }
+      if (savedSession.transcriptEvidenceCheckpointJson === null) {
+        throw new Error(
+          "The current broadcast context is missing its transcript evidence checkpoint.",
+        );
+      }
+      const restoredTranscriptEvidence =
+        parseBroadcastTranscriptResolvedEvidenceCheckpointJson(
+          savedSession.transcriptEvidenceCheckpointJson,
+        );
+      if (restoredTranscriptEvidence === null) {
+        throw new Error(
+          "The saved transcript evidence checkpoint is invalid.",
+        );
+      }
+      const restoredVisualPlan =
+        createBroadcastTranscriptVisualInspectionPlan(
+          restoredTranscriptEvidence,
+        );
+      const restoredVisualProjection =
+        savedSession.transcriptVisualInspectionCheckpointJson === null
+          ? null
+          : parseAndProjectBroadcastTranscriptVisualContext({
+              transcriptEvidenceCheckpointJson:
+                savedSession.transcriptEvidenceCheckpointJson,
+              visualInspectionCheckpointJson:
+                savedSession.transcriptVisualInspectionCheckpointJson,
+            });
+      if (
+        restoredVisualPlan.cells.length > 0 &&
+        (restoredVisualProjection === null ||
+          !restoredVisualProjection.publication.publicationReady)
+      ) {
+        throw new Error(
+          "The saved broadcast context does not have a complete visual-evidence checkpoint.",
+        );
       }
 
       let storedPayload: unknown;
@@ -6077,6 +8413,7 @@ function App() {
       const expectedContextInputSignature = await createContentFingerprint([
         savedSession.inputSignature,
         savedSession.contextInputCheckpointJson,
+        savedSession.participantGroundingInputSignature,
         `broadcast-context-routing:${AI_BROADCAST_CONTEXT_ROUTING_REVISION}`,
         `topical-discovery:${BROADCAST_TOPICAL_DISCOVERY_VERSION}`,
       ]);
@@ -6087,7 +8424,7 @@ function App() {
         storedContextInput.sourceDurationMs !== savedSession.sourceDurationMs ||
         storedContextInput.castRosterId !== savedSession.sourceCastRosterId ||
         JSON.stringify(storedContextInput.participantGrounding) !==
-          savedSession.participantGroundingCheckpointJson ||
+          JSON.stringify(restoredParticipantPreContext.grounding) ||
         JSON.stringify(storedContextInput.chapters) !==
           JSON.stringify(compactBroadcastContextChapters(savedSession.chapters))
       ) {
@@ -6120,12 +8457,15 @@ function App() {
         return;
       }
       const storedEnvelope = unpackPersistedBroadcastContext(storedPayload);
+      if (storedEnvelope === null) {
+        throw new Error(
+          "The saved broadcast context envelope is not the current exact schema.",
+        );
+      }
       const recoveredCandidateById = new Map(
         recoveredCandidates.map((candidate) => [candidate.id, candidate]),
       );
-      const restoreCandidateIds =
-        storedEnvelope.contextCandidateIds ??
-        storedContextInput.candidates.map(({ candidateId }) => candidateId);
+      const restoreCandidateIds = storedEnvelope.contextCandidateIds;
       const restoreCandidates = restoreCandidateIds.flatMap((candidateId) => {
         const candidate = recoveredCandidateById.get(candidateId);
         return candidate === undefined ? [] : [candidate];
@@ -6153,9 +8493,7 @@ function App() {
           candidates: storedContextInput.candidates,
           participantGrounding: storedContextInput.participantGrounding,
           outputLanguage: storedContextInput.outputLanguage,
-          ...(storedContextInput.castRosterId === null
-            ? {}
-            : { castRosterId: storedContextInput.castRosterId }),
+          castRosterId: storedContextInput.castRosterId,
         },
       );
       if (restoredContext === null) {
@@ -6171,7 +8509,7 @@ function App() {
       );
       const restoredRefinementLeadIds = [
         ...new Set(
-          (storedEnvelope.refinementLeadIds ?? []).filter((leadId) =>
+          storedEnvelope.refinementLeadIds.filter((leadId) =>
             availableLeadIds.has(leadId),
           ),
         ),
@@ -6179,14 +8517,12 @@ function App() {
       const restoredRefinementLeadIdSet = new Set(restoredRefinementLeadIds);
       const restoredFastRefinementLeadIds = [
         ...new Set(
-          (storedEnvelope.fastRefinementLeadIds ?? []).filter((leadId) =>
+          storedEnvelope.fastRefinementLeadIds.filter((leadId) =>
             restoredRefinementLeadIdSet.has(leadId),
           ),
         ),
       ];
       const restoredRefinementPlanIsAuthoritative =
-        storedEnvelope.refinementLeadIds !== null &&
-        storedEnvelope.fastRefinementLeadIds !== null &&
         storedEnvelope.refinementLeadIds.length ===
           restoredRefinementLeadIds.length &&
         storedEnvelope.refinementLeadIds.every(
@@ -6200,6 +8536,7 @@ function App() {
             leadId === restoredFastRefinementLeadIds[index],
         );
       let nextCandidates = recoveredCandidates;
+      let restoredRefinementProjectionFingerprint: string | null = null;
       const restoredLeadById = new Map(
         restoredContext.discoveredLeads.map((lead) => [lead.leadId, lead]),
       );
@@ -6363,6 +8700,8 @@ function App() {
           setActiveRefinementEvidenceProjection(
             restoredActiveProjection,
           );
+          restoredRefinementProjectionFingerprint =
+            restoredActiveProjection.projectionFingerprint;
           setSemanticLeadRefinementStatus("completed");
         }
       }
@@ -6373,18 +8712,36 @@ function App() {
       sealedBroadcastTranscriptSourceRef.current =
         savedSession.transcriptSealOperationKey;
       setBroadcastTranscriptStatus("completed");
+      setBroadcastVisualInspectionProjection(restoredVisualProjection);
+      setBroadcastVisualInspectionPlannedCellCount(
+        restoredVisualPlan.cells.length,
+      );
+      setBroadcastVisualInspectionPreparedCellCount(
+        restoredVisualProjection?.runnerCheckpoint.preparedFrameReceipts
+          .length ?? 0,
+      );
+      setBroadcastVisualInspectionSettledCellCount(
+        restoredVisualProjection === null
+          ? 0
+          : restoredVisualProjection.publication.completedCellIds.length +
+              restoredVisualProjection.publication
+                .excludedMusicOnlyCellIds.length,
+      );
+      setBroadcastVisualInspectionStatus("completed");
+      setBroadcastVisualInspectionError(null);
+      setBroadcastParticipantPreContext(restoredParticipantPreContext);
       setBroadcastContextResult(restoredContext);
       setBroadcastContextRefinementLeadIds(restoredRefinementLeadIds);
       setBroadcastContextFastRefinementLeadIds(restoredFastRefinementLeadIds);
       setTimelineSemanticChapterRevealCount(0);
       setTimelineSemanticChapters(restoredContext.semanticChapters);
       setTimelineInspectionTarget(null);
-      setCandidateAiProjectionById(
+      const restoredCandidateProjectionById =
         finalizeContextQualifiedCandidates(
           recoveredCandidates,
           restoredContext.annotations,
-        ).projectionById,
-      );
+        ).projectionById;
+      setCandidateAiProjectionById(restoredCandidateProjectionById);
       setCandidates(nextCandidates);
       setCandidateTimelineScorePoints(
         buildCandidateTimelineScorePoints([
@@ -6397,6 +8754,94 @@ function App() {
           : { ...current, candidateCount: nextCandidates.length },
       );
       resetCandidateRanking(nextCandidates);
+
+      const queuedRecoveredCandidateIds = new Set(
+        selectCandidateDetailCandidateIds(
+          nextCandidates,
+          restoredCandidateProjectionById,
+        ),
+      );
+      const recoveredPlannedCandidateIds = nextCandidates
+        .filter((candidate) => queuedRecoveredCandidateIds.has(candidate.id))
+        .sort(
+          (left, right) =>
+            right.score - left.score ||
+            left.peakMs - right.peakMs ||
+            left.id.localeCompare(right.id),
+        )
+        .map(({ id }) => id);
+      const recoveredStoredContextCohortMatches =
+        candidatePassBPlanContextCohortMatches(
+          storedRecoveredPassBInsights,
+          recoveredPlannedCandidateIds,
+        );
+      const expectedRecoveredPlanReceipt =
+        !recoveredStoredContextCohortMatches ||
+        storedRecoveredPassBInsights === null
+          ? null
+          : await createCandidatePassBPlanReceipt({
+              runId: recovered.terminal.runId,
+              inputSignature: recovered.terminal.inputSignature,
+              contextInputSignature: savedSession.contextInputSignature,
+              refinementEvidenceProjectionFingerprint:
+                restoredRefinementProjectionFingerprint,
+              plannedCandidateIds: recoveredPlannedCandidateIds,
+              contextByCandidateId:
+                storedRecoveredPassBInsights.contextByCandidateId,
+            });
+      const recoveredPlanMatches =
+        storedRecoveredPassBInsights !== null &&
+        recoveredPassBInsights !== null &&
+        expectedRecoveredPlanReceipt !== null &&
+        JSON.stringify(storedRecoveredPassBInsights.planReceipt) ===
+          JSON.stringify(expectedRecoveredPlanReceipt);
+      if (recoveredPlanMatches) {
+        const verifiedRecoveredRecord =
+          recoveredPassBInsights === storedRecoveredPassBInsights
+            ? storedRecoveredPassBInsights
+            : await persistCandidatePassBInsightsWithReadback(
+                store,
+                storedRecoveredPassBInsights,
+                recoveredPassBInsights,
+              );
+        if (!restoreIsCurrent()) return;
+        candidatePassBEvidenceRef.current =
+          verifiedRecoveredRecord.evidenceById;
+        candidateGeminiInsightRef.current =
+          verifiedRecoveredRecord.insightById;
+        candidatePassBModelByIdRef.current =
+          verifiedRecoveredRecord.modelByCandidateId;
+        candidateTimelineFramesRef.current = Object.fromEntries(
+          Object.entries(verifiedRecoveredRecord.thumbnailById).map(
+            ([candidateId, frame]) => [candidateId, [frame]],
+          ),
+        );
+        candidatePassBVerificationReceiptRef.current =
+          verifiedRecoveredRecord.verificationReceiptById;
+        candidatePassBDispatchIntentRef.current =
+          verifiedRecoveredRecord.dispatchIntentByCandidateId;
+        candidatePassBAttemptLedgerRef.current =
+          verifiedRecoveredRecord.attemptLedgerByCandidateId;
+        candidatePassBSettlementRef.current =
+          verifiedRecoveredRecord.settlementByCandidateId;
+        candidatePassBDurableInsightsRef.current = verifiedRecoveredRecord;
+        candidatePassBPlanReceiptRef.current =
+          verifiedRecoveredRecord.planReceipt;
+        candidatePassBPlanReplacementRequiredRef.current = false;
+        setCandidatePassBEvidenceById(verifiedRecoveredRecord.evidenceById);
+        setCandidateGeminiInsightById(verifiedRecoveredRecord.insightById);
+        setCandidateTimelineFramesById(
+          candidateTimelineFramesRef.current,
+        );
+        setCandidatePassBVerificationReceiptById(
+          verifiedRecoveredRecord.verificationReceiptById,
+        );
+        setCandidatePassBDurableInsights(verifiedRecoveredRecord);
+        setCandidatePassBInsightPersistenceStatus("verified");
+      } else {
+        candidatePassBPlanReplacementRequiredRef.current = true;
+        setCandidatePassBInsightPersistenceStatus("idle");
+      }
       setBroadcastContextStatus("completed");
     })().catch((error: unknown) => {
       if (
@@ -6450,6 +8895,7 @@ function App() {
               preflight,
               sourceCheck.sourceDefinitionId,
               sourceContentFingerprint,
+              analysisCaptionVideoId,
             ),
             chat: {
               timestampBasis: chatImport?.timestampBasis ?? "unknown",
@@ -6738,6 +9184,69 @@ function App() {
   };
 
   useEffect(() => {
+    const runId = currentAnalysisRunId;
+    const inputSignature = currentAnalysisInputSignature;
+    if (
+      runId === null ||
+      inputSignature === null ||
+      broadcastContextStatus !== "completed" ||
+      semanticLeadRefinementStatus !== "completed"
+    ) {
+      return;
+    }
+    const operationKey = JSON.stringify([
+      "exclipper.candidate-pass-b-plan.v1",
+      runId,
+      inputSignature,
+      broadcastContextAttemptOrdinal,
+      semanticLeadRefinementAttemptOrdinal,
+      semanticRefinementEvidenceProjectionFingerprint,
+      candidateDetailCandidateIds,
+    ]);
+    const retry = candidatePassBPlanRetryRef.current;
+    if (retry.operationKey !== operationKey) {
+      retry.operationKey = operationKey;
+      retry.attempts = 0;
+    }
+    let cancelled = false;
+    const delayMs =
+      retry.attempts === 0
+        ? 0
+        : Math.min(30_000, 1_000 * 2 ** Math.min(retry.attempts - 1, 5));
+    const timer = globalThis.setTimeout(() => {
+      void ensureCandidatePassBPlanPersistenceRef.current(
+        candidateDetailCandidateIds,
+      ).then(
+        () => {
+          if (!cancelled) {
+            retry.attempts = 0;
+          }
+        },
+        () => {
+          if (!cancelled && isMounted.current) {
+            retry.attempts += 1;
+            setCandidatePassBPlanRetryEpoch((epoch) => epoch + 1);
+          }
+        },
+      );
+    }, delayMs);
+    return () => {
+      cancelled = true;
+      globalThis.clearTimeout(timer);
+    };
+  }, [
+    broadcastContextStatus,
+    broadcastContextAttemptOrdinal,
+    candidateDetailCandidateIds,
+    candidatePassBPlanRetryEpoch,
+    currentAnalysisInputSignature,
+    currentAnalysisRunId,
+    semanticLeadRefinementStatus,
+    semanticLeadRefinementAttemptOrdinal,
+    semanticRefinementEvidenceProjectionFingerprint,
+  ]);
+
+  useEffect(() => {
     const wholeContextGateSettled =
       broadcastContextStatus === "completed" &&
       semanticLeadRefinementStatus === "completed";
@@ -6745,7 +9254,7 @@ function App() {
       sourceContentFingerprint === null
         ? null
         : JSON.stringify([
-            "exclipper.candidate-pass-b-auto.v3",
+            "exclipper.candidate-pass-b-auto.v4",
             sourceContentFingerprint,
             automaticCandidateDetailIds.map((candidateId) => [
               candidateId,
@@ -6760,6 +9269,8 @@ function App() {
       operationKey === null ||
       !wholeContextGateSettled ||
       candidatePassBBusy ||
+      candidatePassBInsightPersistenceStatus !== "verified" ||
+      candidatePassBAutoRetryRef.current.timeout !== null ||
       autoCandidatePassBSourceRef.current === operationKey
     ) {
       return;
@@ -6777,23 +9288,54 @@ function App() {
      * `detail-result-missing`, and the editor got an empty review screen for a
      * broadcast whose moments had been found correctly.
      *
-     * The key now travels with the call and is claimed at the commit point
-     * inside `runCandidatePassB`, so both a cancelled timer and a run that
-     * bails out in its own checks leave it free for the next attempt.
+     * The key now travels with the call, is claimed only after worker setup,
+     * and becomes permanent only after exact durable readback. A transient
+     * failure releases it after bounded backoff, so only outstanding candidates
+     * are retried.
      */
-    const timer = window.setTimeout(() => {
-      void runCandidatePassBRef.current(automaticCandidateDetailIds, operationKey);
-    }, 450);
-    return () => window.clearTimeout(timer);
+    const timer = scheduleCandidatePassBAutomaticTargetReadback({
+      candidateIds: candidateDetailCandidateIds,
+      delayMs: 450,
+      readDurableInput: () => {
+        const durableRecord = candidatePassBDurableInsightsRef.current;
+        return {
+          attemptLedgerByCandidateId:
+            durableRecord?.attemptLedgerByCandidateId ?? {},
+          dispatchIntentByCandidateId:
+            durableRecord?.dispatchIntentByCandidateId ?? {},
+          settlementByCandidateId:
+            durableRecord?.settlementByCandidateId ?? {},
+        };
+      },
+      onReady: (currentTargets) => {
+        if (
+          JSON.stringify(currentTargets) !==
+          JSON.stringify(candidatePassBAutomaticTargets)
+        ) {
+          if (isMounted.current) {
+            setCandidatePassBAutoRetryEpoch((epoch) => epoch + 1);
+          }
+          return;
+        }
+        void runCandidatePassBRef.current(
+          currentTargets.map(({ candidateId }) => candidateId),
+          operationKey,
+        );
+      },
+    });
+    return () => globalThis.clearTimeout(timer);
   }, [
     analysisComplete,
     automaticCandidateDetailIds,
+    candidatePassBAutomaticTargets,
+    candidatePassBAutoRetryEpoch,
     broadcastContextStatus,
     broadcastTranscriptStatus,
     candidatePassBContextById,
     candidatePassBSourceFenceById,
     candidateDetailCandidateIds,
     candidatePassBBusy,
+    candidatePassBInsightPersistenceStatus,
     semanticLeadRefinementStatus,
     sourceContentFingerprint,
     sourceFile,
@@ -6801,10 +9343,58 @@ function App() {
 
   useEffect(() => {
     const runId = currentAnalysisRunId;
-    const inputSignature =
-      openedRecoveredResult?.terminal.inputSignature ??
-      analysisRun?.inputSignature ??
-      sourceContentFingerprint;
+    const retry = candidatePassBPersistenceAutoRetryRef.current;
+    if (
+      !candidatePassBPersistenceRetryNeeded ||
+      candidatePassBBusy ||
+      runId === null
+    ) {
+      if (
+        candidatePassBInsightPersistenceStatus === "idle" ||
+        candidatePassBInsightPersistenceStatus === "verified"
+      ) {
+        retry.runId = runId;
+        retry.attempts = 0;
+      }
+      return;
+    }
+    if (retry.runId !== runId) {
+      retry.runId = runId;
+      retry.attempts = 0;
+    }
+    let cancelled = false;
+    const delayMs = Math.min(
+      30_000,
+      1_000 * 2 ** Math.min(retry.attempts, 5),
+    );
+    const timer = globalThis.setTimeout(() => {
+      void retryCandidatePassBInsightPersistenceRef.current().then((succeeded) => {
+        if (cancelled || !isMounted.current) {
+          return;
+        }
+        if (succeeded) {
+          retry.attempts = 0;
+        } else {
+          retry.attempts += 1;
+          setCandidatePassBPersistenceAutoRetryEpoch((epoch) => epoch + 1);
+        }
+      });
+    }, delayMs);
+    return () => {
+      cancelled = true;
+      globalThis.clearTimeout(timer);
+    };
+  }, [
+    candidatePassBBusy,
+    candidatePassBInsightPersistenceStatus,
+    candidatePassBPersistenceAutoRetryEpoch,
+    candidatePassBPersistenceRetryNeeded,
+    currentAnalysisRunId,
+  ]);
+
+  useEffect(() => {
+    const runId = currentAnalysisRunId;
+    const inputSignature = currentAnalysisInputSignature;
     const activeTranscriptSeal =
       broadcastTranscriptStatus === "completed"
         ? sealedBroadcastTranscriptSourceRef.current
@@ -6829,6 +9419,10 @@ function App() {
       completedChapterCount: boundedBroadcastContextChapters.length,
       requiredEventBoostOperationKey: requiredTranscriptSeal,
       sealedOperationKey: sealedBroadcastTranscriptSourceRef.current,
+      visualInspectionPlannedCellCount:
+        broadcastVisualInspectionPlannedCellCount,
+      visualInspectionSettledCellCount:
+        broadcastVisualInspectionSettledCellCount,
     });
     if (
       // Whole-context reasoning is billed once per map. During the parallel
@@ -6849,21 +9443,11 @@ function App() {
       return;
     }
     if (contextTranscriptReadiness === "visual-evidence-required") {
-      const visualGapOperationKey =
-        `visual-evidence-required:${requiredTranscriptSeal}`;
-      if (
-        autoBroadcastContextSourceRef.current !== visualGapOperationKey
-      ) {
-        autoBroadcastContextSourceRef.current = visualGapOperationKey;
-        broadcastContextAbortController.current?.abort();
-        broadcastContextAbortController.current = null;
-        setBroadcastContextStatus("failed");
-        setBroadcastContextError(
-          analysisLanguage === "ko"
-            ? "대사가 없는 구간의 화면 검토가 아직 완료되지 않았어요. 조용한 성공이나 화면 사건을 놓치지 않도록 4장 화면 근거 분석이 연결될 때까지 최종 후보 게시를 중단합니다."
-            : "Visual review of the no-dialogue ranges is not complete. Publication is blocked until the four-frame evidence lane can rule in quiet successes and visual events.",
-        );
-      }
+      /*
+       * Visual inspection owns its own durable retry state. Whole-context
+       * reasoning waits here instead of converting an in-progress visual lane
+       * into a terminal context failure.
+       */
       return;
     }
 
@@ -6873,13 +9457,17 @@ function App() {
       candidates: broadcastContextCandidateInputs,
       participantGrounding: broadcastParticipantGrounding,
       outputLanguage: analysisLanguage,
-      ...(sourceCastRosterId === null ? {} : { castRosterId: sourceCastRosterId }),
+      castRosterId: sourceCastRosterId,
     };
     const contextInputSnapshotJson = JSON.stringify(contextInput);
+    const participantEvidenceOperationFence = JSON.stringify({
+      planFingerprint: broadcastParticipantPreContext.planFingerprint,
+      sealedPlan: broadcastParticipantPreContext.sealedPlan,
+    });
     const operationKey =
       `${runId}:${inputSignature}:${requiredTranscriptSeal}` +
       `:context-attempt-${broadcastContextAttemptOrdinal}` +
-      `:${contextInputSnapshotJson}`;
+      `:${contextInputSnapshotJson}:${participantEvidenceOperationFence}`;
     if (autoBroadcastContextSourceRef.current === operationKey) {
       return;
     }
@@ -6887,6 +9475,7 @@ function App() {
     broadcastContextAbortController.current?.abort();
     const controller = new AbortController();
     broadcastContextAbortController.current = controller;
+    const store = getResultStore();
     setBroadcastContextStatus("running");
     setBroadcastContextError(null);
 
@@ -6895,6 +9484,76 @@ function App() {
       isMounted.current &&
       broadcastContextAbortController.current === controller &&
       autoBroadcastContextSourceRef.current === operationKey;
+    const waitForSessionRetry = (delayMs: number): Promise<void> =>
+      new Promise((resolve, reject) => {
+        let timer: ReturnType<typeof globalThis.setTimeout> | null =
+          globalThis.setTimeout(() => {
+            timer = null;
+            controller.signal.removeEventListener("abort", onAbort);
+            resolve();
+          }, delayMs);
+        const onAbort = (): void => {
+          if (timer !== null) {
+            globalThis.clearTimeout(timer);
+            timer = null;
+          }
+          controller.signal.removeEventListener("abort", onAbort);
+          reject(new DOMException("Broadcast context cancelled.", "AbortError"));
+        };
+        controller.signal.addEventListener("abort", onAbort, { once: true });
+      });
+    const runSessionCheckpoint = async (
+      label: string,
+      operationToken: string,
+      run: (
+        isCurrent: (
+          identity: {
+            readonly runId: string;
+            readonly operationToken: string;
+            readonly inputSignature: string;
+          },
+        ) => boolean,
+      ) => Promise<DurableBroadcastContextSessionResult>,
+    ) => {
+      let retryCycle = 0;
+      while (operationIsCurrent()) {
+        const isCurrent = (identity: {
+          readonly runId: string;
+          readonly operationToken: string;
+          readonly inputSignature: string;
+        }): boolean =>
+          operationIsCurrent() &&
+          identity.runId === runId &&
+          identity.operationToken === operationToken &&
+          identity.inputSignature === inputSignature;
+        const result = await run(isCurrent);
+        switch (result.status) {
+          case "succeeded":
+            return result.value;
+          case "retry-exhausted":
+            retryCycle += 1;
+            console.warn(
+              `Broadcast context ${label} checkpoint will resume.`,
+              result.reasonCode,
+            );
+            await waitForSessionRetry(
+              Math.min(30_000, 1_000 * 2 ** Math.min(retryCycle - 1, 5)),
+            );
+            break;
+          case "aborted":
+            throw new DOMException(
+              "Broadcast context cancelled.",
+              "AbortError",
+            );
+          case "stale":
+          case "permanent-failure":
+            throw new Error(
+              `Broadcast context ${label} checkpoint rejected: ${result.reasonCode}`,
+            );
+        }
+      }
+      throw new DOMException("Broadcast context cancelled.", "AbortError");
+    };
     const applyContextResult = (
       result: BroadcastContextResult,
       refinementLeadIds: readonly string[],
@@ -6918,18 +9577,20 @@ function App() {
       setTimelineSemanticChapterRevealCount(0);
       setTimelineSemanticChapters(result.semanticChapters);
       setTimelineInspectionTarget(null);
-      const qualified = finalizeContextQualifiedCandidates(candidates, result.annotations);
+      const qualified = finalizeContextQualifiedCandidates(
+        pipelineCandidates,
+        result.annotations,
+      );
       setCandidateAiProjectionById(qualified.projectionById);
       const survivingIds = new Set([
         ...qualified.selectedCandidates.map((candidate) => candidate.id),
         ...qualified.reviewCandidates.map((candidate) => candidate.id),
       ]);
-      const survivingCandidates = candidates.filter(
+      const survivingCandidates = pipelineCandidates.filter(
         (candidate) =>
           candidate.reviewState === "approved" ||
           (candidate.reviewState !== "rejected" &&
-            survivingIds.has(candidate.id) &&
-            !explicitMusicOnlyCandidateIds.has(candidate.id)),
+            survivingIds.has(candidate.id)),
       );
       setSelectionResult((current) =>
         current === null
@@ -6940,17 +9601,19 @@ function App() {
     };
 
     void (async () => {
-      const contextInputSignature = await createContentFingerprint([
-        inputSignature,
-        contextInputSnapshotJson,
-        `broadcast-context-routing:${AI_BROADCAST_CONTEXT_ROUTING_REVISION}`,
-        `topical-discovery:${BROADCAST_TOPICAL_DISCOVERY_VERSION}`,
-      ]);
-      const participantGroundingCheckpointJson = JSON.stringify(
-        broadcastParticipantGrounding,
-      );
       const participantGroundingPlanFingerprint =
         broadcastParticipantPreContext.planFingerprint;
+      const participantGroundingCheckpointJson =
+        await serializeBroadcastParticipantPreContextCheckpoint(
+          broadcastParticipantPreContext,
+          {
+            sourceDurationMs: boundarySourceDurationMs,
+            sourceCastRosterId,
+            transcriptSealOperationKey: requiredTranscriptSeal,
+            dialogueChapters: boundedBroadcastTranscriptDialogueChapters,
+            participantGroundingPlanFingerprint,
+          },
+        );
       const participantGroundingInputSignature =
         await createBroadcastParticipantGroundingInputSignature({
           inputSignature,
@@ -6958,17 +9621,37 @@ function App() {
           participantGroundingPlanFingerprint,
           participantGroundingCheckpointJson,
         });
+      const contextInputSignature = await createContentFingerprint([
+        inputSignature,
+        contextInputSnapshotJson,
+        participantGroundingInputSignature,
+        `broadcast-context-routing:${AI_BROADCAST_CONTEXT_ROUTING_REVISION}`,
+        `topical-discovery:${BROADCAST_TOPICAL_DISCOVERY_VERSION}`,
+      ]);
       const contextLedgerFence: BroadcastContextPhaseLedgerFence = {
         parentContextSignature: contextInputSignature,
         transcriptSignature: requiredTranscriptSeal,
         groundingSignature: participantGroundingInputSignature,
       };
       if (!operationIsCurrent()) return;
-      const store = getResultStore();
-      let saved = await store.getBroadcastContextSession(runId);
+      let saved = await runSessionCheckpoint(
+        "session-load",
+        `${runId}:${contextInputSignature}:session-load`,
+        (isCurrent) =>
+          loadDurableBroadcastContextSession({
+            store,
+            identity: {
+              runId,
+              operationToken:
+                `${runId}:${contextInputSignature}:session-load`,
+              inputSignature,
+            },
+            isCurrent,
+            signal: controller.signal,
+          }),
+      );
       const serializedContextChapters = JSON.stringify(contextInput.chapters);
       if (
-        saved === null ||
         saved.inputSignature !== inputSignature ||
         saved.sourceCastRosterId !== sourceCastRosterId ||
         saved.transcriptSealOperationKey !== requiredTranscriptSeal ||
@@ -6988,34 +9671,84 @@ function App() {
         saved.participantGroundingCheckpointJson !==
           participantGroundingCheckpointJson
       ) {
-        const replaced = await store.replaceBroadcastContextSessionIfUnchanged(
-          saved,
-          {
-          ...saved,
-          participantGroundingInputSignature,
-          participantGroundingPlanFingerprint,
-          participantGroundingCheckpointJson,
-          contextInputSignature: null,
-           contextInputCheckpointJson: null,
-           contextPhaseLedgerJson: null,
-           contextResultJson: null,
-           refinementTranscriptInputSignature: null,
-           refinementTranscriptCheckpointJson: null,
-           refinementEvidenceLedgerJson: null,
-           refinementInputSignature: null,
-           refinementCandidatesJson: null,
-          recordedAt: new Date().toISOString(),
-          },
+        const groundingOperationToken =
+          `${runId}:${contextInputSignature}:participant-grounding`;
+        const groundingRecordedAt = new Date().toISOString();
+        const previousGroundingInputSignature =
+          saved.participantGroundingInputSignature;
+        const previousGroundingPlanFingerprint =
+          saved.participantGroundingPlanFingerprint;
+        const previousGroundingCheckpointJson =
+          saved.participantGroundingCheckpointJson;
+        saved = await runSessionCheckpoint(
+          "participant-grounding",
+          groundingOperationToken,
+          (isCurrent) =>
+            transformDurableBroadcastContextSession({
+              store,
+              identity: {
+                runId,
+                operationToken: groundingOperationToken,
+                inputSignature,
+              },
+              expected: saved,
+              isCurrent,
+              signal: controller.signal,
+              transform: (current) => {
+                if (
+                  current.sourceCastRosterId !== sourceCastRosterId ||
+                  current.transcriptSealOperationKey !==
+                    requiredTranscriptSeal ||
+                  JSON.stringify(
+                    compactBroadcastContextChapters(current.chapters),
+                  ) !== serializedContextChapters
+                ) {
+                  throw new Error(
+                    "The transcript or participant source changed.",
+                  );
+                }
+                if (
+                  current.participantGroundingInputSignature ===
+                    participantGroundingInputSignature &&
+                  current.participantGroundingPlanFingerprint ===
+                    participantGroundingPlanFingerprint &&
+                  current.participantGroundingCheckpointJson ===
+                    participantGroundingCheckpointJson
+                ) {
+                  return current;
+                }
+                if (
+                  current.participantGroundingInputSignature !==
+                    previousGroundingInputSignature ||
+                  current.participantGroundingPlanFingerprint !==
+                    previousGroundingPlanFingerprint ||
+                  current.participantGroundingCheckpointJson !==
+                    previousGroundingCheckpointJson
+                ) {
+                  throw new Error(
+                    "A newer participant grounding checkpoint is already stored.",
+                  );
+                }
+                return {
+                  ...current,
+                  participantGroundingInputSignature,
+                  participantGroundingPlanFingerprint,
+                  participantGroundingCheckpointJson,
+                  contextInputSignature: null,
+                  contextInputCheckpointJson: null,
+                  contextPhaseLedgerJson: null,
+                  contextResultJson: null,
+                  refinementTranscriptInputSignature: null,
+                  refinementTranscriptCheckpointJson: null,
+                  refinementEvidenceLedgerJson: null,
+                  refinementInputSignature: null,
+                  refinementCandidatesJson: null,
+                  recordedAt: groundingRecordedAt,
+                };
+              },
+            }),
         );
-        if (!replaced) {
-          throw new Error(
-            "인물 근거 지도를 저장하는 동안 대사 지도가 갱신됐어요. 최신 지도에서 다시 시작합니다.",
-          );
-        }
-        if (!operationIsCurrent()) return;
-        saved = await store.getBroadcastContextSession(runId);
         if (
-          saved === null ||
           saved.participantGroundingInputSignature !==
             participantGroundingInputSignature ||
           saved.participantGroundingPlanFingerprint !==
@@ -7047,13 +9780,16 @@ function App() {
           savedPayload = null;
         }
         const savedEnvelope = unpackPersistedBroadcastContext(savedPayload);
-        const savedResult = parsePersistedBroadcastContextResult(
-          savedEnvelope.resultPayload,
-          contextInput,
-        );
+        const savedResult =
+          savedEnvelope === null
+            ? null
+            : parsePersistedBroadcastContextResult(
+                savedEnvelope.resultPayload,
+                contextInput,
+              );
         if (
           savedResult !== null &&
-          savedEnvelope.refinementLeadIds !== null &&
+          savedEnvelope !== null &&
           savedLedger !== null &&
           broadcastContextPhaseLedgerMatchesFence(
             savedLedger,
@@ -7078,7 +9814,7 @@ function App() {
             applyContextResult(
               savedResult,
               savedEnvelope.refinementLeadIds,
-              savedEnvelope.fastRefinementLeadIds ?? [],
+              savedEnvelope.fastRefinementLeadIds,
             );
           }
           return;
@@ -7104,6 +9840,7 @@ function App() {
             fence: contextLedgerFence,
             quotaParticipantId: aiQuotaParticipantId,
             operationGeneration: broadcastContextAttemptOrdinal,
+            retryMode: "automatic-free-tier",
             signal: controller.signal,
           });
         } finally {
@@ -7116,10 +9853,26 @@ function App() {
         fastRefinementLeadIds,
       } = contextPipeline;
       if (!operationIsCurrent()) return;
-      const transcriptSession = await store.getBroadcastContextSession(runId);
+      const transcriptSession = await runSessionCheckpoint(
+        "post-ai-readback",
+        `${runId}:${contextInputSignature}:post-ai-readback`,
+        (isCurrent) =>
+          loadDurableBroadcastContextSession({
+            store,
+            identity: {
+              runId,
+              operationToken:
+                `${runId}:${contextInputSignature}:post-ai-readback`,
+              inputSignature,
+            },
+            isCurrent,
+            signal: controller.signal,
+          }),
+      );
       if (!operationIsCurrent()) return;
+      const serializedContextLedger =
+        serializeBroadcastContextPhaseLedger(contextPipeline.ledger);
       if (
-        transcriptSession === null ||
         transcriptSession.inputSignature !== inputSignature ||
         transcriptSession.sourceCastRosterId !== sourceCastRosterId ||
         transcriptSession.transcriptSealOperationKey !==
@@ -7132,7 +9885,7 @@ function App() {
         transcriptSession.participantGroundingCheckpointJson !==
           participantGroundingCheckpointJson ||
         transcriptSession.contextPhaseLedgerJson !==
-          serializeBroadcastContextPhaseLedger(contextPipeline.ledger) ||
+          serializedContextLedger ||
         JSON.stringify(
           compactBroadcastContextChapters(transcriptSession.chapters),
         ) !== serializedContextChapters
@@ -7145,35 +9898,77 @@ function App() {
         ({ candidateId }) => candidateId,
       );
       if (!operationIsCurrent()) return;
-      const contextWasCommitted =
-        await commitBroadcastContextSessionContextIfUnchanged(
-          store,
-          transcriptSession,
-          {
-            contextInputSignature,
-            contextInputCheckpointJson: contextInputSnapshotJson,
-            contextPhaseLedgerJson:
-              serializeBroadcastContextPhaseLedger(contextPipeline.ledger),
-            contextResultJson: JSON.stringify({
-              schemaVersion: "1.2.0",
-              result,
-              refinementLeadIds,
-              fastRefinementLeadIds,
-              contextCandidateIds,
-            }),
-            recordedAt: new Date().toISOString(),
-          },
-        );
-      if (!contextWasCommitted) {
-        throw new Error(
-          "맥락 결과를 저장하기 전에 대사 또는 인물 근거 지도가 갱신됐어요. 오래된 결과는 저장하지 않았습니다.",
-        );
-      }
+      const contextResultJson = JSON.stringify({
+        schemaVersion: "1.2.0",
+        result,
+        refinementLeadIds,
+        fastRefinementLeadIds,
+        contextCandidateIds,
+      });
+      const contextCommitOperationToken =
+        `${runId}:${contextInputSignature}:context-result`;
+      const contextRecordedAt = new Date().toISOString();
+      const reopened = await runSessionCheckpoint(
+        "context-result",
+        contextCommitOperationToken,
+        (isCurrent) =>
+          transformDurableBroadcastContextSession({
+            store,
+            identity: {
+              runId,
+              operationToken: contextCommitOperationToken,
+              inputSignature,
+            },
+            expected: transcriptSession,
+            isCurrent,
+            signal: controller.signal,
+            transform: (current) => {
+              if (
+                current.sourceCastRosterId !== sourceCastRosterId ||
+                current.transcriptSealOperationKey !==
+                  requiredTranscriptSeal ||
+                current.participantGroundingInputSignature !==
+                  participantGroundingInputSignature ||
+                current.participantGroundingPlanFingerprint !==
+                  participantGroundingPlanFingerprint ||
+                current.participantGroundingCheckpointJson !==
+                  participantGroundingCheckpointJson ||
+                current.contextPhaseLedgerJson !== serializedContextLedger ||
+                JSON.stringify(
+                  compactBroadcastContextChapters(current.chapters),
+                ) !== serializedContextChapters
+              ) {
+                throw new Error(
+                  "The transcript, participant grounding, or context ledger changed.",
+                );
+              }
+              if (
+                current.contextInputSignature === contextInputSignature &&
+                current.contextInputCheckpointJson ===
+                  contextInputSnapshotJson &&
+                current.contextResultJson === contextResultJson
+              ) {
+                return current;
+              }
+              return {
+                ...current,
+                contextInputSignature,
+                contextInputCheckpointJson: contextInputSnapshotJson,
+                contextPhaseLedgerJson: serializedContextLedger,
+                contextResultJson,
+                refinementTranscriptInputSignature: null,
+                refinementTranscriptCheckpointJson: null,
+                refinementEvidenceLedgerJson: null,
+                refinementInputSignature: null,
+                refinementCandidatesJson: null,
+                recordedAt: contextRecordedAt,
+              };
+            },
+          }),
+      );
       if (!operationIsCurrent()) return;
-      const reopened = await store.getBroadcastContextSession(runId);
       if (
-        !operationIsCurrent() ||
-        reopened?.inputSignature !== inputSignature ||
+        reopened.inputSignature !== inputSignature ||
         reopened.participantGroundingInputSignature !==
           participantGroundingInputSignature ||
         reopened.participantGroundingPlanFingerprint !==
@@ -7181,26 +9976,26 @@ function App() {
         reopened.participantGroundingCheckpointJson !==
           participantGroundingCheckpointJson ||
         reopened.contextInputCheckpointJson !== contextInputSnapshotJson ||
-        reopened.contextPhaseLedgerJson !==
-          serializeBroadcastContextPhaseLedger(contextPipeline.ledger) ||
+        reopened.contextPhaseLedgerJson !== serializedContextLedger ||
         JSON.stringify(compactBroadcastContextChapters(reopened.chapters)) !==
           serializedContextChapters ||
-        reopened?.contextInputSignature !== contextInputSignature ||
+        reopened.contextInputSignature !== contextInputSignature ||
         reopened.contextResultJson === null
       ) {
         throw new Error("저장한 방송 전체 맥락 결과를 다시 확인하지 못했어요.");
       }
       const reopenedPayload: unknown = JSON.parse(reopened.contextResultJson);
       const reopenedEnvelope = unpackPersistedBroadcastContext(reopenedPayload);
-      const reopenedResult = parsePersistedBroadcastContextResult(
-        reopenedEnvelope.resultPayload,
-        contextInput,
-      );
+      const reopenedResult =
+        reopenedEnvelope === null
+          ? null
+          : parsePersistedBroadcastContextResult(
+              reopenedEnvelope.resultPayload,
+              contextInput,
+            );
       if (
+        reopenedEnvelope === null ||
         reopenedResult === null ||
-        reopenedEnvelope.refinementLeadIds === null ||
-        reopenedEnvelope.fastRefinementLeadIds === null ||
-        reopenedEnvelope.contextCandidateIds === null ||
         reopenedEnvelope.contextCandidateIds.length !== contextCandidateIds.length ||
         reopenedEnvelope.contextCandidateIds.some(
           (candidateId, index) => candidateId !== contextCandidateIds[index],
@@ -7212,12 +10007,49 @@ function App() {
         applyContextResult(
           reopenedResult,
           reopenedEnvelope.refinementLeadIds,
-          reopenedEnvelope.fastRefinementLeadIds ?? [],
+          reopenedEnvelope.fastRefinementLeadIds,
         );
       }
     })()
-      .catch((error: unknown) => {
+      .catch(async (error: unknown) => {
         if (controller.signal.aborted || !isMounted.current) return;
+        try {
+          const checkpoint = await store.getBroadcastContextSession(runId);
+          const checkpointLedger =
+            checkpoint?.inputSignature === inputSignature &&
+            checkpoint.contextPhaseLedgerJson !== null
+              ? parseBroadcastContextPhaseLedgerJson(
+                  checkpoint.contextPhaseLedgerJson,
+                )
+              : null;
+          const retryDelayMs =
+            checkpointLedger === null
+              ? null
+              : automaticContextRetryDelayMs(checkpointLedger);
+          if (retryDelayMs !== null && operationIsCurrent()) {
+            setBroadcastContextStatus("running");
+            setBroadcastContextError(
+              analysisLanguage === "ko"
+                ? "일시적인 AI 응답 오류가 있어 저장된 조각부터 자동으로 이어갑니다."
+                : "A transient AI response failed. Resuming automatically from the durable fragments.",
+            );
+            try {
+              await waitForSessionRetry(retryDelayMs);
+            } catch {
+              return;
+            }
+            if (operationIsCurrent()) {
+              autoBroadcastContextSourceRef.current = null;
+              setBroadcastContextAttemptOrdinal((current) => current + 1);
+            }
+            return;
+          }
+        } catch (recoveryError) {
+          console.warn(
+            "Broadcast context automatic recovery inspection failed.",
+            recoveryError,
+          );
+        }
         setBroadcastContextStatus("failed");
         setBroadcastContextError(
           error instanceof Error && error.message.trim().length > 0
@@ -7233,20 +10065,21 @@ function App() {
   }, [
     aiQuotaParticipantId,
     analysisComplete,
-    analysisRun?.inputSignature,
     boundarySourceDurationMs,
     boundedBroadcastContextChapters,
+    boundedBroadcastTranscriptDialogueChapters,
     broadcastParticipantGrounding,
     broadcastParticipantPreContext,
     broadcastContextAttemptOrdinal,
     broadcastContextCandidateInputs,
     broadcastTranscriptAttemptOrdinal,
     broadcastTranscriptStatus,
-    candidates,
+    broadcastVisualInspectionPlannedCellCount,
+    broadcastVisualInspectionSettledCellCount,
+    currentAnalysisInputSignature,
     currentAnalysisRunId,
     getResultStore,
-    openedRecoveredResult,
-    explicitMusicOnlyCandidateIds,
+    pipelineCandidates,
     resetCandidateRanking,
     sourceContentFingerprint,
     sourceCastRosterId,
@@ -7255,6 +10088,7 @@ function App() {
   ]);
 
   useEffect(() => {
+    const semanticInputSignature = currentAnalysisInputSignature;
     if (
       broadcastContextStatus !== "completed" ||
       broadcastContextResult === null ||
@@ -7264,6 +10098,7 @@ function App() {
       semanticRefinementPlan === null ||
       sourceFile === null ||
       currentAnalysisRunId === null ||
+      semanticInputSignature === null ||
       sourceContentFingerprint === null ||
       boundarySourceDurationMs <= 0
     ) {
@@ -7271,10 +10106,11 @@ function App() {
       semanticLeadRefinementAbortController.current = null;
       autoSemanticLeadRefinementSourceRef.current = null;
       setActiveRefinementEvidenceProjection(null);
-      const retainedCandidates = candidates.filter(
+      const retainedCandidates = candidatesRef.current.filter(
         (candidate) => !isContextDiscoveredCandidate(candidate),
       );
-      if (retainedCandidates.length !== candidates.length) {
+      if (retainedCandidates.length !== candidatesRef.current.length) {
+        candidatesRef.current = retainedCandidates;
         setCandidates(retainedCandidates);
         setSelectionResult((current) =>
           current === null
@@ -7289,6 +10125,7 @@ function App() {
     const semanticOperationInput = JSON.stringify([
       "exclipper.semantic-refinement-effect.v2",
       currentAnalysisRunId,
+      semanticInputSignature,
       sourceContentFingerprint,
       plan,
       boundedBroadcastContextChapters,
@@ -7310,12 +10147,103 @@ function App() {
     semanticLeadRefinementAbortController.current?.abort();
     const controller = new AbortController();
     semanticLeadRefinementAbortController.current = controller;
+    const store = getResultStore();
+    const operationIsCurrent = (): boolean =>
+      !controller.signal.aborted &&
+      isMounted.current &&
+      semanticLeadRefinementAbortController.current === controller &&
+      autoSemanticLeadRefinementSourceRef.current === operationKey;
+    const waitForSessionRetry = (delayMs: number): Promise<void> =>
+      new Promise((resolve, reject) => {
+        let timer: ReturnType<typeof globalThis.setTimeout> | null =
+          globalThis.setTimeout(() => {
+            timer = null;
+            controller.signal.removeEventListener("abort", onAbort);
+            resolve();
+          }, delayMs);
+        const onAbort = (): void => {
+          if (timer !== null) {
+            globalThis.clearTimeout(timer);
+            timer = null;
+          }
+          controller.signal.removeEventListener("abort", onAbort);
+          reject(
+            new DOMException("Semantic refinement cancelled.", "AbortError"),
+          );
+        };
+        controller.signal.addEventListener("abort", onAbort, { once: true });
+      });
+    const runSessionCheckpoint = async (
+      label: string,
+      operationToken: string,
+      run: (
+        isCurrent: (
+          identity: {
+            readonly runId: string;
+            readonly operationToken: string;
+            readonly inputSignature: string;
+          },
+        ) => boolean,
+      ) => Promise<DurableBroadcastContextSessionResult>,
+      settleAfterDispatch = false,
+    ) => {
+      let retryCycle = 0;
+      let settlementWaveStarted = false;
+      while (
+        operationIsCurrent() ||
+        (settleAfterDispatch && !settlementWaveStarted)
+      ) {
+        settlementWaveStarted = true;
+        const isCurrent = (identity: {
+          readonly runId: string;
+          readonly operationToken: string;
+          readonly inputSignature: string;
+        }): boolean =>
+          (settleAfterDispatch || operationIsCurrent()) &&
+          identity.runId === currentAnalysisRunId &&
+          identity.operationToken === operationToken &&
+          identity.inputSignature === semanticInputSignature;
+        const result = await run(isCurrent);
+        switch (result.status) {
+          case "succeeded":
+            return result.value;
+          case "retry-exhausted":
+            if (settleAfterDispatch && !operationIsCurrent()) {
+              throw new DOMException(
+                "Semantic refinement terminal settlement was interrupted.",
+                "AbortError",
+              );
+            }
+            retryCycle += 1;
+            console.warn(
+              `Semantic refinement ${label} checkpoint will resume.`,
+              result.reasonCode,
+            );
+            await waitForSessionRetry(
+              Math.min(30_000, 1_000 * 2 ** Math.min(retryCycle - 1, 5)),
+            );
+            break;
+          case "aborted":
+            throw new DOMException(
+              "Semantic refinement cancelled.",
+              "AbortError",
+            );
+          case "stale":
+          case "permanent-failure":
+            throw new Error(
+              `Semantic refinement ${label} checkpoint rejected: ${result.reasonCode}`,
+            );
+        }
+      }
+      throw new DOMException("Semantic refinement cancelled.", "AbortError");
+    };
     setSemanticLeadRefinementStatus("running");
     setSemanticLeadRefinementError(null);
-    const retainedCandidates = candidates.filter(
+    const retainedCandidates = candidatesRef.current.filter(
       (candidate) => !isContextDiscoveredCandidate(candidate),
     );
-    if (retainedCandidates.length !== candidates.length) {
+    if (retainedCandidates.length !== candidatesRef.current.length) {
+      candidatesRef.current = retainedCandidates;
       setCandidates(retainedCandidates);
       setSelectionResult((current) =>
         current === null
@@ -7337,34 +10265,32 @@ function App() {
     const applySemanticCandidates = (
       proposals: readonly UnifiedHighlightCandidate[],
     ): void => {
-      const baseCandidates = candidates.filter(
+      const latestCandidates = candidatesRef.current;
+      const existingSemanticById = new Map(
+        latestCandidates
+          .filter(isContextDiscoveredCandidate)
+          .map((candidate) => [candidate.id, candidate]),
+      );
+      const baseCandidates = latestCandidates.filter(
         (candidate) => !isContextDiscoveredCandidate(candidate),
       );
-      const semanticCandidates: ReviewedCandidate[] = [];
-      for (const proposal of proposals) {
-        const duplicatesExisting = baseCandidates.some((candidate) => {
-          const overlapMs = Math.max(
-            0,
-            Math.min(candidate.endMs, proposal.endMs) -
-              Math.max(candidate.startMs, proposal.startMs),
-          );
-          const shorterMs = Math.min(
-            candidate.endMs - candidate.startMs,
-            proposal.endMs - proposal.startMs,
-          );
-          return shorterMs > 0 && overlapMs / shorterMs >= 0.6;
-        });
-        if (!duplicatesExisting) {
-          semanticCandidates.push({
+      const semanticCandidates: ReviewedCandidate[] =
+        selectNonOverlappingDiscoveredCandidates(
+          baseCandidates,
+          proposals,
+        ).map((proposal) => {
+          const previous = existingSemanticById.get(proposal.id);
+          return {
             ...proposal,
-            reviewState: "unreviewed",
-            approvedBoundaryRevision: null,
-          });
-        }
-      }
+            reviewState: previous?.reviewState ?? "unreviewed",
+            approvedBoundaryRevision:
+              previous?.approvedBoundaryRevision ?? null,
+          };
+        });
       const nextCandidates = [...baseCandidates, ...semanticCandidates].sort(
         (left, right) => left.peakMs - right.peakMs || left.id.localeCompare(right.id),
       );
+      candidatesRef.current = nextCandidates;
       setCandidates(nextCandidates);
       setSelectionResult((current) =>
         current === null
@@ -7385,20 +10311,34 @@ function App() {
 
     void (async () => {
       if (controller.signal.aborted || !isMounted.current) return;
-      const store = getResultStore();
-      const initialSavedSession =
-        await store.getBroadcastContextSession(currentAnalysisRunId);
-      if (initialSavedSession === null) {
-        throw new Error("새 의미 후보를 저장할 분석 세션을 찾지 못했어요.");
-      }
+      const sessionLoadOperationToken =
+        `${currentAnalysisRunId}:semantic:${semanticInputSignature}:session-load`;
+      const initialSavedSession = await runSessionCheckpoint(
+        "session-load",
+        sessionLoadOperationToken,
+        (isCurrent) =>
+          loadDurableBroadcastContextSession({
+            store,
+            identity: {
+              runId: currentAnalysisRunId,
+              operationToken: sessionLoadOperationToken,
+              inputSignature: semanticInputSignature,
+            },
+            isCurrent,
+            signal: controller.signal,
+          }),
+      );
       let savedSession = initialSavedSession;
+      const savedParticipantPreContext =
+        await restoreBroadcastParticipantPreContextCheckpoint(savedSession);
       if (
+        savedParticipantPreContext === null ||
+        JSON.stringify(savedParticipantPreContext) !==
+          JSON.stringify(broadcastParticipantPreContext) ||
         savedSession.sourceDurationMs !== boundarySourceDurationMs ||
         savedSession.sourceCastRosterId !== sourceCastRosterId ||
         savedSession.participantGroundingPlanFingerprint !==
           broadcastParticipantPreContext.planFingerprint ||
-        savedSession.participantGroundingCheckpointJson !==
-          JSON.stringify(broadcastParticipantGrounding) ||
         JSON.stringify(compactBroadcastContextChapters(savedSession.chapters)) !==
           JSON.stringify(boundedBroadcastContextChapters) ||
         savedSession.contextInputCheckpointJson === null ||
@@ -7429,6 +10369,11 @@ function App() {
       const savedContextEnvelope = unpackPersistedBroadcastContext(
         savedContextResultPayload,
       );
+      if (savedContextEnvelope === null) {
+        throw new Error(
+          "The saved broadcast context envelope is not the current exact schema.",
+        );
+      }
       const savedContextResult = parsePersistedBroadcastContextResult(
         savedContextEnvelope.resultPayload,
         {
@@ -7437,18 +10382,14 @@ function App() {
           candidates: savedContextInput.candidates,
           participantGrounding: savedContextInput.participantGrounding,
           outputLanguage: savedContextInput.outputLanguage,
-          ...(savedContextInput.castRosterId === null
-            ? {}
-            : { castRosterId: savedContextInput.castRosterId }),
+          castRosterId: savedContextInput.castRosterId,
         },
       );
       if (
         savedContextResult === null ||
         JSON.stringify(savedContextResult) !== JSON.stringify(broadcastContextResult) ||
-        savedContextEnvelope.refinementLeadIds === null ||
         JSON.stringify(savedContextEnvelope.refinementLeadIds) !==
           JSON.stringify(broadcastContextRefinementLeadIds) ||
-        savedContextEnvelope.fastRefinementLeadIds === null ||
         JSON.stringify(savedContextEnvelope.fastRefinementLeadIds) !==
           JSON.stringify(broadcastContextFastRefinementLeadIds)
       ) {
@@ -7494,15 +10435,64 @@ function App() {
         const ledgerJson =
           await serializeBroadcastRefinementEvidenceLedger(nextLedger);
         if (savedSession.refinementEvidenceLedgerJson !== ledgerJson) {
-          savedSession =
-            await checkpointBroadcastContextSessionRefinementEvidenceLedgerWithReadback(
-              store,
-              savedSession,
-              {
-                refinementEvidenceLedgerJson: ledgerJson,
-                recordedAt: new Date().toISOString(),
-              },
-            );
+          const expectedSession = savedSession;
+          const previousLedgerJson =
+            expectedSession.refinementEvidenceLedgerJson;
+          const recordedAt = new Date().toISOString();
+          const operationToken =
+            `${currentAnalysisRunId}:semantic-evidence:${nextLedger.ledgerFingerprint}`;
+          savedSession = await runSessionCheckpoint(
+            "evidence-ledger",
+            operationToken,
+            (isCurrent) =>
+              transformDurableBroadcastContextSession({
+                store,
+                identity: {
+                  runId: currentAnalysisRunId,
+                  operationToken,
+                  inputSignature: semanticInputSignature,
+                },
+                expected: expectedSession,
+                isCurrent,
+                signal: controller.signal,
+                transform: async (current) => {
+                  if (
+                    current.contextInputSignature !==
+                      expectedSession.contextInputSignature ||
+                    current.contextInputCheckpointJson !==
+                      expectedSession.contextInputCheckpointJson ||
+                    current.contextResultJson !==
+                      expectedSession.contextResultJson ||
+                    current.transcriptSealOperationKey !==
+                      expectedSession.transcriptSealOperationKey ||
+                    current.participantGroundingInputSignature !==
+                      expectedSession.participantGroundingInputSignature
+                  ) {
+                    throw new Error(
+                      "The refinement evidence parent changed.",
+                    );
+                  }
+                  if (current.refinementEvidenceLedgerJson === ledgerJson) {
+                    return current;
+                  }
+                  if (
+                    current.refinementEvidenceLedgerJson !==
+                    previousLedgerJson
+                  ) {
+                    throw new Error(
+                      "A newer refinement evidence ledger is already stored.",
+                    );
+                  }
+                  return checkpointBroadcastContextSessionRefinementEvidenceLedger(
+                    current,
+                    {
+                      refinementEvidenceLedgerJson: ledgerJson,
+                      recordedAt,
+                    },
+                  );
+                },
+              }),
+          );
         }
         const readback =
           await parseBroadcastContextSessionRefinementEvidenceLedger(
@@ -7596,7 +10586,12 @@ function App() {
             editorRetryGeneration: semanticLeadRefinementAttemptOrdinal,
             allowOutcomeUnknownRetry,
             signal: controller.signal,
-            runAttempt: (attemptChunks, quotaAttemptOrdinal) =>
+            runAttempt: (
+              attemptChunks,
+              quotaAttemptOrdinal,
+              _attemptIndex,
+              persistence,
+            ) =>
               runBroadcastTranscriptWorker(sourceFile, {
                 sourceDurationMs: boundarySourceDurationMs,
                 chunks: attemptChunks,
@@ -7609,6 +10604,10 @@ function App() {
                   attemptOrdinal: quotaAttemptOrdinal,
                 },
                 signal: controller.signal,
+                onDispatchIntent: persistence.onDispatchIntent,
+                onPartialResult: persistence.onPartialResult,
+                onChunkAbstention: persistence.onChunkAbstention,
+                onChunkGap: persistence.onChunkGap,
               }),
           });
         savedSession = refinementRecovery.session;
@@ -7798,49 +10797,75 @@ function App() {
       let activeRefinementSession = savedSession;
       const persistRefinementLedgerAndReadBack = async (
         ledgerJson: string,
+        settleAfterDispatch = false,
       ): Promise<void> => {
         const expectedSession = activeRefinementSession;
-        const replaced =
-          await checkpointBroadcastContextSessionPhaseLedgerIfUnchanged(
-            store,
-            expectedSession,
-            {
-              contextInputSignature:
-                expectedSession.contextInputSignature as string,
-              contextInputCheckpointJson:
-                expectedSession.contextInputCheckpointJson as string,
-              contextPhaseLedgerJson: ledgerJson,
-              recordedAt: new Date().toISOString(),
-            },
-          );
-        if (!replaced) {
-          throw new Error(
-            "후보별 AI 해석 원장을 저장하는 동안 분석 세션이 갱신됐어요.",
-          );
-        }
-        const reopened = await store.getBroadcastContextSession(
-          currentAnalysisRunId,
+        const previousLedgerJson = expectedSession.contextPhaseLedgerJson;
+        const recordedAt = new Date().toISOString();
+        const ledgerFingerprint = await createContentFingerprint([
+          "exclipper.semantic-refinement-phase-ledger.v1",
+          ledgerJson,
+        ]);
+        const operationToken =
+          `${currentAnalysisRunId}:semantic-phase:${ledgerFingerprint}`;
+        activeRefinementSession = await runSessionCheckpoint(
+          "phase-ledger",
+          operationToken,
+          (isCurrent) =>
+            transformDurableBroadcastContextSession({
+              store,
+              identity: {
+                runId: currentAnalysisRunId,
+                operationToken,
+                inputSignature: semanticInputSignature,
+              },
+              expected: expectedSession,
+              isCurrent,
+              ...(settleAfterDispatch
+                ? {}
+                : { signal: controller.signal }),
+              transform: (current) => {
+                if (
+                  current.contextInputSignature !==
+                    expectedSession.contextInputSignature ||
+                  current.contextInputCheckpointJson !==
+                    expectedSession.contextInputCheckpointJson ||
+                  current.contextResultJson !==
+                    expectedSession.contextResultJson ||
+                  current.refinementTranscriptInputSignature !==
+                    expectedSession.refinementTranscriptInputSignature ||
+                  current.refinementTranscriptCheckpointJson !==
+                    expectedSession.refinementTranscriptCheckpointJson ||
+                  current.refinementEvidenceLedgerJson !==
+                    expectedSession.refinementEvidenceLedgerJson
+                ) {
+                  throw new Error(
+                    "The semantic refinement parent changed.",
+                  );
+                }
+                if (current.contextPhaseLedgerJson === ledgerJson) {
+                  return current;
+                }
+                if (current.contextPhaseLedgerJson !== previousLedgerJson) {
+                  throw new Error(
+                    "A newer semantic refinement ledger is already stored.",
+                  );
+                }
+                return checkpointBroadcastContextSessionPhaseLedger(
+                  current,
+                  {
+                    contextInputSignature:
+                      expectedSession.contextInputSignature as string,
+                    contextInputCheckpointJson:
+                      expectedSession.contextInputCheckpointJson as string,
+                    contextPhaseLedgerJson: ledgerJson,
+                    recordedAt,
+                  },
+                );
+              },
+            }),
+          settleAfterDispatch,
         );
-        if (
-          reopened === null ||
-          reopened.contextInputSignature !==
-            expectedSession.contextInputSignature ||
-          reopened.contextInputCheckpointJson !==
-            expectedSession.contextInputCheckpointJson ||
-          reopened.contextPhaseLedgerJson !== ledgerJson ||
-          reopened.contextResultJson !== expectedSession.contextResultJson ||
-          reopened.refinementTranscriptInputSignature !==
-            expectedSession.refinementTranscriptInputSignature ||
-          reopened.refinementTranscriptCheckpointJson !==
-            expectedSession.refinementTranscriptCheckpointJson ||
-          reopened.refinementEvidenceLedgerJson !==
-            expectedSession.refinementEvidenceLedgerJson
-        ) {
-          throw new Error(
-            "저장한 후보별 AI 해석 원장을 정확히 다시 확인하지 못했어요.",
-          );
-        }
-        activeRefinementSession = reopened;
       };
       if (
         allowOutcomeUnknownRetry &&
@@ -7880,10 +10905,24 @@ function App() {
           routingManifestSignature:
             refinementRoutingManifestSignature,
           operationGeneration: semanticLeadRefinementAttemptOrdinal,
+          retryMode: "automatic-free-tier",
           signal: controller.signal,
           maximumConcurrency: MAX_TOPICAL_REFINEMENT_CONCURRENCY,
-          persistAndReadBack: async ({ ledger, ledgerJson }) => {
-            await persistRefinementLedgerAndReadBack(ledgerJson);
+          persistAndReadBack: async ({
+            ledger,
+            ledgerJson,
+            transition,
+          }) => {
+            const settleAfterDispatch =
+              transition !== null &&
+              (transition.resultingStatus === "succeeded" ||
+                transition.resultingStatus === "retryable-gap" ||
+                transition.resultingStatus === "outcome-unknown" ||
+                transition.resultingStatus === "failed");
+            await persistRefinementLedgerAndReadBack(
+              ledgerJson,
+              settleAfterDispatch,
+            );
             activeRefinementLedger = ledger;
           },
         });
@@ -7940,24 +10979,73 @@ function App() {
         semanticCandidates,
       );
       if (controller.signal.aborted || !isMounted.current) return;
-      const refinementWasCommitted =
-        await store.replaceBroadcastContextSessionIfUnchanged(
-          savedSession,
-          {
-            ...savedSession,
-            refinementInputSignature: refinementAiInputSignature,
-            refinementCandidatesJson,
-            recordedAt: new Date().toISOString(),
-          },
-        );
-      if (!refinementWasCommitted) {
-        throw new Error(
-          "새 의미 후보를 저장하기 전에 방송 맥락이 갱신됐어요. 오래된 결과는 저장하지 않았습니다.",
-        );
-      }
-      const reopened = await store.getBroadcastContextSession(currentAnalysisRunId);
+      const refinementCommitOperationToken =
+        `${currentAnalysisRunId}:semantic-candidates:${refinementAiInputSignature}`;
+      const refinementRecordedAt = new Date().toISOString();
+      const reopened = await runSessionCheckpoint(
+        "semantic-candidates",
+        refinementCommitOperationToken,
+        (isCurrent) =>
+          transformDurableBroadcastContextSession({
+            store,
+            identity: {
+              runId: currentAnalysisRunId,
+              operationToken: refinementCommitOperationToken,
+              inputSignature: semanticInputSignature,
+            },
+            expected: savedSession,
+            isCurrent,
+            signal: controller.signal,
+            transform: (current) => {
+              if (
+                current.contextInputSignature !==
+                  savedSession.contextInputSignature ||
+                current.contextInputCheckpointJson !==
+                  savedSession.contextInputCheckpointJson ||
+                current.contextPhaseLedgerJson !==
+                  savedSession.contextPhaseLedgerJson ||
+                current.contextResultJson !==
+                  savedSession.contextResultJson ||
+                current.refinementTranscriptInputSignature !==
+                  savedSession.refinementTranscriptInputSignature ||
+                current.refinementTranscriptCheckpointJson !==
+                  savedSession.refinementTranscriptCheckpointJson ||
+                current.refinementEvidenceLedgerJson !==
+                  savedSession.refinementEvidenceLedgerJson
+              ) {
+                throw new Error(
+                  "The semantic candidate parent changed.",
+                );
+              }
+              if (
+                current.refinementInputSignature ===
+                  refinementAiInputSignature &&
+                current.refinementCandidatesJson ===
+                  refinementCandidatesJson
+              ) {
+                return current;
+              }
+              if (
+                current.refinementInputSignature !==
+                  savedSession.refinementInputSignature ||
+                current.refinementCandidatesJson !==
+                  savedSession.refinementCandidatesJson
+              ) {
+                throw new Error(
+                  "A newer semantic candidate projection is already stored.",
+                );
+              }
+              return {
+                ...current,
+                refinementInputSignature: refinementAiInputSignature,
+                refinementCandidatesJson,
+                recordedAt: refinementRecordedAt,
+              };
+            },
+          }),
+      );
       if (
-        reopened?.refinementInputSignature !== refinementAiInputSignature ||
+        reopened.refinementInputSignature !== refinementAiInputSignature ||
         reopened.refinementCandidatesJson !== refinementCandidatesJson ||
         reopened.contextPhaseLedgerJson !==
           savedSession.contextPhaseLedgerJson ||
@@ -7980,8 +11068,48 @@ function App() {
       }
       applySemanticCandidates(semanticCandidates);
     })()
-      .catch((error: unknown) => {
+      .catch(async (error: unknown) => {
         if (controller.signal.aborted || !isMounted.current) return;
+        try {
+          const checkpoint =
+            await store.getBroadcastContextSession(currentAnalysisRunId);
+          const checkpointLedger =
+            checkpoint?.inputSignature === semanticInputSignature &&
+            checkpoint.contextPhaseLedgerJson !== null
+              ? parseBroadcastContextPhaseLedgerJson(
+                  checkpoint.contextPhaseLedgerJson,
+                )
+              : null;
+          const retryDelayMs =
+            checkpointLedger === null
+              ? null
+              : automaticContextRetryDelayMs(checkpointLedger);
+          if (retryDelayMs !== null && operationIsCurrent()) {
+            setSemanticLeadRefinementStatus("running");
+            setSemanticLeadRefinementError(
+              analysisLanguage === "ko"
+                ? "일시적인 AI 응답 오류가 있어 저장된 의미 분석 조각부터 자동으로 이어갑니다."
+                : "A transient AI response failed. Resuming semantic analysis from its durable fragments.",
+            );
+            try {
+              await waitForSessionRetry(retryDelayMs);
+            } catch {
+              return;
+            }
+            if (operationIsCurrent()) {
+              autoSemanticLeadRefinementSourceRef.current = null;
+              setSemanticLeadRefinementAttemptOrdinal(
+                (current) => current + 1,
+              );
+            }
+            return;
+          }
+        } catch (recoveryError) {
+          console.warn(
+            "Semantic refinement automatic recovery inspection failed.",
+            recoveryError,
+          );
+        }
         semanticRefinementRouteChangeCountRef.current = 0;
         setSemanticLeadRefinementStatus("failed");
         setSemanticLeadRefinementError(
@@ -7995,6 +11123,15 @@ function App() {
           semanticLeadRefinementAbortController.current = null;
         }
       });
+    return () => {
+      if (semanticLeadRefinementAbortController.current === controller) {
+        controller.abort();
+        semanticLeadRefinementAbortController.current = null;
+        if (autoSemanticLeadRefinementSourceRef.current === operationKey) {
+          autoSemanticLeadRefinementSourceRef.current = null;
+        }
+      }
+    };
   }, [
     aiQuotaParticipantId,
     boundarySourceDurationMs,
@@ -8006,7 +11143,7 @@ function App() {
     broadcastContextResult,
     broadcastContextStatus,
     broadcastParticipantPreContext,
-    candidates,
+    currentAnalysisInputSignature,
     currentAnalysisRunId,
     getResultStore,
     resetCandidateRanking,
@@ -8044,12 +11181,6 @@ function App() {
     }
 
     const transcriptPhase = transcriptPhaseFor(analysisComplete);
-    const transcriptPhaseSealPrefix =
-      `${transcriptOperationKey(
-        runId,
-        sourceContentFingerprint,
-        transcriptPhase,
-      )}:identity-`;
     /*
      * This is a local React re-entry fence, not a provider/quota identifier.
      * The descriptive source identity can legitimately exceed the bounded
@@ -8068,15 +11199,25 @@ function App() {
       return;
     }
     autoBroadcastTranscriptSourceRef.current = transcriptEffectKey;
+    broadcastVisualInspectionAbortController.current?.abort();
+    broadcastVisualInspectionAbortController.current = null;
+    autoBroadcastVisualInspectionSourceRef.current = null;
+    setBroadcastVisualInspectionProjection(null);
+    setBroadcastVisualInspectionStatus("idle");
+    setBroadcastVisualInspectionPlannedCellCount(0);
+    setBroadcastVisualInspectionPreparedCellCount(0);
+    setBroadcastVisualInspectionSettledCellCount(0);
+    setBroadcastVisualInspectionError(null);
     const sourceDurationMs = broadcastContextSamplingPlan.sourceDurationMs;
     const chunks = createBroadcastContextTranscriptionChunks(
       broadcastContextSamplingPlan.samplingWindows,
     );
     if (chunks.length === 0) {
-      broadcastTranscriptRouteChangeCountRef.current = 0;
-      sealedBroadcastTranscriptSourceRef.current = transcriptEffectKey;
-      setBroadcastTranscriptStatus("completed");
-      setBroadcastTranscriptChapters([]);
+      sealedBroadcastTranscriptSourceRef.current = null;
+      setBroadcastTranscriptStatus("failed");
+      setBroadcastTranscriptError(
+        "방송 대사 계획을 만들지 못해 분석을 완료하지 않았어요.",
+      );
       setBroadcastTranscriptExplorationCells([]);
       return;
     }
@@ -8092,9 +11233,7 @@ function App() {
 
     void (async () => {
       const store = getResultStore();
-      const youtubeVideoId =
-        youtubeVideoIdFromUserInput(manualVodInputRef.current) ??
-        youtubeVideoIdFromSourceName(sourceFile.name);
+      const youtubeVideoId = analysisCaptionVideoId;
       const saved = await store.getBroadcastContextSession(runId);
       const matchedSaved =
         saved !== null &&
@@ -8103,7 +11242,24 @@ function App() {
         saved.sourceCastRosterId === sourceCastRosterId
           ? saved
           : null;
+      const matchedSavedTranscriptSealIsCurrent =
+        matchedSaved?.transcriptSealOperationKey !== null &&
+        matchedSaved?.transcriptSealOperationKey !== undefined
+          ? await isCurrentTranscriptSealOperationKey({
+              operationKey: matchedSaved.transcriptSealOperationKey,
+              runId,
+              contentFingerprint: sourceContentFingerprint,
+              modelRevision: matchedSaved.modelRevision,
+              sourceCastRosterId,
+              phase: transcriptPhase,
+            })
+          : false;
       let transcriptSessionSnapshot = matchedSaved;
+      const matchedSavedTranscriptChapters =
+        matchedSaved === null
+          ? []
+          : partitionBroadcastContextSessionChapters(matchedSaved)
+              .transcriptChapters;
 
       const persistTranscriptMap = async (
         chapters: readonly BroadcastContextChapterInput[],
@@ -8155,6 +11311,7 @@ function App() {
           transcriptEvidenceCheckpointJson,
           transcriptProviderReceiptInputSignature,
           transcriptProviderReceiptCheckpointJson,
+          transcriptVisualInspectionCheckpointJson: null,
           modelRevision,
           sourceCastRosterId,
           transcriptSealOperationKey,
@@ -8167,70 +11324,77 @@ function App() {
            contextResultJson: null,
            refinementTranscriptInputSignature: null,
            refinementTranscriptCheckpointJson: null,
+           refinementEvidenceLedgerJson: null,
            refinementInputSignature: null,
            refinementCandidatesJson: null,
           recordedAt: new Date().toISOString(),
         };
+        const rebaseTranscriptReplacement = (
+          current: BroadcastContextSessionRecord,
+          pending: BroadcastContextSessionRecord,
+        ): BroadcastContextSessionRecord | null =>
+          mergeBroadcastTranscriptSessionCheckpoints(current, pending);
+        let reopened;
         if (transcriptSessionSnapshot === null) {
           if (saved !== null) {
             throw new Error(
               "같은 분석 세션에 다른 원본의 대사 체크포인트가 있어 덮어쓰지 않았어요.",
             );
           }
-          await store.putBroadcastContextSession(record);
+          reopened = await commitDurableBroadcastTranscriptCheckpoint({
+            store,
+            expected: null,
+            replacement: record,
+            rebaseReplacement: rebaseTranscriptReplacement,
+            signal: controller.signal,
+          });
         } else {
-          const replaced =
-            await checkpointBroadcastContextSessionTranscriptIfUnchanged(
-              store,
-              transcriptSessionSnapshot,
-              {
-                completeAudioCoverage,
-                chapters,
-                gapChunkIds,
+          const pendingReplacement =
+            checkpointBroadcastContextSessionTranscript(
+            transcriptSessionSnapshot,
+            {
+                 completeAudioCoverage,
+                 chapters,
+                 gapChunkIds,
                 fragmentGaps,
                 transcriptEvidenceInputSignature,
                 transcriptEvidenceCheckpointJson,
                 transcriptProviderReceiptInputSignature,
                 transcriptProviderReceiptCheckpointJson,
                 modelRevision,
-                transcriptSealOperationKey,
-                recordedAt: record.recordedAt,
-              },
+                 transcriptSealOperationKey,
+                 recordedAt: record.recordedAt,
+            },
+          );
+          const replacement = mergeBroadcastTranscriptSessionCheckpoints(
+            transcriptSessionSnapshot,
+            pendingReplacement,
+          );
+          if (replacement === null) {
+            throw new Error(
+              "The main transcript checkpoint no longer matches its frozen plan.",
             );
-          if (!replaced) {
+          }
+          reopened = await commitDurableBroadcastTranscriptCheckpoint({
+            store,
+            expected: transcriptSessionSnapshot,
+            replacement,
+            rebaseReplacement: rebaseTranscriptReplacement,
+            signal: controller.signal,
+          });
+          if (reopened === null) {
             throw new Error(
               "대사 지도를 저장하는 동안 다른 실행이 같은 세션을 갱신했어요.",
             );
           }
         }
-        const reopened = await store.getBroadcastContextSession(runId);
+        // The durable commit helper already completed exact readback.
         if (
           reopened === null ||
           reopened.inputSignature !== inputSignature ||
           reopened.sourceDurationMs !== sourceDurationMs ||
-          reopened.completeAudioCoverage !== completeAudioCoverage ||
-          reopened.modelRevision !== modelRevision ||
-          reopened.transcriptEvidenceInputSignature !==
-            transcriptEvidenceInputSignature ||
-          reopened.transcriptEvidenceCheckpointJson !==
-            transcriptEvidenceCheckpointJson ||
-          reopened.transcriptProviderReceiptInputSignature !==
-            transcriptProviderReceiptInputSignature ||
-          reopened.transcriptProviderReceiptCheckpointJson !==
-            transcriptProviderReceiptCheckpointJson ||
           reopened.sourceCastRosterId !== sourceCastRosterId ||
-          reopened.transcriptSealOperationKey !==
-            transcriptSealOperationKey ||
-          reopened.participantGroundingInputSignature !== null ||
-          reopened.participantGroundingPlanFingerprint !== null ||
-          reopened.participantGroundingCheckpointJson !== null ||
-           reopened.contextInputCheckpointJson !== null ||
-           reopened.contextPhaseLedgerJson !== null ||
-           reopened.refinementTranscriptInputSignature !== null ||
-           reopened.refinementTranscriptCheckpointJson !== null ||
-           JSON.stringify(reopened.chapters) !== JSON.stringify(chapters) ||
-          JSON.stringify(reopened.gapChunkIds) !== JSON.stringify(gapChunkIds) ||
-          JSON.stringify(reopened.fragmentGaps) !== JSON.stringify(fragmentGaps)
+          !broadcastTranscriptSessionCheckpointIncludes(reopened, record)
         ) {
           throw new Error("저장한 방송 대사 지도를 다시 확인하지 못했어요.");
         }
@@ -8259,9 +11423,23 @@ function App() {
           : parseBroadcastTranscriptResolvedEvidenceCheckpointJson(
               matchedSaved.transcriptEvidenceCheckpointJson,
             );
+      const storedTranscriptEvidenceIdentityIsCurrent =
+        storedTranscriptEvidenceCheckpoint !== null &&
+        matchedSaved !== null
+          ? await isCurrentTranscriptSealOperationKey({
+              operationKey:
+                storedTranscriptEvidenceCheckpoint.transcriptInputSignature,
+              runId,
+              contentFingerprint: sourceContentFingerprint,
+              modelRevision: matchedSaved.modelRevision,
+              sourceCastRosterId,
+              phase: transcriptPhase,
+            })
+          : false;
       const storedTranscriptEvidenceMatchesSession =
         storedTranscriptEvidenceCheckpoint !== null &&
         matchedSaved !== null &&
+        storedTranscriptEvidenceIdentityIsCurrent &&
         matchedSaved.transcriptEvidenceInputSignature ===
           storedTranscriptEvidenceCheckpoint.transcriptInputSignature &&
         storedTranscriptEvidenceCheckpoint.sourceFingerprint === inputSignature &&
@@ -8273,6 +11451,7 @@ function App() {
       const storedTranscriptProviderReceiptMatchesSession =
         storedTranscriptProviderReceiptCheckpoint !== null &&
         matchedSaved !== null &&
+        storedTranscriptEvidenceIdentityIsCurrent &&
         matchedSaved.transcriptProviderReceiptInputSignature ===
           storedTranscriptProviderReceiptCheckpoint.routeManifestFingerprint &&
         storedTranscriptProviderReceiptCheckpoint.sourceFingerprint ===
@@ -8282,6 +11461,10 @@ function App() {
         broadcastTranscriptProviderReceiptCheckpointModelRevision(
           storedTranscriptProviderReceiptCheckpoint,
         ) === matchedSaved.modelRevision &&
+        storedTranscriptProviderReceiptCheckpoint.captionReceipts.every(
+          ({ receipt }) =>
+            youtubeVideoId !== null && receipt.videoId === youtubeVideoId,
+        ) &&
         JSON.stringify(storedTranscriptProviderReceiptCheckpoint.plannedCells) ===
           JSON.stringify(transcriptProviderPlanCells);
       let storedAsrPlanIsSettled = false;
@@ -8300,10 +11483,7 @@ function App() {
           const providerSettlement =
             inspectBroadcastTranscriptProviderReceiptSettlement({
               checkpoint: storedTranscriptProviderReceiptCheckpoint,
-              chapterRanges: matchedSaved.chapters.map(({ startMs, endMs }) => ({
-                startMs,
-                endMs,
-              })),
+              chapterRanges: matchedSavedTranscriptChapters,
               resolvedChunkIds,
               gapChunkIds: matchedSaved.gapChunkIds,
             });
@@ -8311,7 +11491,7 @@ function App() {
             storedTranscriptEvidenceMatchesSession
               ? inspectBroadcastTranscriptEvidenceSettlement({
                   checkpoint: storedTranscriptEvidenceCheckpoint,
-                  chapterRanges: matchedSaved.chapters.map(
+                  chapterRanges: matchedSavedTranscriptChapters.map(
                     ({ startMs, endMs }) => ({
                       startMs,
                       endMs,
@@ -8335,27 +11515,18 @@ function App() {
           storedAsrPlanIsSettled = false;
         }
       }
-      const storedCaptionIsSettled =
-        matchedSaved !== null &&
-        matchedSaved.modelRevision === YOUTUBE_CAPTION_MODEL_REVISION &&
-        matchedSaved.chapters.length > 0 &&
-        matchedSaved.transcriptProviderReceiptCheckpointJson === null &&
-        matchedSaved.transcriptEvidenceCheckpointJson === null;
       if (
         matchedSaved !== null &&
         matchedSaved.transcriptSealOperationKey !== null &&
-        matchedSaved.transcriptSealOperationKey.startsWith(
-          transcriptPhaseSealPrefix,
-        ) &&
-        (storedCaptionIsSettled ||
-          matchedSaved.transcriptSealOperationKey ===
-            storedTranscriptEvidenceCheckpoint?.transcriptInputSignature) &&
+        matchedSavedTranscriptSealIsCurrent &&
+        matchedSaved.transcriptSealOperationKey ===
+          storedTranscriptEvidenceCheckpoint?.transcriptInputSignature &&
         matchedSaved.gapChunkIds.length === 0 &&
-        (storedCaptionIsSettled || storedAsrPlanIsSettled)
+        storedAsrPlanIsSettled
       ) {
         if (!controller.signal.aborted && isMounted.current) {
           setBroadcastTranscriptExplorationCells(
-            createChapterExplorationCells(matchedSaved.chapters),
+            createChapterExplorationCells(matchedSavedTranscriptChapters),
           );
           setBroadcastTranscriptChapters(matchedSaved.chapters);
           sealedBroadcastTranscriptSourceRef.current =
@@ -8367,16 +11538,12 @@ function App() {
       }
 
       /*
-       * Captions are free and do not depend on the transcript provider health
-       * route. Try them before `/healthz`, but never overwrite a partially paid
-       * ASR checkpoint: the single-session schema cannot yet preserve both
-       * active routes without losing provenance.
+       * Captions are a free source for exact planned cells, not an alternate
+       * completion route. They seed real chapter receipts below; every cell
+       * without caption text continues through the same VAD/ASR recovery plan.
        */
-      if (
-        youtubeVideoId !== null &&
-        (matchedSaved === null ||
-          matchedSaved.modelRevision === YOUTUBE_CAPTION_MODEL_REVISION)
-      ) {
+      let captionTrackForTranscript: YouTubeCaptionTrackResult | null = null;
+      if (youtubeVideoId !== null) {
         try {
           const endCaptionSpan = stageTimerRef.current?.startSpan(
             "youtube-caption-fetch",
@@ -8389,44 +11556,7 @@ function App() {
           if (controller.signal.aborted || !isMounted.current) return;
           youtubeCaptionTrackRef.current = captionTrack;
           setYouTubeCaptionTrack(captionTrack);
-          const captionChapters = createYouTubeCaptionChapters(
-            captionTrack,
-            sourceDurationMs,
-          );
-          if (captionChapters.length > 0) {
-            const captionSourceIdentityFence =
-              await createTranscriptSourceIdentityFence([
-                "caption",
-                transcriptSourceIdentityFence,
-                youtubeVideoId,
-                YOUTUBE_CAPTION_MODEL_REVISION,
-              ]);
-            const captionOperationKey = transcriptOperationKey(
-              runId,
-              sourceContentFingerprint,
-              transcriptPhase,
-              broadcastTranscriptAttemptOrdinal,
-              captionSourceIdentityFence,
-            );
-            const reopened = await persistTranscriptMap(
-              captionChapters,
-              true,
-              [],
-              YOUTUBE_CAPTION_MODEL_REVISION,
-              [],
-              captionOperationKey,
-            );
-            if (!controller.signal.aborted && isMounted.current) {
-              setBroadcastTranscriptExplorationCells(
-                createChapterExplorationCells(reopened.chapters),
-              );
-              setBroadcastTranscriptChapters(reopened.chapters);
-              sealedBroadcastTranscriptSourceRef.current = captionOperationKey;
-              broadcastTranscriptRouteChangeCountRef.current = 0;
-              setBroadcastTranscriptStatus("completed");
-            }
-            return;
-          }
+          captionTrackForTranscript = captionTrack;
         } catch {
           // YouTube may throttle or withhold captions. The bounded ASR route
           // below is the automatic fallback and needs no user action.
@@ -8438,11 +11568,9 @@ function App() {
         { signal: controller.signal },
       );
       const routeSourceIdentityFence =
-        await createTranscriptSourceIdentityFence([
-          "provider",
-          transcriptSourceIdentityFence,
-          transcriptRoute.fingerprint,
-        ]);
+        await createCurrentProviderTranscriptSourceIdentityFence(
+          sourceCastRosterId,
+        );
       const matchingStoredTranscriptProviderReceiptCheckpoint =
         storedTranscriptProviderReceiptMatchesSession
           ? rebaseBroadcastTranscriptProviderReceiptCheckpointRoute(
@@ -8478,24 +11606,13 @@ function App() {
         matchingStoredTranscriptProviderReceiptCheckpoint !== null
           ? matchedSaved
           : null;
-      const ambiguousStoredGaps =
-        matchedSaved?.fragmentGaps.filter(
-          ({ reason, attemptCount }) =>
-            transcriptGapRequiresExplicitBillingRetry(reason, attemptCount),
-        ) ?? [];
-      if (
-        ambiguousStoredGaps.length > 0 &&
-        !allowAmbiguousTranscriptRetryRef.current
-      ) {
-        if (!controller.signal.aborted && isMounted.current) {
-          setBroadcastTranscriptChapters(savedQwenCheckpoint?.chapters ?? []);
-          setBroadcastTranscriptStatus("failed");
-          setBroadcastTranscriptError(
-            `처리 결과를 확인할 수 없는 대사 조각 ${ambiguousStoredGaps.length}개가 남아 있어 자동 재결제를 중단했습니다. 저장된 조각은 보존되어 있습니다.`,
-          );
-        }
-        return;
-      }
+      /*
+       * Only a paid direct request has a duplicate-billing ambiguity. The
+       * free R2 route can safely reconcile the same cell under a fresh
+       * generation without stopping the pipeline.
+       */
+      const allowPaidAmbiguousTranscriptRetry =
+        allowAmbiguousTranscriptRetryRef.current;
       allowAmbiguousTranscriptRetryRef.current = false;
       const transcriptFragmentManualGeneration = Math.max(
         broadcastTranscriptAttemptOrdinal,
@@ -8517,6 +11634,26 @@ function App() {
           route: transcriptRoute,
           plannedCells: transcriptProviderPlanCells,
         });
+      const captionCellOutcomes =
+        matchingStoredTranscriptProviderReceiptCheckpoint === null &&
+        captionTrackForTranscript !== null
+          ? createYouTubeCaptionTranscriptCellOutcomes(
+              captionTrackForTranscript,
+              transcriptProviderPlanCells,
+              sourceDurationMs,
+            )
+          : [];
+      if (captionTrackForTranscript !== null) {
+        for (const outcome of captionCellOutcomes) {
+          transcriptProviderReceiptCheckpoint =
+            recordBroadcastTranscriptCaptionReceipt(
+              transcriptProviderReceiptCheckpoint,
+              outcome.chunkId,
+              captionTrackForTranscript,
+              outcome.chapter,
+            );
+        }
+      }
       let recoveredCheckpointModelRevision =
         broadcastTranscriptProviderReceiptCheckpointModelRevision(
           transcriptProviderReceiptCheckpoint,
@@ -8530,7 +11667,10 @@ function App() {
           plannedChunks: chunks,
           storedCheckpointJson:
             savedQwenCheckpoint?.transcriptEvidenceCheckpointJson ?? null,
-          storedChapters: savedQwenCheckpoint?.chapters ?? [],
+          storedChapters:
+            savedQwenCheckpoint === null
+              ? captionCellOutcomes.map(({ chapter }) => chapter)
+              : matchedSavedTranscriptChapters,
         });
       let transcriptEvidenceCheckpoint =
         preparedTranscriptEvidence.checkpoint;
@@ -8543,20 +11683,30 @@ function App() {
       const transcriptChunks = createBroadcastContextTranscriptionChunks(
         uncoveredSamplingWindows,
       );
+      const runnableTranscriptChunks =
+        selectRunnableBroadcastTranscriptChunks(
+          transcriptChunks,
+          matchedSaved?.fragmentGaps ?? [],
+          {
+            transportMode: transcriptRoute.manifest.transportMode,
+            allowPaidAmbiguousRetry:
+              allowPaidAmbiguousTranscriptRetry,
+          },
+        );
       if (checkpointChapters.length > 0 && !controller.signal.aborted) {
         setBroadcastTranscriptChapters(checkpointChapters);
       }
       if (transcriptChunks.length === 0) {
         const completeAudioCoverage =
           broadcastContextSamplingPlan.estimatedAudioCoverageRatio === 1;
-        const migratedChapters = mergeBroadcastTranscriptChapters(
+        const completedChapters = mergeBroadcastTranscriptChapters(
           checkpointChapters,
           [],
           sourceDurationMs,
           completeAudioCoverage,
         );
         const reopened = await persistTranscriptMap(
-          migratedChapters,
+          completedChapters,
           completeAudioCoverage,
           [],
           recoveredCheckpointModelRevision,
@@ -8580,7 +11730,7 @@ function App() {
       }
 
       const explorationChunks = createDistributedTranscriptExplorationOrder(
-        transcriptChunks,
+        runnableTranscriptChunks,
       );
       setBroadcastTranscriptExplorationCells(
         createTranscriptExplorationCells(explorationChunks),
@@ -8605,7 +11755,19 @@ function App() {
           readonly attemptCount: number;
         }
       >();
+      const uncoveredChunkIds = new Set(
+        transcriptChunks.map(({ chunkId }) => chunkId),
+      );
+      for (const gap of matchedSaved?.fragmentGaps ?? []) {
+        if (uncoveredChunkIds.has(gap.chunkId)) {
+          checkpointGapState.set(gap.chunkId, {
+            reason: gap.reason,
+            attemptCount: gap.attemptCount,
+          });
+        }
+      }
       let checkpointPersistence: Promise<void> = Promise.resolve();
+      let checkpointPersistenceFailure: unknown = null;
       /*
        * **본 전사.** 화면의 `표본 n/N` 이 이것이고, 자막이 없을 때 방송 전체를
        * 현재 sampling plan의 최대 90초 청크로 잘라 원격 ASR 에 보내는 구간이다.
@@ -8679,12 +11841,25 @@ function App() {
           if (!controller.signal.aborted && isMounted.current) {
             setBroadcastTranscriptChapters(reopened.chapters);
           }
+          checkpointPersistenceFailure = null;
+        }).catch((error: unknown) => {
+          checkpointPersistenceFailure = error;
         });
       };
-      const persistPartialResult = (
+      const awaitTranscriptCheckpointPersistence = async (): Promise<void> => {
+        await checkpointPersistence;
+        if (checkpointPersistenceFailure !== null) {
+          throw checkpointPersistenceFailure instanceof Error
+            ? checkpointPersistenceFailure
+            : new Error("Transcript checkpoint persistence failed.", {
+                cause: checkpointPersistenceFailure,
+              });
+        }
+      };
+      const persistPartialResult = async (
         chunkId: string,
         partialResult: BroadcastTranscriptVerifiedResult,
-      ): void => {
+      ): Promise<void> => {
         updateExplorationCell(chunkId, "complete");
         checkpointResults.set(chunkId, partialResult);
         transcriptProviderReceiptCheckpoint =
@@ -8704,8 +11879,9 @@ function App() {
           );
         checkpointGapState.delete(chunkId);
         queueTranscriptCheckpoint();
+        await awaitTranscriptCheckpointPersistence();
       };
-      const persistAbstentionOrGap = (
+      const persistAbstentionOrGap = async (
         chunkId: string,
         reason:
           | StoredBroadcastTranscriptGap["reason"]
@@ -8713,7 +11889,7 @@ function App() {
           | "no-speech",
         quotaAttemptOrdinal: number,
         speechActivityReceipt: BroadcastSpeechActivityRunReceipt | null = null,
-      ): void => {
+      ): Promise<void> => {
         updateExplorationCell(
           chunkId,
           reason === "no-audio" || reason === "no-speech"
@@ -8751,19 +11927,39 @@ function App() {
           });
         }
         queueTranscriptCheckpoint();
+        await awaitTranscriptCheckpointPersistence();
       };
       const persistAttemptStart = async (
-        attemptChunks: readonly BroadcastContextTranscriptionChunk[],
+        intent: BroadcastTranscriptDispatchIntent,
         quotaAttemptOrdinal: number,
       ): Promise<void> => {
-        for (const chunk of attemptChunks) {
-          checkpointGapState.set(chunk.chunkId, {
-            reason: "in-flight",
-            attemptCount: quotaAttemptOrdinal + 1,
-          });
+        const plannedChunk = explorationChunks.find(
+          ({ chunkId }) => chunkId === intent.chunkId,
+        );
+        const expectedOperationId = transcriptFragmentQuotaOperationId(
+          transcriptPhase,
+          quotaAttemptOrdinal,
+          intent.chunkId,
+          transcriptQuotaOperationScope,
+        );
+        if (
+          plannedChunk === undefined ||
+          intent.sourceStartMs !== plannedChunk.sourceStartMs ||
+          intent.sourceEndMs !== plannedChunk.sourceEndMs ||
+          intent.attemptOrdinal !== quotaAttemptOrdinal ||
+          intent.operationNamespace !== transcriptPhase ||
+          intent.operationScope !== transcriptQuotaOperationScope ||
+          intent.routeManifestFingerprint !== transcriptRoute.fingerprint ||
+          intent.operationId !== expectedOperationId
+        ) {
+          throw new Error("Transcript dispatch attempt identity changed.");
         }
+        checkpointGapState.set(intent.chunkId, {
+          reason: "in-flight",
+          attemptCount: quotaAttemptOrdinal + 1,
+        });
         queueTranscriptCheckpoint();
-        await checkpointPersistence;
+        await awaitTranscriptCheckpointPersistence();
       };
       let recoveryResult: BroadcastTranscriptFragmentRecoveryResult;
       try {
@@ -8780,12 +11976,6 @@ function App() {
             attemptChunks,
             quotaAttemptOrdinal,
           ) => {
-            /*
-             * Commit an `in-flight` fence before a provider request can start.
-             * A tab closed after this point must reopen as outcome-ambiguous,
-             * never as a fresh unpaid-looking pending fragment.
-             */
-            await persistAttemptStart(attemptChunks, quotaAttemptOrdinal);
             return runBroadcastTranscriptWorker(sourceFile, {
               sourceDurationMs,
               chunks: attemptChunks,
@@ -8798,6 +11988,8 @@ function App() {
                 attemptOrdinal: quotaAttemptOrdinal,
               },
               signal: controller.signal,
+              onDispatchIntent: (intent) =>
+                persistAttemptStart(intent, quotaAttemptOrdinal),
               onProgress: (progress) => {
                 if (!controller.signal.aborted && isMounted.current) {
                   setBroadcastTranscriptProgress(progress);
@@ -8809,21 +12001,19 @@ function App() {
                 }
               },
               onPartialResult: persistPartialResult,
-              onChunkAbstention: (abstention) => {
+              onChunkAbstention: (abstention) =>
                 persistAbstentionOrGap(
                   abstention.chunkId,
                   abstention.reason,
                   quotaAttemptOrdinal,
                   abstention.speechActivityReceipt,
-                );
-              },
-              onChunkGap: (chunkId, reason) => {
+                ),
+              onChunkGap: (chunkId, reason) =>
                 persistAbstentionOrGap(
                   chunkId,
                   reason,
                   quotaAttemptOrdinal,
-                );
-              },
+                ),
             });
           },
         });
@@ -8831,7 +12021,7 @@ function App() {
         // A paid result is not considered recovered until its checkpoint write
         // and exact readback have both settled. Storage failure blocks the
         // phase instead of silently issuing the same provider request again.
-        await checkpointPersistence;
+        await awaitTranscriptCheckpointPersistence();
       }
       stageTimerRef.current?.addSpan(
         "main-transcription",
@@ -8847,34 +12037,21 @@ function App() {
       if (controller.signal.aborted || !isMounted.current) {
         return;
       }
-      setYouTubeCaptionTrack(null);
-      youtubeCaptionTrackRef.current = null;
-      const unresolvedGaps = [
-        ...recoveryResult.unresolvedRetryableGaps,
-        ...recoveryResult.routeChangedGaps,
-        ...recoveryResult.outcomeUnknownGaps,
-      ];
       const unresolvedFragmentGaps: readonly StoredBroadcastTranscriptGap[] =
-        unresolvedGaps
-          .flatMap((gap) => {
-            const chunk = transcriptChunks.find(
-              ({ chunkId }) => chunkId === gap.chunkId,
-            );
-            if (chunk === undefined || gap.reason === "no-audio") return [];
-            return [
-              {
-                chunkId: gap.chunkId,
-                sourceStartMs: chunk.sourceStartMs,
-                sourceEndMs: chunk.sourceEndMs,
-                reason: gap.reason,
-                attemptCount:
-                  checkpointGapState.get(gap.chunkId)?.attemptCount ??
-                  (transcriptFragmentQuotaAttemptOrdinal(
-                    transcriptFragmentManualGeneration,
-                    Math.max(0, recoveryResult.attemptedCount - 1),
-                  ) + 1),
-              },
-            ];
+        transcriptChunks
+          .flatMap((chunk) => {
+            const gap = checkpointGapState.get(chunk.chunkId);
+            return gap === undefined
+              ? []
+              : [
+                  {
+                    chunkId: chunk.chunkId,
+                    sourceStartMs: chunk.sourceStartMs,
+                    sourceEndMs: chunk.sourceEndMs,
+                    reason: gap.reason,
+                    attemptCount: gap.attemptCount,
+                  },
+                ];
           })
           .sort(
             (left, right) =>
@@ -8892,7 +12069,9 @@ function App() {
         sourceDurationMs,
         completeAudioCoverage,
       );
-      for (const { chunkId } of recoveryResult.noAudioGaps) {
+      for (const { chunkId } of recoveryResult.resolvedAbstentions.filter(
+        ({ reason }) => reason === "no-audio",
+      )) {
         transcriptEvidenceCheckpoint =
           recordBroadcastTranscriptResolvedEvidence(
             transcriptEvidenceCheckpoint,
@@ -8919,7 +12098,7 @@ function App() {
         sourceDurationMs,
         completeAudioCoverage,
       );
-      const reopened = await persistTranscriptMap(
+      let reopened = await persistTranscriptMap(
         chapters,
         completeAudioCoverage,
         finalGapChunkIds,
@@ -8929,10 +12108,61 @@ function App() {
         transcriptEvidenceCheckpoint,
         transcriptProviderReceiptCheckpoint,
       );
+      if (
+        reopened.fragmentGaps.length === 0 &&
+        broadcastContextSamplingPlan.estimatedAudioCoverageRatio === 1 &&
+        !reopened.completeAudioCoverage
+      ) {
+        const canonicalEvidence =
+          reopened.transcriptEvidenceCheckpointJson === null
+            ? null
+            : parseBroadcastTranscriptResolvedEvidenceCheckpointJson(
+                reopened.transcriptEvidenceCheckpointJson,
+              );
+        const canonicalProvider =
+          reopened.transcriptProviderReceiptCheckpointJson === null
+            ? null
+            : parseBroadcastTranscriptProviderReceiptCheckpointJson(
+                reopened.transcriptProviderReceiptCheckpointJson,
+              );
+        if (canonicalEvidence === null || canonicalProvider === null) {
+          throw new Error(
+            "The completed main transcript lost its durable evidence ledgers.",
+          );
+        }
+        reopened = await persistTranscriptMap(
+          partitionBroadcastContextSessionChapters(reopened)
+            .transcriptChapters,
+          true,
+          [],
+          reopened.modelRevision,
+          [],
+          canonicalEvidence.transcriptInputSignature,
+          canonicalEvidence,
+          canonicalProvider,
+        );
+      }
       if (!controller.signal.aborted && isMounted.current) {
         setBroadcastTranscriptChapters(reopened.chapters);
         setBroadcastTranscriptRecoveryProgress(null);
-        if (recoveryResult.routeChangedGaps.length > 0) {
+        const durableRouteChangedGaps = reopened.fragmentGaps.filter(
+          ({ reason }) => reason === "route-changed",
+        );
+        const durableRetryableGaps = reopened.fragmentGaps.filter(
+          (gap) =>
+            broadcastTranscriptGapCanAutomaticallyRetry(
+              gap,
+              transcriptRoute.manifest.transportMode,
+            ),
+        );
+        const durableAmbiguousGaps = reopened.fragmentGaps.filter(
+          (gap) =>
+            broadcastTranscriptGapRequiresExplicitPaidRetry(
+              gap,
+              transcriptRoute.manifest.transportMode,
+            ),
+        );
+        if (durableRouteChangedGaps.length > 0) {
           /*
            * Route drift is known to occur before provider billing. Keep every
            * completed cell and its immutable receipt, reacquire `/healthz`,
@@ -8955,16 +12185,33 @@ function App() {
           return;
         }
         broadcastTranscriptRouteChangeCountRef.current = 0;
-        if (unresolvedGaps.length > 0) {
+        if (durableRetryableGaps.length > 0) {
+          /*
+           * Three waves are one bounded batch, not a terminal failure. The
+           * durable gap attempt counts allocate a disjoint next generation on
+           * the next effect turn, so a transient provider failure can recover
+           * without reusing an operation or asking the editor to restart.
+           */
+          autoBroadcastTranscriptSourceRef.current = null;
+          setBroadcastTranscriptAttemptOrdinal((current) => current + 1);
+          setBroadcastTranscriptStatus("idle");
+          setBroadcastTranscriptError(null);
+          return;
+        }
+        if (durableAmbiguousGaps.length > 0) {
           setBroadcastTranscriptStatus("failed");
           setBroadcastTranscriptError(
-            recoveryResult.outcomeUnknownGaps.length > 0
-              ? `처리 결과를 확인할 수 없는 대사 조각 ${recoveryResult.outcomeUnknownGaps.length}개가 있어 중복 결제를 막고 멈췄어요. 확보된 조각은 모두 보존했습니다.`
-              : `대사 조각 ${recoveryResult.unresolvedRetryableGaps.length}개를 자동으로 세 번 복구했지만 아직 완료되지 않았어요. 확보된 조각은 보존했으며 다음 단계로 넘어가지 않았습니다.`,
+            `처리 결과를 확인할 수 없는 대사 조각 ${durableAmbiguousGaps.length}개가 있어 중복 결제를 막고 멈췄어요. 나머지 안전한 조각은 모두 처리·보존했습니다.`,
           );
           return;
         }
-        sealedBroadcastTranscriptSourceRef.current = operationKey;
+        if (reopened.fragmentGaps.length > 0) {
+          throw new Error(
+            "The durable main transcript contains an unsupported gap state.",
+          );
+        }
+        sealedBroadcastTranscriptSourceRef.current =
+          reopened.transcriptSealOperationKey ?? operationKey;
         broadcastTranscriptRouteChangeCountRef.current = 0;
         setBroadcastTranscriptStatus("completed");
       }
@@ -9006,6 +12253,7 @@ function App() {
     sourceChannelResolutionIsCurrent,
     sourceFile,
     transcriptSourceIdentityFence,
+    analysisCaptionVideoId,
   ]);
 
   const copyApprovedTimecodes = async (): Promise<void> => {
@@ -9869,12 +13117,18 @@ function App() {
                   <h3 id="candidate-title" ref={candidateHeading} tabIndex={-1}>
                     {contextualCandidatePublicationReady
                       ? `최종 검토 후보 ${orderedCandidates.length}개`
-                      : "방송 전체 맥락을 만들고 있어요"}
+                      : artifactSelectionReady
+                        ? currentPipelineCertificationFailure === null
+                          ? "최종 증거를 확인하고 있어요"
+                          : "완료 조건을 복구해야 해요"
+                        : "방송 전체 맥락을 만들고 있어요"}
                   </h3>
                   <p className="rh-help">
                     {contextualCandidatePublicationReady
                       ? "AI가 전체 방송 맥락과 화면·대사를 종합한 장면만 모았습니다. 이제 짧은 후보만 재생해 결정하면 됩니다."
-                      : "분산 탐색으로 방송 곳곳을 먼저 확인한 뒤, 의미가 이어지는 주변을 넓혀 봅니다. 최종 후보는 종합이 끝난 뒤 한 번에 표시합니다."}
+                      : artifactSelectionReady
+                        ? "저장된 분석 조각이 같은 원본·실행·대사·맥락·대표 화면에 속하는지 마지막으로 확인합니다."
+                        : "분산 탐색으로 방송 곳곳을 먼저 확인한 뒤, 의미가 이어지는 주변을 넓혀 봅니다. 최종 후보는 종합이 끝난 뒤 한 번에 표시합니다."}
                   </p>
                   {selectionResult.audioGapReasonCode !== undefined && selectionResult.audioGapReasonCode !== null && (
                     <p className="rh-notice" data-tone="warning" role="status">
@@ -9923,6 +13177,91 @@ function App() {
                 )}
               </div>
 
+              {artifactSelectionReady &&
+                currentPipelineCertificationChecking && (
+                  <div
+                    className="rh-notice"
+                    data-tone="info"
+                    role="status"
+                    aria-live="polite"
+                  >
+                    {ui(
+                      "저장된 대사·맥락·대표 화면을 다시 열어 최종 후보를 확인하고 있어요.",
+                      "Reopening the saved transcript, context, and frames before publishing candidates.",
+                    )}
+                  </div>
+                )}
+
+              {currentPipelineCertificationFailure !== null && (
+                <div
+                  className="rh-notice rh-notice-with-action"
+                  data-tone="warning"
+                  role="alert"
+                >
+                  <div>
+                    <strong>
+                      {ui(
+                        "완료 조건을 아직 모두 확인하지 못했어요.",
+                        "The analysis has not yet passed every completion check.",
+                      )}
+                    </strong>
+                    <ul>
+                      {[
+                        ...new Set(
+                          currentPipelineCertificationFailure.gaps.map(
+                            ({ code }) => code,
+                          ),
+                        ),
+                      ].map((code) => (
+                        <li key={code}>
+                          {PIPELINE_CERTIFICATION_GAP_LABEL[code][
+                            analysisLanguage
+                          ]}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                  <button
+                    className="btn btn-secondary"
+                    type="button"
+                    onClick={() =>
+                      setPipelineCertificationRetryEpoch(
+                        (epoch) => epoch + 1,
+                      )
+                    }
+                  >
+                    {ui("저장 결과 다시 확인", "Check saved results again")}
+                  </button>
+                </div>
+              )}
+
+              {currentPipelineCertificate !== null &&
+                !certificateMatchesFinalCandidates && (
+                  <div
+                    className="rh-notice rh-notice-with-action"
+                    data-tone="warning"
+                    role="alert"
+                  >
+                    <span>
+                      {ui(
+                        "인증된 후보 목록과 화면의 후보 목록이 달라 공개를 멈췄어요.",
+                        "Publication stopped because the certified and visible candidate sets differ.",
+                      )}
+                    </span>
+                    <button
+                      className="btn btn-secondary"
+                      type="button"
+                      onClick={() =>
+                        setPipelineCertificationRetryEpoch(
+                          (epoch) => epoch + 1,
+                        )
+                      }
+                    >
+                      {ui("후보 다시 확인", "Check candidates again")}
+                    </button>
+                  </div>
+                )}
+
               {!contextualCandidatePublicationReady && !analysisComplete && candidates.length > 0 && (
                 <details className="rh-early-candidates">
                   <summary>
@@ -9952,6 +13291,75 @@ function App() {
                       ))}
                   </ol>
                 </details>
+              )}
+
+              {(broadcastVisualInspectionStatus === "preparing" ||
+                broadcastVisualInspectionStatus === "analyzing" ||
+                broadcastVisualInspectionStatus === "blocked" ||
+                broadcastVisualInspectionStatus === "failed") && (
+                <div
+                  className="rh-notice rh-notice-with-action"
+                  data-tone={
+                    broadcastVisualInspectionStatus === "blocked" ||
+                    broadcastVisualInspectionStatus === "failed"
+                      ? "warning"
+                      : undefined
+                  }
+                  role="status"
+                >
+                  <span>
+                    <strong>
+                      {broadcastVisualInspectionStatus === "preparing"
+                        ? ui("화면 증거를 준비하고 있어요", "Preparing visual evidence")
+                        : broadcastVisualInspectionStatus === "analyzing"
+                          ? ui("준비된 화면을 AI가 해석하고 있어요", "AI is reading the prepared frames")
+                          : broadcastVisualInspectionStatus === "blocked"
+                            ? ui("남은 화면 분석을 자동으로 이어갈게요", "Remaining visual analysis will resume automatically")
+                            : ui("저장된 지점부터 화면 분석을 다시 시작할 수 있어요", "Visual analysis can restart from its saved checkpoint")}
+                    </strong>
+                    <br />
+                    {ui(
+                      `화면 묶음 ${broadcastVisualInspectionPreparedCellCount}/${broadcastVisualInspectionPlannedCellCount} · AI 해석 ${broadcastVisualInspectionSettledCellCount}/${broadcastVisualInspectionPlannedCellCount}`,
+                      `Frame bundles ${broadcastVisualInspectionPreparedCellCount}/${broadcastVisualInspectionPlannedCellCount} · AI readings ${broadcastVisualInspectionSettledCellCount}/${broadcastVisualInspectionPlannedCellCount}`,
+                    )}
+                    {broadcastVisualInspectionError !== null && (
+                      <>
+                        <br />
+                        {broadcastVisualInspectionError}
+                      </>
+                    )}
+                    <progress
+                      className="rh-analysis-progress"
+                      max={Math.max(
+                        1,
+                        broadcastVisualInspectionPlannedCellCount * 2,
+                      )}
+                      value={
+                        broadcastVisualInspectionPreparedCellCount +
+                        broadcastVisualInspectionSettledCellCount
+                      }
+                      aria-label={ui(
+                        "화면 증거 분석 진행률",
+                        "Visual evidence analysis progress",
+                      )}
+                    />
+                  </span>
+                  {broadcastVisualInspectionStatus === "failed" && (
+                    <button
+                      className="btn btn-secondary"
+                      type="button"
+                      onClick={() => {
+                        setBroadcastVisualInspectionStatus("preparing");
+                        setBroadcastVisualInspectionError(null);
+                        setBroadcastVisualInspectionAttemptOrdinal(
+                          (current) => current + 1,
+                        );
+                      }}
+                    >
+                      {ui("화면 분석 다시 시작", "Restart visual analysis")}
+                    </button>
+                  )}
+                </div>
               )}
 
               {(broadcastTranscriptStatus === "failed" ||
@@ -10234,27 +13642,30 @@ function App() {
                         type="button"
                         disabled={
                           sourceFile === null ||
-                          !candidatePassBRuntimeAvailable ||
-                          (candidatePassBActionIds.length === 0 &&
-                            !candidatePassBPersistenceRetryNeeded) ||
-                          selectionResult.audioGapReasonCode === "NO_AUDIO_TRACK" ||
-                          candidateAudioEventBusy
-                        }
+                           !candidatePassBRuntimeAvailable ||
+                           (candidatePassBActionIds.length === 0 &&
+                             !candidatePassBPersistenceRetryNeeded) ||
+                           candidateAudioEventBusy
+                         }
                         onClick={() => {
                           if (candidatePassBPersistenceRetryNeeded) {
                             void retryCandidatePassBInsightPersistence();
                             return;
                           }
-                          void runCandidatePassB(candidatePassBActionIds);
+                          void runCandidatePassB(
+                            candidatePassBActionIds,
+                            undefined,
+                            true,
+                          );
                         }}
                       >
                         {candidatePassBPersistenceRetryNeeded
                           ? "검증 결과 저장 다시 시도"
                           : candidatePassBRun === null
-                          ? `후보 ${Math.min(12, candidateDetailCandidateIds.length)}개 자세히 분석`
+                          ? `후보 ${candidateDetailCandidateIds.length}개 자세히 분석`
                           : automaticCandidateDetailIds.length > 0
                             ? `미완료 후보 ${automaticCandidateDetailIds.length}개 다시 분석`
-                            : `후보 ${Math.min(12, candidateDetailCandidateIds.length)}개 다시 분석`}
+                            : `후보 ${candidateDetailCandidateIds.length}개 다시 분석`}
                       </button>
                     )}
                     {candidatePassBBusy && (
@@ -10655,7 +14066,7 @@ function App() {
                           className="btn btn-secondary"
                           type="button"
                           disabled={analysisBusy || candidateRefinementBusy}
-                          onClick={retryWholeContextPhase}
+                          onClick={() => retryWholeContextPhase()}
                         >
                           맥락 분석 다시 시도
                         </button>

@@ -14,7 +14,19 @@ import {
   BROADCAST_TRANSCRIPT_ROUTE_FINGERPRINT_HEADER,
   createBroadcastTranscriptRouteSelection,
 } from "../analysis/broadcastTranscriptRouteManifest";
-import { DEFAULT_CANDIDATE_PASS_B_CAST_ROSTER_ID } from "../analysis/participantRoster";
+import {
+  DEFAULT_CANDIDATE_PASS_B_CAST_ROSTER_ID,
+  type CandidatePassBCastRosterId,
+} from "../analysis/participantRoster";
+import {
+  createBroadcastParticipantGrounding,
+  participantContextForBroadcastRange,
+  type BroadcastParticipantGroundingChapter,
+} from "../analysis/broadcastParticipantGrounding";
+import type { BroadcastContextCandidateInput } from "../analysis/broadcastContextProtocol";
+import {
+  currentCandidatePassBContext,
+} from "../testSupport/candidatePassBCurrentFixture";
 import {
   handleBroadcastTranscriptRequest,
   handleBroadcastContextRequest,
@@ -75,7 +87,12 @@ function createCandidateBody(candidateDurationMs = 1_000): {
   readonly videoFrames: readonly [
     { readonly timestampMs: number; readonly mimeType: "image/jpeg"; readonly dataBase64: string },
     { readonly timestampMs: number; readonly mimeType: "image/jpeg"; readonly dataBase64: string },
+    { readonly timestampMs: number; readonly mimeType: "image/jpeg"; readonly dataBase64: string },
+    { readonly timestampMs: number; readonly mimeType: "image/jpeg"; readonly dataBase64: string },
   ];
+  readonly castRosterId: null;
+  readonly outputLanguage: "ko";
+  readonly context: ReturnType<typeof currentCandidatePassBContext>;
 } {
   const sampleCount = Math.ceil(
     (candidateDurationMs / 1_000) * CANDIDATE_PASS_B_SAMPLE_RATE_HZ,
@@ -90,11 +107,24 @@ function createCandidateBody(candidateDurationMs = 1_000): {
     videoFrames: [
       { timestampMs: 100, mimeType: "image/jpeg", dataBase64: "aGVsbG8=" },
       {
-        timestampMs: Math.max(101, candidateDurationMs - 100),
+        timestampMs: Math.max(101, Math.floor(candidateDurationMs * 0.3)),
+        mimeType: "image/jpeg",
+        dataBase64: "d29ybGQ=",
+      },
+      {
+        timestampMs: Math.max(102, Math.floor(candidateDurationMs * 0.6)),
+        mimeType: "image/jpeg",
+        dataBase64: "aGVsbG8=",
+      },
+      {
+        timestampMs: Math.max(103, candidateDurationMs - 1),
         mimeType: "image/jpeg",
         dataBase64: "d29ybGQ=",
       },
     ],
+    castRosterId: null,
+    outputLanguage: "ko",
+    context: currentCandidatePassBContext(),
   };
 }
 
@@ -188,6 +218,9 @@ function createGeminiPayload(candidateDurationMs = 1_000): unknown {
                 participantPresence: "none-present",
                 participantSummaryKo: "준비된 대표 화면 네 장에는 확인할 수 있는 등장인물이 없습니다.",
                 identifiedParticipants: [],
+                clipDecision: "uncertain",
+                contextConsistency: "insufficient",
+                programMaterial: "routine-or-unclear",
               }),
             },
           ],
@@ -212,6 +245,40 @@ function createQwenSsePayload(candidateDurationMs = 1_000): string {
 async function responseErrorCode(response: Response): Promise<string> {
   const payload = (await response.json()) as { error: { code: string } };
   return payload.error.code;
+}
+
+function withSealedParticipantGrounding<
+  const T extends {
+    readonly sourceDurationMs: number;
+    readonly castRosterId?: CandidatePassBCastRosterId | null;
+    readonly outputLanguage?: "ko" | "en";
+    readonly chapters: readonly BroadcastParticipantGroundingChapter[];
+    readonly candidates: readonly (
+      Omit<BroadcastContextCandidateInput, "participantContextKo"> & {
+        readonly participantContextKo?: string;
+      }
+    )[];
+  },
+>(input: T) {
+  const participantGrounding = createBroadcastParticipantGrounding({
+    sourceDurationMs: input.sourceDurationMs,
+    castRosterId: input.castRosterId ?? null,
+    chapters: input.chapters,
+  });
+  return {
+    ...input,
+    castRosterId: input.castRosterId ?? null,
+    outputLanguage: input.outputLanguage ?? "ko",
+    participantGrounding,
+    candidates: input.candidates.map((candidate) => ({
+      ...candidate,
+      participantContextKo: participantContextForBroadcastRange(
+        participantGrounding,
+        candidate.startMs,
+        candidate.endMs,
+      ),
+    })),
+  };
 }
 
 describe("aiProxy.worker", () => {
@@ -294,7 +361,7 @@ describe("aiProxy.worker", () => {
   });
 
   it("reasons over whole-broadcast context through Qwen 3.7 Plus", async () => {
-    const contextInput = {
+    const contextInput = withSealedParticipantGrounding({
       sourceDurationMs: 60_000,
       castRosterId: DEFAULT_CANDIDATE_PASS_B_CAST_ROSTER_ID,
       chapters: [
@@ -318,10 +385,24 @@ describe("aiProxy.worker", () => {
           chatReactionSummaryKo: null,
         },
       ],
-    };
+    });
     const providerResult = {
       summary: "실수의 경위를 설명하고 사과한 방송이다.",
+      host: {
+        name: null,
+        profile: "실수의 경위를 차분하게 설명하고 책임을 인정하는 진행 흐름을 보였다.",
+        evidence: ["직접 실수를 인정하고 사과했다."],
+        uncertainty: ["화면·목소리 식별 근거가 없어 이름은 확인하지 못했다."],
+      },
       themes: ["사과"],
+      chapters: [{
+        s: "chapter-1",
+        e: "chapter-1",
+        title: "실수 인정과 사과",
+        desc: "경위를 설명한 뒤 직접 사과했다.",
+        kind: "main-event",
+        sal: "primary",
+      }],
       leads: [],
       candidates: [
         {
@@ -414,7 +495,7 @@ describe("aiProxy.worker", () => {
     );
   });
 
-  it("compacts an older client's oversized chapter map before validation", async () => {
+  it("rejects a 145-chapter map before any paid context request", async () => {
     const chapters = Array.from({ length: 145 }, (_, index) => ({
       chapterId: `chapter-${index + 1}`,
       startMs: index * 1_000,
@@ -434,6 +515,7 @@ describe("aiProxy.worker", () => {
         const prompt = providerBody.messages[1]?.content ?? "";
         expect(prompt).toContain("context-144");
         expect(prompt).not.toContain('"chapter-145"');
+        expect(prompt).toContain("transcript-names: 완료 144/144");
         return Promise.resolve(
           new Response(
             JSON.stringify({
@@ -441,7 +523,21 @@ describe("aiProxy.worker", () => {
                 message: {
                   content: JSON.stringify({
                     summary: "전체 방송의 흐름을 압축해 파악했다.",
+                    host: {
+                      name: null,
+                      profile: "방송 구간을 순서대로 설명하는 진행 흐름을 확인했다.",
+                      evidence: ["145개 원본 구간이 144개 맥락 구간으로 투영됐다."],
+                      uncertainty: ["닫힌 출연진 명단이 없어 이름은 확인하지 못했다."],
+                    },
                     themes: ["전체 흐름"],
+                    chapters: [{
+                      s: "context-001",
+                      e: "context-144",
+                      title: "전체 흐름",
+                      desc: "방송 시작부터 끝까지 대사 흐름을 압축했다.",
+                      kind: "story-progress",
+                      sal: "primary",
+                    }],
                     leads: [],
                     candidates: [],
                   }),
@@ -455,11 +551,11 @@ describe("aiProxy.worker", () => {
     );
     const response = await handleBroadcastContextRequest(
       createRequest(
-        {
+        withSealedParticipantGrounding({
           sourceDurationMs: 145_000,
           chapters,
           candidates: [],
-        },
+        }),
         { url: "https://rettohighlight-gemini.example/v1/broadcast-context" },
       ),
       {
@@ -470,8 +566,8 @@ describe("aiProxy.worker", () => {
       { fetchImplementation: upstreamFetch },
     );
 
-    expect(response.status).toBe(200);
-    expect(upstreamFetch).toHaveBeenCalledTimes(1);
+    expect(response.status).toBe(400);
+    expect(upstreamFetch).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -479,7 +575,7 @@ describe("aiProxy.worker", () => {
     ["invalid evidence mode", { evidenceMode: "music-only" }],
     ["invalid evidence coverage", { evidenceCoverageRatio: 999 }],
   ])(
-    "rejects %s in an oversized stale-client map before compaction",
+    "rejects %s in an oversized current request",
     async (_label, invalidPatch) => {
       const chapters = Array.from({ length: 145 }, (_, index) => ({
         chapterId: `chapter-${index + 1}`,
@@ -494,11 +590,11 @@ describe("aiProxy.worker", () => {
 
       const response = await handleBroadcastContextRequest(
         createRequest(
-          {
+          withSealedParticipantGrounding({
             sourceDurationMs: 145_000,
             chapters,
             candidates: [],
-          },
+          }),
           { url: "https://rettohighlight-gemini.example/v1/broadcast-context" },
         ),
         {
@@ -545,8 +641,42 @@ describe("aiProxy.worker", () => {
     expect(upstreamFetch).not.toHaveBeenCalled();
   });
 
+  it("rejects an unknown context analysis mode before any provider call", async () => {
+    const upstreamFetch = vi.fn();
+    const response = await handleBroadcastContextRequest(
+      createRequest(
+        {
+          ...withSealedParticipantGrounding({
+            sourceDurationMs: 60_000,
+            chapters: [{
+              chapterId: "chapter-1",
+              startMs: 0,
+              endMs: 60_000,
+              evidenceMode: "complete-transcript",
+              evidenceCoverageRatio: 1,
+              summaryKo: "방송 전체 흐름을 설명합니다.",
+            }],
+            candidates: [],
+          }),
+          analysisMode: "intermediate-maybe-final",
+        },
+        { url: "https://rettohighlight-gemini.example/v1/broadcast-context" },
+      ),
+      {
+        ...createEnvironment(),
+        BROADCAST_CONTEXT_PROVIDER: "qwen",
+        QWEN_API_KEY: "qwen-secret",
+      },
+      { fetchImplementation: upstreamFetch },
+    );
+
+    expect(response.status).toBe(400);
+    expect(await responseErrorCode(response)).toBe("INVALID_ANALYSIS_MODE");
+    expect(upstreamFetch).not.toHaveBeenCalled();
+  });
+
   it("falls back once from Qwen 3.7 Plus to Qwen 3.6 Flash for text context", async () => {
-    const contextInput = {
+    const contextInput = withSealedParticipantGrounding({
       sourceDurationMs: 60_000,
       chapters: [
         {
@@ -569,10 +699,24 @@ describe("aiProxy.worker", () => {
           chatReactionSummaryKo: null,
         },
       ],
-    };
+    });
     const providerResult = {
       summary: "오랜 시도 끝에 조용히 목표를 달성했다.",
+      host: {
+        name: null,
+        profile: "오랜 시도 끝에 목표를 달성하고 차분하게 성취를 확인했다.",
+        evidence: ["목표 달성을 직접 알리고 반응했다."],
+        uncertainty: ["화면·목소리 식별 근거가 없어 이름은 확인하지 못했다."],
+      },
       themes: ["조용한 성취"],
+      chapters: [{
+        s: "chapter-1",
+        e: "chapter-1",
+        title: "조용한 목표 달성",
+        desc: "오랜 시도 끝에 목표를 달성하고 차분하게 반응했다.",
+        kind: "main-event",
+        sal: "primary",
+      }],
       leads: [],
       candidates: [
         {
@@ -633,7 +777,7 @@ describe("aiProxy.worker", () => {
   });
 
   it("does not pay for a second context model when the shared input is invalid", async () => {
-    const contextInput = {
+    const contextInput = withSealedParticipantGrounding({
       sourceDurationMs: 60_000,
       chapters: [{
         chapterId: "chapter-1",
@@ -652,7 +796,7 @@ describe("aiProxy.worker", () => {
         reactionSummaryKo: "차분한 목소리로 정리했다.",
         chatReactionSummaryKo: null,
       }],
-    };
+    });
     const upstreamFetch = vi.fn(() =>
       Promise.resolve(
         new Response(
@@ -680,13 +824,15 @@ describe("aiProxy.worker", () => {
     );
 
     expect(response.status).toBe(502);
-    expect(await responseErrorCode(response)).toBe("UPSTREAM_REJECTED");
+    expect(await responseErrorCode(response)).toBe(
+      "UPSTREAM_INVALID_ARGUMENT",
+    );
     expect(response.headers.get("X-ExClipper-Fallback-Used")).toBeNull();
     expect(upstreamFetch).toHaveBeenCalledTimes(1);
   });
 
   it("uses Qwen 3.6 Flash for bounded topic discovery", async () => {
-    const contextInput = {
+    const contextInput = withSealedParticipantGrounding({
       sourceDurationMs: 120_000,
       chapters: [{
         chapterId: "chapter-1",
@@ -698,7 +844,7 @@ describe("aiProxy.worker", () => {
       }],
       candidates: [],
       analysisMode: "discovery",
-    };
+    });
     const upstreamFetch = vi.fn(
       (_input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
         const body = JSON.parse(
@@ -765,7 +911,7 @@ describe("aiProxy.worker", () => {
     modelId,
     modelRevision,
   }) => {
-    const contextInput = {
+    const contextInput = withSealedParticipantGrounding({
       sourceDurationMs: 120_000,
       chapters: [{
         chapterId: "chapter-1",
@@ -777,7 +923,7 @@ describe("aiProxy.worker", () => {
       }],
       candidates: [],
       analysisMode,
-    };
+    });
     const upstreamFetch = vi.fn(
       (_input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
         const body = JSON.parse(
@@ -831,7 +977,7 @@ describe("aiProxy.worker", () => {
   });
 
   it("uses Qwen 3.7 Plus for the final abstention-sensitive editorial jury", async () => {
-    const contextInput = {
+    const contextInput = withSealedParticipantGrounding({
       sourceDurationMs: 120_000,
       chapters: [{
         chapterId: "chapter-1",
@@ -851,7 +997,7 @@ describe("aiProxy.worker", () => {
         chatReactionSummaryKo: null,
       }],
       analysisMode: "selection",
-    };
+    });
     const upstreamFetch = vi.fn(
       (_input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
         const body = JSON.parse(
@@ -1423,6 +1569,8 @@ describe("aiProxy.worker", () => {
       { ...valid, candidateDurationMs: 999 },
       { ...valid, audioBase64: "AAAA" },
       { ...valid, audioBase64: "not-base64" },
+      { ...valid, videoFrames: valid.videoFrames.slice(0, 3) },
+      { ...valid, context: null },
       {
         ...valid,
         castRosterId: "arbitrary-public-roster",
@@ -1612,10 +1760,10 @@ describe("aiProxy.worker", () => {
 
     expect(response.status).toBe(200);
     expect(upstreamRequestBody).toContain("아모레또");
-    expect(upstreamRequestBody).toContain("두 가지 이상");
+    expect(upstreamRequestBody).toContain("이 목록 자체는 등장");
   });
 
-  it("removes visual and causal claims from a successful provider response when no frame arrived", async () => {
+  it("rejects a legacy audio-only candidate request before provider work", async () => {
     const candidateWithFrames = createCandidateBody();
     const candidate = { ...candidateWithFrames, videoFrames: [] };
     const inventedAnalysis = JSON.stringify({
@@ -1650,6 +1798,9 @@ describe("aiProxy.worker", () => {
       "data: [DONE]",
       "",
     ].join("\n");
+    const upstreamFetch = vi.fn(() =>
+      Promise.resolve(new Response(sse, { status: 200 })),
+    );
     const response = await handleCandidateInsightRequest(
       createRequest(candidate),
       {
@@ -1657,53 +1808,25 @@ describe("aiProxy.worker", () => {
         CANDIDATE_INSIGHT_PROVIDER: "qwen",
         QWEN_API_KEY: "qwen-secret",
       },
-      { fetchImplementation: () => Promise.resolve(new Response(sse, { status: 200 })) },
+      { fetchImplementation: upstreamFetch },
     );
 
-    expect(response.status).toBe(200);
-    const payload = await response.json() as {
-      candidates: readonly [{ content: { parts: readonly [{ text: string }] } }];
-    };
-    const safeAnalysis = JSON.parse(payload.candidates[0].content.parts[0].text) as {
-      eventSummaryKo: string;
-      reactionSummaryKo: string;
-      whyGoodClipKo: string;
-      segments: readonly { text: string }[];
-      identifiedParticipants: readonly unknown[];
-    };
-    expect(safeAnalysis.segments[0]?.text).toBe("내가 두바이 초콜릿을 안 먹어");
-    expect(safeAnalysis.eventSummaryKo).toContain("대표 화면을 확보하지 못해");
-    expect(safeAnalysis.reactionSummaryKo).not.toContain("캐릭터");
-    expect(safeAnalysis.whyGoodClipKo).not.toContain("게임 화면");
-    expect(safeAnalysis.identifiedParticipants).toEqual([]);
+    expect(response.status).toBe(400);
+    expect(await responseErrorCode(response)).toBe("INVALID_REQUEST");
+    expect(upstreamFetch).not.toHaveBeenCalled();
   });
 
-  it("uses one bounded Gemini fallback when Qwen candidate perception fails", async () => {
+  it("does not retry or cross-provider fallback when candidate perception returns 503", async () => {
     const candidate = createCandidateBody();
     const geminiPayload = createGeminiPayload(candidate.candidateDurationMs);
-    const upstreamFetch = vi.fn(
-      (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
-        const url =
-          typeof input === "string"
-            ? input
-            : input instanceof URL
-              ? input.toString()
-              : input.url;
-        if (url.includes("dashscope-intl.aliyuncs.com")) {
-          expect(new Headers(init?.headers).get("Authorization")).toBe(
-            "Bearer qwen-secret",
-          );
-          return Promise.resolve(
-            new Response("temporary qwen failure", { status: 503 }),
-          );
-        }
-        expect(url).toContain("models/gemini-3.6-flash:generateContent");
-        expect(new Headers(init?.headers).get("x-goog-api-key")).toBe(API_KEY);
-        return Promise.resolve(
-          new Response(JSON.stringify(geminiPayload), { status: 200 }),
-        );
-      },
-    );
+    const upstreamFetch = vi
+      .fn<(_input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>()
+      .mockResolvedValueOnce(
+        new Response("temporary qwen failure", { status: 503 }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify(geminiPayload), { status: 200 }),
+      );
     const response = await handleCandidateInsightRequest(
       createRequest(candidate),
       {
@@ -1712,25 +1835,16 @@ describe("aiProxy.worker", () => {
         AI_PROVIDER_FALLBACK_MODE: "bounded",
         QWEN_API_KEY: "qwen-secret",
       },
-      { fetchImplementation: upstreamFetch, upstreamRetryDelaysMs: [] },
+      { fetchImplementation: upstreamFetch, upstreamRetryDelaysMs: [0, 0] },
     );
 
-    expect(response.status).toBe(200);
-    expect(await response.json()).toEqual(geminiPayload);
-    expect(response.headers.get("X-ExClipper-Model-Id")).toBe(
-      "gemini-3.6-flash",
+    expect(response.status).toBe(502);
+    expect(await responseErrorCode(response)).toBe(
+      "UPSTREAM_UNAVAILABLE",
     );
-    expect(response.headers.get("X-ExClipper-Model-Revision")).toBe(
-      "gemini-3.6-flash-context-verified-frames-v8-2026-07-23",
-    );
-    expect(response.headers.get("X-ExClipper-Fallback-Used")).toBe("true");
-    expect(response.headers.get("X-ExClipper-Fallback-Reason")).toBe(
-      "unavailable",
-    );
-    expect(response.headers.get("Access-Control-Expose-Headers")).toContain(
-      "X-ExClipper-Model-Id",
-    );
-    expect(upstreamFetch).toHaveBeenCalledTimes(2);
+    expect(response.headers.get("X-ExClipper-Fallback-Used")).toBeNull();
+    expect(response.headers.get("X-ExClipper-Fallback-Reason")).toBeNull();
+    expect(upstreamFetch).toHaveBeenCalledOnce();
   });
 
   it("starts with the configured alternate when the selected provider credential is missing", async () => {
@@ -1794,7 +1908,7 @@ describe("aiProxy.worker", () => {
     expect(upstreamFetch).toHaveBeenCalledTimes(1);
   });
 
-  it("uses a different provider for a temporary rate-limit failure", async () => {
+  it("does not retry or cross-provider fallback after a candidate rate limit", async () => {
     const candidate = createCandidateBody();
     const geminiPayload = createGeminiPayload(candidate.candidateDurationMs);
     const upstreamFetch = vi
@@ -1811,18 +1925,17 @@ describe("aiProxy.worker", () => {
         AI_PROVIDER_FALLBACK_MODE: "bounded",
         QWEN_API_KEY: "qwen-secret",
       },
-      { fetchImplementation: upstreamFetch, upstreamRetryDelaysMs: [] },
+      { fetchImplementation: upstreamFetch, upstreamRetryDelaysMs: [0, 0] },
     );
 
-    expect(response.status).toBe(200);
-    expect(response.headers.get("X-ExClipper-Fallback-Used")).toBe("true");
-    expect(response.headers.get("X-ExClipper-Fallback-Reason")).toBe(
-      "rate-limited",
-    );
-    expect(upstreamFetch).toHaveBeenCalledTimes(2);
+    expect(response.status).toBe(429);
+    expect(await responseErrorCode(response)).toBe("UPSTREAM_RATE_LIMITED");
+    expect(response.headers.get("X-ExClipper-Fallback-Used")).toBeNull();
+    expect(response.headers.get("X-ExClipper-Fallback-Reason")).toBeNull();
+    expect(upstreamFetch).toHaveBeenCalledOnce();
   });
 
-  it("falls back when the selected provider does not expose the configured model", async () => {
+  it("does not cross-provider fallback when the candidate model is unavailable", async () => {
     const candidate = createCandidateBody();
     const qwenPayload = createQwenSsePayload(candidate.candidateDurationMs);
     const upstreamFetch = vi
@@ -1837,19 +1950,19 @@ describe("aiProxy.worker", () => {
         AI_PROVIDER_FALLBACK_MODE: "bounded",
         QWEN_API_KEY: "qwen-secret",
       },
-      { fetchImplementation: upstreamFetch, upstreamRetryDelaysMs: [] },
+      { fetchImplementation: upstreamFetch, upstreamRetryDelaysMs: [0, 0] },
     );
 
-    expect(response.status).toBe(200);
-    expect(response.headers.get("X-ExClipper-Model-Id")).toBe(
-      "qwen3.5-omni-flash",
+    expect(response.status).toBe(502);
+    expect(await responseErrorCode(response)).toBe(
+      "UPSTREAM_MODEL_UNAVAILABLE",
     );
-    expect(response.headers.get("X-ExClipper-Fallback-Reason")).toBe(
-      "model-unavailable",
-    );
+    expect(response.headers.get("X-ExClipper-Model-Id")).toBeNull();
+    expect(response.headers.get("X-ExClipper-Fallback-Reason")).toBeNull();
+    expect(upstreamFetch).toHaveBeenCalledOnce();
   });
 
-  it("reports both bounded failure classes without exposing provider bodies", async () => {
+  it("reports only the first candidate provider failure without exposing its body", async () => {
     const upstreamFetch = vi
       .fn<(_input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>()
       .mockResolvedValueOnce(new Response("primary private", { status: 503 }))
@@ -1862,17 +1975,17 @@ describe("aiProxy.worker", () => {
         AI_PROVIDER_FALLBACK_MODE: "bounded",
         QWEN_API_KEY: "qwen-secret",
       },
-      { fetchImplementation: upstreamFetch, upstreamRetryDelaysMs: [] },
+      { fetchImplementation: upstreamFetch, upstreamRetryDelaysMs: [0, 0] },
     );
 
-    expect(response.status).toBe(429);
-    expect(response.headers.get("X-ExClipper-Primary-Failure")).toBe(
-      "unavailable",
+    expect(response.status).toBe(502);
+    expect(await responseErrorCode(response.clone())).toBe(
+      "UPSTREAM_UNAVAILABLE",
     );
-    expect(response.headers.get("X-ExClipper-Fallback-Failure")).toBe(
-      "rate-limited",
-    );
+    expect(response.headers.get("X-ExClipper-Primary-Failure")).toBeNull();
+    expect(response.headers.get("X-ExClipper-Fallback-Failure")).toBeNull();
     expect(await response.text()).not.toContain("private");
+    expect(upstreamFetch).toHaveBeenCalledOnce();
   });
 
   it.each([
@@ -1962,7 +2075,7 @@ describe("aiProxy.worker", () => {
     expect(text).not.toContain(API_KEY);
   });
 
-  it("retries a transient upstream failure and returns the next valid response", async () => {
+  it("does not retry a transient candidate upstream failure", async () => {
     const candidate = createCandidateBody();
     const geminiPayload = createGeminiPayload(candidate.candidateDurationMs);
     const upstreamFetch = vi
@@ -1981,9 +2094,11 @@ describe("aiProxy.worker", () => {
       },
     );
 
-    expect(response.status).toBe(200);
-    expect(await response.json()).toEqual(geminiPayload);
-    expect(upstreamFetch).toHaveBeenCalledTimes(2);
+    expect(response.status).toBe(502);
+    expect(await responseErrorCode(response)).toBe(
+      "UPSTREAM_UNAVAILABLE",
+    );
+    expect(upstreamFetch).toHaveBeenCalledOnce();
   });
 
   it.each([

@@ -132,13 +132,12 @@ describe("finalizeContextQualifiedCandidates", () => {
           "ai-low": "deprioritized",
           "editor-rejected": "recommended",
         },
-        new Set(["approved-music"]),
       ),
     ).toEqual(["approved-music", "ai-recommended"]);
     expect(ledger).toHaveLength(4);
   });
 
-  it("separates normal context exclusions from missing context without deleting the ledger", () => {
+  it("uses only durable context dispositions for exclusions", () => {
     const ledger = [
       { id: "context-rejected", reviewState: "unreviewed" as const },
       { id: "music-only", reviewState: "unreviewed" as const },
@@ -155,9 +154,8 @@ describe("finalizeContextQualifiedCandidates", () => {
           "context-missing": "insufficient-evidence",
           "approved-override": "deprioritized",
         },
-        new Set(["music-only"]),
       ),
-    ).toEqual(["context-rejected", "music-only"]);
+    ).toEqual(["context-rejected"]);
     expect(ledger.map(({ id }) => id)).toEqual([
       "context-rejected",
       "music-only",

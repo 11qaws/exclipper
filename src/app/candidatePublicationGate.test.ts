@@ -7,7 +7,8 @@ import {
 } from "./candidatePublicationGate";
 
 const settledContext = {
-  candidateDetailOutstandingCount: 8,
+  candidateDetailOutstandingCount: 0,
+  candidatePlanDurable: true,
   candidatePassBBusy: false,
   semanticLeadRefinementStatus: "completed",
   refinementEvidenceRequired: false,
@@ -30,14 +31,26 @@ describe("deriveCandidatePublicationGate", () => {
     ).toBe(true);
   });
 
-  it("opens publication with explicit per-candidate gaps", () => {
+  it("blocks publication while a completed envelope still has missing artifacts", () => {
     const gate = deriveCandidatePublicationGate({
       ...settledContext,
+      candidateDetailOutstandingCount: 8,
+      candidatePassBStatus: "completed",
+    });
+
+    expect(gate.candidateDetailSettled).toBe(false);
+    expect(gate.finalSelectionReady).toBe(false);
+  });
+
+  it("blocks publication with explicit per-candidate gaps", () => {
+    const gate = deriveCandidatePublicationGate({
+      ...settledContext,
+      candidateDetailOutstandingCount: 8,
       candidatePassBStatus: "completedWithGaps",
     });
 
-    expect(gate.candidateDetailSettled).toBe(true);
-    expect(gate.finalSelectionReady).toBe(true);
+    expect(gate.candidateDetailSettled).toBe(false);
+    expect(gate.finalSelectionReady).toBe(false);
   });
 
   it("waits for the active refinement evidence route when the sealed plan selected leads", () => {
@@ -113,6 +126,7 @@ describe("deriveCandidatePublicationGate", () => {
     (candidatePassBStatus) => {
       const gate = deriveCandidatePublicationGate({
         ...settledContext,
+        candidateDetailOutstandingCount: 8,
         candidatePassBStatus,
       });
 
@@ -140,6 +154,19 @@ describe("deriveCandidatePublicationGate", () => {
 
     expect(gate.candidateDetailSettled).toBe(true);
     expect(gate.finalSelectionReady).toBe(true);
+  });
+
+  it("keeps an empty detail queue blocked until its exact empty plan is durable", () => {
+    const gate = deriveCandidatePublicationGate({
+      ...settledContext,
+      candidatePlanDurable: false,
+      candidateDetailOutstandingCount: 0,
+      candidatePassBStatus: null,
+    });
+
+    expect(gate.candidatePlanDurable).toBe(false);
+    expect(gate.candidateDetailSettled).toBe(false);
+    expect(gate.finalSelectionReady).toBe(false);
   });
 
   it("publishes durable artifacts despite a late cancelled envelope", () => {
@@ -171,6 +198,7 @@ describe("selectCandidateDetailActionIds", () => {
       selectCandidateDetailActionIds({
         candidateIds: ["a", "b", "c"],
         outstandingIds: ["b"],
+        retryableIds: [],
         runStatus: "failed",
       }),
     ).toEqual(["b"]);
@@ -183,6 +211,7 @@ describe("selectCandidateDetailActionIds", () => {
         selectCandidateDetailActionIds({
           candidateIds: ["a", "b", "c"],
           outstandingIds: [],
+          retryableIds: [],
           runStatus,
         }),
       ).toEqual([]);
@@ -194,19 +223,32 @@ describe("selectCandidateDetailActionIds", () => {
       selectCandidateDetailActionIds({
         candidateIds: ["a", "b"],
         outstandingIds: [],
+        retryableIds: [],
         runStatus: "completed",
       }),
     ).toEqual(["a", "b"]);
   });
 
-  it("keeps an incomplete legacy insight rerunnable after a completed run", () => {
+  it("keeps an incomplete current insight rerunnable after a completed run", () => {
     expect(
       selectCandidateDetailActionIds({
         candidateIds: ["candidate"],
         outstandingIds: ["candidate"],
+        retryableIds: [],
         runStatus: "completed",
       }),
     ).toEqual(["candidate"]);
+  });
+
+  it("retries only explicitly blocked candidates after a failed run", () => {
+    expect(
+      selectCandidateDetailActionIds({
+        candidateIds: ["a", "b", "c"],
+        outstandingIds: [],
+        retryableIds: ["c", "unknown", "c"],
+        runStatus: "failed",
+      }),
+    ).toEqual(["c"]);
   });
 });
 
@@ -216,7 +258,6 @@ describe("deriveCandidateStageCommitGate", () => {
       deriveCandidateStageCommitGate({
         wholeContextComplete: false,
         finalSelectionReady: true,
-        publicationReady: true,
         hasPipelineGap: true,
       }),
     ).toEqual({
@@ -232,7 +273,6 @@ describe("deriveCandidateStageCommitGate", () => {
       deriveCandidateStageCommitGate({
         wholeContextComplete: true,
         finalSelectionReady: true,
-        publicationReady: true,
         hasPipelineGap: true,
       }),
     ).toEqual({
@@ -248,7 +288,6 @@ describe("deriveCandidateStageCommitGate", () => {
       deriveCandidateStageCommitGate({
         wholeContextComplete: true,
         finalSelectionReady: true,
-        publicationReady: true,
         hasPipelineGap: false,
       }),
     ).toEqual({

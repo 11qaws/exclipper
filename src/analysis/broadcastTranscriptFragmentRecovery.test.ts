@@ -202,50 +202,6 @@ describe("recoverBroadcastTranscriptFragments", () => {
     });
 
     expect(runAttempt).toHaveBeenCalledTimes(1);
-    expect(result.noAudioGaps).toEqual([
-      {
-        chunkId: "asr-a",
-        reason: "no-audio",
-        speechActivityReceipt: null,
-      },
-    ]);
-    expect(result.resolvedAbstentions).toEqual([
-      {
-        chunkId: "asr-a",
-        reason: "no-audio",
-        speechActivityReceipt: null,
-      },
-    ]);
-    expect(result.unresolvedRetryableGaps).toEqual([]);
-  });
-
-  it("normalizes a legacy 1.6 no-audio gap into a resolved abstention", async () => {
-    const runAttempt = vi.fn(
-      (
-        requested: readonly BroadcastContextTranscriptionChunk[],
-      ): Promise<BroadcastTranscriptWorkerRunResult> =>
-        Promise.resolve({
-          fragments: [],
-          results: [],
-          abstentions: [],
-          abstainedChunkIds: [],
-          gaps: requested.map(({ chunkId }) => ({
-            chunkId,
-            reason: "no-audio" as const,
-          })),
-          gapChunkIds: requested.map(({ chunkId }) => chunkId),
-          requestedCount: requested.length,
-          concurrencyOutcome: "legacy 1.6",
-        }),
-    );
-
-    const result = await recoverBroadcastTranscriptFragments({
-      chunks: [firstChunk],
-      manualAttemptGeneration: 0,
-      runAttempt,
-    });
-
-    expect(runAttempt).toHaveBeenCalledTimes(1);
     expect(result.resolvedAbstentions).toEqual([
       {
         chunkId: "asr-a",
@@ -275,7 +231,6 @@ describe("recoverBroadcastTranscriptFragments", () => {
     expect(result.resolvedAbstentions).toEqual([
       expect.objectContaining({ chunkId: "asr-a", reason: "no-speech" }),
     ]);
-    expect(result.noAudioGaps).toEqual([]);
     expect(result.unresolvedRetryableGaps).toEqual([]);
     expect(result.outcomeUnknownGaps).toEqual([]);
   });
@@ -318,17 +273,11 @@ describe("recoverBroadcastTranscriptFragments", () => {
     expect(result.outcomeUnknownGaps).toEqual([]);
   });
 
-  it("awaits durable start and settlement hooks around every worker attempt", async () => {
+  it("awaits the durable terminal settlement hook before returning an attempt", async () => {
     const events: string[] = [];
     const result = await recoverBroadcastTranscriptFragments({
       chunks: [firstChunk],
       manualAttemptGeneration: 3,
-      onAttemptStarting: async (requested, quotaAttemptOrdinal, attemptIndex) => {
-        await Promise.resolve();
-        events.push(
-          `start:${attemptIndex}:${quotaAttemptOrdinal}:${requested[0]?.chunkId}`,
-        );
-      },
       runAttempt: (requested, quotaAttemptOrdinal, attemptIndex) => {
         events.push(
           `run:${attemptIndex}:${quotaAttemptOrdinal}:${requested[0]?.chunkId}`,
@@ -351,7 +300,6 @@ describe("recoverBroadcastTranscriptFragments", () => {
 
     expect(result.fragments.map(({ chunkId }) => chunkId)).toEqual(["asr-a"]);
     expect(events).toEqual([
-      "start:0:12:asr-a",
       "run:0:12:asr-a",
       "settle:0:12:asr-a",
     ]);

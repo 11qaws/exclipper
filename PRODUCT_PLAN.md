@@ -7,7 +7,7 @@
 - 전체 대사 지도 seal 뒤 `BroadcastParticipantGrounding`을 결정론적으로 만들고 session에 저장한 다음 exact readback이 성공해야 전체 맥락 API를 시작한다. `sealed`는 계획한 근거 수집이 정상 terminal이라는 뜻이며 인물 식별 성공을 뜻하지 않는다.
 - 현재 transcript-name 어댑터는 이름·고정 호칭이 나타난 챕터만 근거화한다. visual/voice 어댑터는 6인 전원의 검증된 reference manifest가 없으므로 명시적인 unavailable terminal로 기록한다. 이 상태에서는 맥락은 진행하되 주 진행자 이름과 발화자를 source prior만으로 확정하지 않는다.
 - voice 어댑터의 WavLM 임베딩 Worker와 부분 coverage/open-set 비교 계층은 준비되어 있다. 다만 전원 방송 6개와 개인 채널 12개를 교차검증한 결과 전원 방송의 30초 표본 다수가 다중 화자·음악에 오염된 것으로 나타났으므로 아직 App에 연결하지 않는다. VAD/overlap 제거와 사람 검증을 통과한 참여자만 prototype coverage에 포함하고, 나머지는 `unknown`으로 남긴다.
-- session schema `1.7.0`은 source roster, transcript seal, grounding pair, refinement transcript checkpoint, whole-context exact input snapshot을 함께 저장한다. 맥락·refinement 결과는 compare-and-swap으로만 commit하며 복구 때 모든 fingerprint를 다시 계산한다. 기존 1.2~1.6 결과는 삭제하지 않고 마이그레이션하되 grounding이나 exact input이 없던 과거 맥락을 새 근거가 있는 결과로 표시하지 않는다.
+- session schema `1.12.0`은 source roster, transcript seal, grounding pair, refinement transcript checkpoint, whole-context exact input snapshot을 함께 저장한다. 맥락·refinement 결과는 compare-and-swap으로만 commit하며 복구 때 모든 fingerprint를 다시 계산한다. `0.9.0`은 배포 전 current-only 계약이므로 이전 session schema를 마이그레이션하거나 현재 결과로 승격하지 않는다.
 - visual/voice 결과 타입과 validator는 실제 관찰 근거 및 `인물 없음 | 식별 불가 | 무발화` terminal을 이미 보존한다. 145개 이상 챕터를 요청 경계에서 압축할 때도 media evidence는 버리지 않고 새 bounded transcript-name projection 위에 다시 결합한다.
 - 실제 매체 식별은 두 계층이다. 맥락 전 방송 단위 grounding pass는 빠른 탐색·전사와 병렬로 source-time 화면 4장 묶음과 VAD의 비중첩 clean speech turn을 준비하고, visual identity와 `diarization → speaker embedding verification`을 모두 terminal로 만든 뒤 저장·readback한다. 맥락 뒤 후보 단위 confirmation은 같은 immutable bundle key가 일치할 때만 이미 디코딩한 화면·오디오를 재사용해 후보별로 다시 확인한다. 이름 없음·인물 없음·무발화·식별 불가는 정상 결과이며 디코딩·모델 실패만 다음 phase 전에 해당 cell을 재시도한다.
 - pre-context 계획은 transcript/visual/voice adapter의 source·model·reference manifest fence를 하나의 fingerprint로 묶는다. enabled adapter의 모든 cell이 modality에 맞는 terminal이고 누락·retryable·outcome-unknown이 0일 때만 seal한다. 검증된 visual/voice manifest가 없으면 해당 adapter는 명시적 unavailable terminal이므로 맥락은 진행하지만 이름을 만들지 않는다.
@@ -15,20 +15,20 @@
 
 ## 다음 배포 후보 · 완전 검증 파이프라인 계약
 
-- 전체 방송 전사는 한 번의 Worker run이 아니라 `초기 시도 → 실패 조각만 최대 2회 복구 → 저장 readback → event-boost seal`의 한 phase다. 성공 조각은 즉시 source-fenced checkpoint로 보존하며 자동 복구에서 다시 보내지 않는다.
-- `decode-failed | transcription-failed | rate-limited`만 새 quota attempt로 자동 재시도한다. 정상 디코딩 뒤 발화가 없는 `no-audio`는 음성 없음이라는 완성된 음성 근거로 저장한다. 공급자 요청 전에 해당 source range를 `in-flight`와 영속 attempt ordinal로 먼저 저장하며, 탭이 이 사이 종료되면 새로고침은 이를 결과 불명으로 취급한다. 응답 도달 여부를 알 수 없는 `outcome-unknown`은 동일 lease transport replay로 먼저 확인하되, 결과를 끝내 확인할 수 없으면 새 유료 operation을 몰래 만들지 않고 phase를 실패 상태로 유지한다.
+- 전체 방송 전사는 한 번의 Worker run이 아니라 `실패 조각만 최대 3회인 bounded wave → 저장 readback → 남은 안전 조각의 다음 generation → event-boost seal`을 반복하는 한 phase다. 성공·무발화 조각은 즉시 source-fenced checkpoint로 보존하며 자동 복구에서 다시 보내지 않는다. 한 wave의 상한은 메모리와 호출 폭주를 막기 위한 것이지 세 번째 wave 뒤 분석을 포기하는 상한이 아니다.
+- `decode-failed | transcription-failed | rate-limited`만 새 quota attempt로 자동 재시도한다. 정상 디코딩 뒤 발화가 없는 `no-audio`는 음성 없음이라는 완성된 음성 근거로 저장한다. 공급자 요청 전에 해당 source range를 `in-flight`와 영속 attempt ordinal로 먼저 저장하며, 탭이 이 사이 종료되면 새로고침은 이를 결과 불명으로 취급한다. 응답 도달 여부를 알 수 없는 `outcome-unknown`은 동일 lease transport replay로 먼저 확인한다. 무료 route는 미확정 operation을 durable terminal로 닫은 뒤 새 operation ID로 자동 복구하고, 유료 route만 편집자의 명시적 승인 전까지 새 operation을 만들지 않는다.
 - quota operation은 `uniform | event-boost | refinement` namespace와 영속 generation, stable source-range chunk ID를 모두 포함한다. 따라서 uniform의 terminal tombstone, 다음 event-boost, 자동 실패 복구, 새로고침 뒤 명시적 복구가 같은 operation ID를 재사용하지 않는다.
 - 다음 whole-context phase는 현재 run의 최종 `event-boost` operation key, transcript `completed`, chapter 1개 이상, 저장소 exact readback이 모두 일치할 때만 시작한다. 복구 가능한 조각이나 결과 불명 조각이 하나라도 남으면 transcript seal을 발급하지 않으며, 부분 지도를 완성된 방송 맥락으로 사용하지 않는다.
 - candidate ledger, whole-context cohort, paid-detail cohort, final projection은 서로 다른 집합이다. ledger는 발견된 후보를 모두 보존하고, whole-context는 protocol 상한 32개까지 판단하며, paid detail은 맥락 판정 뒤 최대 12개만 검토한다. 실행 예산 때문에 detail에 들어가지 않은 후보를 API 실패로 표시하지 않는다.
 - 최종 후보 하나의 최소 단위는 `전체 방송 흐름 + source-fenced 앞뒤 맥락 + 참고 대사 + 후보 WAV + 서로 다른 JPEG 4장 + 그중 하나인 thumbnail + AI insight + 현재 context fingerprint receipt`다. 어느 하나라도 없으면 최종 후보가 아니며, 기존 점수나 사람의 과거 승인으로 이 gate를 우회하지 않는다.
 - candidate detail run은 후보별 독립 pipeline이다. 화면 bundle이 준비된 후보부터 최대 두 개가 AI로 진행하고, 실패한 후보만 gap으로 남는다. 이미 저장한 다른 후보의 유료 결과는 run envelope 오류나 새로고침 때문에 폐기·재결제하지 않는다.
-- 후보 insight는 IndexedDB 쓰기만으로 완료하지 않는다. 같은 run ID로 즉시 다시 읽어 메타데이터·대사 근거·모델·AI 해석·대표 thumbnail·현재 맥락 receipt가 모두 정확히 일치해야 durable artifact로 인정한다. 사건·반응·클립 가치 설명, 등장인물 상태와 근거, 최종 판정, 맥락 일치, 프로그램성 자료 판정 중 하나라도 비거나 서로 모순되면 과거 호환 레코드라도 완료 자료가 아니다. 이때 불완전 insight 객체의 존재만 보고 분석 완료로 착각하지 않고 해당 후보를 AI 재실행 대상으로 남긴다. 확인 실패 시 메모리 결과는 검토용으로만 남고 `deepPass/publication/completed`는 전진하지 않으며, 완전한 AI 결과의 저장만 실패한 경우에는 API를 다시 부르지 않는 저장 재시도를 제공한다.
+- 후보 insight는 IndexedDB 쓰기만으로 완료하지 않는다. 같은 run ID로 즉시 다시 읽어 메타데이터·대사 근거·모델·AI 해석·대표 thumbnail·계획 때 고정한 정확한 맥락 packet과 receipt가 모두 정확히 일치해야 durable artifact로 인정한다. 사건·반응·클립 가치 설명, 등장인물 상태와 근거, 최종 판정, 맥락 일치, 프로그램성 자료 판정 중 하나라도 비거나 서로 모순되면 완료 자료가 아니다. 이때 불완전 insight 객체의 존재만 보고 분석 완료로 착각하지 않고 해당 후보를 AI 재실행 대상으로 남긴다. 확인 실패 시 메모리 결과는 검토용으로만 남고 `deepPass/publication/completed`는 전진하지 않으며, 완전한 AI 결과의 저장만 실패한 경우에는 API를 다시 부르지 않는 저장 재시도를 제공한다.
 - 최종 0개에는 두 종료 의미가 있다. 모든 검증을 마치고 사건성이 없다고 판단한 방송은 `completedEmpty`, 근거 누락으로 판단하지 못한 방송은 pipeline gap이다. UI와 저장 이력은 각각 “쓸 장면 없음”과 “분석을 끝내지 못함”으로 구분하고 후자에만 복구 행동을 제공한다.
 - Free Worker 후보 전송은 browser bundle → private R2 stage → signed range URL → Qwen 순서다. 전체 방송 자료는 세션에 그대로 보존하고, provider 전에는 전체 요약·주제·후보 대사·앞뒤 흐름·빠른 근거·판정·채팅을 48KiB의 공식 candidate context packet으로 결정론적으로 구성한다. 중간을 줄인 필드는 `[중간 생략 / middle omitted]`을 명시하고 앞·뒤를 보존한다. Qwen·Gemini·quota 예약·verification receipt는 모두 이 동일한 canonical packet만 사용하므로 합법적인 최대 입력도 80KiB prompt/100k TPM 경계 안에서 크기 때문에 중단되지 않는다. 세션 원문은 그대로 남고, 모델이 받지 않은 중간 원문을 봤다고 기록하지 않는다.
 - candidate R2 ingress는 `Content-Length` 유무와 관계없이 서명된 exact byte length에서 streaming fence를 건다. 초과 본문은 읽는 즉시 413으로 중단하고, 짧은 본문은 400으로 거부하며, 어느 경우에도 불완전한 객체를 provider 실행이나 최종 후보로 넘기지 않는다.
 - 후보 bundle은 Worker에서 버퍼링·디코딩·Base64 변환하지 않지만 headerless 초과를 막기 위해 각 chunk의 byte count는 관찰한다. 이 counted stream을 exact-length metadata를 보존하는 `FixedLengthStream`에 연결해 R2에 전달한다. 기존 object 재사용·manifest conflict·conditional PUT race에서는 미사용 body를 JS로 drain하지 않고 pump를 abort한다.
 - Qwen이 성공 HTTP를 보냈더라도 candidate schema 검증이 실패하면 같은 staged media와 fresh internal quota operation으로 최대 두 번 복구한다. 이 bounded 복구가 모두 실패한 항목은 완성 후보가 아니며, staged object와 ticket을 보존해 해당 후보만 다시 분석할 수 있게 한다.
-- 배포 호환은 양방향이다. 새 Pages는 구 Worker의 health를 `legacy`로 해석하고, 새 Worker는 bounded 구 candidate JSON을 한 배포 주기 동안 허용한다. transport health cache는 60초 뒤 다시 확인하며 일시 실패는 영구 cache하지 않는다.
+- `0.9.0`은 current-only 단일 배포 계약이다. Pages와 Worker는 같은 commit의 protocol만 수용하고, 이전 candidate JSON·화면 없는 audio-only 후보·이전 health contract를 받아들이지 않는다. 배포는 Worker와 Pages를 한 묶음으로 교체하며 transport health cache는 60초 뒤 다시 확인하고 일시 실패는 영구 cache하지 않는다.
 
 ## `0.8.7` 무료 R2 기본·유료 direct 즉시 전환 계약
 
@@ -819,7 +819,7 @@ videoMs = messageTimeMs - broadcastStartedAtMs + syncOffsetMs
 
 ### 7.3 StreamSaver를 기준으로 한 UI 디자인 시스템
 
-전반적인 모양은 같은 작업공간의 StreamSaver 웹 대시보드를 기준으로 한다. 원본 `D:/Agents/StreamSaver/Opencode/workspace/index.html`의 `<style>` 블록 567줄을 다음 파일에 스냅샷으로 복사했다.
+전반적인 모양은 같은 작업공간의 StreamSaver 웹 대시보드를 기준으로 한다. 원본 StreamSaver `index.html`의 `<style>` 블록 567줄을 다음 파일에 스냅샷으로 복사했다.
 
 - `styles/streamsaver-reference.css` — 2026-07-19 원본 보존본. 직접 수정하지 않는다.
 - `styles/retto-highlight.css` — ExClipper 전용 토큰·레이아웃·분석 진행·후보·근거 배지·반응 지도를 수정하는 유일한 파일.
@@ -2482,7 +2482,7 @@ YouTube IFrame이 요구하는 Referer를 유지하고 `strict-origin-when-cross
 
 다음은 코드 작성 전에 승인을 받는 것이 좋다.
 
-1. 제품 이름: `ExClipper` (확정; 저장소와 Pages 경로는 `rettolight` 호환 유지)
+1. 제품 이름: `ExClipper` (확정; 저장소와 Pages 경로는 `/exclipper/`만 지원)
 2. 1차 권장 환경: AI WebGPU 분석과 대용량 출력은 데스크톱 Chrome/Edge 우선으로 안내하되 기능 검사로 폴백할지
 3. AI 후보량 기본값: 원본 1시간당 약 6개를 목표로 하는 `균형`, 결과 뒤 `더 엄선/더 많이`
 4. 클립 경계: 맥락 8~25초 + 사건 + 반응 6~15초, 전체 30~60초 자동 제안

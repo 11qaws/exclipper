@@ -25,6 +25,7 @@ function makePayload(withChatGap = false): DurableFinalResultPayload {
       source: {
         sourceDefinitionId: "source-recovery-1",
         contentFingerprint: SOURCE_FINGERPRINT,
+        captionVideoId: null,
         sizeBytes: 8_000_000,
         durationMs: 120_000,
         kind: "video",
@@ -45,6 +46,9 @@ function makePayload(withChatGap = false): DurableFinalResultPayload {
       outOfRangeChatMessageCount: 0,
       skippedChatMessageCount: withChatGap ? 10 : 0,
       chatGapReasonCode,
+      plannedAudioWindowCount: 120,
+      analyzedAudioWindowCount: 120,
+      audioGapReasonCode: null,
       candidateCount: 0,
     },
     coverage: {
@@ -55,15 +59,19 @@ function makePayload(withChatGap = false): DurableFinalResultPayload {
       chatProcessedMessageCount: 0,
       chatCoverageComplete: !withChatGap,
       chatGapReasonCode,
-      chatGapApproval: withChatGap
+      audioPlannedWindowCount: 120,
+      audioProcessedWindowCount: 120,
+      audioCoverageComplete: true,
+      audioGapReasonCode: null,
+      signalGapApproval: withChatGap
         ? {
-            policyId: "local-chat-worker-degradation-v1",
+            policyId: "local-available-signal-degradation-v2",
             disclosedBeforeStart: true,
             approvals: [
               {
                 gapId: "chat-signal-analysis",
                 reason: "WORKER_UNAVAILABLE",
-                approvedBy: "local-chat-worker-degradation-v1",
+                approvedBy: "local-available-signal-degradation-v2",
               },
             ],
           }
@@ -82,15 +90,15 @@ function makeManifest(
     kind: "manifest",
     runId,
     artifactId: `manifest-${runId}`,
-    schemaVersion: "0.2.0",
+    schemaVersion: "0.3.0",
     inputSignature: INPUT_SIGNATURE,
-    modelManifestHash: "visual-chat-fast-pass-v1",
+    modelManifestHash: "streamer-reaction-fast-pass-v1",
     result: {
       input: payload.input,
-      chatGapPolicy: {
-        policyId: "local-chat-worker-degradation-v1",
+      signalGapPolicy: {
+        policyId: "local-available-signal-degradation-v2",
         disclosedBeforeStart: true,
-        behavior: "preserve-visual-result-and-complete-with-documented-chat-gap",
+        behavior: "complete-with-available-reaction-signals-and-documented-gaps",
       },
     },
     recordedAt: RECORDED_AT,
@@ -105,9 +113,9 @@ function makeFinal(
     kind: "finalResult",
     runId,
     artifactId: `result-${runId}`,
-    schemaVersion: "0.2.0",
+    schemaVersion: "0.3.0",
     inputSignature: INPUT_SIGNATURE,
-    modelManifestHash: "visual-chat-fast-pass-v1",
+    modelManifestHash: "streamer-reaction-fast-pass-v1",
     result: payload,
     recordedAt: RECORDED_AT,
   };
@@ -121,9 +129,9 @@ function makeTerminal(
   return {
     kind: "terminalDisposition",
     runId,
-    schemaVersion: "0.2.0",
+    schemaVersion: "0.3.0",
     inputSignature: INPUT_SIGNATURE,
-    modelManifestHash: "visual-chat-fast-pass-v1",
+    modelManifestHash: "streamer-reaction-fast-pass-v1",
     outcome,
     resultRecordKind:
       outcome === "completed" || outcome === "completedWithGaps"
@@ -162,8 +170,25 @@ describe("recoverable analysis audit", () => {
       schemaVersion: CANDIDATE_PASS_B_INSIGHT_SCHEMA_VERSION,
       inputSignature: INPUT_SIGNATURE,
       modelManifestHash: "gemini-3.1-pro-preview",
+      planReceipt: {
+        schemaVersion: "1.0.0",
+        runId,
+        inputSignature: INPUT_SIGNATURE,
+        contextInputSignature: "context-input-signature",
+        refinementEvidenceProjectionFingerprint: null,
+        plannedCandidateIds: [],
+        plannedContextFingerprints: [],
+        planFingerprint: `sha256:${"a".repeat(64)}`,
+      },
+      contextByCandidateId: {},
       evidenceById: {},
       insightById: {},
+      modelByCandidateId: {},
+      thumbnailById: {},
+      attemptLedgerByCandidateId: {},
+      dispatchIntentByCandidateId: {},
+      settlementByCandidateId: {},
+      verificationReceiptById: {},
       recordedAt: RECORDED_AT,
     };
     await store.putCandidatePassBInsights(passB);
@@ -177,14 +202,32 @@ describe("recoverable analysis audit", () => {
     const store = new InMemoryAnalysisResultStore();
     const runId = "run-with-stale-pass-b";
     await putCompletedBundle(store, runId);
+    const staleInputSignature = `sha256:${"f".repeat(64)}`;
     await store.putCandidatePassBInsights({
       kind: "candidatePassBInsights",
       runId,
       schemaVersion: CANDIDATE_PASS_B_INSIGHT_SCHEMA_VERSION,
-      inputSignature: `sha256:${"f".repeat(64)}`,
+      inputSignature: staleInputSignature,
       modelManifestHash: "gemini-3.1-pro-preview",
+      planReceipt: {
+        schemaVersion: "1.0.0",
+        runId,
+        inputSignature: staleInputSignature,
+        contextInputSignature: "context-input-signature",
+        refinementEvidenceProjectionFingerprint: null,
+        plannedCandidateIds: [],
+        plannedContextFingerprints: [],
+        planFingerprint: `sha256:${"b".repeat(64)}`,
+      },
+      contextByCandidateId: {},
       evidenceById: {},
       insightById: {},
+      modelByCandidateId: {},
+      thumbnailById: {},
+      attemptLedgerByCandidateId: {},
+      dispatchIntentByCandidateId: {},
+      settlementByCandidateId: {},
+      verificationReceiptById: {},
       recordedAt: RECORDED_AT,
     });
 
@@ -211,11 +254,11 @@ describe("recoverable analysis audit", () => {
   it("treats an approved audio coverage gap as completedWithGaps on reload", async () => {
     const store = new InMemoryAnalysisResultStore();
     const runId = "run-audio-gap";
-    const legacy = makePayload(false);
+    const baseline = makePayload(false);
     const payload: DurableFinalResultPayload = {
-      ...legacy,
+      ...baseline,
       summary: {
-        ...legacy.summary,
+        ...baseline.summary,
         plannedAudioWindowCount: 120,
         analyzedAudioWindowCount: 0,
         audioGapReasonCode: "NO_AUDIO_TRACK",
@@ -306,19 +349,19 @@ describe("recoverable analysis audit", () => {
     });
   });
 
-  it("quarantines a bundle when manifest/final and terminal schema versions disagree", async () => {
+  it("rejects a legacy terminal before it can enter recoverable history", async () => {
     const store = new InMemoryAnalysisResultStore();
-    const payload = makePayload();
-    await store.putManifest(makeManifest("run-schema-skew", payload));
-    await store.putFinalResult(makeFinal("run-schema-skew", payload));
-    await store.putTerminalRecord({
+    const legacyTerminal = {
       ...makeTerminal("run-schema-skew", "completed"),
-      schemaVersion: "0.3.0",
-    });
+      schemaVersion: "0.2.9",
+    } as unknown as AnalysisTerminalRecord;
 
+    await expect(store.putTerminalRecord(legacyTerminal)).rejects.toMatchObject({
+      code: "INVALID_PAYLOAD",
+    });
     await expect(auditRecoverableAnalysisResults(store)).resolves.toMatchObject({
       results: [],
-      skippedCompletedResultCount: 1,
+      skippedCompletedResultCount: 0,
     });
   });
 

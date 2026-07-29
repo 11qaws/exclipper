@@ -4,7 +4,6 @@ import {
   AMORETTO_CHANNEL_CAST_ROSTER_ID,
   DEFAULT_CANDIDATE_PASS_B_CAST_ROSTER_ID,
   EUREKA_CHANNEL_CAST_ROSTER_ID,
-  LEGACY_CANDIDATE_PASS_B_CAST_ROSTER_ID,
   MANGJING_CHANNEL_CAST_ROSTER_ID,
   SENA_ARBEL_CHANNEL_CAST_ROSTER_ID,
   TORORI_COCO_CHANNEL_CAST_ROSTER_ID,
@@ -18,9 +17,6 @@ describe("streamer palette for roster", () => {
   it("maps a group / unknown source to the base palette", () => {
     expect(paletteIdForCastRosterId(null)).toBe("default");
     expect(paletteIdForCastRosterId(DEFAULT_CANDIDATE_PASS_B_CAST_ROSTER_ID)).toBe(
-      "default",
-    );
-    expect(paletteIdForCastRosterId(LEGACY_CANDIDATE_PASS_B_CAST_ROSTER_ID)).toBe(
       "default",
     );
   });

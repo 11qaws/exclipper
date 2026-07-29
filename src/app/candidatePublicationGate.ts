@@ -8,6 +8,8 @@ export type SemanticLeadRefinementStatus =
 
 export interface CandidatePublicationGateInput {
   readonly candidateDetailOutstandingCount: number;
+  /** Exact current plan receipt and its plan-only snapshot survived readback. */
+  readonly candidatePlanDurable: boolean;
   readonly candidatePassBStatus: CandidatePassBRunState["status"] | null;
   readonly candidatePassBBusy: boolean;
   readonly semanticLeadRefinementStatus: SemanticLeadRefinementStatus;
@@ -22,6 +24,7 @@ export interface CandidatePublicationGate {
   readonly detailedReviewActive: boolean;
   readonly detailedReviewFailed: boolean;
   readonly candidateDetailSettled: boolean;
+  readonly candidatePlanDurable: boolean;
   readonly refinementEvidenceReady: boolean;
   readonly finalSelectionReady: boolean;
 }
@@ -36,9 +39,18 @@ export interface CandidateStageCommitGate {
 export function selectCandidateDetailActionIds(input: {
   readonly candidateIds: readonly string[];
   readonly outstandingIds: readonly string[];
+  readonly retryableIds: readonly string[];
   readonly runStatus: CandidatePassBRunState["status"] | null;
 }): readonly string[] {
-  if (input.outstandingIds.length > 0) return input.outstandingIds;
+  const requestedIds = new Set([
+    ...input.outstandingIds,
+    ...input.retryableIds,
+  ]);
+  if (requestedIds.size > 0) {
+    return input.candidateIds.filter((candidateId) =>
+      requestedIds.has(candidateId),
+    );
+  }
   if (input.runStatus === "failed" || input.runStatus === "cancelled") {
     /*
      * All paid artifacts survived but the final envelope did not. Retrying the
@@ -73,10 +85,14 @@ export function deriveCandidatePublicationGate(
     input.semanticLeadRefinementStatus === "failed" ||
     input.candidatePassBStatus === "failed" ||
     input.candidatePassBStatus === "cancelled";
+  /*
+   * A run envelope is not candidate evidence. `completedWithGaps` explicitly
+   * means at least one planned detail cell is unresolved, and even a nominal
+   * `completed` envelope cannot override an exact durable outstanding count.
+   */
   const candidateDetailSettled =
-    input.candidateDetailOutstandingCount === 0 ||
-    input.candidatePassBStatus === "completed" ||
-    input.candidatePassBStatus === "completedWithGaps";
+    input.candidateDetailOutstandingCount === 0 &&
+    input.candidatePlanDurable === true;
   const detailFailureStillHasMissingArtifacts =
     detailedReviewFailed && input.candidateDetailOutstandingCount > 0;
   const refinementEvidenceContractValid =
@@ -105,6 +121,7 @@ export function deriveCandidatePublicationGate(
     detailedReviewActive,
     detailedReviewFailed,
     candidateDetailSettled,
+    candidatePlanDurable: input.candidatePlanDurable === true,
     refinementEvidenceReady,
     finalSelectionReady,
   };
@@ -118,7 +135,6 @@ export function deriveCandidatePublicationGate(
 export function deriveCandidateStageCommitGate(input: {
   readonly wholeContextComplete: boolean;
   readonly finalSelectionReady: boolean;
-  readonly publicationReady: boolean;
   readonly hasPipelineGap: boolean;
 }): CandidateStageCommitGate {
   const broadcastContext = input.wholeContextComplete;
@@ -126,7 +142,12 @@ export function deriveCandidateStageCommitGate(input: {
     broadcastContext &&
     input.finalSelectionReady &&
     !input.hasPipelineGap;
-  const publication = deepPass && input.publicationReady;
+  /*
+   * Publication is an analysis-artifact transition. Timeline reveal progress
+   * is presentation state and may be throttled while the tab is in the
+   * background, so it must never participate in the durable job cursor.
+   */
+  const publication = deepPass;
   return {
     broadcastContext,
     deepPass,

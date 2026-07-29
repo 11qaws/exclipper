@@ -102,19 +102,14 @@ describe("broadcastParticipantGrounding", () => {
     ).toBe(true);
   });
 
-  it("retains the six-person catalog without inventing a source prior", () => {
+  it("keeps an unknown source participant list empty instead of leaking the six-person catalog", () => {
     const grounding = createBroadcastParticipantGrounding({
       sourceDurationMs: 120_000,
       castRosterId: null,
       chapters: [],
     });
     expect(grounding.resolutionStatus).toBe("no-source-roster");
-    expect(grounding.participants).toHaveLength(6);
-    expect(
-      grounding.participants.every(
-        ({ sourceRolePrior }) => sourceRolePrior === "none",
-      ),
-    ).toBe(true);
+    expect(grounding.participants).toEqual([]);
     expect(
       grounding.evidence.some(({ kind }) => kind === "source-channel-prior"),
     ).toBe(false);

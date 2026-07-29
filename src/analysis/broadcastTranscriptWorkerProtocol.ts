@@ -1,4 +1,7 @@
-import type { BroadcastContextTranscriptionChunk } from "./broadcastContextSamplingPlan";
+import {
+  QWEN_ASR_SAFE_CHUNK_DURATION_MS,
+  type BroadcastContextTranscriptionChunk,
+} from "./broadcastContextSamplingPlan";
 import type {
   BroadcastTranscriptRouteSelection,
   BroadcastTranscriptVerifiedResult,
@@ -7,15 +10,11 @@ import type {
   BroadcastSpeechActivityRunReceipt,
 } from "./broadcastSpeechActivity";
 
-export const BROADCAST_TRANSCRIPT_WORKER_VERSION = "2.0.0" as const;
-/**
- * 한 실행이 보낼 수 있는 청크 수의 상한.
- *
- * 0.8.5의 30초 완화 실행과 저장된 재개 계획을 읽을 수 있도록 760을 유지한다.
- * 새 0.8.6 계획은 90초 raw WAV라 실제 최악 수가 더 작지만, protocol ceiling을
- * 낮춰 과거 partial checkpoint를 거부할 이유는 없다.
- */
-export const MAX_BROADCAST_TRANSCRIPT_WORKER_CHUNKS = 760;
+export const BROADCAST_TRANSCRIPT_WORKER_VERSION = "2.1.0" as const;
+/** One canonical 90-second cell for every range in a maximum 12-hour source. */
+export const MAX_BROADCAST_TRANSCRIPT_WORKER_CHUNKS = Math.ceil(
+  (12 * 60 * 60_000) / QWEN_ASR_SAFE_CHUNK_DURATION_MS,
+);
 export const MAX_BROADCAST_TRANSCRIPT_CHUNK_ID_LENGTH = 96;
 
 export function isBroadcastTranscriptChunkId(value: unknown): value is string {
@@ -54,6 +53,22 @@ export interface BroadcastTranscriptQuotaIdentity {
   readonly attemptOrdinal?: number;
 }
 
+/**
+ * Exact paid-request boundary. The worker emits this only after decoding and
+ * VAD, immediately before acquiring quota or starting the provider fetch.
+ * Main must durably persist and read back this one cell before ACKing it.
+ */
+export interface BroadcastTranscriptDispatchIntent {
+  readonly operationId: string;
+  readonly chunkId: string;
+  readonly sourceStartMs: number;
+  readonly sourceEndMs: number;
+  readonly attemptOrdinal: number;
+  readonly operationNamespace: BroadcastTranscriptQuotaOperationNamespace;
+  readonly operationScope: string | null;
+  readonly routeManifestFingerprint: string;
+}
+
 export function isBroadcastTranscriptQuotaOperationScope(
   value: unknown,
 ): value is string {
@@ -67,14 +82,12 @@ export function isBroadcastTranscriptQuotaOperationScope(
 
 /**
  * Why one requested transcript fragment did not produce a transcript despite
- * requiring ASR. Current 2.0 values are either safe to retry or must remain
- * explicitly blocked until their billing outcome is known. `no-audio` remains
- * only so a 1.6 response can be normalized into an abstention during rollout.
+ * requiring ASR. Current 2.1 values are either safe to retry or must remain
+ * explicitly blocked until their billing outcome is known. A decoded range
+ * without audio is a resolved abstention, never a retry gap.
  */
 export type BroadcastTranscriptChunkGapReason =
   | "decode-failed"
-  /** Legacy 1.6 worker response; 2.0 emits a resolved abstention instead. */
-  | "no-audio"
   | "transcription-failed"
   | "rate-limited"
   /** Server route changed before provider billing; reacquire health and resume. */
@@ -122,6 +135,17 @@ export type BroadcastTranscriptWorkerRequest =
   | {
       readonly type: "broadcast-transcript-cancel";
       readonly identity: BroadcastTranscriptWorkerIdentity;
+    }
+  | {
+      readonly type: "broadcast-transcript-dispatch-ack";
+      readonly identity: BroadcastTranscriptWorkerIdentity;
+      readonly chunkId: string;
+      readonly operationId: string;
+    }
+  | {
+      readonly type: "broadcast-transcript-terminal-ack";
+      readonly identity: BroadcastTranscriptWorkerIdentity;
+      readonly chunkId: string;
     };
 
 export interface BroadcastTranscriptWorkerProgress {
@@ -144,6 +168,11 @@ export type BroadcastTranscriptWorkerResponse =
       readonly type: "broadcast-transcript-progress";
       readonly identity: BroadcastTranscriptWorkerIdentity;
       readonly progress: BroadcastTranscriptWorkerProgress;
+    }
+  | {
+      readonly type: "broadcast-transcript-dispatch-intent";
+      readonly identity: BroadcastTranscriptWorkerIdentity;
+      readonly intent: BroadcastTranscriptDispatchIntent;
     }
   | {
       readonly type: "broadcast-transcript-partial";

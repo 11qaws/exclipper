@@ -1,11 +1,11 @@
 import {
   MAX_CANDIDATE_PASS_B_RESPONSE_BYTES,
-  buildCandidatePassBAudioOnlySafeResponse,
   buildCandidatePassBGeminiRequestBody,
   extractCandidatePassBGeminiResponse,
 } from "../analysis/candidatePassBGemini";
 import {
   CANDIDATE_PASS_B_QWEN_MAX_OUTPUT_TOKENS,
+  buildBroadcastTranscriptVisualQwenOmniUrlRequestBody,
   buildCandidatePassBQwenOmniSharedPrompt,
   buildCandidatePassBQwenOmniRequestBody,
   buildCandidatePassBQwenOmniUrlRequestBody,
@@ -13,6 +13,7 @@ import {
   inspectCandidatePassBQwenOmniSseResponse,
 } from "../analysis/candidatePassBQwenOmni";
 import {
+  BROADCAST_TRANSCRIPT_VISUAL_MEDIA_RESOLVE_CONTENT_TYPE,
   CANDIDATE_INSIGHT_MEDIA_BUNDLE_CONTENT_TYPE,
   CANDIDATE_INSIGHT_MEDIA_ENDPOINT_PATH,
   CANDIDATE_INSIGHT_MEDIA_RESOLVE_CONTENT_TYPE,
@@ -53,12 +54,9 @@ import {
 import {
   createBroadcastContextRequest,
   BroadcastContextInputError,
-  MAX_BROADCAST_CONTEXT_CHAPTERS,
-  MAX_BROADCAST_CONTEXT_UNCOMPACTED_CHAPTERS,
   type BroadcastContextRequest,
   type BroadcastContextRequestInput,
 } from "../analysis/broadcastContextProtocol";
-import { compactBroadcastContextChapters } from "../analysis/broadcastContextChapterCompaction";
 import {
   BROADCAST_TRANSCRIPT_QWEN_MAX_OUTPUT_TOKENS,
   MAX_BROADCAST_TRANSCRIPT_QWEN_DURATION_MS,
@@ -237,7 +235,6 @@ const UPSTREAM_TIMEOUT_MS = 90_000;
 const QUOTA_EXECUTION_WAIT_TIMEOUT_MS = 3 * 60_000;
 const QUOTA_CANCEL_TIMEOUT_MS = 1_000;
 const DEFAULT_UPSTREAM_RETRY_DELAYS_MS = Object.freeze([1_000, 2_000]);
-const CANDIDATE_INVALID_RESPONSE_RETRY_LIMIT = 2;
 const QWEN_OMNI_SHARED_RATE_LIMIT_KEY = "qwen-omni-media";
 const RATE_LIMIT_KEY = QWEN_OMNI_SHARED_RATE_LIMIT_KEY;
 const BROADCAST_CONTEXT_RATE_LIMIT_KEY = "broadcast-context";
@@ -284,11 +281,15 @@ function candidateTokenReservation(
   const textTokenUpperBound =
     new TextEncoder().encode(sharedPrompt).byteLength +
     QWEN_CANDIDATE_PROMPT_TOKEN_MARGIN;
+  const hasAudio =
+    "audioBase64" in candidateRequest || candidateRequest.audioUrl !== null;
   return (
-    Math.ceil(
-      (candidateRequest.candidateDurationMs / 1_000) *
-        QWEN_OMNI_AUDIO_TOKENS_PER_SECOND,
-    ) +
+    (hasAudio
+      ? Math.ceil(
+          (candidateRequest.candidateDurationMs / 1_000) *
+            QWEN_OMNI_AUDIO_TOKENS_PER_SECOND,
+        )
+      : 0) +
     candidateRequest.videoFrames.length *
       QWEN_OMNI_MAX_IMAGE_TOKENS_PER_FRAME +
     textTokenUpperBound +
@@ -332,12 +333,18 @@ export interface AiProxyEnvironment
 }
 
 interface CandidateInsightRequest {
+  readonly mode: "candidate";
   readonly audioBase64: string;
   readonly candidateDurationMs: number;
-  readonly videoFrames: readonly CandidatePassBVideoFrame[];
+  readonly videoFrames: readonly [
+    CandidatePassBVideoFrame,
+    CandidatePassBVideoFrame,
+    CandidatePassBVideoFrame,
+    CandidatePassBVideoFrame,
+  ];
   readonly castRosterId: CandidatePassBCastRosterId | null;
   readonly outputLanguage: AnalysisLanguage;
-  readonly context: CandidatePassBContextPacket | null;
+  readonly context: CandidatePassBContextPacket;
 }
 
 interface CandidateInsightUrlFrame {
@@ -345,19 +352,35 @@ interface CandidateInsightUrlFrame {
   readonly url: string;
 }
 
-interface CandidateInsightUrlRequest {
-  readonly audioUrl: string;
-  readonly candidateDurationMs: number;
-  readonly videoFrames: readonly [
-    CandidateInsightUrlFrame,
-    CandidateInsightUrlFrame,
-    CandidateInsightUrlFrame,
-    CandidateInsightUrlFrame,
-  ];
-  readonly castRosterId: CandidatePassBCastRosterId | null;
-  readonly outputLanguage: AnalysisLanguage;
-  readonly context: CandidatePassBContextPacket | null;
-}
+type CandidateInsightUrlRequest =
+  | {
+      readonly mode: "candidate";
+      readonly audioUrl: string;
+      readonly candidateDurationMs: number;
+      readonly videoFrames: readonly [
+        CandidateInsightUrlFrame,
+        CandidateInsightUrlFrame,
+        CandidateInsightUrlFrame,
+        CandidateInsightUrlFrame,
+      ];
+      readonly castRosterId: CandidatePassBCastRosterId | null;
+      readonly outputLanguage: AnalysisLanguage;
+      readonly context: CandidatePassBContextPacket;
+    }
+  | {
+      readonly mode: "transcript-visual";
+      readonly audioUrl: string | null;
+      readonly candidateDurationMs: number;
+      readonly videoFrames: readonly [
+        CandidateInsightUrlFrame,
+        CandidateInsightUrlFrame,
+        CandidateInsightUrlFrame,
+        CandidateInsightUrlFrame,
+      ];
+      readonly castRosterId: CandidatePassBCastRosterId | null;
+      readonly outputLanguage: AnalysisLanguage;
+      readonly context: CandidatePassBContextPacket | null;
+    };
 
 type CandidateInsightProviderRequest =
   | CandidateInsightRequest
@@ -708,15 +731,14 @@ function parseCandidateRequest(bytes: Uint8Array): CandidateInsightRequest | nul
   }
   if (
     !isRecord(value) ||
-    !["audioBase64", "candidateDurationMs"].every((key) => key in value) ||
-    Object.keys(value).some((key) => ![
+    !hasExactKeys(value, [
       "audioBase64",
       "candidateDurationMs",
       "videoFrames",
       "context",
       "castRosterId",
       "outputLanguage",
-    ].includes(key)) ||
+    ]) ||
     typeof value.audioBase64 !== "string" ||
     value.audioBase64.length === 0 ||
     value.audioBase64.length > MAX_AUDIO_BASE64_LENGTH ||
@@ -726,8 +748,11 @@ function parseCandidateRequest(bytes: Uint8Array): CandidateInsightRequest | nul
   ) {
     return null;
   }
-  const rawFrames = "videoFrames" in value ? value.videoFrames : [];
-  if (!Array.isArray(rawFrames) || rawFrames.length > MAX_CANDIDATE_PASS_B_VIDEO_FRAMES) {
+  const rawFrames = value.videoFrames;
+  if (
+    !Array.isArray(rawFrames) ||
+    rawFrames.length !== MAX_CANDIDATE_PASS_B_VIDEO_FRAMES
+  ) {
     return null;
   }
   const videoFrames: CandidatePassBVideoFrame[] = [];
@@ -737,7 +762,8 @@ function parseCandidateRequest(bytes: Uint8Array): CandidateInsightRequest | nul
       !hasExactKeys(frame, ["timestampMs", "mimeType", "dataBase64"]) ||
       !Number.isSafeInteger(frame.timestampMs) ||
       (frame.timestampMs as number) < 0 ||
-      (frame.timestampMs as number) > MAX_CANDIDATE_PASS_B_TARGET_DURATION_MS ||
+      (frame.timestampMs as number) >=
+        (value.candidateDurationMs as number) ||
       frame.mimeType !== "image/jpeg" ||
       typeof frame.dataBase64 !== "string" ||
       frame.dataBase64.length === 0 ||
@@ -752,18 +778,30 @@ function parseCandidateRequest(bytes: Uint8Array): CandidateInsightRequest | nul
       dataBase64: frame.dataBase64,
     });
   }
-  const castRosterId = "castRosterId" in value ? value.castRosterId : null;
+  if (
+    new Set(videoFrames.map(({ timestampMs }) => timestampMs)).size !==
+    MAX_CANDIDATE_PASS_B_VIDEO_FRAMES
+  ) {
+    return null;
+  }
+  const castRosterId = value.castRosterId;
   if (castRosterId !== null && !isCandidatePassBCastRosterId(castRosterId)) {
     return null;
   }
-  const context = "context" in value ? value.context : null;
-  if (context !== null && !isCandidatePassBContextPacket(context)) return null;
-  const outputLanguage = "outputLanguage" in value ? value.outputLanguage : "ko";
+  const context = value.context;
+  if (!isCandidatePassBContextPacket(context)) return null;
+  const outputLanguage = value.outputLanguage;
   if (!isAnalysisLanguage(outputLanguage)) return null;
   return {
+    mode: "candidate",
     audioBase64: value.audioBase64,
     candidateDurationMs: value.candidateDurationMs as number,
-    videoFrames,
+    videoFrames: videoFrames as unknown as readonly [
+      CandidatePassBVideoFrame,
+      CandidatePassBVideoFrame,
+      CandidatePassBVideoFrame,
+      CandidatePassBVideoFrame,
+    ],
     castRosterId,
     outputLanguage,
     context,
@@ -1706,26 +1744,6 @@ type CandidateProviderAttempt =
       readonly diagnosticHeaders?: Readonly<Record<string, string>>;
     };
 
-/**
- * Cross-provider retries are reserved for provider-specific or temporary
- * failures. A rejected request or invalid shared argument is deterministic;
- * sending it to another paid model would only hide a contract bug or repeat a
- * policy rejection.
- */
-function shouldAttemptCandidateProviderFallback(
-  kind: CandidateProviderFailureKind,
-): boolean {
-  return (
-    kind === "timeout" ||
-    kind === "unavailable" ||
-    kind === "rate-limited" ||
-    kind === "auth" ||
-    kind === "model-unavailable" ||
-    kind === "response-format" ||
-    kind === "invalid-response"
-  );
-}
-
 function boundedDiagnosticHeaderValue(
   value: string,
   maximumLength: number,
@@ -1740,21 +1758,29 @@ async function attemptCandidateProvider(
   candidateRequest: CandidateInsightProviderRequest,
   fetchImplementation: FetchImplementation,
   timeoutMs: number,
-  retryDelaysMs: readonly number[],
 ): Promise<CandidateProviderAttempt> {
   let upstreamRequestBody: string;
   try {
     upstreamRequestBody = JSON.stringify(
       connection.provider === "qwen"
         ? "audioUrl" in candidateRequest
-          ? buildCandidatePassBQwenOmniUrlRequestBody(
-              candidateRequest.audioUrl,
-              candidateRequest.candidateDurationMs,
-              candidateRequest.videoFrames,
-              candidateRequest.castRosterId,
-              candidateRequest.outputLanguage,
-              candidateRequest.context,
-            )
+          ? candidateRequest.mode === "candidate"
+            ? buildCandidatePassBQwenOmniUrlRequestBody(
+                candidateRequest.audioUrl,
+                candidateRequest.candidateDurationMs,
+                candidateRequest.videoFrames,
+                candidateRequest.castRosterId,
+                candidateRequest.outputLanguage,
+                candidateRequest.context,
+              )
+            : buildBroadcastTranscriptVisualQwenOmniUrlRequestBody(
+                candidateRequest.audioUrl,
+                candidateRequest.candidateDurationMs,
+                candidateRequest.videoFrames,
+                candidateRequest.castRosterId,
+                candidateRequest.outputLanguage,
+                candidateRequest.context,
+              )
           : buildCandidatePassBQwenOmniRequestBody(
               candidateRequest.audioBase64,
               candidateRequest.candidateDurationMs,
@@ -1784,7 +1810,7 @@ async function attemptCandidateProvider(
 
   let upstreamResponse: Response;
   try {
-    upstreamResponse = await fetchWithTransientRetries(
+    upstreamResponse = await fetchWithTimeout(
       fetchImplementation,
       connection.endpoint,
       {
@@ -1805,7 +1831,6 @@ async function attemptCandidateProvider(
         referrerPolicy: "no-referrer",
       },
       timeoutMs,
-      retryDelaysMs,
     );
   } catch (error) {
     return {
@@ -1973,48 +1998,7 @@ async function attemptCandidateProvider(
       },
     }],
   };
-  const safePayload = candidateRequest.videoFrames.length === 0
-    ? buildCandidatePassBAudioOnlySafeResponse(
-        validatedPayload,
-        candidateRequest.candidateDurationMs,
-      )
-    : validatedPayload;
-  if (safePayload === null) {
-    return { ok: false, kind: "invalid-response" };
-  }
-  return { ok: true, payload: safePayload, connection };
-}
-
-async function attemptCandidateProviderWithSchemaRecovery(
-  connection: CandidateInsightConnection,
-  candidateRequest: CandidateInsightProviderRequest,
-  fetchImplementation: FetchImplementation,
-  timeoutMs: number,
-  retryDelaysMs: readonly number[],
-): Promise<CandidateProviderAttempt> {
-  let attempt = await attemptCandidateProvider(
-    connection,
-    candidateRequest,
-    fetchImplementation,
-    timeoutMs,
-    retryDelaysMs,
-  );
-  for (
-    let retry = 0;
-    !attempt.ok &&
-    attempt.kind === "invalid-response" &&
-    retry < CANDIDATE_INVALID_RESPONSE_RETRY_LIMIT;
-    retry += 1
-  ) {
-    attempt = await attemptCandidateProvider(
-      connection,
-      candidateRequest,
-      fetchImplementation,
-      timeoutMs,
-      retryDelaysMs,
-    );
-  }
-  return attempt;
+  return { ok: true, payload: validatedPayload, connection };
 }
 
 function candidateProviderFailureResponse(
@@ -2156,19 +2140,22 @@ function parseCandidateInsightBundleFence(
     candidateDurationMs === null ||
     candidateDurationMs <= 0 ||
     audioByteLength === null ||
-    audioByteLength < CANDIDATE_INSIGHT_MEDIA_AUDIO_HEADER_BYTES ||
+    (audioByteLength !== 0 &&
+      audioByteLength < CANDIDATE_INSIGHT_MEDIA_AUDIO_HEADER_BYTES) ||
     [...url.searchParams.keys()].some((key) => !expectedKeys.includes(key)) ||
     expectedKeys.some((key) => url.searchParams.getAll(key).length !== 1)
   ) {
     return null;
   }
-  const expectedAudioByteLength =
-    WAV_HEADER_BYTES +
-    Math.ceil(
-      (candidateDurationMs / 1_000) * CANDIDATE_PASS_B_SAMPLE_RATE_HZ,
-    ) *
-      PCM_BYTES_PER_SAMPLE;
-  if (audioByteLength !== expectedAudioByteLength) return null;
+  if (audioByteLength !== 0) {
+    const expectedAudioByteLength =
+      WAV_HEADER_BYTES +
+      Math.ceil(
+        (candidateDurationMs / 1_000) * CANDIDATE_PASS_B_SAMPLE_RATE_HZ,
+      ) *
+        PCM_BYTES_PER_SAMPLE;
+    if (audioByteLength !== expectedAudioByteLength) return null;
+  }
   const frames: CandidateInsightMediaFrameBinding[] = [];
   let previousTimestamp = -1;
   let expectedByteLength = audioByteLength;
@@ -2489,11 +2476,13 @@ async function handleCandidateInsightMediaStage(
       uploadFence,
       staged.uploadDisposition,
     );
-    const validAudio = isCanonicalCandidateWav(
-      staged.audioHeader,
-      fence.audioByteLength,
-      fence.candidateDurationMs,
-    );
+    const validAudio =
+      fence.audioByteLength === 0 ||
+      isCanonicalCandidateWav(
+        staged.audioHeader,
+        fence.audioByteLength,
+        fence.candidateDurationMs,
+      );
     staged.audioHeader.fill(0);
     if (!validAudio) {
       await deleteCandidateInsightMediaBestEffort(
@@ -2551,25 +2540,45 @@ async function handleCandidateInsightMediaStage(
   }
 }
 
-function parseCandidateInsightMediaResolveRequest(
-  value: unknown,
-): {
+interface ParsedCandidateInsightMediaResolveRequest {
   readonly mediaTicket: string;
   readonly candidateDurationMs: number;
+  readonly transcriptAbstentionReason:
+    | "no-speech"
+    | "no-audio"
+    | "dialogue-sample"
+    | null;
   readonly castRosterId: CandidatePassBCastRosterId | null;
   readonly outputLanguage: AnalysisLanguage;
   readonly context: CandidatePassBContextPacket | null;
-} | null {
+}
+
+function parseCandidateInsightMediaResolveRequest(
+  value: unknown,
+  mode: "candidate" | "transcript-visual",
+): ParsedCandidateInsightMediaResolveRequest | null {
+  const exactKeys =
+    mode === "candidate"
+      ? [
+          "schemaVersion",
+          "mediaTicket",
+          "candidateDurationMs",
+          "castRosterId",
+          "outputLanguage",
+          "context",
+        ]
+      : [
+          "schemaVersion",
+          "mediaTicket",
+          "candidateDurationMs",
+          "transcriptAbstentionReason",
+          "castRosterId",
+          "outputLanguage",
+          "context",
+        ];
   if (
     !isRecord(value) ||
-    !hasExactKeys(value, [
-      "schemaVersion",
-      "mediaTicket",
-      "candidateDurationMs",
-      "castRosterId",
-      "outputLanguage",
-      "context",
-    ]) ||
+    !hasExactKeys(value, exactKeys) ||
     value.schemaVersion !== CANDIDATE_INSIGHT_MEDIA_SCHEMA_VERSION ||
     !isCandidateInsightMediaTicket(value.mediaTicket) ||
     !Number.isSafeInteger(value.candidateDurationMs) ||
@@ -2579,17 +2588,30 @@ function parseCandidateInsightMediaResolveRequest(
     (value.castRosterId !== null &&
       !isCandidatePassBCastRosterId(value.castRosterId)) ||
     !isAnalysisLanguage(value.outputLanguage) ||
-    (value.context !== null &&
-      !isCandidatePassBContextPacket(value.context))
+    (mode === "candidate"
+      ? !isCandidatePassBContextPacket(value.context)
+      : value.context !== null &&
+        !isCandidatePassBContextPacket(value.context)) ||
+    (mode === "transcript-visual" &&
+      value.transcriptAbstentionReason !== "no-speech" &&
+      value.transcriptAbstentionReason !== "no-audio" &&
+      value.transcriptAbstentionReason !== "dialogue-sample")
   ) {
     return null;
   }
   return {
     mediaTicket: value.mediaTicket,
     candidateDurationMs: value.candidateDurationMs as number,
+    transcriptAbstentionReason:
+      mode === "transcript-visual"
+        ? value.transcriptAbstentionReason as
+            | "no-speech"
+            | "no-audio"
+            | "dialogue-sample"
+        : null,
     castRosterId: value.castRosterId,
     outputLanguage: value.outputLanguage,
-    context: value.context,
+    context: value.context as CandidatePassBContextPacket | null,
   };
 }
 
@@ -2599,6 +2621,7 @@ async function handleCandidateInsightMediaResolve(
   transport: FreeR2BroadcastTranscriptTransport,
   origin: string,
   dependencies: AiProxyDependencies,
+  mode: "candidate" | "transcript-visual",
 ): Promise<Response> {
   const providerResolution = resolveCandidateInsightConnection(environment);
   if (
@@ -2691,7 +2714,7 @@ async function handleCandidateInsightMediaResolve(
     );
   }
   requestBytes.fill(0);
-  const resolveRequest = parseCandidateInsightMediaResolveRequest(value);
+  const resolveRequest = parseCandidateInsightMediaResolveRequest(value, mode);
   if (resolveRequest === null) {
     return rejectUnusedQuotaLease(
       environment,
@@ -2712,7 +2735,13 @@ async function handleCandidateInsightMediaResolve(
   }).catch(() => null);
   if (
     resolved === null ||
-    resolved.candidateDurationMs !== resolveRequest.candidateDurationMs
+    resolved.candidateDurationMs !== resolveRequest.candidateDurationMs ||
+    (mode === "candidate" && resolved.audioByteLength === 0) ||
+    (resolveRequest.transcriptAbstentionReason === "no-audio" &&
+      resolved.audioByteLength !== 0) ||
+    (resolveRequest.transcriptAbstentionReason !== null &&
+      resolveRequest.transcriptAbstentionReason !== "no-audio" &&
+      resolved.audioByteLength === 0)
   ) {
     return rejectUnusedQuotaLease(
       environment,
@@ -2725,25 +2754,42 @@ async function handleCandidateInsightMediaResolve(
       ),
     );
   }
-  const candidateRequest: CandidateInsightUrlRequest = {
-    audioUrl: createCandidateInsightMediaCapabilityUrl(
+  const audioUrl =
+    resolved.audioByteLength === 0
+      ? null
+      : createCandidateInsightMediaCapabilityUrl(
+          request.url,
+          resolveRequest.mediaTicket,
+          "audio",
+        );
+  const videoFrames = resolved.frames.map((frame, index) => ({
+    timestampMs: frame.timestampMs,
+    url: createCandidateInsightMediaCapabilityUrl(
       request.url,
       resolveRequest.mediaTicket,
-      "audio",
+      String(index) as "0" | "1" | "2" | "3",
     ),
-    candidateDurationMs: resolved.candidateDurationMs,
-    videoFrames: resolved.frames.map((frame, index) => ({
-      timestampMs: frame.timestampMs,
-      url: createCandidateInsightMediaCapabilityUrl(
-        request.url,
-        resolveRequest.mediaTicket,
-        String(index) as "0" | "1" | "2" | "3",
-      ),
-    })) as unknown as CandidateInsightUrlRequest["videoFrames"],
-    castRosterId: resolveRequest.castRosterId,
-    outputLanguage: resolveRequest.outputLanguage,
-    context: resolveRequest.context,
-  };
+  })) as unknown as CandidateInsightUrlRequest["videoFrames"];
+  const candidateRequest: CandidateInsightUrlRequest =
+    mode === "candidate"
+      ? {
+          mode,
+          audioUrl: audioUrl as string,
+          candidateDurationMs: resolved.candidateDurationMs,
+          videoFrames,
+          castRosterId: resolveRequest.castRosterId,
+          outputLanguage: resolveRequest.outputLanguage,
+          context: resolveRequest.context as CandidatePassBContextPacket,
+        }
+      : {
+          mode,
+          audioUrl,
+          candidateDurationMs: resolved.candidateDurationMs,
+          videoFrames,
+          castRosterId: resolveRequest.castRosterId,
+          outputLanguage: resolveRequest.outputLanguage,
+          context: resolveRequest.context,
+        };
   const reservedTokens = candidateTokenReservation(candidateRequest);
   if (
     reservedTokens === null ||
@@ -2792,7 +2838,7 @@ async function handleCandidateInsightMediaResolve(
       ),
     );
   }
-  const attempt = await attemptCandidateProviderWithSchemaRecovery(
+  const attempt = await attemptCandidateProvider(
     providerResolution.connection,
     candidateRequest,
     createQuotaMeteredFetch(
@@ -2802,7 +2848,6 @@ async function handleCandidateInsightMediaResolve(
       reservedTokens,
     ),
     dependencies.upstreamTimeoutMs ?? UPSTREAM_TIMEOUT_MS,
-    dependencies.upstreamRetryDelaysMs ?? DEFAULT_UPSTREAM_RETRY_DELAYS_MS,
   );
   if (
     !attempt.ok &&
@@ -2929,7 +2974,9 @@ export async function handleCandidateInsightRequest(
   }
   const requestMediaType = mediaType(request);
   if (
-    requestMediaType === CANDIDATE_INSIGHT_MEDIA_RESOLVE_CONTENT_TYPE
+    requestMediaType === CANDIDATE_INSIGHT_MEDIA_RESOLVE_CONTENT_TYPE ||
+    requestMediaType ===
+      BROADCAST_TRANSCRIPT_VISUAL_MEDIA_RESOLVE_CONTENT_TYPE
   ) {
     const transport = resolveBroadcastTranscriptTransport(environment);
     if (!transport.ok || transport.mode !== "free-r2") {
@@ -2946,6 +2993,9 @@ export async function handleCandidateInsightRequest(
       transport,
       origin,
       dependencies,
+      requestMediaType === CANDIDATE_INSIGHT_MEDIA_RESOLVE_CONTENT_TYPE
+        ? "candidate"
+        : "transcript-visual",
     );
   }
   if (requestMediaType !== "application/json") {
@@ -3210,56 +3260,29 @@ export async function handleCandidateInsightRequest(
     reservedTokens,
   );
   const timeoutMs = dependencies.upstreamTimeoutMs ?? UPSTREAM_TIMEOUT_MS;
-  const retryDelaysMs =
-    dependencies.upstreamRetryDelaysMs ?? DEFAULT_UPSTREAM_RETRY_DELAYS_MS;
-  const primaryAttempt = await attemptCandidateProvider(
+  const attempt = await attemptCandidateProvider(
     providerConnection,
     candidateRequest,
     fetchImplementation,
     timeoutMs,
-    retryDelaysMs,
   );
-  let finalAttempt = primaryAttempt;
-  let fallbackUsed = configurationFallbackUsed;
-  let primaryFailureKind: CandidateProviderFailureKind | null =
-    configurationFallbackUsed ? "auth" : null;
-  if (
-    !configurationFallbackUsed &&
-    !primaryAttempt.ok &&
-    shouldAttemptCandidateProviderFallback(primaryAttempt.kind)
-  ) {
-    const fallbackConnection = resolveCandidateInsightFallbackConnection(
-      environment,
-      providerConnection.provider,
-    );
-    if (fallbackConnection !== null) {
-      fallbackUsed = true;
-      primaryFailureKind = primaryAttempt.kind;
-      finalAttempt = await attemptCandidateProvider(
-        fallbackConnection,
-        candidateRequest,
-        fetchImplementation,
-        timeoutMs,
-        retryDelaysMs,
-      );
-    }
-  }
-  if (!finalAttempt.ok) {
-    const response = candidateProviderFailureResponse(finalAttempt, origin);
-    if (primaryFailureKind !== null && fallbackUsed) {
-      response.headers.set(EXCLIPPER_PRIMARY_FAILURE_HEADER, primaryFailureKind);
-      response.headers.set(EXCLIPPER_FALLBACK_FAILURE_HEADER, finalAttempt.kind);
+  if (!attempt.ok) {
+    const response = candidateProviderFailureResponse(attempt, origin);
+    if (configurationFallbackUsed) {
+      response.headers.set(EXCLIPPER_PRIMARY_FAILURE_HEADER, "auth");
+      response.headers.set(EXCLIPPER_FALLBACK_FAILURE_HEADER, attempt.kind);
     }
     return response;
   }
-  return successResponse(finalAttempt.payload, origin, {
+  return successResponse(attempt.payload, origin, {
     [CANDIDATE_PASS_B_RESPONSE_MODEL_ID_HEADER]:
-      finalAttempt.connection.descriptor.modelId,
+      attempt.connection.descriptor.modelId,
     [CANDIDATE_PASS_B_RESPONSE_MODEL_REVISION_HEADER]:
-      finalAttempt.connection.descriptor.modelRevision,
-    [CANDIDATE_PASS_B_RESPONSE_FALLBACK_HEADER]: fallbackUsed ? "true" : "false",
-    ...(primaryFailureKind !== null && fallbackUsed
-      ? { [EXCLIPPER_FALLBACK_REASON_HEADER]: primaryFailureKind }
+      attempt.connection.descriptor.modelRevision,
+    [CANDIDATE_PASS_B_RESPONSE_FALLBACK_HEADER]:
+      configurationFallbackUsed ? "true" : "false",
+    ...(configurationFallbackUsed
+      ? { [EXCLIPPER_FALLBACK_REASON_HEADER]: "auth" }
       : {}),
   });
 }
@@ -4856,7 +4879,6 @@ async function attemptBroadcastContextProvider(
           : extractBroadcastContextDeepseekResponse(
               upstreamPayload,
               broadcastContextRequest,
-              { recoverMalformedItems: true },
             );
   if (!parsed.ok) {
     const choices: readonly unknown[] =
@@ -5185,36 +5207,33 @@ export async function handleBroadcastContextRequest(
   }
   requestBytes.fill(0);
 
-  const contextMode = isRecord(inputValue) && inputValue.analysisMode === "refinement-fast"
-    ? "refinement-fast" as const
-    : isRecord(inputValue) && inputValue.analysisMode === "refinement"
-    ? "refinement" as const
-    : isRecord(inputValue) && inputValue.analysisMode === "discovery"
-      ? "discovery" as const
-    : isRecord(inputValue) && inputValue.analysisMode === "selection"
-      ? "selection" as const
-      : "overview" as const;
+  const requestedContextMode =
+    isRecord(inputValue) ? inputValue.analysisMode : undefined;
+  if (
+    requestedContextMode !== undefined &&
+    requestedContextMode !== "overview" &&
+    requestedContextMode !== "discovery" &&
+    requestedContextMode !== "refinement" &&
+    requestedContextMode !== "refinement-fast" &&
+    requestedContextMode !== "selection"
+  ) {
+    return rejectUnusedQuotaLease(
+      environment,
+      quotaGuard.lease,
+      jsonResponse(
+        400,
+        "INVALID_ANALYSIS_MODE",
+        "지원하지 않는 방송 맥락 분석 단계예요.",
+        origin,
+      ),
+    );
+  }
+  const contextMode = requestedContextMode ?? "overview";
   let broadcastContextRequest;
   try {
-    const validatedInput = createBroadcastContextRequest(
+    broadcastContextRequest = createBroadcastContextRequest(
       inputValue as BroadcastContextRequestInput,
-      {
-        maximumChapterCount: MAX_BROADCAST_CONTEXT_UNCOMPACTED_CHAPTERS,
-      },
     );
-    if (validatedInput.chapters.length <= MAX_BROADCAST_CONTEXT_CHAPTERS) {
-      broadcastContextRequest = validatedInput;
-    } else {
-      broadcastContextRequest = createBroadcastContextRequest({
-        sourceDurationMs: validatedInput.sourceDurationMs,
-        chapters: compactBroadcastContextChapters(validatedInput.chapters),
-        candidates: validatedInput.candidates,
-        outputLanguage: validatedInput.outputLanguage,
-        ...(validatedInput.castRosterId === null
-          ? {}
-          : { castRosterId: validatedInput.castRosterId }),
-      });
-    }
   } catch (error) {
     return rejectUnusedQuotaLease(
       environment,
@@ -5421,8 +5440,12 @@ export async function handleBroadcastContextRequest(
       502,
       invalidResponse
         ? "UPSTREAM_INVALID_RESPONSE"
-        : deterministicRejection
-          ? "UPSTREAM_REJECTED"
+        : finalAttempt.kind === "auth"
+          ? "UPSTREAM_AUTH_FAILED"
+          : finalAttempt.kind === "invalid-argument"
+            ? "UPSTREAM_INVALID_ARGUMENT"
+            : deterministicRejection
+              ? "UPSTREAM_REJECTED"
           : "UPSTREAM_UNAVAILABLE",
       invalidResponse
         ? "답변 형식을 확인할 수 없어요."

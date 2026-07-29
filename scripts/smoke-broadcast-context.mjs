@@ -1,48 +1,44 @@
+import {
+  createCurrentContextRequest,
+  currentSmokePlan,
+  DEFAULT_PROXY_ORIGIN,
+  runContextSmoke,
+} from "./current-ai-smoke-contract.mjs";
+
+if (process.argv.includes("--dry-run")) {
+  process.stdout.write(`${JSON.stringify(currentSmokePlan("context"), null, 2)}\n`);
+  process.exit(0);
+}
+
+const endpointIndex = process.argv.indexOf("--endpoint");
 const endpoint =
-  "https://rettohighlight-gemini.11qaws.workers.dev/v1/broadcast-context";
+  endpointIndex >= 0
+    ? process.argv[endpointIndex + 1]
+    : `${DEFAULT_PROXY_ORIGIN}/v1/broadcast-context`;
+if (typeof endpoint !== "string" || endpoint.length === 0) {
+  throw new Error(
+    "Usage: node scripts/smoke-broadcast-context.mjs [--endpoint <url>] [--dry-run]",
+  );
+}
 
-const response = await fetch(endpoint, {
-  method: "POST",
-  headers: {
-    "Content-Type": "application/json",
-    Origin: "https://11qaws.github.io",
-  },
-  body: JSON.stringify({
-    sourceDurationMs: 60_000,
-    chapters: [
-      {
-        chapterId: "chapter-1",
-        startMs: 0,
-        endMs: 60_000,
-        evidenceMode: "complete-transcript",
-        evidenceCoverageRatio: 1,
-        summaryKo: "스트리머가 실수를 인정하고 정확히 사과했다.",
-      },
-    ],
-    candidates: [
-      {
-        candidateId: "candidate-1",
-        startMs: 10_000,
-        endMs: 55_000,
-        transcriptKo: "제가 실수했습니다. 죄송합니다.",
-        eventSummaryKo: "실수를 인정했다.",
-        reactionSummaryKo: "차분하게 사과했다.",
-        chatReactionSummaryKo: null,
-      },
-    ],
-  }),
+const { response } = await runContextSmoke({
+  request: createCurrentContextRequest(),
+  proxyOrigin: new URL(endpoint).origin,
 });
-
-const payload = await response.json();
+const payload = await response.json().catch(() => null);
 process.stdout.write(
   `${JSON.stringify(
     response.ok
       ? {
           status: response.status,
-          broadcastSummaryKo: payload.broadcastSummaryKo,
-          clipDecision: payload.annotations?.[0]?.clipDecision ?? null,
+          schemaVersion: payload?.schemaVersion ?? null,
+          broadcastSummaryKo: payload?.broadcastSummaryKo ?? null,
+          clipDecision: payload?.annotations?.[0]?.clipDecision ?? null,
         }
-      : { status: response.status, errorCode: payload.error?.code ?? "unknown" },
+      : {
+          status: response.status,
+          errorCode: payload?.error?.code ?? "UNKNOWN",
+        },
     null,
     2,
   )}\n`,

@@ -484,6 +484,135 @@ export function broadcastRefinementTranscriptCheckpointCanComplete(
   );
 }
 
+type BroadcastRefinementTranscriptSettlement =
+  | {
+      readonly kind: "success";
+      readonly value: BroadcastRefinementTranscriptSuccessfulFragment;
+    }
+  | {
+      readonly kind: "abstention";
+      readonly value: BroadcastRefinementTranscriptAbstention;
+    }
+  | {
+      readonly kind: "gap";
+      readonly value: BroadcastRefinementTranscriptGap;
+    };
+
+function settlementByChunkId(
+  checkpoint: BroadcastRefinementTranscriptCheckpoint,
+): ReadonlyMap<string, BroadcastRefinementTranscriptSettlement> {
+  const settlements = new Map<
+    string,
+    BroadcastRefinementTranscriptSettlement
+  >();
+  for (const value of checkpoint.successfulFragments) {
+    settlements.set(value.chunkId, { kind: "success", value });
+  }
+  for (const value of checkpoint.abstentions) {
+    settlements.set(value.chunkId, { kind: "abstention", value });
+  }
+  for (const value of checkpoint.gaps) {
+    settlements.set(value.chunkId, { kind: "gap", value });
+  }
+  return settlements;
+}
+
+function gapSafetyRank(reason: BroadcastRefinementTranscriptGapReason): number {
+  switch (reason) {
+    case "outcome-unknown":
+      return 3;
+    case "decode-failed":
+    case "transcription-failed":
+    case "rate-limited":
+    case "route-changed":
+      return 2;
+    case "in-flight":
+      return 1;
+  }
+}
+
+function mergeSettlement(
+  current: BroadcastRefinementTranscriptSettlement | undefined,
+  pending: BroadcastRefinementTranscriptSettlement | undefined,
+): BroadcastRefinementTranscriptSettlement | undefined {
+  if (current === undefined) return pending;
+  if (pending === undefined) return current;
+
+  /*
+   * A terminal fragment or verified abstention is immutable paid/negative
+   * evidence. A late in-flight or gap checkpoint must never replace it.
+   */
+  if (current.kind !== "gap") return current;
+  if (pending.kind !== "gap") return pending;
+
+  if (pending.value.attemptCount > current.value.attemptCount) return pending;
+  if (pending.value.attemptCount < current.value.attemptCount) return current;
+  return gapSafetyRank(pending.value.reason) >
+    gapSafetyRank(current.value.reason)
+    ? pending
+    : current;
+}
+
+/**
+ * Monotonically joins two checkpoints for the same immutable refinement plan.
+ *
+ * This is the child-level CAS merge used when another tab commits between a
+ * local transition and its compare-and-swap. Terminal evidence never regresses
+ * to a gap, and an older attempt can never replace a newer attempt.
+ */
+export function mergeBroadcastRefinementTranscriptCheckpoints(
+  currentCheckpoint: BroadcastRefinementTranscriptCheckpoint,
+  pendingCheckpoint: BroadcastRefinementTranscriptCheckpoint,
+): BroadcastRefinementTranscriptCheckpoint {
+  const current = normalizeCheckpoint(currentCheckpoint);
+  const pending = normalizeCheckpoint(pendingCheckpoint);
+  if (
+    current === null ||
+    pending === null ||
+    current.refinementInputSignature !== pending.refinementInputSignature ||
+    JSON.stringify(current.plannedChunks) !==
+      JSON.stringify(pending.plannedChunks)
+  ) {
+    throw new TypeError(
+      "Broadcast refinement transcript checkpoints do not share one exact plan.",
+    );
+  }
+
+  const currentByChunkId = settlementByChunkId(current);
+  const pendingByChunkId = settlementByChunkId(pending);
+  const successfulFragments: BroadcastRefinementTranscriptSuccessfulFragment[] =
+    [];
+  const abstentions: BroadcastRefinementTranscriptAbstention[] = [];
+  const gaps: BroadcastRefinementTranscriptGap[] = [];
+
+  for (const { chunkId } of current.plannedChunks) {
+    const settlement = mergeSettlement(
+      currentByChunkId.get(chunkId),
+      pendingByChunkId.get(chunkId),
+    );
+    if (settlement?.kind === "success") {
+      successfulFragments.push(settlement.value);
+    } else if (settlement?.kind === "abstention") {
+      abstentions.push(settlement.value);
+    } else if (settlement?.kind === "gap") {
+      gaps.push(settlement.value);
+    }
+  }
+
+  const merged = normalizeCheckpoint({
+    ...current,
+    successfulFragments,
+    abstentions,
+    gaps,
+  });
+  if (merged === null) {
+    throw new TypeError(
+      "Merged broadcast refinement transcript checkpoint is invalid.",
+    );
+  }
+  return merged;
+}
+
 function replaceChunkSettlement(
   checkpoint: BroadcastRefinementTranscriptCheckpoint,
   settlement:

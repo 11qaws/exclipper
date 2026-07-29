@@ -12,6 +12,8 @@ import {
   selectBroadcastTopicalJuryApprovedLeadIds,
   selectBroadcastTopicalRefinementLeadIds,
 } from "./broadcastTopicalDiscovery";
+import { createBroadcastParticipantGrounding } from "./broadcastParticipantGrounding";
+import { DEFAULT_CANDIDATE_PASS_B_CAST_ROSTER_ID } from "./participantRoster";
 
 const chapters: BroadcastContextChapterInput[] = Array.from(
   { length: 8 },
@@ -60,6 +62,19 @@ function lead(id: string, startMs: number, confidence = 0.8): BroadcastContextDi
     evidenceCueKo: id,
     uncertaintiesKo: [],
   };
+}
+
+function participantGroundingFor(sourceDurationMs: number) {
+  return createBroadcastParticipantGrounding({
+    sourceDurationMs,
+    castRosterId: DEFAULT_CANDIDATE_PASS_B_CAST_ROSTER_ID,
+    chapters: [{
+      chapterId: "participant-source",
+      startMs: 0,
+      endMs: sourceDurationMs,
+      summaryKo: "유레카가 방송에 언급된다.",
+    }],
+  });
 }
 
 describe("broadcastTopicalDiscovery", () => {
@@ -135,8 +150,12 @@ describe("broadcastTopicalDiscovery", () => {
       "음식 퀴즈 방송",
       [semanticChapter],
       leads,
+      participantGroundingFor(960_000),
     );
     expect(plan.candidates).toHaveLength(32);
+    expect(plan.candidates[0]?.participantContextKo).toContain(
+      "이름이나 고정 호칭이 언급",
+    );
     expect(plan.chapters).toHaveLength(1);
     expect(plan.leadIdByCandidateId["topical-jury-32"]).toBe("lead-32");
   });
@@ -158,6 +177,7 @@ describe("broadcastTopicalDiscovery", () => {
       "음식과 토크 방송",
       semanticChapters,
       leads,
+      participantGroundingFor(3_600_000),
     );
     const selectedCandidateIds = [
       "topical-jury-02",
@@ -212,6 +232,7 @@ describe("broadcastTopicalDiscovery", () => {
       "뚜렷한 사건이 없는 방송",
       [semantic("relay", 0, 900_000)],
       leads,
+      participantGroundingFor(900_000),
     );
     expect(
       selectBroadcastTopicalRefinementLeadIds(
@@ -233,6 +254,44 @@ describe("broadcastTopicalDiscovery", () => {
     ).toEqual([]);
   });
 
+  it("sends review-only jury leads to refinement while keeping the fast lane select-only", () => {
+    const topic = semantic("review-needed", 0, 900_000);
+    const leads = [
+      lead("needs-more-context-a", 180_000, 0.86),
+      lead("needs-more-context-b", 540_000, 0.81),
+    ];
+    const plan = createBroadcastTopicalLeadJuryPlan(
+      900_000,
+      "추가 근거가 필요한 방송",
+      [topic],
+      leads,
+      participantGroundingFor(900_000),
+    );
+    const annotations = plan.candidates.map((candidate, index) => ({
+      candidateId: candidate.candidateId,
+      category: "reaction" as const,
+      clipDecision: "review" as const,
+      confidence: 0.9 - index * 0.05,
+      rejectionReasons: [],
+      contextSummaryKo: "사건 가능성은 있지만 근거를 더 확인해야 한다.",
+      whyThisMomentKo: "정제 단계에서 정확한 대사와 경계를 확인해야 한다.",
+      relatedCandidateIds: [],
+      uncertaintiesKo: ["후보 구간의 정확한 시작과 끝"],
+    }));
+
+    expect(
+      selectBroadcastTopicalJuryApprovedLeadIds(leads, plan, annotations),
+    ).toEqual([]);
+    expect(
+      selectBroadcastTopicalRefinementLeadIds(
+        leads,
+        plan,
+        annotations,
+        [topic],
+      ),
+    ).toEqual(["needs-more-context-a", "needs-more-context-b"]);
+  });
+
   it("limits reserve fan-out when the jury approves only one event", () => {
     const topic = semantic("single-seed", 0, 1_800_000);
     const leads = Array.from({ length: 10 }, (_, index) =>
@@ -243,6 +302,7 @@ describe("broadcastTopicalDiscovery", () => {
       "하나의 사건만 확실한 방송",
       [topic],
       leads,
+      participantGroundingFor(1_800_000),
     );
     const annotations = plan.candidates.map((candidate, index) => ({
       candidateId: candidate.candidateId,
@@ -281,6 +341,7 @@ describe("broadcastTopicalDiscovery", () => {
       "음식 퀴즈",
       [topic],
       leads,
+      participantGroundingFor(1_800_000),
     );
     const annotations = plan.candidates.map((candidate, index) => ({
       candidateId: candidate.candidateId,

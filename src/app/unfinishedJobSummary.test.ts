@@ -15,6 +15,7 @@ import {
 } from "./unfinishedJobSummary";
 
 const SIX_HOURS = 6 * 60 * 60 * 1000;
+const RUN_ID = "run-1";
 
 function drive(job: AnalysisJob, events: readonly AnalysisJobEvent[]): AnalysisJob {
   return events.reduce((current, event) => {
@@ -33,9 +34,9 @@ function pausedAt(stagesDone: number, jobId = "job-1"): AnalysisJob {
   return drive(base, [
     { type: "START", runId: "run-1" },
     ...ANALYSIS_STAGES.slice(0, stagesDone).map(
-      (stage) => ({ type: "STAGE_COMMITTED", stage }) as const,
+      (stage) => ({ type: "STAGE_COMMITTED", runId: RUN_ID, stage }) as const,
     ),
-    { type: "PAUSE" },
+    { type: "PAUSE", runId: RUN_ID },
   ]);
 }
 
@@ -101,7 +102,7 @@ describe("unfinished job summary", () => {
       // 안내를 거쳐 다시 누르게 만들면 첫 클릭에서 이탈한다.
       const blocked = drive(pausedAt(4), [
         { type: "RESUME", runId: "run-2" },
-        { type: "SOURCE_LOST", availability: "needsPermission" },
+        { type: "SOURCE_LOST", runId: "run-2", availability: "needsPermission" },
       ]);
       const summary = summarize(blocked);
       expect(summary.action).toBe("reconnect");
@@ -115,7 +116,7 @@ describe("unfinished job summary", () => {
     it("offers to retry after a failure", () => {
       const failed = drive(pausedAt(4), [
         { type: "RESUME", runId: "run-2" },
-        { type: "FATAL", reasonCode: "worker_crashed" },
+        { type: "FATAL", runId: "run-2", reasonCode: "worker_crashed" },
       ]);
       expect(summarize(failed).action).toBe("retry");
     });
@@ -127,11 +128,11 @@ describe("unfinished job summary", () => {
       // 필요 없는 탐색을 시킨다.
       const expired = drive(pausedAt(3), [
         { type: "RESUME", runId: "run-2" },
-        { type: "SOURCE_LOST", availability: "needsPermission" },
+        { type: "SOURCE_LOST", runId: "run-2", availability: "needsPermission" },
       ]);
       const missing = drive(pausedAt(3, "job-2"), [
         { type: "RESUME", runId: "run-2" },
-        { type: "SOURCE_LOST", availability: "missing" },
+        { type: "SOURCE_LOST", runId: "run-2", availability: "missing" },
       ]);
       expect(summarize(expired).blockedReason).not.toBe(summarize(missing).blockedReason);
       expect(summarize(expired).blockedReason).not.toBeNull();
@@ -150,14 +151,20 @@ describe("unfinished job summary", () => {
     it("drops finished and discarded work", () => {
       const done = drive(pausedAt(0, "done"), [
         { type: "RESUME", runId: "run-2" },
-        ...ANALYSIS_STAGES.map((stage) => ({ type: "STAGE_COMMITTED", stage }) as const),
-        { type: "ALL_STAGES_DONE", quality: "usable" },
+        ...ANALYSIS_STAGES.map(
+          (stage) =>
+            ({ type: "STAGE_COMMITTED", runId: "run-2", stage }) as const,
+        ),
+        { type: "ALL_STAGES_DONE", runId: "run-2", quality: "usable" },
       ]);
       const thrown = drive(pausedAt(2, "thrown"), [{ type: "ABANDON" }]);
       const emptyDone = drive(pausedAt(0, "empty-done"), [
         { type: "RESUME", runId: "run-2" },
-        ...ANALYSIS_STAGES.map((stage) => ({ type: "STAGE_COMMITTED", stage }) as const),
-        { type: "ALL_STAGES_DONE", quality: "empty" },
+        ...ANALYSIS_STAGES.map(
+          (stage) =>
+            ({ type: "STAGE_COMMITTED", runId: "run-2", stage }) as const,
+        ),
+        { type: "ALL_STAGES_DONE", runId: "run-2", quality: "empty" },
       ]);
       const kept = pausedAt(3, "kept");
 
@@ -223,7 +230,7 @@ describe("when the pipeline cannot skip what is already done", () => {
   it("still says reconnect first when the file is unreachable", () => {
     const blocked = drive(pausedAt(4), [
       { type: "RESUME", runId: "run-2" },
-      { type: "SOURCE_LOST", availability: "needsPermission" },
+      { type: "SOURCE_LOST", runId: "run-2", availability: "needsPermission" },
     ]);
     expect(summarizeToday(blocked).action).toBe("reconnect");
     expect(summarizeToday(blocked).actionLabel).toBe("연결하고 다시 분석");

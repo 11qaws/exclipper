@@ -4,6 +4,7 @@ import {
   MAX_BROADCAST_TRANSCRIPT_QWEN_DURATION_MS,
   MAX_BROADCAST_TRANSCRIPT_QWEN_RESPONSE_BYTES,
   MAX_BROADCAST_TRANSCRIPT_QWEN_TEXT_LENGTH,
+  broadcastTranscriptModelRevisionForId,
   isBroadcastTranscriptModelId,
   type BroadcastTranscriptQwenResult,
 } from "./broadcastTranscriptQwen";
@@ -80,6 +81,8 @@ function parseResult(
     !isRecord(value) ||
     value.schemaVersion !== BROADCAST_TRANSCRIPT_QWEN_SCHEMA_VERSION ||
     !isBroadcastTranscriptModelId(value.modelId) ||
+    value.modelRevision !==
+      broadcastTranscriptModelRevisionForId(value.modelId) ||
     value.sourceStartMs !== sourceStartMs ||
     value.sourceEndMs !== sourceStartMs + durationMs ||
     typeof value.textKo !== "string" ||
@@ -100,6 +103,7 @@ function parseResult(
   return {
     schemaVersion: BROADCAST_TRANSCRIPT_QWEN_SCHEMA_VERSION,
     modelId: value.modelId,
+    modelRevision: value.modelRevision,
     sourceStartMs,
     sourceEndMs: sourceStartMs + durationMs,
     textKo: value.textKo,
@@ -224,7 +228,8 @@ async function resolveBroadcastTranscriptProxyResponse(
     responseModelRevision === null ||
     (responseFallbackUsed !== "true" && responseFallbackUsed !== "false") ||
     responseRouteFingerprint !== route.fingerprint ||
-    responseModelId !== result.modelId
+    responseModelId !== result.modelId ||
+    responseModelRevision !== result.modelRevision
   ) {
     throw new BroadcastTranscriptQwenClientError(
       "PROXY_INVALID_RESPONSE",

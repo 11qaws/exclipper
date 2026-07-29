@@ -6,16 +6,20 @@ import {
   type CreateBroadcastParticipantGroundingInput,
 } from "./broadcastParticipantGrounding";
 import {
+  createBroadcastParticipantGroundingTerminalReceipt,
   sealBroadcastParticipantGroundingPlan,
   type BroadcastParticipantGroundingAdapterCompletionReceipt,
   type BroadcastParticipantGroundingPlan,
   type BroadcastParticipantGroundingSourceFence,
   type BroadcastParticipantGroundingTerminalCellReceipt,
 } from "./broadcastParticipantGroundingPlan";
+import { candidatePassBCastReferences } from "./participantRoster";
 import {
-  candidatePassBCastReferences,
-  candidatePassBKnownCastReferences,
-} from "./participantRoster";
+  createBroadcastTranscriptVisualProviderSettlementLedger,
+  recordBroadcastTranscriptVisualProviderSettlement,
+  type BroadcastTranscriptVisualInspectionPlan,
+  type BroadcastTranscriptVisualProviderSettlement,
+} from "./broadcastTranscriptVisualInspectionQueue";
 
 export interface ProjectBroadcastParticipantGroundingAdapterOutputsInput {
   readonly groundingInput: CreateBroadcastParticipantGroundingInput;
@@ -31,6 +35,7 @@ export interface ProjectBroadcastParticipantGroundingAdapterOutputsInput {
 export type BroadcastParticipantGroundingBridgeErrorCode =
   | "SOURCE_FENCE_MISMATCH"
   | "ROSTER_FENCE_MISMATCH"
+  | "VISUAL_SETTLEMENT_MISMATCH"
   | "INVALID_SEALED_ADAPTER"
   | "OUTPUT_TOO_LARGE";
 
@@ -76,10 +81,8 @@ function assertCurrentSourceFence(
       "The sealed participant evidence does not belong to the current source fence.",
     );
   }
-  const expectedParticipantIds = (
-    input.groundingInput.castRosterId === null
-      ? candidatePassBKnownCastReferences()
-      : candidatePassBCastReferences(input.groundingInput.castRosterId)
+  const expectedParticipantIds = candidatePassBCastReferences(
+    input.groundingInput.castRosterId,
   ).map(({ participantId }) => participantId);
   if (
     JSON.stringify(input.plan.expectedParticipantIds) !==
@@ -137,8 +140,7 @@ function visualEvidenceFor(
         endMs: receipt.sourceEndMs,
         chapterId: null,
         confidence: receipt.confidence!,
-        evidenceKo:
-          "검증된 화면 참조와 참가자 고유 특징이 일치했습니다.",
+        evidenceKo: "검증된 화면 참조와 참가자 고유 특징이 일치했습니다.",
       }));
     case "none":
       return [
@@ -207,8 +209,7 @@ function voiceEvidenceFor(
           endMs: receipt.sourceEndMs,
           chapterId: null,
           confidence: receipt.confidence,
-          evidenceKo:
-            "검증된 음성 참조와 화자 임베딩이 일치했습니다.",
+          evidenceKo: "검증된 음성 참조와 화자 임베딩이 일치했습니다.",
         },
       ];
     }
@@ -315,6 +316,149 @@ function outputForAdapter(
         : voiceEvidenceFor(receipt),
     ),
   };
+}
+
+export interface CreateBroadcastParticipantVisualTerminalReceiptInput {
+  readonly participantPlan: BroadcastParticipantGroundingPlan;
+  readonly participantCellId: string;
+  readonly visualInspectionPlan: BroadcastTranscriptVisualInspectionPlan;
+  readonly settlement: BroadcastTranscriptVisualProviderSettlement;
+}
+
+/**
+ * Converts one terminal four-frame provider settlement into the exact
+ * visual-identity cell receipt needed by participant pre-context.
+ *
+ * The conversion is deliberately narrower than the provider response:
+ * transcript names and channel ownership are not visual identity evidence.
+ * An identified result therefore requires at least one observed frame and a
+ * visual basis for every attributed participant. An on-screen canonical name
+ * is self-contained evidence. Appearance matching is accepted only when the
+ * exact participant is covered by a real, source-fenced reference manifest.
+ */
+export function createBroadcastParticipantVisualTerminalReceiptFromSettlement(
+  input: CreateBroadcastParticipantVisualTerminalReceiptInput,
+): BroadcastParticipantGroundingTerminalCellReceipt {
+  try {
+    recordBroadcastTranscriptVisualProviderSettlement(
+      createBroadcastTranscriptVisualProviderSettlementLedger(
+        input.visualInspectionPlan,
+      ),
+      input.visualInspectionPlan,
+      input.settlement,
+    );
+  } catch {
+    throw new BroadcastParticipantGroundingBridgeError(
+      "VISUAL_SETTLEMENT_MISMATCH",
+      "The visual participant outcome is not one terminal settlement from the exact four-frame inspection plan.",
+    );
+  }
+
+  const visualAdapter = input.participantPlan.adapters.find(
+    ({ adapter }) => adapter === "visual-identity",
+  );
+  const participantCell = visualAdapter?.cells.find(
+    ({ cellId }) => cellId === input.participantCellId,
+  );
+  const inspectionCell = input.visualInspectionPlan.cells.find(
+    ({ cellId }) => cellId === input.settlement.cellId,
+  );
+  if (
+    visualAdapter === undefined ||
+    visualAdapter.adapter !== "visual-identity" ||
+    visualAdapter.availability !== "enabled" ||
+    participantCell === undefined ||
+    inspectionCell === undefined ||
+    input.participantPlan.sourceFence.sourceFingerprint !==
+      input.visualInspectionPlan.sourceFence.sourceFingerprint ||
+    input.participantPlan.sourceFence.sourceDurationMs !==
+      input.visualInspectionPlan.sourceFence.sourceDurationMs ||
+    input.settlement.providerModelRevision !== visualAdapter.modelRevision ||
+    participantCell.sourceStartMs !== inspectionCell.sourceStartMs ||
+    participantCell.sourceEndMs !== inspectionCell.sourceEndMs ||
+    JSON.stringify(participantCell.frameTimestampsMs) !==
+      JSON.stringify(inspectionCell.frameTimestampsMs) ||
+    (input.settlement.outcome !== "completed" &&
+      input.settlement.outcome !== "excluded-music-only") ||
+    input.settlement.participantOutcome === null
+  ) {
+    throw new BroadcastParticipantGroundingBridgeError(
+      "VISUAL_SETTLEMENT_MISMATCH",
+      "The terminal settlement does not match the source, range, and four frames of the visual-identity cell.",
+    );
+  }
+
+  const participantOutcome = input.settlement.participantOutcome;
+  if (input.settlement.outcome === "excluded-music-only") {
+    return createBroadcastParticipantGroundingTerminalReceipt({
+      plan: input.participantPlan,
+      adapter: "visual-identity",
+      cellId: participantCell.cellId,
+      operationId: input.settlement.operationId,
+      attemptOrdinal: input.settlement.attemptOrdinal,
+      outcome: "unidentified",
+    });
+  }
+  if (participantOutcome.presence === "identified") {
+    const rosterByParticipantId = new Map(
+      candidatePassBCastReferences(
+        input.participantPlan.sourceFence.castRosterId,
+      ).map((reference) => [reference.participantId, reference]),
+    );
+    if (
+      participantOutcome.participants.length === 0 ||
+      participantOutcome.participants.some((attribution) => {
+        const reference = rosterByParticipantId.get(
+          attribution.participantId,
+        );
+        const hasSourceFencedAppearanceReference =
+          attribution.evidenceBasis === "provided-cast-reference" &&
+          visualAdapter.referenceManifestHash !== null &&
+          visualAdapter.coveredParticipantIds.includes(
+            attribution.participantId,
+          );
+        return (
+          reference === undefined ||
+          attribution.displayName !== reference.displayName ||
+          attribution.role !== reference.role ||
+          (attribution.evidenceBasis !== "on-screen-name" &&
+            !hasSourceFencedAppearanceReference) ||
+          attribution.observedFrameIndices.length === 0
+        );
+      })
+    ) {
+      throw new BroadcastParticipantGroundingBridgeError(
+        "VISUAL_SETTLEMENT_MISMATCH",
+        "An identified visual receipt requires an on-screen canonical name tied to a reviewed frame; spoken names, text rosters, and channel priors are not visual identity evidence.",
+      );
+    }
+    return createBroadcastParticipantGroundingTerminalReceipt({
+      plan: input.participantPlan,
+      adapter: "visual-identity",
+      cellId: participantCell.cellId,
+      operationId: input.settlement.operationId,
+      attemptOrdinal: input.settlement.attemptOrdinal,
+      outcome: "identified",
+      participantIds: participantOutcome.participants.map(
+        ({ participantId }) => participantId,
+      ),
+      confidence: Math.min(
+        ...participantOutcome.participants.map(({ confidence }) => confidence),
+      ),
+    });
+  }
+
+  return createBroadcastParticipantGroundingTerminalReceipt({
+    plan: input.participantPlan,
+    adapter: "visual-identity",
+    cellId: participantCell.cellId,
+    operationId: input.settlement.operationId,
+    attemptOrdinal: input.settlement.attemptOrdinal,
+    outcome:
+      participantOutcome.presence === "none-present"
+        ? "none"
+        : "unidentified",
+  });
 }
 
 /**

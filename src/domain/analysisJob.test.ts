@@ -5,6 +5,7 @@ import {
   createAnalysisJob,
   isEligibleForAutomaticCleanup,
   nextStageToRun,
+  parseAnalysisJob,
   remainingStageCount,
   transitionAnalysisJob,
   type AnalysisJob,
@@ -12,6 +13,7 @@ import {
 } from "./analysisJob";
 
 const IDENTITY = { scheme: "local-file-sampled-sha256-v1", key: "abc" };
+const RUN_ID = "run-1";
 
 function newJob(): AnalysisJob {
   return createAnalysisJob({ jobId: "job-1", identity: IDENTITY });
@@ -29,10 +31,51 @@ function drive(job: AnalysisJob, events: readonly AnalysisJobEvent[]): AnalysisJ
 }
 
 const ALL_STAGES_COMMITTED: readonly AnalysisJobEvent[] = ANALYSIS_STAGES.map(
-  (stage) => ({ type: "STAGE_COMMITTED", stage }) as const,
+  (stage) => ({ type: "STAGE_COMMITTED", runId: RUN_ID, stage }) as const,
 );
 
 describe("analysis job", () => {
+  describe("current durable parser", () => {
+    it("returns one canonical current job", () => {
+      const job = createAnalysisJob({
+        jobId: "job-current",
+        identity: {
+          scheme: "exclipper-input-signature-v1",
+          key: "input-current",
+          offsetMs: -250,
+        },
+      });
+
+      expect(parseAnalysisJob(job)).toEqual(job);
+    });
+
+    it.each([
+      {
+        name: "an unsupported nested field",
+        value: { ...newJob(), legacyResumeToken: "old-token" },
+      },
+      {
+        name: "an unknown status",
+        value: { ...newJob(), status: "interrupted" },
+      },
+      {
+        name: "duplicate run ids",
+        value: { ...newJob(), runIds: ["run-1", "run-1"] },
+      },
+      {
+        name: "a running job without the latest active run",
+        value: {
+          ...newJob(),
+          status: "running",
+          runIds: ["run-1"],
+          activeRunId: "run-2",
+        },
+      },
+    ])("rejects $name", ({ value }) => {
+      expect(() => parseAnalysisJob(value)).toThrow(TypeError);
+    });
+  });
+
   it("starts queued with nothing committed", () => {
     const job = newJob();
     expect(job.status).toBe("queued");
@@ -44,9 +87,9 @@ describe("analysis job", () => {
     it("accumulates a run id each time work restarts", () => {
       const job = drive(newJob(), [
         { type: "START", runId: "run-1" },
-        { type: "PAUSE" },
+        { type: "PAUSE", runId: "run-1" },
         { type: "RESUME", runId: "run-2" },
-        { type: "SOURCE_LOST", availability: "needsPermission" },
+        { type: "SOURCE_LOST", runId: "run-2", availability: "needsPermission" },
         { type: "SOURCE_RECONNECTED", runId: "run-3" },
       ]);
       expect(job.runIds).toEqual(["run-1", "run-2", "run-3"]);
@@ -58,7 +101,7 @@ describe("analysis job", () => {
       const invalidated = drive(newJob(), [
         { type: "START", runId: "run-1" },
         ...ALL_STAGES_COMMITTED,
-        { type: "ALL_STAGES_DONE", quality: "usable" },
+        { type: "ALL_STAGES_DONE", runId: RUN_ID, quality: "usable" },
         { type: "INVALIDATE", reasonCode: "model_manifest_changed" },
       ]);
       expect(invalidated.runIds).toEqual(["run-1"]);
@@ -68,7 +111,10 @@ describe("analysis job", () => {
   it("rejects a transition that is not defined", () => {
     // 조용히 무시하면 상태가 어긋난 채 진행되고, 그 어긋남은 한참 뒤에 다른
     // 증상으로 나타난다.
-    const outcome = transitionAnalysisJob(newJob(), { type: "PAUSE" });
+    const outcome = transitionAnalysisJob(newJob(), {
+      type: "PAUSE",
+      runId: RUN_ID,
+    });
     expect(outcome.accepted).toBe(false);
     if (!outcome.accepted) expect(outcome.reason).toBe("undefined_transition");
   });
@@ -77,9 +123,9 @@ describe("analysis job", () => {
     it("returns to the same stage after a pause and resume", () => {
       const paused = drive(newJob(), [
         { type: "START", runId: "run-1" },
-        { type: "STAGE_COMMITTED", stage: "preflight" },
-        { type: "STAGE_COMMITTED", stage: "fastPass" },
-        { type: "PAUSE" },
+        { type: "STAGE_COMMITTED", runId: RUN_ID, stage: "preflight" },
+        { type: "STAGE_COMMITTED", runId: RUN_ID, stage: "fastPass" },
+        { type: "PAUSE", runId: RUN_ID },
       ]);
       expect(paused.status).toBe("paused");
       expect(paused.lastCommittedStage).toBe("fastPass");
@@ -95,8 +141,8 @@ describe("analysis job", () => {
     it("counts only the stages still to do", () => {
       const job = drive(newJob(), [
         { type: "START", runId: "run-1" },
-        { type: "STAGE_COMMITTED", stage: "preflight" },
-        { type: "STAGE_COMMITTED", stage: "fastPass" },
+        { type: "STAGE_COMMITTED", runId: RUN_ID, stage: "preflight" },
+        { type: "STAGE_COMMITTED", runId: RUN_ID, stage: "fastPass" },
       ]);
       expect(remainingStageCount(job)).toBe(ANALYSIS_STAGES.length - 2);
     });
@@ -106,8 +152,8 @@ describe("analysis job", () => {
     it("keeps committed stages when the source goes away", () => {
       const blocked = drive(newJob(), [
         { type: "START", runId: "run-1" },
-        { type: "STAGE_COMMITTED", stage: "preflight" },
-        { type: "SOURCE_LOST", availability: "needsPermission" },
+        { type: "STAGE_COMMITTED", runId: RUN_ID, stage: "preflight" },
+        { type: "SOURCE_LOST", runId: RUN_ID, availability: "needsPermission" },
       ]);
       expect(blocked.status).toBe("blocked");
       expect(blocked.source).toBe("needsPermission");
@@ -122,7 +168,7 @@ describe("analysis job", () => {
     it("refuses to start while the source is unavailable", () => {
       const blocked = drive(newJob(), [
         { type: "START", runId: "run-1" },
-        { type: "SOURCE_LOST", availability: "missing" },
+        { type: "SOURCE_LOST", runId: RUN_ID, availability: "missing" },
       ]);
       const outcome = transitionAnalysisJob(blocked, { type: "RESUME", runId: "run-2" });
       expect(outcome.accepted).toBe(false);
@@ -147,19 +193,41 @@ describe("analysis job", () => {
       const running = drive(newJob(), [{ type: "START", runId: "run-1" }]);
       const outcome = transitionAnalysisJob(running, {
         type: "STAGE_COMMITTED",
+        runId: RUN_ID,
         stage: "deepPass",
       });
       expect(outcome.accepted).toBe(false);
       if (!outcome.accepted) expect(outcome.reason).toBe("stage_order_violation");
     });
 
+    it("refuses a delayed stage commit from an older run", () => {
+      const paused = drive(newJob(), [
+        { type: "START", runId: "run-1" },
+        { type: "PAUSE", runId: "run-1" },
+      ]);
+      const current = drive(paused, [{ type: "RESUME", runId: "run-2" }]);
+      const outcome = transitionAnalysisJob(current, {
+        type: "STAGE_COMMITTED",
+        runId: "run-1",
+        stage: "preflight",
+      });
+
+      expect(outcome.accepted).toBe(false);
+      if (!outcome.accepted) {
+        expect(outcome.reason).toBe("run_fence_mismatch");
+      }
+      expect(outcome.job.activeRunId).toBe("run-2");
+      expect(outcome.job.lastCommittedStage).toBeNull();
+    });
+
     it("refuses to complete before every stage is committed", () => {
       const running = drive(newJob(), [
         { type: "START", runId: "run-1" },
-        { type: "STAGE_COMMITTED", stage: "preflight" },
+        { type: "STAGE_COMMITTED", runId: RUN_ID, stage: "preflight" },
       ]);
       const outcome = transitionAnalysisJob(running, {
         type: "ALL_STAGES_DONE",
+        runId: RUN_ID,
         quality: "usable",
       });
       expect(outcome.accepted).toBe(false);
@@ -172,7 +240,11 @@ describe("analysis job", () => {
         ...ALL_STAGES_COMMITTED,
       ]);
       for (const quality of ["suspect", "unknown"] as const) {
-        const outcome = transitionAnalysisJob(done, { type: "ALL_STAGES_DONE", quality });
+        const outcome = transitionAnalysisJob(done, {
+          type: "ALL_STAGES_DONE",
+          runId: RUN_ID,
+          quality,
+        });
         expect(outcome.accepted, quality).toBe(false);
         if (!outcome.accepted) expect(outcome.reason).toBe("quality_not_usable");
       }
@@ -182,7 +254,7 @@ describe("analysis job", () => {
       const completed = drive(newJob(), [
         { type: "START", runId: "run-1" },
         ...ALL_STAGES_COMMITTED,
-        { type: "ALL_STAGES_DONE", quality: "empty" },
+        { type: "ALL_STAGES_DONE", runId: RUN_ID, quality: "empty" },
       ]);
 
       expect(completed.status).toBe("completedEmpty");
@@ -194,7 +266,7 @@ describe("analysis job", () => {
       const completed = drive(newJob(), [
         { type: "START", runId: "run-1" },
         ...ALL_STAGES_COMMITTED,
-        { type: "ALL_STAGES_DONE", quality: "usable" },
+        { type: "ALL_STAGES_DONE", runId: RUN_ID, quality: "usable" },
       ]);
       expect(completed.status).toBe("completed");
       expect(nextStageToRun(completed)).toBeNull();
@@ -205,16 +277,23 @@ describe("analysis job", () => {
       const completed = drive(newJob(), [
         { type: "START", runId: "run-1" },
         ...ALL_STAGES_COMMITTED,
-        { type: "ALL_STAGES_DONE", quality: "usable" },
+        { type: "ALL_STAGES_DONE", runId: RUN_ID, quality: "usable" },
       ]);
-      const outcome = transitionAnalysisJob(completed, { type: "PAUSE" });
+      const outcome = transitionAnalysisJob(completed, {
+        type: "PAUSE",
+        runId: RUN_ID,
+      });
       expect(outcome.accepted).toBe(false);
       if (!outcome.accepted) expect(outcome.reason).toBe("terminal_state_absorbing");
     });
 
     it("requires a reason code for every terminal failure", () => {
       const running = drive(newJob(), [{ type: "START", runId: "run-1" }]);
-      const outcome = transitionAnalysisJob(running, { type: "FATAL", reasonCode: "" });
+      const outcome = transitionAnalysisJob(running, {
+        type: "FATAL",
+        runId: RUN_ID,
+        reasonCode: "",
+      });
       expect(outcome.accepted).toBe(false);
       if (!outcome.accepted) expect(outcome.reason).toBe("missing_reason_code");
     });
@@ -225,7 +304,7 @@ describe("analysis job", () => {
       const completed = drive(newJob(), [
         { type: "START", runId: "run-1" },
         ...ALL_STAGES_COMMITTED,
-        { type: "ALL_STAGES_DONE", quality: "usable" },
+        { type: "ALL_STAGES_DONE", runId: RUN_ID, quality: "usable" },
       ]);
       const invalidated = drive(completed, [
         { type: "INVALIDATE", reasonCode: "model_manifest_changed" },
@@ -243,7 +322,7 @@ describe("analysis job", () => {
       const completed = drive(newJob(), [
         { type: "START", runId: "run-1" },
         ...ALL_STAGES_COMMITTED,
-        { type: "ALL_STAGES_DONE", quality: "empty" },
+        { type: "ALL_STAGES_DONE", runId: RUN_ID, quality: "empty" },
       ]);
       const invalidated = drive(completed, [
         { type: "INVALIDATE", reasonCode: "reanalysis_requested" },
@@ -256,7 +335,7 @@ describe("analysis job", () => {
     it("lets a failed job be retried", () => {
       const failed = drive(newJob(), [
         { type: "START", runId: "run-1" },
-        { type: "FATAL", reasonCode: "worker_crashed" },
+        { type: "FATAL", runId: RUN_ID, reasonCode: "worker_crashed" },
       ]);
       expect(failed.status).toBe("failed");
       const retried = drive(failed, [{ type: "RETRY", runId: "run-2" }]);
@@ -271,7 +350,7 @@ describe("analysis job", () => {
       const completed = drive(newJob(), [
         { type: "START", runId: "run-1" },
         ...ALL_STAGES_COMMITTED,
-        { type: "ALL_STAGES_DONE", quality: "usable" },
+        { type: "ALL_STAGES_DONE", runId: RUN_ID, quality: "usable" },
       ]);
       expect(isEligibleForAutomaticCleanup(completed, RETENTION + 1, RETENTION)).toBe(true);
       expect(isEligibleForAutomaticCleanup(completed, RETENTION - 1, RETENTION)).toBe(false);
@@ -281,7 +360,7 @@ describe("analysis job", () => {
       const completed = drive(newJob(), [
         { type: "START", runId: "run-1" },
         ...ALL_STAGES_COMMITTED,
-        { type: "ALL_STAGES_DONE", quality: "empty" },
+        { type: "ALL_STAGES_DONE", runId: RUN_ID, quality: "empty" },
       ]);
 
       expect(isEligibleForAutomaticCleanup(completed, RETENTION + 1, RETENTION)).toBe(true);
@@ -289,10 +368,13 @@ describe("analysis job", () => {
 
     it("never collects paused or blocked work, however old", () => {
       // 지우면 "한 번 들어온 영상은 마무리한다"는 약속을 화면이 스스로 깬다.
-      const paused = drive(newJob(), [{ type: "START", runId: "run-1" }, { type: "PAUSE" }]);
+      const paused = drive(newJob(), [
+        { type: "START", runId: RUN_ID },
+        { type: "PAUSE", runId: RUN_ID },
+      ]);
       const blocked = drive(newJob(), [
         { type: "START", runId: "run-1" },
-        { type: "SOURCE_LOST", availability: "needsPermission" },
+        { type: "SOURCE_LOST", runId: RUN_ID, availability: "needsPermission" },
       ]);
       const ancient = RETENTION * 100;
       expect(isEligibleForAutomaticCleanup(paused, ancient, RETENTION)).toBe(false);

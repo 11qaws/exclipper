@@ -7,11 +7,13 @@ import {
 } from "./broadcastParticipantGrounding";
 import {
   BroadcastParticipantGroundingBridgeError,
+  createBroadcastParticipantVisualTerminalReceiptFromSettlement,
   projectBroadcastParticipantGroundingAdapterOutputs,
 } from "./broadcastParticipantGroundingBridge";
 import {
   BroadcastParticipantGroundingPlanContractError,
   createBroadcastParticipantGroundingGapReceipt,
+  createBroadcastParticipantGroundingNoneObservedReceipt,
   createBroadcastParticipantGroundingPlan,
   createBroadcastParticipantGroundingTerminalReceipt,
   projectBroadcastParticipantVoiceRecognition,
@@ -29,10 +31,29 @@ import {
   type ParticipantVoiceEnrollmentAsset,
   type ParticipantVoiceEnrollmentManifest,
 } from "./participantVoiceEnrollmentManifest";
+import {
+  BROADCAST_TRANSCRIPT_VISUAL_AUDIO_EXTRACTION_REVISION,
+  createBroadcastTranscriptVisualInspectionPlan,
+  createBroadcastTranscriptVisualPreparedFrameReceipt,
+  createBroadcastTranscriptVisualProviderSettlement,
+  type BroadcastTranscriptVisualInspectionPlan,
+  type BroadcastTranscriptVisualParticipantOutcome,
+} from "./broadcastTranscriptVisualInspectionQueue";
+import {
+  createBroadcastTranscriptResolvedEvidenceCheckpoint,
+  recordBroadcastTranscriptResolvedEvidence,
+} from "./broadcastTranscriptResolvedEvidence";
+import { createVerifiedNoSpeechRunReceiptForTest } from "../testSupport/broadcastSpeechActivityTestReceipt";
 
 const SOURCE_FINGERPRINT = `sha256:${"a".repeat(64)}`;
 const VISUAL_REFERENCE_MANIFEST_HASH = `sha256:${"b".repeat(64)}`;
 const SOURCE_DURATION_MS = 120_000;
+const FRAME_FINGERPRINTS = [
+  `sha256:${"1".repeat(64)}`,
+  `sha256:${"2".repeat(64)}`,
+  `sha256:${"3".repeat(64)}`,
+  `sha256:${"4".repeat(64)}`,
+] as const;
 
 const groundingInput: CreateBroadcastParticipantGroundingInput = {
   sourceDurationMs: SOURCE_DURATION_MS,
@@ -277,11 +298,375 @@ function completedCellReceipts(
   ];
 }
 
+function participantVisualInspectionPlan(): BroadcastTranscriptVisualInspectionPlan {
+  let evidence = createBroadcastTranscriptResolvedEvidenceCheckpoint({
+    sourceFingerprint: SOURCE_FINGERPRINT,
+    sourceDurationMs: SOURCE_DURATION_MS,
+    transcriptInputSignature: "transcript-visual-participant-bridge-v1",
+    modelRevision: "qwen3-asr-test-v1",
+    plannedCells: [
+      {
+        chunkId: "participant-visual-1",
+        sourceStartMs: 10_000,
+        sourceEndMs: 20_000,
+      },
+    ],
+  });
+  evidence = recordBroadcastTranscriptResolvedEvidence(
+    evidence,
+    "participant-visual-1",
+    "no-speech",
+    createVerifiedNoSpeechRunReceiptForTest(
+      SOURCE_DURATION_MS,
+      10_000,
+      20_000,
+    ),
+  );
+  return createBroadcastTranscriptVisualInspectionPlan(evidence);
+}
+
+async function groundingPlanForVisualInspection(
+  inspectionPlan: BroadcastTranscriptVisualInspectionPlan,
+  withReferenceManifest = true,
+): Promise<BroadcastParticipantGroundingPlan> {
+  const base = groundingPlanInput();
+  return createBroadcastParticipantGroundingPlan({
+    ...base,
+    visual: {
+      ...base.visual,
+      referenceManifestHash: withReferenceManifest
+        ? base.visual.referenceManifestHash
+        : null,
+      referenceParticipantIds: withReferenceManifest
+        ? base.visual.referenceParticipantIds
+        : [],
+      cells: inspectionPlan.cells.map((cell) => ({
+        sourceStartMs: cell.sourceStartMs,
+        sourceEndMs: cell.sourceEndMs,
+        sourceUnitId: cell.cellId,
+        frameTimestampsMs: cell.frameTimestampsMs,
+      })),
+    },
+  });
+}
+
+function visualSettlement(
+  inspectionPlan: BroadcastTranscriptVisualInspectionPlan,
+  participantOutcome: BroadcastTranscriptVisualParticipantOutcome,
+  outcome: "completed" | "excluded-music-only" = "completed",
+) {
+  const cell = inspectionPlan.cells[0]!;
+  const prepared = createBroadcastTranscriptVisualPreparedFrameReceipt({
+    plan: inspectionPlan,
+    cellId: cell.cellId,
+    frameContentFingerprints: FRAME_FINGERPRINTS,
+    audioEvidence: {
+      sourceStartMs: cell.sourceStartMs,
+      sourceEndMs: cell.sourceEndMs,
+      codec: "audio/wav;codecs=pcm_s16le",
+      extractionRevision:
+        BROADCAST_TRANSCRIPT_VISUAL_AUDIO_EXTRACTION_REVISION,
+      contentFingerprint: `sha256:${"9".repeat(64)}`,
+    },
+  });
+  const base = {
+    plan: inspectionPlan,
+    cellId: cell.cellId,
+    preparedFrameReceipt: prepared,
+    providerModelRevision: "visual-reference-test-v1",
+    operationId: "visual-participant-settlement-1",
+    attemptOrdinal: 0,
+    summaryKo: "네 장의 화면과 오디오를 함께 검토했습니다.",
+    providerResponseFingerprint: `sha256:${"d".repeat(64)}`,
+    participantOutcome,
+  };
+  return outcome === "excluded-music-only"
+    ? createBroadcastTranscriptVisualProviderSettlement({
+        ...base,
+        outcome,
+        editorialFinding: "music-or-mv-only",
+      })
+    : createBroadcastTranscriptVisualProviderSettlement({
+        ...base,
+        outcome,
+        editorialFinding: "visual-event",
+      });
+}
+
 describe("broadcast participant grounding bridge", () => {
-  it("projects only sealed terminal cells into exact visual and voice outputs", async () => {
-    const plan = await createBroadcastParticipantGroundingPlan(
-      groundingPlanInput(),
+  it("does not turn a music or MV exclusion into participant identity evidence", async () => {
+    const inspectionPlan = participantVisualInspectionPlan();
+    const plan = await groundingPlanForVisualInspection(inspectionPlan);
+    const participantCellId = adapter(
+      plan,
+      "visual-identity",
+    ).cells[0]!.cellId;
+    const amoretto = candidatePassBCastReferences(
+      DEFAULT_CANDIDATE_PASS_B_CAST_ROSTER_ID,
+    ).find(({ participantId }) => participantId === "amoretto")!;
+
+    const receipt =
+      createBroadcastParticipantVisualTerminalReceiptFromSettlement({
+        participantPlan: plan,
+        participantCellId,
+        visualInspectionPlan: inspectionPlan,
+        settlement: visualSettlement(
+          inspectionPlan,
+          {
+            presence: "identified",
+            summaryKo: "뮤직비디오 프레임에는 인물이 보입니다.",
+            participants: [
+              {
+                participantId: amoretto.participantId,
+                displayName: amoretto.displayName,
+                role: amoretto.role,
+                evidenceBasis: "on-screen-name",
+                evidenceKo: "뮤직비디오 화면 안 이름표입니다.",
+                confidence: 0.99,
+                relativeTimestampMs: 3_000,
+                observedFrameIndices: [0, 1],
+              },
+            ],
+          },
+          "excluded-music-only",
+        ),
+      });
+
+    expect(receipt).toMatchObject({
+      outcome: "unidentified",
+      participantIds: [],
+      confidence: null,
+    });
+  });
+
+  it("turns only terminal four-frame visual evidence into an identified participant receipt", async () => {
+    const inspectionPlan = participantVisualInspectionPlan();
+    const plan = await groundingPlanForVisualInspection(inspectionPlan);
+    const visualCell = adapter(plan, "visual-identity").cells[0]!;
+    const references = candidatePassBCastReferences(
+      DEFAULT_CANDIDATE_PASS_B_CAST_ROSTER_ID,
     );
+    const amoretto = references.find(
+      ({ participantId }) => participantId === "amoretto",
+    )!;
+    const eureka = references.find(
+      ({ participantId }) => participantId === "eureka",
+    )!;
+    const settlement = visualSettlement(inspectionPlan, {
+      presence: "identified",
+      summaryKo: "검증된 화면 근거로 두 출연자를 확인했습니다.",
+      participants: [
+        {
+          participantId: amoretto.participantId,
+          displayName: amoretto.displayName,
+          role: amoretto.role,
+          evidenceBasis: "on-screen-name",
+          evidenceKo: "첫 번째와 세 번째 검토 화면에서 이름표를 확인했습니다.",
+          confidence: 0.97,
+          relativeTimestampMs: 3_000,
+          observedFrameIndices: [0, 2],
+        },
+        {
+          participantId: eureka.participantId,
+          displayName: eureka.displayName,
+          role: eureka.role,
+          evidenceBasis: "provided-cast-reference",
+          evidenceKo: "두 번째와 네 번째 검토 화면의 고유 아바타 특징을 대조했습니다.",
+          confidence: 0.91,
+          relativeTimestampMs: 6_000,
+          observedFrameIndices: [1, 3],
+        },
+      ],
+    });
+
+    expect(
+      createBroadcastParticipantVisualTerminalReceiptFromSettlement({
+        participantPlan: plan,
+        participantCellId: visualCell.cellId,
+        visualInspectionPlan: inspectionPlan,
+        settlement,
+      }),
+    ).toMatchObject({
+      adapter: "visual-identity",
+      cellId: visualCell.cellId,
+      outcome: "identified",
+      participantIds: ["amoretto", "eureka"],
+      confidence: 0.91,
+      operationId: settlement.operationId,
+      attemptOrdinal: settlement.attemptOrdinal,
+    });
+  });
+
+  it("accepts an on-screen canonical name without a cast-image manifest but rejects appearance matching", async () => {
+    const inspectionPlan = participantVisualInspectionPlan();
+    const plan = await groundingPlanForVisualInspection(
+      inspectionPlan,
+      false,
+    );
+    const visual = adapter(plan, "visual-identity");
+    const participantCellId = visual.cells[0]!.cellId;
+    const amoretto = candidatePassBCastReferences(
+      DEFAULT_CANDIDATE_PASS_B_CAST_ROSTER_ID,
+    ).find(({ participantId }) => participantId === "amoretto")!;
+    const attribution = {
+      participantId: amoretto.participantId,
+      displayName: amoretto.displayName,
+      role: amoretto.role,
+      evidenceKo: "검토 화면의 이름표에 정식 이름이 표시되었습니다.",
+      confidence: 0.97,
+      relativeTimestampMs: 3_000,
+      observedFrameIndices: [0, 2],
+    } as const;
+
+    expect(visual).toMatchObject({
+      referenceManifestHash: null,
+      coveredParticipantIds: [],
+      missingParticipantIds: plan.expectedParticipantIds,
+    });
+    expect(
+      createBroadcastParticipantVisualTerminalReceiptFromSettlement({
+        participantPlan: plan,
+        participantCellId,
+        visualInspectionPlan: inspectionPlan,
+        settlement: visualSettlement(inspectionPlan, {
+          presence: "identified",
+          summaryKo: "화면 이름표로 출연자를 확인했습니다.",
+          participants: [
+            { ...attribution, evidenceBasis: "on-screen-name" },
+          ],
+        }),
+      }),
+    ).toMatchObject({
+      outcome: "identified",
+      participantIds: ["amoretto"],
+    });
+
+    expect(() =>
+      createBroadcastParticipantVisualTerminalReceiptFromSettlement({
+        participantPlan: plan,
+        participantCellId,
+        visualInspectionPlan: inspectionPlan,
+        settlement: visualSettlement(inspectionPlan, {
+          presence: "identified",
+          summaryKo: "등록 이미지와 닮았다고 추측했습니다.",
+          participants: [
+            {
+              ...attribution,
+              evidenceBasis: "provided-cast-reference",
+            },
+          ],
+        }),
+      }),
+    ).toThrowError(BroadcastParticipantGroundingBridgeError);
+  });
+
+  it("maps explicit no-person and unresolved identity without inventing an observed participant", async () => {
+    const inspectionPlan = participantVisualInspectionPlan();
+    const plan = await groundingPlanForVisualInspection(inspectionPlan);
+    const participantCellId = adapter(plan, "visual-identity").cells[0]!.cellId;
+
+    expect(
+      createBroadcastParticipantVisualTerminalReceiptFromSettlement({
+        participantPlan: plan,
+        participantCellId,
+        visualInspectionPlan: inspectionPlan,
+        settlement: visualSettlement(inspectionPlan, {
+          presence: "none-present",
+          summaryKo: "검토한 화면에서 등장인물이 보이지 않았습니다.",
+          participants: [],
+        }),
+      }),
+    ).toMatchObject({ outcome: "none", participantIds: [], confidence: null });
+
+    expect(
+      createBroadcastParticipantVisualTerminalReceiptFromSettlement({
+        participantPlan: plan,
+        participantCellId,
+        visualInspectionPlan: inspectionPlan,
+        settlement: visualSettlement(inspectionPlan, {
+          presence: "insufficient-evidence",
+          summaryKo: "화면 근거만으로 등장 여부나 신원을 확정하지 못했습니다.",
+          participants: [],
+        }),
+      }),
+    ).toMatchObject({
+      outcome: "unidentified",
+      participantIds: [],
+      confidence: null,
+    });
+  });
+
+  it("rejects spoken names, channel priors without observed frames, and a different four-frame cell", async () => {
+    const inspectionPlan = participantVisualInspectionPlan();
+    const exactPlan = await groundingPlanForVisualInspection(inspectionPlan);
+    const exactCellId = adapter(exactPlan, "visual-identity").cells[0]!.cellId;
+    const amoretto = candidatePassBCastReferences(
+      DEFAULT_CANDIDATE_PASS_B_CAST_ROSTER_ID,
+    ).find(({ participantId }) => participantId === "amoretto")!;
+    const attribution = {
+      participantId: amoretto.participantId,
+      displayName: amoretto.displayName,
+      role: amoretto.role,
+      evidenceKo: "검토 구간에서 이름이 언급되었습니다.",
+      confidence: 0.95,
+      relativeTimestampMs: 4_000,
+      observedFrameIndices: [1],
+    } as const;
+
+    expect(() =>
+      createBroadcastParticipantVisualTerminalReceiptFromSettlement({
+        participantPlan: exactPlan,
+        participantCellId: exactCellId,
+        visualInspectionPlan: inspectionPlan,
+        settlement: visualSettlement(inspectionPlan, {
+          presence: "identified",
+          summaryKo: "대사에서만 이름이 언급되었습니다.",
+          participants: [
+            { ...attribution, evidenceBasis: "spoken-name" },
+          ],
+        }),
+      }),
+    ).toThrowError(BroadcastParticipantGroundingBridgeError);
+
+    expect(() =>
+      createBroadcastParticipantVisualTerminalReceiptFromSettlement({
+        participantPlan: exactPlan,
+        participantCellId: exactCellId,
+        visualInspectionPlan: inspectionPlan,
+        settlement: visualSettlement(inspectionPlan, {
+          presence: "identified",
+          summaryKo: "채널의 기존 출연자 정보만 있습니다.",
+          participants: [
+            {
+              ...attribution,
+              evidenceBasis: "provided-cast-reference",
+              observedFrameIndices: [],
+            },
+          ],
+        }),
+      }),
+    ).toThrowError(BroadcastParticipantGroundingBridgeError);
+
+    const mismatchedPlan =
+      await createBroadcastParticipantGroundingPlan(groundingPlanInput());
+    expect(() =>
+      createBroadcastParticipantVisualTerminalReceiptFromSettlement({
+        participantPlan: mismatchedPlan,
+        participantCellId: adapter(mismatchedPlan, "visual-identity").cells[0]!
+          .cellId,
+        visualInspectionPlan: inspectionPlan,
+        settlement: visualSettlement(inspectionPlan, {
+          presence: "none-present",
+          summaryKo: "검토한 화면에서 등장인물이 보이지 않았습니다.",
+          participants: [],
+        }),
+      }),
+    ).toThrowError(BroadcastParticipantGroundingBridgeError);
+  });
+
+  it("projects only sealed terminal cells into exact visual and voice outputs", async () => {
+    const plan =
+      await createBroadcastParticipantGroundingPlan(groundingPlanInput());
     const outputs = projectBroadcastParticipantGroundingAdapterOutputs({
       groundingInput,
       expectedSourceFence: plan.sourceFence,
@@ -339,9 +724,24 @@ describe("broadcast participant grounding bridge", () => {
         confidence: null,
       }),
     ]);
-    expect(isBroadcastParticipantGroundingForInput(grounding, groundingInput)).toBe(
-      true,
-    );
+    expect(grounding.participants).toHaveLength(6);
+    expect([
+      ...new Set(
+        grounding.evidence.flatMap((evidence) =>
+          [
+            "on-screen-name",
+            "visual-reference-match",
+            "spoken-self-identification",
+            "voice-reference-match",
+          ].includes(evidence.kind) && evidence.participantId !== null
+            ? [evidence.participantId]
+            : [],
+        ),
+      ),
+    ]).toEqual(["amoretto"]);
+    expect(
+      isBroadcastParticipantGroundingForInput(grounding, groundingInput),
+    ).toBe(true);
   });
 
   it.each([
@@ -350,9 +750,8 @@ describe("broadcast participant grounding bridge", () => {
   ] as const)(
     "rejects a %s gap before projecting adapter outputs",
     async (disposition, reason) => {
-      const plan = await createBroadcastParticipantGroundingPlan(
-        groundingPlanInput(),
-      );
+      const plan =
+        await createBroadcastParticipantGroundingPlan(groundingPlanInput());
       const receipts = [...completedCellReceipts(plan)];
       const voice = adapter(plan, "voice-identity");
       const failedCell = voice.cells[1]!;
@@ -381,9 +780,8 @@ describe("broadcast participant grounding bridge", () => {
   );
 
   it("rejects an incomplete receipt set instead of treating it as sealed", async () => {
-    const plan = await createBroadcastParticipantGroundingPlan(
-      groundingPlanInput(),
-    );
+    const plan =
+      await createBroadcastParticipantGroundingPlan(groundingPlanInput());
     expect(() =>
       projectBroadcastParticipantGroundingAdapterOutputs({
         groundingInput,
@@ -395,9 +793,8 @@ describe("broadcast participant grounding bridge", () => {
   });
 
   it("rejects a stale source fence before projecting any evidence", async () => {
-    const plan = await createBroadcastParticipantGroundingPlan(
-      groundingPlanInput(),
-    );
+    const plan =
+      await createBroadcastParticipantGroundingPlan(groundingPlanInput());
     expect(() =>
       projectBroadcastParticipantGroundingAdapterOutputs({
         groundingInput,
@@ -441,6 +838,18 @@ describe("broadcast participant grounding bridge", () => {
           attemptOrdinal: 0,
           outcome: "none",
         }),
+        createBroadcastParticipantGroundingNoneObservedReceipt({
+          plan,
+          adapter: "visual-identity",
+          operationId: "visual:bridge:none-observed",
+          attemptOrdinal: 0,
+        }),
+        createBroadcastParticipantGroundingNoneObservedReceipt({
+          plan,
+          adapter: "voice-identity",
+          operationId: "voice:bridge:none-observed",
+          attemptOrdinal: 0,
+        }),
       ],
     });
 
@@ -463,9 +872,8 @@ describe("broadcast participant grounding bridge", () => {
   });
 
   it("does not accept null confidence for an identified observation", async () => {
-    const plan = await createBroadcastParticipantGroundingPlan(
-      groundingPlanInput(),
-    );
+    const plan =
+      await createBroadcastParticipantGroundingPlan(groundingPlanInput());
     const outputs = projectBroadcastParticipantGroundingAdapterOutputs({
       groundingInput,
       expectedSourceFence: plan.sourceFence,

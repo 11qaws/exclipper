@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
-  BROADCAST_CONTEXT_RECOVERED_IN_FLIGHT_REASON,
+  BROADCAST_CONTEXT_RECONCILIATION_UNRESOLVED_REASON,
   BroadcastContextPhaseRunnerError,
   runBroadcastContextPhaseLedger,
 } from "./broadcastContextPhaseRunner";
@@ -175,6 +175,13 @@ function defaultOptions(
 ): RunBroadcastContextPhaseLedgerOptions {
   return {
     ledger,
+    reconcile: (current) =>
+      Promise.resolve({
+        disposition: "unresolved",
+        operationId: current.operationId,
+        inputDigest: current.inputDigest,
+        reasonCode: BROADCAST_CONTEXT_RECONCILIATION_UNRESOLVED_REASON,
+      }),
     execute: () =>
       Promise.resolve({
         result: { summary: "new result" },
@@ -224,13 +231,15 @@ describe("runBroadcastContextPhaseLedger", () => {
     expect(persist).not.toHaveBeenCalled();
   });
 
-  it("seals every recovered in-flight operation before any provider call", async () => {
+  it("reconciles every recovered in-flight operation before any new provider call", async () => {
     const ledger = inFlightLedger();
     const execute = vi.fn(defaultOptions(ledger).execute);
+    const reconcile = vi.fn(defaultOptions(ledger).reconcile);
     const transitions: BroadcastContextPhasePersistedTransition[] = [];
 
     const result = await runBroadcastContextPhaseLedger({
       ...defaultOptions(ledger),
+      reconcile,
       execute,
       persist: (_nextLedger, metadata) => {
         transitions.push(metadata);
@@ -242,18 +251,191 @@ describe("runBroadcastContextPhaseLedger", () => {
     expect(result.complete).toBe(false);
     expect(result.ledger.units[0]).toMatchObject({
       status: "outcome-unknown",
-      reasonCode: BROADCAST_CONTEXT_RECOVERED_IN_FLIGHT_REASON,
+      reasonCode: BROADCAST_CONTEXT_RECONCILIATION_UNRESOLVED_REASON,
     });
     expect(result.statistics.recoveredInFlightCount).toBe(1);
+    expect(result.statistics.reconciliationExecutionCount).toBe(1);
+    expect(reconcile).toHaveBeenCalledWith(
+      expect.objectContaining({
+        operationId: "operation-a-0",
+        inputDigest: "digest-a",
+      }),
+    );
     expect(execute).not.toHaveBeenCalled();
     expect(transitions).toEqual([
       expect.objectContaining({
-        cause: "recovery-seal",
-        eventType: "UNIT_OUTCOME_UNKNOWN",
+        cause: "reconciliation-started",
+        eventType: "UNIT_RECONCILIATION_STARTED",
         previousStatus: "in-flight",
+        resultingStatus: "reconciling",
+      }),
+      expect.objectContaining({
+        cause: "reconciliation-unresolved",
+        eventType: "UNIT_RECONCILIATION_UNRESOLVED",
+        previousStatus: "reconciling",
         resultingStatus: "outcome-unknown",
       }),
     ]);
+    expect(result.recoveryActions).toEqual([
+      expect.objectContaining({
+        kind: "reconcile-current-operation",
+        operationId: "operation-a-0",
+        inputDigest: "digest-a",
+      }),
+    ]);
+  });
+
+  it("consumes a matching terminal reconciliation result without a new provider execution", async () => {
+    const ledger = inFlightLedger();
+    const execute = vi.fn(defaultOptions(ledger).execute);
+    const reconcile = vi.fn(
+      (current: BroadcastContextPhaseLedgerUnitIdentity) =>
+        Promise.resolve({
+          disposition: "succeeded" as const,
+          operationId: current.operationId,
+          inputDigest: current.inputDigest,
+          result: { summary: "cached terminal result" },
+          modelReceipt: { requestId: "cached-receipt" },
+        }),
+    );
+
+    const result = await runBroadcastContextPhaseLedger({
+      ...defaultOptions(ledger),
+      reconcile,
+      execute,
+    });
+
+    expect(result.status).toBe("completed");
+    expect(result.ledger.units[0]).toMatchObject({
+      status: "succeeded",
+      operationId: "operation-a-0",
+      result: { summary: "cached terminal result" },
+      modelReceipt: { requestId: "cached-receipt" },
+    });
+    expect(result.statistics.reconciliationSucceededCount).toBe(1);
+    expect(result.statistics.providerExecutionCount).toBe(0);
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it("turns proven non-dispatch into a retryable gap and executes only its fresh operation", async () => {
+    const ledger = outcomeUnknownLedger();
+    const execute = vi.fn(defaultOptions(ledger).execute);
+    const reconcile = vi.fn(
+      (current: BroadcastContextPhaseLedgerUnitIdentity) =>
+        Promise.resolve({
+          disposition: "not-dispatched" as const,
+          operationId: current.operationId,
+          inputDigest: current.inputDigest,
+          reasonCode: "coordinator_proved_not_dispatched",
+        }),
+    );
+
+    const result = await runBroadcastContextPhaseLedger({
+      ...defaultOptions(ledger),
+      reconcile,
+      execute,
+      createRetryOperationId: ({ nextAttemptOrdinal }) =>
+        `operation-a-${nextAttemptOrdinal}`,
+    });
+
+    expect(result.status).toBe("completed");
+    expect(reconcile).toHaveBeenCalledTimes(1);
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(execute).toHaveBeenCalledWith(
+      expect.objectContaining({
+        operationId: "operation-a-1",
+        inputDigest: "digest-a",
+        attemptOrdinal: 1,
+      }),
+    );
+    expect(result.ledger.usedOperationIds).toEqual(["operation-a-1"]);
+    expect(result.statistics.reconciliationNotDispatchedCount).toBe(1);
+  });
+
+  it("rejects a mismatched reconciliation receipt and exposes only the current-operation action", async () => {
+    const ledger = outcomeUnknownLedger();
+    const execute = vi.fn(defaultOptions(ledger).execute);
+
+    const result = await runBroadcastContextPhaseLedger({
+      ...defaultOptions(ledger),
+      reconcile: (current) =>
+        Promise.resolve({
+          disposition: "succeeded",
+          operationId: current.operationId,
+          inputDigest: "different-input-digest",
+          result: { summary: "must not be consumed" },
+        }),
+      execute,
+    });
+
+    expect(result.status).toBe("blocked-outcome-unknown");
+    expect(result.ledger.units[0]).toMatchObject({
+      status: "outcome-unknown",
+      operationId: "operation-a-0",
+      inputDigest: "digest-a",
+      reasonCode: "runner_invalid_reconciliation_result",
+    });
+    expect(result.recoveryActions).toEqual([
+      {
+        kind: "reconcile-current-operation",
+        phase: "discovery",
+        unitId: "chapter-a",
+        inputDigest: "digest-a",
+        operationId: "operation-a-0",
+        attemptOrdinal: 0,
+        maximumReconciliationsPerInvocation: 1,
+      },
+    ]);
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it("reloads a durably reconciling unit and resumes the same operation after an interrupted settlement", async () => {
+    const ledger = inFlightLedger();
+    let reconcilingLedger: BroadcastContextPhaseLedger | null = null;
+
+    const interrupted = await captureRunnerError(
+      runBroadcastContextPhaseLedger({
+        ...defaultOptions(ledger),
+        reconcile: () => Promise.reject(new Error("tab closed")),
+        persist: (nextLedger, transition) => {
+          if (transition.cause === "reconciliation-started") {
+            reconcilingLedger = nextLedger;
+            return Promise.resolve();
+          }
+          return Promise.reject(new Error("settlement write interrupted"));
+        },
+      }),
+    );
+    expect(interrupted.code).toBe("PERSISTENCE_FAILED");
+    if (reconcilingLedger === null) {
+      throw new Error("Missing durable reconciling checkpoint.");
+    }
+    expect(
+      (reconcilingLedger as BroadcastContextPhaseLedger).units[0],
+    ).toMatchObject({
+      status: "reconciling",
+      operationId: "operation-a-0",
+    });
+    const execute = vi.fn(defaultOptions(reconcilingLedger).execute);
+    const resumed = await runBroadcastContextPhaseLedger({
+      ...defaultOptions(reconcilingLedger),
+      reconcile: (current) =>
+        Promise.resolve({
+          disposition: "succeeded",
+          operationId: current.operationId,
+          inputDigest: current.inputDigest,
+          result: { summary: "recovered after reload" },
+        }),
+      execute,
+    });
+
+    expect(resumed.status).toBe("completed");
+    expect(resumed.ledger.units[0]).toMatchObject({
+      status: "succeeded",
+      operationId: "operation-a-0",
+      result: { summary: "recovered after reload" },
+    });
+    expect(execute).not.toHaveBeenCalled();
   });
 
   it("persists start before execution and success before completion", async () => {
@@ -323,7 +505,6 @@ describe("runBroadcastContextPhaseLedger", () => {
 
     const result = await runBroadcastContextPhaseLedger({
       ...defaultOptions(ledger),
-      maximumAttemptCount: 3,
       execute,
       classifyFailure,
       createRetryOperationId,
@@ -357,12 +538,12 @@ describe("runBroadcastContextPhaseLedger", () => {
       "UNIT_STARTED",
       "UNIT_SUCCEEDED",
     ]);
-    expect(result.ledger.usedOperationIds).toContain("operation-a-0");
+    expect(result.ledger.usedOperationIds).not.toContain("operation-a-0");
     expect(result.ledger.usedOperationIds).toContain("operation-a-1");
     expect(result.statistics.plannedRetryCount).toBe(1);
   });
 
-  it("stops at the bounded attempt limit and never reports completion", async () => {
+  it("stops at the bounded invocation budget and resumes in a later invocation", async () => {
     const ledger = createLedger();
     const execute = vi.fn(() => Promise.reject(new Error("rate limit")));
     const createRetryOperationId = vi.fn(
@@ -372,7 +553,7 @@ describe("runBroadcastContextPhaseLedger", () => {
 
     const result = await runBroadcastContextPhaseLedger({
       ...defaultOptions(ledger),
-      maximumAttemptCount: 2,
+      maximumExecutionsPerInvocation: 2,
       execute,
       classifyFailure: () => ({
         disposition: "retryable-gap",
@@ -403,7 +584,6 @@ describe("runBroadcastContextPhaseLedger", () => {
 
     const result = await runBroadcastContextPhaseLedger({
       ...defaultOptions(ledger),
-      maximumAttemptCount: 8,
       maximumExecutionsPerInvocation: 3,
       execute,
       classifyFailure: () => ({
@@ -429,7 +609,6 @@ describe("runBroadcastContextPhaseLedger", () => {
 
     const result = await runBroadcastContextPhaseLedger({
       ...defaultOptions(ledger),
-      maximumAttemptCount: 8,
       execute,
       classifyFailure: () => ({
         disposition: "outcome-unknown",
@@ -447,6 +626,50 @@ describe("runBroadcastContextPhaseLedger", () => {
       operationId: "operation-a-0",
       attemptOrdinal: 0,
     });
+  });
+
+  it("persists deterministic failure once and never retries it", async () => {
+    const ledger = createLedger();
+    const execute = vi.fn(() =>
+      Promise.reject(new Error("credential configuration is invalid")),
+    );
+    const createRetryOperationId = vi.fn(
+      defaultOptions(ledger).createRetryOperationId,
+    );
+    const statuses: string[] = [];
+
+    const result = await runBroadcastContextPhaseLedger({
+      ...defaultOptions(ledger),
+      execute,
+      classifyFailure: () => ({
+        disposition: "failed",
+        reasonCode: "provider_configuration_or_request_rejected",
+      }),
+      createRetryOperationId,
+      persist: (nextLedger) => {
+        statuses.push(nextLedger.units[0]!.status);
+        return Promise.resolve();
+      },
+    });
+
+    expect(result.status).toBe("blocked-failed");
+    expect(result.blockingUnits).toEqual([
+      expect.objectContaining({
+        status: "failed",
+        reasonCode: "provider_configuration_or_request_rejected",
+      }),
+    ]);
+    expect(statuses).toEqual(["in-flight", "failed"]);
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(createRetryOperationId).not.toHaveBeenCalled();
+
+    const resumedExecute = vi.fn(defaultOptions(result.ledger).execute);
+    const resumed = await runBroadcastContextPhaseLedger({
+      ...defaultOptions(result.ledger),
+      execute: resumedExecute,
+    });
+    expect(resumed.status).toBe("blocked-failed");
+    expect(resumedExecute).not.toHaveBeenCalled();
   });
 
   it("runs an outcome-unknown unit only after the explicit confirmation event", async () => {
@@ -710,28 +933,23 @@ describe("runBroadcastContextPhaseLedger", () => {
     expect(persist).not.toHaveBeenCalled();
   });
 
-  it("leaves over-limit pending work incomplete without side effects", async () => {
+  it("executes a high durable attempt ordinal without a lifetime ceiling", async () => {
     const ledger = createLedger(3);
     const execute = vi.fn(defaultOptions(ledger).execute);
     const persist = vi.fn(defaultOptions(ledger).persist);
 
     const result = await runBroadcastContextPhaseLedger({
       ...defaultOptions(ledger),
-      maximumAttemptCount: 3,
       execute,
       persist,
     });
 
-    expect(result.status).toBe("blocked-attempt-limit");
-    expect(result.complete).toBe(false);
-    expect(result.blockingUnits).toEqual([
-      expect.objectContaining({
-        status: "pending",
-        attemptOrdinal: 3,
-      }),
-    ]);
-    expect(execute).not.toHaveBeenCalled();
-    expect(persist).not.toHaveBeenCalled();
+    expect(result.status).toBe("completed");
+    expect(result.complete).toBe(true);
+    expect(execute).toHaveBeenCalledWith(
+      expect.objectContaining({ attemptOrdinal: 3 }),
+    );
+    expect(persist).toHaveBeenCalledTimes(2);
   });
 
   it("requires only required units for completion", async () => {
@@ -787,15 +1005,19 @@ describe("runBroadcastContextPhaseLedger", () => {
     expect(execute).not.toHaveBeenCalled();
   });
 
-  it("rejects an unbounded or zero attempt policy before side effects", async () => {
+  it("rejects an unbounded or zero per-invocation budget before side effects", async () => {
     const ledger = createLedger();
-    for (const maximumAttemptCount of [0, 9, Number.POSITIVE_INFINITY]) {
+    for (const maximumExecutionsPerInvocation of [
+      0,
+      9,
+      Number.POSITIVE_INFINITY,
+    ]) {
       const execute = vi.fn(defaultOptions(ledger).execute);
       const persist = vi.fn(defaultOptions(ledger).persist);
       const error = await captureRunnerError(
         runBroadcastContextPhaseLedger({
           ...defaultOptions(ledger),
-          maximumAttemptCount,
+          maximumExecutionsPerInvocation,
           execute,
           persist,
         }),

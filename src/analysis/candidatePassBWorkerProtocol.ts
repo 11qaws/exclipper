@@ -3,69 +3,20 @@ import type { AnalysisLanguage } from "../domain/analysisLanguage";
 
 /** Provider-specific IDs plus the currently deployed default. */
 export const CANDIDATE_PASS_B_GEMINI_MODEL_ID = "gemini-3.6-flash" as const;
-export const CANDIDATE_PASS_B_OLDER_GEMINI_MODEL_REVISION =
-  "gemini-3.6-flash-grounded-frames-v3-2026-07-22" as const;
-export const CANDIDATE_PASS_B_PREVIOUS_GEMINI_MODEL_REVISION =
-  "gemini-3.6-flash-grounded-frames-cast-v4-2026-07-22" as const;
-export const CANDIDATE_PASS_B_PRIOR_GEMINI_MODEL_REVISION =
-  "gemini-3.6-flash-grounded-frames-cast-v5-2026-07-22" as const;
-export const CANDIDATE_PASS_B_CONTEXTLESS_GEMINI_MODEL_REVISION =
-  "gemini-3.6-flash-grounded-frames-participants-language-v7-2026-07-23" as const;
 export const CANDIDATE_PASS_B_GEMINI_MODEL_REVISION =
   "gemini-3.6-flash-context-verified-frames-v8-2026-07-23" as const;
-export const CANDIDATE_PASS_B_LEGACY_GEMINI_MODEL_ID =
-  "gemini-3.5-flash" as const;
-export const CANDIDATE_PASS_B_LEGACY_GEMINI_MODEL_REVISION =
-  "gemini-3.5-flash-grounded-frames-v2-2026-07-22" as const;
 export const CANDIDATE_PASS_B_QWEN_MODEL_ID = "qwen3.5-omni-flash" as const;
-export const CANDIDATE_PASS_B_OLDER_QWEN_MODEL_REVISION =
-  "qwen3.5-omni-flash-grounded-frames-v2-2026-07-22" as const;
-export const CANDIDATE_PASS_B_PREVIOUS_QWEN_MODEL_REVISION =
-  "qwen3.5-omni-flash-grounded-frames-cast-v3-2026-07-22" as const;
-export const CANDIDATE_PASS_B_PRIOR_QWEN_MODEL_REVISION =
-  "qwen3.5-omni-flash-grounded-frames-cast-v4-2026-07-22" as const;
-export const CANDIDATE_PASS_B_CONTEXTLESS_QWEN_MODEL_REVISION =
-  "qwen3.5-omni-flash-grounded-frames-participants-language-v6-2026-07-23" as const;
 export const CANDIDATE_PASS_B_QWEN_MODEL_REVISION =
   "qwen3.5-omni-flash-context-verified-frames-v7-2026-07-23" as const;
 export const CANDIDATE_PASS_B_MODEL_ID = CANDIDATE_PASS_B_QWEN_MODEL_ID;
 export const CANDIDATE_PASS_B_MODEL_REVISION = CANDIDATE_PASS_B_QWEN_MODEL_REVISION;
 export const CANDIDATE_PASS_B_ROUTING_MODEL_ID =
   "exclipper-candidate-perception-route" as const;
-export const CANDIDATE_PASS_B_PREVIOUS_ROUTING_MODEL_REVISION =
-  "qwen3.5-omni-flash_then_gemini-3.6-flash_bounded-cast-v4" as const;
-export const CANDIDATE_PASS_B_OLDER_ROUTING_MODEL_REVISION =
-  "qwen3.5-omni-flash_then_gemini-3.6-flash_bounded-v3" as const;
-export const CANDIDATE_PASS_B_PRIOR_ROUTING_MODEL_REVISION =
-  "qwen3.5-omni-flash_then_gemini-3.6-flash_bounded-cast-v5" as const;
-export const CANDIDATE_PASS_B_CONTEXTLESS_ROUTING_MODEL_REVISION =
-  "qwen3.5-omni-flash_then_gemini-3.6-flash_bounded-participants-language-v7" as const;
 export const CANDIDATE_PASS_B_ROUTING_MODEL_REVISION =
-  "qwen3.5-omni-flash_then_gemini-3.6-flash_context-verified-v8" as const;
-export const CANDIDATE_PASS_B_LEGACY_ROUTING_MODEL_REVISION =
-  "qwen3.5-omni-flash_then_gemini-3.5-flash_bounded-v2" as const;
+  "qwen3.5-omni-flash_then_gemini-3.6-flash_durable-multimodal-v9" as const;
 
 export type CandidatePassBRoutingModelRevision =
-  | typeof CANDIDATE_PASS_B_ROUTING_MODEL_REVISION
-  | typeof CANDIDATE_PASS_B_PRIOR_ROUTING_MODEL_REVISION
-  | typeof CANDIDATE_PASS_B_PREVIOUS_ROUTING_MODEL_REVISION
-  | typeof CANDIDATE_PASS_B_OLDER_ROUTING_MODEL_REVISION
-  | typeof CANDIDATE_PASS_B_CONTEXTLESS_ROUTING_MODEL_REVISION
-  | typeof CANDIDATE_PASS_B_LEGACY_ROUTING_MODEL_REVISION;
-
-/** Keeps already-paid v2 candidate interpretations recoverable after the GA upgrade. */
-export function isCompatibleCandidatePassBRoutingModelRevision(
-  value: unknown,
-): value is CandidatePassBRoutingModelRevision {
-  return (
-    value === CANDIDATE_PASS_B_ROUTING_MODEL_REVISION ||
-    value === CANDIDATE_PASS_B_PRIOR_ROUTING_MODEL_REVISION ||
-    value === CANDIDATE_PASS_B_PREVIOUS_ROUTING_MODEL_REVISION ||
-    value === CANDIDATE_PASS_B_OLDER_ROUTING_MODEL_REVISION ||
-    value === CANDIDATE_PASS_B_CONTEXTLESS_ROUTING_MODEL_REVISION ||
-    value === CANDIDATE_PASS_B_LEGACY_ROUTING_MODEL_REVISION
-  );
-}
+  typeof CANDIDATE_PASS_B_ROUTING_MODEL_REVISION;
 export const CANDIDATE_PASS_B_RESPONSE_MODEL_ID_HEADER =
   "X-ExClipper-Model-Id" as const;
 export const CANDIDATE_PASS_B_RESPONSE_MODEL_REVISION_HEADER =
@@ -77,11 +28,18 @@ export const CANDIDATE_PASS_B_DEVICE = "remote" as const;
 export const CANDIDATE_PASS_B_LANGUAGE = "korean" as const;
 export const CANDIDATE_PASS_B_TASK = "transcribe-and-explain" as const;
 export const CANDIDATE_PASS_B_SAMPLE_RATE_HZ = 16_000 as const;
-export const MAX_CANDIDATE_PASS_B_TARGETS = 12 as const;
+export const MAX_CANDIDATE_PASS_B_TARGETS = 32 as const;
 export const MAX_CANDIDATE_PASS_B_SOURCE_DURATION_MS = 12 * 60 * 60_000;
 export const MAX_CANDIDATE_PASS_B_TARGET_DURATION_MS = 60_000;
 export const MAX_CANDIDATE_PASS_B_VIDEO_FRAMES = 4;
 export const MAX_CANDIDATE_PASS_B_VIDEO_FRAME_BASE64_LENGTH = 360_000;
+export const CANDIDATE_PASS_B_FRAME_EXTRACTION_REVISION =
+  "candidate-jpeg-640-q58-four-frame-v1" as const;
+export const CANDIDATE_PASS_B_AUDIO_GATE_REVISION =
+  "candidate-vad-20ms-rms-peak-v1" as const;
+export const CANDIDATE_PASS_B_MEDIA_RECEIPT_SCHEMA_VERSION = "1.0.0" as const;
+export const CANDIDATE_PASS_B_DISPATCH_INTENT_SCHEMA_VERSION = "2.0.0" as const;
+export const CANDIDATE_PASS_B_SETTLEMENT_SCHEMA_VERSION = "1.0.0" as const;
 export const CANDIDATE_PASS_B_CONTEXT_SCHEMA_VERSION = "1.0.0" as const;
 export const MAX_CANDIDATE_PASS_B_CONTEXT_TEXT_LENGTH = 4_000;
 
@@ -138,7 +96,7 @@ export type CandidatePassBProgramMaterial =
   | "routine-or-unclear";
 
 export const CANDIDATE_PASS_B_VERIFICATION_RECEIPT_SCHEMA_VERSION =
-  "1.4.0" as const;
+  "2.0.0" as const;
 
 /**
  * Exact source identity used both when issuing a receipt and when deciding
@@ -163,61 +121,173 @@ export interface CandidatePassBVerificationSourceFence {
   readonly refinementEvidenceProjectionFingerprint: string | null;
 }
 
-interface CandidatePassBVerificationReceiptBase {
-  readonly contextSchemaVersion: typeof CANDIDATE_PASS_B_CONTEXT_SCHEMA_VERSION;
-  readonly transcriptSource: CandidatePassBReferenceTranscriptSource;
-  readonly audioReviewed: true;
-  readonly videoFrameCount: typeof MAX_CANDIDATE_PASS_B_VIDEO_FRAMES;
-  readonly thumbnailPrepared: true;
-  readonly thumbnailTimestampMs: number;
-  readonly referenceTranscriptReviewed: true;
-  readonly broadcastContextReviewed: true;
+export type CandidatePassBSha256Digest = `sha256:${string}`;
+export type CandidatePassBTransportMode = "free-r2" | "paid-direct";
+
+export interface CandidatePassBFrameReceipt {
+  readonly timestampMs: number;
+  readonly mimeType: "image/jpeg";
+  readonly byteLength: number;
+  readonly contentDigest: CandidatePassBSha256Digest;
+  readonly extractionRevision: typeof CANDIDATE_PASS_B_FRAME_EXTRACTION_REVISION;
+}
+
+export interface CandidatePassBAudibleAudioReceipt {
+  readonly kind: "audible-audio";
+  readonly wavByteLength: number;
+  readonly wavContentDigest: CandidatePassBSha256Digest;
+  readonly sampleRateHz: typeof CANDIDATE_PASS_B_SAMPLE_RATE_HZ;
+  readonly sampleCount: number;
+}
+
+export interface CandidatePassBVerifiedNoSpeechReceipt {
+  readonly kind: "verified-no-speech";
+  readonly wavByteLength: number;
+  readonly wavContentDigest: CandidatePassBSha256Digest;
+  readonly sampleRateHz: typeof CANDIDATE_PASS_B_SAMPLE_RATE_HZ;
+  readonly sampleCount: number;
+  readonly vadRevision: typeof CANDIDATE_PASS_B_AUDIO_GATE_REVISION;
+  readonly frameCount: number;
+  readonly activeFrameCount: number;
+  readonly activeFrameRatio: number;
+  readonly audible: false;
+}
+
+export type CandidatePassBAudioReceipt =
+  | CandidatePassBAudibleAudioReceipt
+  | CandidatePassBVerifiedNoSpeechReceipt;
+
+export interface CandidatePassBMediaReceipt {
+  readonly schemaVersion: typeof CANDIDATE_PASS_B_MEDIA_RECEIPT_SCHEMA_VERSION;
+  readonly frameExtractionRevision:
+    typeof CANDIDATE_PASS_B_FRAME_EXTRACTION_REVISION;
+  readonly frames: readonly [
+    CandidatePassBFrameReceipt,
+    CandidatePassBFrameReceipt,
+    CandidatePassBFrameReceipt,
+    CandidatePassBFrameReceipt,
+  ];
+  readonly audio: CandidatePassBAudioReceipt;
+  readonly providerPayloadDigest: CandidatePassBSha256Digest;
+}
+
+export interface CandidatePassBOperationIdInput {
+  readonly analysisRunId: string;
+  readonly sourceFingerprint: string;
+  readonly candidateId: string;
+  readonly sourceStartMs: number;
+  readonly sourceEndMs: number;
+  readonly contextFingerprint: string;
+  readonly outputLanguage: AnalysisLanguage;
+  readonly castRosterId: CandidatePassBCastRosterId | null;
+  readonly routingModelRevision: typeof CANDIDATE_PASS_B_ROUTING_MODEL_REVISION;
+  readonly attemptOrdinal: number;
+  readonly retryGrantId: string | null;
+  readonly transportMode: CandidatePassBTransportMode;
+  readonly providerPayloadDigest: CandidatePassBSha256Digest;
 }
 
 /**
- * Locally issued only after the actual audio, four frames and exact context
- * packet succeeded.
- *
- * 1.0.0 through 1.3.0 remain readable so an already-paid insight is
- * recoverable. 1.0.0 and 1.1.0 do not carry the complete source-range fence;
- * 1.2.0 does not bind the refinement-evidence projection; 1.3.0 does not bind
- * the output language or cast roster. None may satisfy the current
- * final-publication or reuse gate.
+ * Derives the paid-operation identity from every immutable dispatch fence.
+ * A retry grant or transport change necessarily creates a different operation.
  */
-export type CandidatePassBCurrentVerificationReceipt =
-  CandidatePassBVerificationReceiptBase &
-    CandidatePassBVerificationSourceFence & {
-      readonly schemaVersion: typeof CANDIDATE_PASS_B_VERIFICATION_RECEIPT_SCHEMA_VERSION;
-      readonly contextFingerprint: string;
-    };
+export async function createCandidatePassBOperationId(
+  input: CandidatePassBOperationIdInput,
+): Promise<string> {
+  const bytes = new TextEncoder().encode(
+    JSON.stringify([
+      "candidate-pass-b-operation-v3",
+      input.analysisRunId,
+      input.sourceFingerprint,
+      input.candidateId,
+      input.sourceStartMs,
+      input.sourceEndMs,
+      input.contextFingerprint,
+      input.outputLanguage,
+      input.castRosterId,
+      input.routingModelRevision,
+      input.attemptOrdinal,
+      input.retryGrantId,
+      input.transportMode,
+      input.providerPayloadDigest,
+    ]),
+  );
+  const digest = new Uint8Array(
+    await globalThis.crypto.subtle.digest("SHA-256", bytes),
+  );
+  let hex = "";
+  for (const byte of digest) {
+    hex += byte.toString(16).padStart(2, "0");
+  }
+  bytes.fill(0);
+  digest.fill(0);
+  return `candidate-pass-b.${hex.slice(0, 48)}`;
+}
+
+export interface CandidatePassBDispatchIntent {
+  readonly schemaVersion: typeof CANDIDATE_PASS_B_DISPATCH_INTENT_SCHEMA_VERSION;
+  readonly operationId: string;
+  readonly analysisRunId: string;
+  readonly candidateId: string;
+  readonly sourceFingerprint: string;
+  readonly sourceStartMs: number;
+  readonly sourceEndMs: number;
+  readonly contextFingerprint: string;
+  readonly outputLanguage: AnalysisLanguage;
+  readonly castRosterId: CandidatePassBCastRosterId | null;
+  readonly routingModelRevision: typeof CANDIDATE_PASS_B_ROUTING_MODEL_REVISION;
+  readonly attemptOrdinal: number;
+  readonly retryGrantId: string | null;
+  readonly transportMode: CandidatePassBTransportMode;
+  readonly mediaReceipt: CandidatePassBMediaReceipt;
+}
+
+export interface CandidatePassBCompletedSettlement {
+  readonly schemaVersion: typeof CANDIDATE_PASS_B_SETTLEMENT_SCHEMA_VERSION;
+  readonly status: "completed";
+  readonly operationId: string;
+  readonly providerPayloadDigest: CandidatePassBSha256Digest;
+  readonly outputLanguage: AnalysisLanguage;
+  readonly castRosterId: CandidatePassBCastRosterId | null;
+  readonly responseDigest: CandidatePassBSha256Digest;
+  readonly providerModelId:
+    | typeof CANDIDATE_PASS_B_QWEN_MODEL_ID
+    | typeof CANDIDATE_PASS_B_GEMINI_MODEL_ID;
+  readonly providerModelRevision:
+    | typeof CANDIDATE_PASS_B_QWEN_MODEL_REVISION
+    | typeof CANDIDATE_PASS_B_GEMINI_MODEL_REVISION;
+}
+
+export interface CandidatePassBOutcomeUnknownSettlement {
+  readonly schemaVersion: typeof CANDIDATE_PASS_B_SETTLEMENT_SCHEMA_VERSION;
+  readonly status: "outcome-unknown";
+  readonly operationId: string;
+  readonly providerPayloadDigest: CandidatePassBSha256Digest;
+  readonly outputLanguage: AnalysisLanguage;
+  readonly castRosterId: CandidatePassBCastRosterId | null;
+  readonly reason:
+    | "quota-outcome-unknown"
+    | "armed-dispatch-interrupted"
+    | "armed-dispatch-recovered";
+}
+
+export type CandidatePassBTerminalSettlement =
+  | CandidatePassBCompletedSettlement
+  | CandidatePassBOutcomeUnknownSettlement;
+
+export interface CandidatePassBCurrentVerificationReceipt
+  extends CandidatePassBVerificationSourceFence {
+  readonly schemaVersion: typeof CANDIDATE_PASS_B_VERIFICATION_RECEIPT_SCHEMA_VERSION;
+  readonly contextSchemaVersion: typeof CANDIDATE_PASS_B_CONTEXT_SCHEMA_VERSION;
+  readonly transcriptSource: CandidatePassBReferenceTranscriptSource;
+  readonly contextFingerprint: string;
+  readonly dispatchIntent: CandidatePassBDispatchIntent;
+  readonly settlement: CandidatePassBCompletedSettlement;
+  readonly thumbnailTimestampMs: number;
+}
 
 export type CandidatePassBVerificationReceipt =
-  | (CandidatePassBVerificationReceiptBase & {
-      readonly schemaVersion: "1.0.0";
-    })
-  | (CandidatePassBVerificationReceiptBase & {
-      readonly schemaVersion: "1.1.0";
-      readonly contextFingerprint: string;
-    })
-  | (CandidatePassBVerificationReceiptBase &
-      Omit<
-        CandidatePassBVerificationSourceFence,
-        | "refinementEvidenceProjectionFingerprint"
-        | "outputLanguage"
-        | "castRosterId"
-      > & {
-        readonly schemaVersion: "1.2.0";
-        readonly contextFingerprint: string;
-      })
-  | (CandidatePassBVerificationReceiptBase &
-      Omit<
-        CandidatePassBVerificationSourceFence,
-        "outputLanguage" | "castRosterId"
-      > & {
-        readonly schemaVersion: "1.3.0";
-        readonly contextFingerprint: string;
-      })
-  | CandidatePassBCurrentVerificationReceipt;
+  CandidatePassBCurrentVerificationReceipt;
 
 /**
  * A Pass B run has its own identity in addition to the fast-pass analysis run.
@@ -237,38 +307,56 @@ export interface CandidatePassBQuotaIdentity {
   readonly participantId: string;
   readonly runId: string;
   /** A stable number for one run, incremented only by an explicit rerun. */
-  readonly attemptOrdinal?: number;
+  readonly attemptOrdinal: number;
+  /** Null only for the first attempt; every retry names its durable grant. */
+  readonly retryGrantId: string | null;
 }
 
 export interface CandidatePassBTarget {
   readonly candidateId: string;
   readonly startMs: number;
   readonly endMs: number;
-  /** Optional representative screenshots sampled from this candidate. */
-  readonly videoFrames?: readonly CandidatePassBVideoFrame[];
-  /** Required by the final-publication path; omitted only by legacy/test callers. */
-  readonly context?: CandidatePassBContextPacket;
-  /** Optional server-known closed-set VTuber roster; never an open text prompt. */
-  readonly castRosterId?: CandidatePassBCastRosterId;
+  readonly videoFrames: readonly CandidatePassBVideoFrame[];
+  readonly frameExtractionRevision:
+    typeof CANDIDATE_PASS_B_FRAME_EXTRACTION_REVISION;
+  readonly context: CandidatePassBContextPacket;
+  readonly contextFingerprint: string;
+  /**
+   * Explicit server-known spelling roster. `null` proves that the caller
+   * intentionally supplied no closed roster.
+   */
+  readonly castRosterId: CandidatePassBCastRosterId | null;
   /** Language for generated editorial narration; source speech stays verbatim. */
-  readonly outputLanguage?: AnalysisLanguage;
+  readonly outputLanguage: AnalysisLanguage;
 }
 
-/**
- * The legacy values remain in the public type until the old runtime selector is
- * removed. Analyze requests and result manifests accept only `remote`.
- */
+/** Analyze requests and result manifests accept only `remote`. */
 export type CandidatePassBDevice = "webgpu" | "wasm" | "remote";
 
 export type CandidatePassBWorkerRequest =
   | {
       readonly type: "candidate-pass-b-analyze";
       readonly identity: CandidatePassBWorkerIdentity;
-      readonly quota?: CandidatePassBQuotaIdentity;
+      readonly quota: CandidatePassBQuotaIdentity;
       readonly file: File;
+      readonly sourceFingerprint: string;
       readonly sourceDurationMs: number;
       readonly device: typeof CANDIDATE_PASS_B_DEVICE;
       readonly targets: readonly CandidatePassBTarget[];
+    }
+  | {
+      readonly type: "candidate-pass-b-dispatch-arm-ack";
+      readonly identity: CandidatePassBWorkerIdentity;
+      readonly operationId: string;
+      readonly accepted: boolean;
+    }
+  | {
+      readonly type: "candidate-pass-b-terminal-result-ack";
+      readonly identity: CandidatePassBWorkerIdentity;
+      readonly terminalEventId: string;
+      readonly candidateId: string;
+      readonly settlement: CandidatePassBTerminalSettlement;
+      readonly accepted: boolean;
     }
   | {
       readonly type: "candidate-pass-b-cancel";
@@ -305,18 +393,15 @@ export interface CandidatePassBInsight {
   readonly reactionSummaryKo: string;
   readonly whyGoodClipKo: string;
   readonly uncertaintiesKo: readonly string[];
-  /** Required for current results; absent only on sessions saved before 0.3.44. */
-  readonly participantPresence?: CandidatePassBParticipantPresence;
+  readonly participantPresence: CandidatePassBParticipantPresence;
   /** Human-readable participant grounding that is reused by context and UI. */
-  readonly participantSummaryKo?: string;
-  /** Absent only on sessions saved before insight schema 1.2.0. */
-  readonly identifiedParticipants?: readonly CandidatePassBParticipantAttribution[];
-  /** Required for current results; absent only on legacy saved sessions. */
-  readonly clipDecision?: CandidatePassBClipDecision;
+  readonly participantSummaryKo: string;
+  readonly identifiedParticipants: readonly CandidatePassBParticipantAttribution[];
+  readonly clipDecision: CandidatePassBClipDecision;
   /** Whether the candidate audio/video agrees with the supplied broadcast context. */
-  readonly contextConsistency?: CandidatePassBContextConsistency;
+  readonly contextConsistency: CandidatePassBContextConsistency;
   /** Explicit exclusion fence for songs, MVs, openings, endings and breaks. */
-  readonly programMaterial?: CandidatePassBProgramMaterial;
+  readonly programMaterial: CandidatePassBProgramMaterial;
 }
 
 export type CandidatePassBParticipantPresence =
@@ -329,6 +414,10 @@ export type CandidatePassBParticipantRole = "streamer" | "guest" | "unknown";
 export type CandidatePassBParticipantEvidenceBasis =
   | "on-screen-name"
   | "spoken-name"
+  /**
+   * Reserved for the separate source-fenced visual identity bridge. Candidate
+   * Pass B prompts, parsers, storage and publication deliberately reject it.
+   */
   | "provided-cast-reference";
 
 export interface CandidatePassBParticipantAttribution {
@@ -339,7 +428,7 @@ export interface CandidatePassBParticipantAttribution {
   readonly confidence: number;
   readonly relativeTimestampMs: number;
   /** Zero-based indices into the exact four-frame AI bundle. */
-  readonly observedFrameIndices?: readonly number[];
+  readonly observedFrameIndices: readonly number[];
 }
 
 export interface CandidatePassBTranscriptResult {
@@ -363,15 +452,16 @@ export interface CandidatePassBTranscriptResult {
   readonly language: typeof CANDIDATE_PASS_B_LANGUAGE;
   readonly task: typeof CANDIDATE_PASS_B_TASK;
   readonly sampleRateHz: typeof CANDIDATE_PASS_B_SAMPLE_RATE_HZ;
+  readonly settlement: CandidatePassBCompletedSettlement;
 }
 
 export type CandidatePassBCandidateGapReason =
   | "NO_AUDIO_TRACK"
   | "UNSUPPORTED_CONTAINER"
   | "UNSUPPORTED_AUDIO_CODEC"
-  | "EMPTY_AUDIO"
   | "AUDIO_DECODE_FAILED"
-  | "TRANSCRIPTION_FAILED";
+  | "TRANSCRIPTION_FAILED"
+  | "OUTCOME_UNKNOWN";
 
 export interface CandidatePassBCandidateGap {
   readonly candidateId: string;
@@ -387,6 +477,13 @@ export interface CandidatePassBCompletionSummary {
   readonly gapCount: number;
 }
 
+export interface CandidatePassBOutcomeUnknown {
+  readonly candidateId: string;
+  readonly sourceStartMs: number;
+  readonly sourceEndMs: number;
+  readonly settlement: CandidatePassBOutcomeUnknownSettlement;
+}
+
 export type CandidatePassBWorkerFailureReason =
   | "INVALID_REQUEST"
   | "WORKER_BUSY"
@@ -396,6 +493,9 @@ export type CandidatePassBWorkerFailureReason =
   | "PROXY_UNAVAILABLE"
   | "PROXY_INVALID_RESPONSE"
   | "PROXY_REQUEST_REJECTED"
+  | "DISPATCH_NOT_ARMED"
+  | "TERMINAL_NOT_ACKNOWLEDGED"
+  | "OUTCOME_UNKNOWN"
   | "UNEXPECTED_WORKER_FAILURE";
 
 export function candidatePassBWorkerFailureMessage(
@@ -418,6 +518,12 @@ export function candidatePassBWorkerFailureMessage(
       return "ExClipper AI 응답을 안전하게 읽지 못했어요. 다시 시도해 주세요.";
     case "PROXY_REQUEST_REJECTED":
       return "ExClipper AI 서비스가 후보 분석 요청을 완료하지 못했어요.";
+    case "DISPATCH_NOT_ARMED":
+      return "AI 요청 기록을 저장소에서 확인하지 못해 결제 요청을 보내지 않았어요.";
+    case "TERMINAL_NOT_ACKNOWLEDGED":
+      return "AI 분석 결과를 내구 저장소에서 확인하지 못해 작업을 완료하지 않았어요.";
+    case "OUTCOME_UNKNOWN":
+      return "AI 요청 전송 뒤 응답을 확인하지 못했어요. 중복 결제를 막기 위해 자동 재시도하지 않아요.";
     case "UNEXPECTED_WORKER_FAILURE":
       return "후보 정밀 분석 작업이 예기치 않게 멈췄어요.";
   }
@@ -435,6 +541,14 @@ export type CandidatePassBWorkerResponsePayload =
   | {
       readonly type: "candidate-pass-b-partial-result";
       readonly result: CandidatePassBTranscriptResult;
+    }
+  | {
+      readonly type: "candidate-pass-b-dispatch-intent";
+      readonly intent: CandidatePassBDispatchIntent;
+    }
+  | {
+      readonly type: "candidate-pass-b-outcome-unknown";
+      readonly outcome: CandidatePassBOutcomeUnknown;
     }
   | {
       readonly type: "candidate-pass-b-candidate-gap";

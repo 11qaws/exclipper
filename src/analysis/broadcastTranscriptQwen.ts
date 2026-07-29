@@ -1,7 +1,6 @@
+import { YOUTUBE_CAPTION_MODEL_REVISION } from "./youtubeCaptionTrack";
+
 export const BROADCAST_TRANSCRIPT_QWEN_SCHEMA_VERSION = "1.0.0" as const;
-export const BROADCAST_TRANSCRIPT_QWEN_MODEL_ID = "qwen3-asr-flash" as const;
-export const BROADCAST_TRANSCRIPT_QWEN_MODEL_REVISION =
-  "qwen3-asr-flash-dashscope-native-reviewed-2026-07-22" as const;
 export const BROADCAST_TRANSCRIPT_GEMINI_MODEL_ID = "gemini-3.6-flash" as const;
 export const BROADCAST_TRANSCRIPT_GEMINI_MODEL_REVISION =
   "gemini-3.6-flash-audio-transcript-reviewed-2026-07-22" as const;
@@ -12,18 +11,12 @@ export const BROADCAST_TRANSCRIPT_GROQ_MODEL_ID =
 export const BROADCAST_TRANSCRIPT_GROQ_MODEL_REVISION =
   "groq-whisper-large-v3-turbo-ko-segment-v1-2026-07-29" as const;
 export const BROADCAST_TRANSCRIPT_QWEN_MAX_OUTPUT_TOKENS = 1_024;
-export const BROADCAST_TRANSCRIPT_PREVIOUS_ACTIVE_MODEL_REVISION =
-  "qwen3.5-omni-flash-audio-transcript-reviewed-2026-07-22" as const;
-export const BROADCAST_TRANSCRIPT_MIXED_CHECKPOINT_MODEL_REVISION =
-  "qwen3.5-omni-flash-audio-transcript-mixed-210s-90s-2026-07-22" as const;
 export const BROADCAST_TRANSCRIPT_QWEN_OMNI_MODEL_REVISION =
   "qwen3.5-omni-flash-audio-transcript-90s-reviewed-2026-07-22" as const;
-export const BROADCAST_TRANSCRIPT_ACTIVE_MODEL_REVISION =
-  BROADCAST_TRANSCRIPT_QWEN_OMNI_MODEL_REVISION;
 export const BROADCAST_TRANSCRIPT_CHECKPOINT_MIXED_REVISION_PREFIX =
-  "broadcast-transcript-mixed-v1:" as const;
+  "broadcast-transcript-mixed-v2:" as const;
 export const MAX_BROADCAST_TRANSCRIPT_QWEN_DURATION_MS = 90_000;
-export const MAX_BROADCAST_TRANSCRIPT_QWEN_BASE64_LENGTH = 4_000_000;
+export const MAX_BROADCAST_TRANSCRIPT_AUDIO_BASE64_LENGTH = 4_000_000;
 export const MAX_BROADCAST_TRANSCRIPT_QWEN_TEXT_LENGTH = 20_000;
 export const MAX_BROADCAST_TRANSCRIPT_QWEN_RESPONSE_BYTES = 128 * 1024;
 /** ExClipper's 90-second canonical 16 kHz mono PCM16 WAV ceiling. */
@@ -45,17 +38,9 @@ interface BroadcastTranscriptSourceRange {
 
 export interface BroadcastTranscriptQwenResult {
   readonly schemaVersion: typeof BROADCAST_TRANSCRIPT_QWEN_SCHEMA_VERSION;
-  readonly modelId:
-    | typeof BROADCAST_TRANSCRIPT_QWEN_MODEL_ID
-    | typeof BROADCAST_TRANSCRIPT_GEMINI_MODEL_ID
-    | typeof BROADCAST_TRANSCRIPT_QWEN_OMNI_MODEL_ID
-    | typeof BROADCAST_TRANSCRIPT_GROQ_MODEL_ID;
-  /**
-   * Exact server-selected model revision. Older persisted fixtures can omit
-   * this field, but live proxy responses attach and validate it from the
-   * exposed response header before the result enters a checkpoint.
-   */
-  readonly modelRevision?: string;
+  readonly modelId: BroadcastTranscriptLiveModelId;
+  /** Exact current server-selected revision for this model ID. */
+  readonly modelRevision: string;
   readonly sourceStartMs: number;
   readonly sourceEndMs: number;
   readonly textKo: string;
@@ -68,7 +53,6 @@ export function isBroadcastTranscriptModelId(
   value: unknown,
 ): value is BroadcastTranscriptQwenResult["modelId"] {
   return (
-    value === BROADCAST_TRANSCRIPT_QWEN_MODEL_ID ||
     value === BROADCAST_TRANSCRIPT_GEMINI_MODEL_ID ||
     value === BROADCAST_TRANSCRIPT_QWEN_OMNI_MODEL_ID ||
     value === BROADCAST_TRANSCRIPT_GROQ_MODEL_ID
@@ -79,8 +63,6 @@ export function broadcastTranscriptModelRevisionForId(
   modelId: BroadcastTranscriptQwenResult["modelId"],
 ): string {
   switch (modelId) {
-    case BROADCAST_TRANSCRIPT_QWEN_MODEL_ID:
-      return BROADCAST_TRANSCRIPT_QWEN_MODEL_REVISION;
     case BROADCAST_TRANSCRIPT_GEMINI_MODEL_ID:
       return BROADCAST_TRANSCRIPT_GEMINI_MODEL_REVISION;
     case BROADCAST_TRANSCRIPT_QWEN_OMNI_MODEL_ID:
@@ -96,7 +78,6 @@ export function broadcastTranscriptProviderForModelId(
   switch (modelId) {
     case BROADCAST_TRANSCRIPT_GEMINI_MODEL_ID:
       return "gemini";
-    case BROADCAST_TRANSCRIPT_QWEN_MODEL_ID:
     case BROADCAST_TRANSCRIPT_QWEN_OMNI_MODEL_ID:
       return "qwen";
     case BROADCAST_TRANSCRIPT_GROQ_MODEL_ID:
@@ -105,13 +86,35 @@ export function broadcastTranscriptProviderForModelId(
 }
 
 const CURRENT_BROADCAST_TRANSCRIPT_MODEL_REVISIONS = Object.freeze([
-  BROADCAST_TRANSCRIPT_QWEN_MODEL_REVISION,
   BROADCAST_TRANSCRIPT_GEMINI_MODEL_REVISION,
   BROADCAST_TRANSCRIPT_QWEN_OMNI_MODEL_REVISION,
   BROADCAST_TRANSCRIPT_GROQ_MODEL_REVISION,
+  YOUTUBE_CAPTION_MODEL_REVISION,
 ] as const);
 
-function transcriptCheckpointRevisionMembers(
+const CURRENT_BROADCAST_TRANSCRIPT_REVISION_ALIASES = Object.freeze(
+  new Map<string, string>([
+    [BROADCAST_TRANSCRIPT_GEMINI_MODEL_REVISION, "gemini-flash"],
+    [BROADCAST_TRANSCRIPT_QWEN_OMNI_MODEL_REVISION, "qwen-omni"],
+    [BROADCAST_TRANSCRIPT_GROQ_MODEL_REVISION, "groq-whisper"],
+    [YOUTUBE_CAPTION_MODEL_REVISION, "youtube-caption"],
+  ]),
+);
+const CURRENT_BROADCAST_TRANSCRIPT_REVISION_BY_ALIAS = Object.freeze(
+  new Map(
+    [...CURRENT_BROADCAST_TRANSCRIPT_REVISION_ALIASES].map(
+      ([revision, alias]) => [alias, revision],
+    ),
+  ),
+);
+
+export function currentBroadcastTranscriptModelPolicyRevision(): string {
+  return resolveCurrentBroadcastTranscriptCheckpointModelRevisions(
+    CURRENT_BROADCAST_TRANSCRIPT_MODEL_REVISIONS,
+  );
+}
+
+function currentTranscriptCheckpointRevisionMembers(
   value: string,
 ): readonly string[] | null {
   if (
@@ -121,40 +124,32 @@ function transcriptCheckpointRevisionMembers(
   ) {
     return [value];
   }
-  if (
-    value === BROADCAST_TRANSCRIPT_PREVIOUS_ACTIVE_MODEL_REVISION ||
-    value === BROADCAST_TRANSCRIPT_MIXED_CHECKPOINT_MODEL_REVISION
-  ) {
-    return [value];
-  }
   if (!value.startsWith(BROADCAST_TRANSCRIPT_CHECKPOINT_MIXED_REVISION_PREFIX)) {
     return null;
   }
-  const members = value
+  const aliases = value
     .slice(BROADCAST_TRANSCRIPT_CHECKPOINT_MIXED_REVISION_PREFIX.length)
-    .split("|");
+    .split("+");
+  const members = aliases.map((alias) =>
+    CURRENT_BROADCAST_TRANSCRIPT_REVISION_BY_ALIAS.get(alias),
+  );
   if (
     members.length < 2 ||
-    new Set(members).size !== members.length ||
-    members.some(
-      (member) =>
-        !CURRENT_BROADCAST_TRANSCRIPT_MODEL_REVISIONS.some(
-          (revision) => revision === member,
-        ),
-    ) ||
-    [...members].sort().some((member, index) => member !== members[index])
+    members.some((member) => member === undefined) ||
+    new Set(aliases).size !== aliases.length ||
+    [...aliases].sort().some((alias, index) => alias !== aliases[index])
   ) {
     return null;
   }
-  return members;
+  return members as readonly string[];
 }
 
-export function isCompatibleBroadcastTranscriptCheckpointModelRevision(
+export function isCurrentBroadcastTranscriptCheckpointModelRevision(
   value: unknown,
 ): value is string {
   return (
     typeof value === "string" &&
-    transcriptCheckpointRevisionMembers(value) !== null
+    currentTranscriptCheckpointRevisionMembers(value) !== null
   );
 }
 
@@ -165,7 +160,7 @@ export function resolveBroadcastTranscriptCheckpointModelRevision(
   const revisions = new Set<string>();
   if (fallbackRevision !== null) {
     const fallbackMembers =
-      transcriptCheckpointRevisionMembers(fallbackRevision);
+      currentTranscriptCheckpointRevisionMembers(fallbackRevision);
     if (fallbackMembers === null) {
       throw new RangeError(
         "Broadcast transcript checkpoint fallback revision is unknown.",
@@ -174,10 +169,33 @@ export function resolveBroadcastTranscriptCheckpointModelRevision(
     for (const member of fallbackMembers) revisions.add(member);
   }
   for (const transcript of transcripts) {
-    revisions.add(
-      transcript.modelRevision ??
-        broadcastTranscriptModelRevisionForId(transcript.modelId),
+    const expectedRevision = broadcastTranscriptModelRevisionForId(
+      transcript.modelId,
     );
+    if (transcript.modelRevision !== expectedRevision) {
+      throw new RangeError(
+        "Broadcast transcript result model revision does not match its current model ID.",
+      );
+    }
+    revisions.add(transcript.modelRevision);
+  }
+  return resolveCurrentBroadcastTranscriptCheckpointModelRevisions([
+    ...revisions,
+  ]);
+}
+
+export function resolveCurrentBroadcastTranscriptCheckpointModelRevisions(
+  revisionValues: readonly string[],
+): string {
+  const revisions = new Set<string>();
+  for (const revision of revisionValues) {
+    const members = currentTranscriptCheckpointRevisionMembers(revision);
+    if (members === null) {
+      throw new RangeError(
+        "Broadcast transcript checkpoint revision is unknown.",
+      );
+    }
+    for (const member of members) revisions.add(member);
   }
   if (revisions.size === 0) {
     throw new RangeError(
@@ -185,9 +203,19 @@ export function resolveBroadcastTranscriptCheckpointModelRevision(
     );
   }
   const ordered = [...revisions].sort();
+  const aliases = ordered
+    .map((revision) =>
+      CURRENT_BROADCAST_TRANSCRIPT_REVISION_ALIASES.get(revision),
+    )
+    .sort();
+  if (aliases.some((alias) => alias === undefined)) {
+    throw new RangeError(
+      "Broadcast transcript checkpoint revision has no canonical alias.",
+    );
+  }
   return ordered.length === 1
     ? ordered[0]!
-    : `${BROADCAST_TRANSCRIPT_CHECKPOINT_MIXED_REVISION_PREFIX}${ordered.join("|")}`;
+    : `${BROADCAST_TRANSCRIPT_CHECKPOINT_MIXED_REVISION_PREFIX}${aliases.join("+")}`;
 }
 
 export type BroadcastTranscriptGroqAudioSource =
@@ -200,11 +228,6 @@ export type BroadcastTranscriptGroqAudioSource =
       readonly wavBytes: Uint8Array;
     };
 
-interface QwenAsrAnnotation {
-  readonly language: string | null;
-  readonly emotion: string | null;
-}
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -213,12 +236,6 @@ function hasExactKeys(value: Record<string, unknown>, keys: readonly string[]): 
   const actual = Object.keys(value).sort();
   const expected = [...keys].sort();
   return actual.length === expected.length && actual.every((key, index) => key === expected[index]);
-}
-
-function normalizedOptionalLabel(value: unknown): string | null {
-  if (typeof value !== "string" || /[\p{Cc}\p{Cf}]/u.test(value)) return null;
-  const normalized = value.trim();
-  return normalized.length > 0 && normalized.length <= 40 ? normalized : null;
 }
 
 function normalizedTranscript(value: unknown): string | null {
@@ -240,80 +257,6 @@ function normalizedTranscript(value: unknown): string | null {
     : null;
 }
 
-function readAnnotation(value: unknown): QwenAsrAnnotation {
-  if (!Array.isArray(value)) return { language: null, emotion: null };
-  for (const entry of value) {
-    if (!isRecord(entry) || entry.type !== "audio_info") continue;
-    return {
-      language: normalizedOptionalLabel(entry.language),
-      emotion: normalizedOptionalLabel(entry.emotion),
-    };
-  }
-  return { language: null, emotion: null };
-}
-
-function readDashscopeNativeResponse(value: unknown): {
-  readonly text: string;
-  readonly annotation: QwenAsrAnnotation;
-  readonly billedSeconds: number | null;
-} | null {
-  if (
-    !isRecord(value) ||
-    !isRecord(value.output) ||
-    !Array.isArray(value.output.choices) ||
-    value.output.choices.length !== 1
-  ) return null;
-  const choices: readonly unknown[] = value.output.choices;
-  const choice = choices[0];
-  if (!isRecord(choice) || choice.finish_reason !== "stop" || !isRecord(choice.message)) return null;
-  if (!Array.isArray(choice.message.content) || choice.message.content.length !== 1) return null;
-  const contents: readonly unknown[] = choice.message.content;
-  const content: unknown = contents[0];
-  if (!isRecord(content)) return null;
-  const text = normalizedTranscript(content.text);
-  if (text === null) return null;
-  const usage = isRecord(value.usage) ? value.usage : null;
-  const seconds = usage?.seconds;
-  return {
-    text,
-    annotation: readAnnotation(choice.message.annotations),
-    billedSeconds:
-      typeof seconds === "number" && Number.isFinite(seconds) && seconds >= 0
-        ? seconds
-        : null,
-  };
-}
-
-/** Builds the fixed server-side request for Alibaba's synchronous DashScope API. */
-export function buildBroadcastTranscriptQwenRequestBody(audioBase64: string): unknown {
-  if (
-    typeof audioBase64 !== "string" ||
-    audioBase64.length === 0 ||
-    audioBase64.length > MAX_BROADCAST_TRANSCRIPT_QWEN_BASE64_LENGTH ||
-    !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u.test(audioBase64)
-  ) {
-    throw new RangeError("Qwen ASR audio must be a bounded Base64 WAV payload.");
-  }
-  return {
-    model: BROADCAST_TRANSCRIPT_QWEN_MODEL_ID,
-    input: {
-      messages: [
-        { role: "system", content: [{ text: "" }] },
-        {
-          role: "user",
-          content: [{ audio: `data:audio/wav;base64,${audioBase64}` }],
-        },
-      ],
-    },
-    parameters: {
-      asr_options: {
-        language: "ko",
-        enable_itn: false,
-      },
-    },
-  };
-}
-
 const GEMINI_TRANSCRIPT_RESPONSE_SCHEMA = Object.freeze({
   type: "object",
   properties: {
@@ -330,7 +273,7 @@ export function buildBroadcastTranscriptGeminiRequestBody(audioBase64: string): 
   if (
     typeof audioBase64 !== "string" ||
     audioBase64.length === 0 ||
-    audioBase64.length > MAX_BROADCAST_TRANSCRIPT_QWEN_BASE64_LENGTH ||
+    audioBase64.length > MAX_BROADCAST_TRANSCRIPT_AUDIO_BASE64_LENGTH ||
     !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u.test(audioBase64)
   ) {
     throw new RangeError("Gemini transcript audio must be a bounded Base64 WAV payload.");
@@ -365,7 +308,7 @@ export function buildBroadcastTranscriptQwenOmniRequestBody(audioBase64: string)
   if (
     typeof audioBase64 !== "string" ||
     audioBase64.length === 0 ||
-    audioBase64.length > MAX_BROADCAST_TRANSCRIPT_QWEN_BASE64_LENGTH ||
+    audioBase64.length > MAX_BROADCAST_TRANSCRIPT_AUDIO_BASE64_LENGTH ||
     !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u.test(audioBase64)
   ) {
     throw new RangeError("Qwen Omni transcript audio must be a bounded Base64 WAV payload.");
@@ -396,7 +339,6 @@ export function buildBroadcastTranscriptQwenOmniRequestBody(audioBase64: string)
     max_tokens: BROADCAST_TRANSCRIPT_QWEN_MAX_OUTPUT_TOKENS,
   };
 }
-
 function normalizedGroqLanguage(value: unknown): "ko" | null {
   if (typeof value !== "string") return null;
   const normalized = value.trim().toLowerCase();
@@ -525,6 +467,7 @@ export function extractBroadcastTranscriptGroqResponse(
   return {
     schemaVersion: BROADCAST_TRANSCRIPT_QWEN_SCHEMA_VERSION,
     modelId: BROADCAST_TRANSCRIPT_GROQ_MODEL_ID,
+    modelRevision: BROADCAST_TRANSCRIPT_GROQ_MODEL_REVISION,
     sourceStartMs: request.sourceStartMs,
     sourceEndMs: request.sourceStartMs + request.durationMs,
     textKo: text,
@@ -621,6 +564,7 @@ export function extractBroadcastTranscriptQwenOmniSseResponse(
   return {
     schemaVersion: BROADCAST_TRANSCRIPT_QWEN_SCHEMA_VERSION,
     modelId: BROADCAST_TRANSCRIPT_QWEN_OMNI_MODEL_ID,
+    modelRevision: BROADCAST_TRANSCRIPT_QWEN_OMNI_MODEL_REVISION,
     sourceStartMs: request.sourceStartMs,
     sourceEndMs: request.sourceStartMs + request.durationMs,
     textKo: normalized,
@@ -662,29 +606,12 @@ export function extractBroadcastTranscriptGeminiResponse(
   return {
     schemaVersion: BROADCAST_TRANSCRIPT_QWEN_SCHEMA_VERSION,
     modelId: BROADCAST_TRANSCRIPT_GEMINI_MODEL_ID,
+    modelRevision: BROADCAST_TRANSCRIPT_GEMINI_MODEL_REVISION,
     sourceStartMs: request.sourceStartMs,
     sourceEndMs: request.sourceStartMs + request.durationMs,
     textKo: text,
     detectedLanguage: text === "[대사 없음]" ? null : "ko",
     emotion: null,
     billedSeconds: null,
-  };
-}
-
-export function extractBroadcastTranscriptQwenResponse(
-  value: unknown,
-  request: BroadcastTranscriptSourceRange,
-): BroadcastTranscriptQwenResult | null {
-  const parsed = readDashscopeNativeResponse(value);
-  if (parsed === null) return null;
-  return {
-    schemaVersion: BROADCAST_TRANSCRIPT_QWEN_SCHEMA_VERSION,
-    modelId: BROADCAST_TRANSCRIPT_QWEN_MODEL_ID,
-    sourceStartMs: request.sourceStartMs,
-    sourceEndMs: request.sourceStartMs + request.durationMs,
-    textKo: parsed.text,
-    detectedLanguage: parsed.annotation.language,
-    emotion: parsed.annotation.emotion,
-    billedSeconds: parsed.billedSeconds,
   };
 }

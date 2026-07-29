@@ -14,10 +14,6 @@ import {
   isBroadcastTranscriptQuotaOperationScope,
 } from "./broadcastTranscriptWorkerProtocol";
 
-type NoAudioBroadcastTranscriptAbstention = Extract<
-  BroadcastTranscriptChunkAbstention,
-  { readonly reason: "no-audio" }
->;
 type NoSpeechBroadcastTranscriptAbstention = Extract<
   BroadcastTranscriptChunkAbstention,
   { readonly reason: "no-speech" }
@@ -41,8 +37,6 @@ export interface BroadcastTranscriptFragmentRecoveryResult {
   readonly fragments: readonly BroadcastTranscriptWorkerFragment[];
   /** Source-fenced work resolved before a paid ASR request was issued. */
   readonly resolvedAbstentions: readonly BroadcastTranscriptChunkAbstention[];
-  /** Backwards-compatible projection used by the existing no-audio chapter path. */
-  readonly noAudioGaps: readonly NoAudioBroadcastTranscriptAbstention[];
   /** Confirmed no-speaker evidence, kept distinct from a missing audio track. */
   readonly noSpeechAbstentions: readonly NoSpeechBroadcastTranscriptAbstention[];
   /** Safe retries that still failed after the bounded automatic recovery waves. */
@@ -68,15 +62,6 @@ export interface RecoverBroadcastTranscriptFragmentsOptions {
   readonly onProgress?: (
     progress: BroadcastTranscriptFragmentRecoveryProgress,
   ) => void;
-  /**
-   * Runs before a worker batch is dispatched. Durable callers use this hook to
-   * seal every requested chunk as in-flight before any paid operation starts.
-   */
-  readonly onAttemptStarting?: (
-    chunks: readonly BroadcastContextTranscriptionChunk[],
-    quotaAttemptOrdinal: number,
-    attemptIndex: number,
-  ) => void | Promise<void>;
   /**
    * Runs after a complete worker response has passed structural validation,
    * but before another retry wave can start. Durable callers persist and read
@@ -156,9 +141,9 @@ export function transcriptFragmentQuotaAttemptOrdinal(
  * Returns the first manual generation whose automatic attempt ordinals are
  * strictly newer than every durable fragment attempt.
  *
- * Stored `attemptCount` is one plus the last quota ordinal. Legacy records
- * used a small local count; treating those values with the same formula may
- * skip a generation, but can never reuse a terminal operation.
+ * Stored `attemptCount` is one plus the last current-schema quota ordinal.
+ * Advancing to the next stride guarantees that a terminal operation ID is
+ * never reused.
  */
 export function nextTranscriptFragmentManualGeneration(
   storedAttemptCounts: readonly number[],
@@ -244,7 +229,6 @@ export async function recoverBroadcastTranscriptFragments(
     return {
       fragments: [],
       resolvedAbstentions: [],
-      noAudioGaps: [],
       noSpeechAbstentions: [],
       unresolvedRetryableGaps: [],
       routeChangedGaps: [],
@@ -290,11 +274,6 @@ export async function recoverBroadcastTranscriptFragments(
       options.manualAttemptGeneration,
       attemptIndex,
     );
-    await options.onAttemptStarting?.(
-      Object.freeze([...pending]),
-      quotaAttemptOrdinal,
-      attemptIndex,
-    );
     const attemptResult = await options.runAttempt(
       pending,
       quotaAttemptOrdinal,
@@ -320,13 +299,7 @@ export async function recoverBroadcastTranscriptFragments(
 
     const nextRetryable = new Map<string, BroadcastTranscriptChunkGap>();
     for (const gap of attemptResult.gaps) {
-      if (gap.reason === "no-audio") {
-        abstentions.set(gap.chunkId, {
-          chunkId: gap.chunkId,
-          reason: "no-audio",
-          speechActivityReceipt: null,
-        });
-      } else if (gap.reason === "outcome-unknown") {
+      if (gap.reason === "outcome-unknown") {
         outcomeUnknown.set(gap.chunkId, gap);
       } else if (gap.reason === "route-changed") {
         routeChanged.set(gap.chunkId, gap);
@@ -368,14 +341,6 @@ export async function recoverBroadcastTranscriptFragments(
   return {
     fragments: byOriginalOrder(successful.values()),
     resolvedAbstentions: byOriginalOrder(abstentions.values()),
-    noAudioGaps: byOriginalOrder(
-      [...abstentions.values()].filter(
-        (
-          abstention,
-        ): abstention is NoAudioBroadcastTranscriptAbstention =>
-          abstention.reason === "no-audio",
-      ),
-    ),
     noSpeechAbstentions: byOriginalOrder(
       [...abstentions.values()].filter(
         (

@@ -7,7 +7,7 @@ export const CANDIDATE_PASS_B_TERMINAL_STATUSES = [
   "failed",
 ] as const;
 
-export type CandidatePassBRuntimeDevice = "webgpu" | "wasm" | "remote";
+export type CandidatePassBRuntimeDevice = "remote";
 
 export interface CandidatePassBRunIdentity {
   readonly sessionId: string;
@@ -297,6 +297,9 @@ function copyAndValidateSnapshot(
 
   requireIdentifier(model.modelId, "modelId");
   requireIdentifier(model.modelRevision, "modelRevision");
+  if (model.runtimeDevice !== "remote") {
+    throw new TypeError("runtimeDevice must use the current remote pipeline");
+  }
 
   if (
     input.candidates.length === 0 ||

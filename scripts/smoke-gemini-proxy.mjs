@@ -1,19 +1,39 @@
 import { spawnSync } from "node:child_process";
 
-const PROXY_ENDPOINT =
-  "https://rettohighlight-gemini.11qaws.workers.dev/v1/candidate-insights";
-const PRODUCTION_ORIGIN = "https://11qaws.github.io";
+import {
+  currentSmokePlan,
+  DEFAULT_PROXY_ORIGIN,
+  runCandidateSmoke,
+} from "./current-ai-smoke-contract.mjs";
+
 const SAMPLE_RATE_HZ = 16_000;
 const DURATION_SECONDS = 30;
 const PCM_BYTE_LENGTH = SAMPLE_RATE_HZ * DURATION_SECONDS * 2;
+const FRAME_SECONDS = [3, 10, 20, 27];
+
+if (process.argv.includes("--dry-run")) {
+  process.stdout.write(`${JSON.stringify(currentSmokePlan("candidate"), null, 2)}\n`);
+  process.exit(0);
+}
 
 const sourcePath = process.argv[2];
 const offsetSeconds = Number(process.argv[3] ?? 600);
+const endpointIndex = process.argv.indexOf("--endpoint");
+const endpoint =
+  endpointIndex >= 0
+    ? process.argv[endpointIndex + 1]
+    : `${DEFAULT_PROXY_ORIGIN}/v1/candidate-insights`;
 const ffmpegPath = process.env.FFMPEG_PATH ?? "ffmpeg";
 
-if (!sourcePath || !Number.isFinite(offsetSeconds) || offsetSeconds < 0) {
+if (
+  !sourcePath ||
+  !Number.isFinite(offsetSeconds) ||
+  offsetSeconds < 0 ||
+  typeof endpoint !== "string" ||
+  endpoint.length === 0
+) {
   throw new Error(
-    "Usage: node scripts/smoke-gemini-proxy.mjs <video-path> [offset-seconds]",
+    "Usage: node scripts/smoke-gemini-proxy.mjs <video-path> [offset-seconds] [--endpoint <url>] [--dry-run]",
   );
 }
 
@@ -48,8 +68,10 @@ const extraction = spawnSync(
 );
 
 if (extraction.status !== 0) {
-  const stderr = extraction.stderr?.toString("utf8").trim();
-  throw new Error(stderr || "ffmpeg audio extraction failed.");
+  throw new Error(
+    extraction.stderr?.toString("utf8").trim() ||
+      "ffmpeg audio extraction failed.",
+  );
 }
 
 const pcm = extraction.stdout;
@@ -73,7 +95,7 @@ wav.write("data", 36, "ascii");
 wav.writeUInt32LE(pcm.byteLength, 40);
 pcm.copy(wav, 44);
 
-const videoFrames = [3, 10, 20, 27].map((relativeSeconds) => {
+const frames = FRAME_SECONDS.map((relativeSeconds) => {
   const frame = spawnSync(
     ffmpegPath,
     [
@@ -96,109 +118,54 @@ const videoFrames = [3, 10, 20, 27].map((relativeSeconds) => {
       "mjpeg",
       "pipe:1",
     ],
-    { encoding: null, maxBuffer: 1024 * 1024, windowsHide: true },
+    {
+      encoding: null,
+      maxBuffer: 2 * 1024 * 1024,
+      windowsHide: true,
+    },
   );
-  if (frame.status !== 0 || !Buffer.isBuffer(frame.stdout) || frame.stdout.length === 0) {
+  if (
+    frame.status !== 0 ||
+    !Buffer.isBuffer(frame.stdout) ||
+    frame.stdout.length === 0
+  ) {
     throw new Error(`ffmpeg frame extraction failed at +${relativeSeconds}s`);
   }
   return {
     timestampMs: relativeSeconds * 1_000,
-    mimeType: "image/jpeg",
-    dataBase64: frame.stdout.toString("base64"),
+    bytes: frame.stdout,
   };
 });
 
-const response = await fetch(PROXY_ENDPOINT, {
-  method: "POST",
-  headers: {
-    "Content-Type": "application/json",
-    Origin: PRODUCTION_ORIGIN,
-  },
-  body: JSON.stringify({
-    audioBase64: wav.toString("base64"),
+try {
+  const { response, candidateHash } = await runCandidateSmoke({
+    wav,
+    frames,
     candidateDurationMs: DURATION_SECONDS * 1_000,
-    videoFrames,
-  }),
-});
-
-const payload = await response.json();
-if (!response.ok) {
-  const code = payload?.error?.code ?? "UNKNOWN_PROXY_ERROR";
-  throw new Error(
-    `Proxy smoke failed with HTTP ${response.status}: ${code}; stop=${response.headers.get("X-Qwen-Stop")}, length=${response.headers.get("X-Qwen-Text-Length")}, content=${response.headers.get("X-Qwen-Content-Type")}, json=${response.headers.get("X-Qwen-Json")}, keys=${response.headers.get("X-Qwen-Keys")}`,
+    proxyOrigin: new URL(endpoint).origin,
+  });
+  const payload = await response.json().catch(() => null);
+  process.stdout.write(
+    `${JSON.stringify(
+      response.ok
+        ? {
+            status: response.status,
+            candidateHash,
+            cleanupVerified: true,
+            payload,
+          }
+        : {
+            status: response.status,
+            candidateHash,
+            errorCode: payload?.error?.code ?? "UNKNOWN_PROXY_ERROR",
+          },
+      null,
+      2,
+    )}\n`,
   );
+  if (!response.ok) process.exitCode = 1;
+} finally {
+  pcm.fill(0);
+  wav.fill(0);
+  for (const frame of frames) frame.bytes.fill(0);
 }
-
-const text = payload?.candidates?.[0]?.content?.parts?.[0]?.text;
-if (typeof text !== "string") {
-  throw new Error("Gemini response did not contain structured text.");
-}
-
-const insight = JSON.parse(text);
-const insightKeys = Object.keys(insight).sort();
-const expectedInsightKeys = [
-  "eventSummaryKo",
-  "reactionSummaryKo",
-  "segments",
-  "uncertaintiesKo",
-  "whyGoodClipKo",
-].sort();
-const segments = insight.segments;
-const hasExactInsightKeys =
-  insightKeys.length === expectedInsightKeys.length &&
-  insightKeys.every((key, index) => key === expectedInsightKeys[index]);
-const hasValidSegments =
-  Array.isArray(segments) &&
-  segments.length > 0 &&
-  segments.every(
-    (segment) =>
-      Number.isSafeInteger(segment?.relativeStartMs) &&
-      Number.isSafeInteger(segment?.relativeEndMs) &&
-      segment.relativeStartMs >= 0 &&
-      segment.relativeEndMs > segment.relativeStartMs &&
-      segment.relativeEndMs <= DURATION_SECONDS * 1_000 &&
-      typeof segment.text === "string" &&
-      (segment.text === "[불명]" || /\p{Script=Hangul}/u.test(segment.text)),
-  );
-const hasKoreanTranscript =
-  Array.isArray(segments) &&
-  segments.some(
-    (segment) =>
-      typeof segment?.text === "string" &&
-      /\p{Script=Hangul}/u.test(segment.text),
-  );
-const hasKoreanInterpretation =
-  [
-    insight.eventSummaryKo,
-    insight.reactionSummaryKo,
-    insight.whyGoodClipKo,
-  ].every((value) => typeof value === "string" && /\p{Script=Hangul}/u.test(value)) &&
-  Array.isArray(insight.uncertaintiesKo) &&
-  insight.uncertaintiesKo.length > 0 &&
-  insight.uncertaintiesKo.every(
-    (value) => typeof value === "string" && /\p{Script=Hangul}/u.test(value),
-  );
-if (
-  response.headers.get("access-control-allow-origin") !== PRODUCTION_ORIGIN ||
-  response.headers.get("cache-control") !== "no-store" ||
-  payload?.candidates?.[0]?.finishReason !== "STOP" ||
-  !hasExactInsightKeys ||
-  !hasValidSegments ||
-  !hasKoreanTranscript ||
-  !hasKoreanInterpretation
-) {
-  throw new Error("Proxy smoke response failed the Korean insight contract.");
-}
-const result = {
-  status: response.status,
-  allowOrigin: response.headers.get("access-control-allow-origin"),
-  cacheControl: response.headers.get("cache-control"),
-  finishReason: payload?.candidates?.[0]?.finishReason ?? null,
-  segments,
-  eventSummaryKo: insight.eventSummaryKo,
-  reactionSummaryKo: insight.reactionSummaryKo,
-  whyGoodClipKo: insight.whyGoodClipKo,
-  uncertaintiesKo: insight.uncertaintiesKo,
-};
-
-process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);

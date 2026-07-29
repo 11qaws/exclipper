@@ -6,12 +6,18 @@ import {
   broadcastContextFailureDisposition,
   requestBroadcastContextDeepseek,
 } from "./broadcastContextDeepseekClient";
-import { createBroadcastContextRequest } from "./broadcastContextProtocol";
+import {
+  calculateCoverage,
+  createBroadcastContextRequest,
+  normalizeSemanticChapters,
+} from "./broadcastContextProtocol";
 import { createBroadcastParticipantGrounding } from "./broadcastParticipantGrounding";
 import { DEFAULT_CANDIDATE_PASS_B_CAST_ROSTER_ID } from "./participantRoster";
 
 const input = {
   sourceDurationMs: 60_000,
+  castRosterId: null,
+  outputLanguage: "ko" as const,
   chapters: [
     {
       chapterId: "chapter-1",
@@ -34,16 +40,35 @@ const input = {
       participantContextKo: "이 후보의 화면 등장인물은 아직 확인하지 못했습니다.",
     },
   ],
+  participantGrounding: createBroadcastParticipantGrounding({
+    sourceDurationMs: 60_000,
+    castRosterId: null,
+    chapters: [
+      {
+        chapterId: "chapter-1",
+        startMs: 0,
+        endMs: 60_000,
+        summaryKo: "스트리머가 실수를 인정하고 시청자에게 정확히 사과했다.",
+      },
+    ],
+  }),
 };
 
 const result = {
-  schemaVersion: "1.4.0",
+  schemaVersion: "1.7.0",
   broadcastSummaryKo: "실수의 경위를 설명하고 정확히 사과한 방송이다.",
+  hostStreamerProfile: {
+    displayNameKo: null,
+    profileSummaryKo:
+      "실수의 경위를 직접 설명하고 시청자에게 차분하게 사과하는 진행자다.",
+    evidenceKo: ["실수를 직접 인정하고 사과했다."],
+    uncertaintiesKo: ["화면 근거로 이름은 확인하지 못했다."],
+  },
   recurringThemesKo: ["사과"],
   semanticChaptersSupported: true,
   semanticChapters: [
     {
-      semanticChapterId: "semantic-001",
+      semanticChapterId: "sc-chapter-1-chapter-1-main-event",
       startChapterId: "chapter-1",
       endChapterId: "chapter-1",
       startMs: 0,
@@ -78,7 +103,7 @@ const result = {
     gaps: [],
     partialChapterIds: [],
   },
-};
+} as const;
 
 describe("requestBroadcastContextDeepseek", () => {
   it("separates safe retries from ambiguous paid outcomes", () => {
@@ -88,6 +113,15 @@ describe("requestBroadcastContextDeepseek", () => {
           "PROXY_REJECTED",
           "rate limited",
           { status: 429, proxyErrorCode: "UPSTREAM_RATE_LIMITED" },
+        ),
+      ),
+    ).toBe("retryable");
+    expect(
+      broadcastContextFailureDisposition(
+        new BroadcastContextDeepseekClientError(
+          "PROXY_INVALID_RESPONSE",
+          "provider returned incomplete JSON",
+          { status: 502, proxyErrorCode: "UPSTREAM_INVALID_RESPONSE" },
         ),
       ),
     ).toBe("retryable");
@@ -222,7 +256,7 @@ describe("requestBroadcastContextDeepseek", () => {
     const unboundedGrounding = createBroadcastParticipantGrounding(
       {
         sourceDurationMs: 145_000,
-        castRosterId: null,
+        castRosterId: DEFAULT_CANDIDATE_PASS_B_CAST_ROSTER_ID,
         chapters,
       },
       {
@@ -257,6 +291,7 @@ describe("requestBroadcastContextDeepseek", () => {
         ...input,
         sourceDurationMs: 145_000,
         chapters,
+        castRosterId: DEFAULT_CANDIDATE_PASS_B_CAST_ROSTER_ID,
         participantGrounding: unboundedGrounding,
       },
       {
@@ -266,21 +301,30 @@ describe("requestBroadcastContextDeepseek", () => {
           }
           receivedBody = JSON.parse(init.body) as Record<string, unknown>;
           const sentChapters = receivedBody.chapters as typeof chapters;
+          const boundedCoverage = calculateCoverage(
+            sentChapters,
+            145_000,
+          );
+          const boundedSemanticChapters = normalizeSemanticChapters(
+            [{
+              startChapterId: sentChapters[0]!.chapterId,
+              endChapterId: sentChapters.at(-1)!.chapterId,
+              titleKo: result.semanticChapters[0].titleKo,
+              summaryKo: result.semanticChapters[0].summaryKo,
+              kind: result.semanticChapters[0].kind,
+              salience: result.semanticChapters[0].salience,
+              relatedCandidateIds:
+                result.semanticChapters[0].relatedCandidateIds,
+              uncertaintiesKo:
+                result.semanticChapters[0].uncertaintiesKo,
+            }],
+            sentChapters,
+            boundedCoverage.gaps,
+          );
           const boundedResult = {
             ...result,
-            semanticChapters: [
-              {
-                ...result.semanticChapters[0],
-                startChapterId: sentChapters[0]?.chapterId,
-                endChapterId: sentChapters.at(-1)?.chapterId,
-                startMs: 0,
-                endMs: 145_000,
-              },
-            ],
-            coverage: {
-              ...result.coverage,
-              coveredMs: 145_000,
-            },
+            semanticChapters: boundedSemanticChapters,
+            coverage: boundedCoverage,
           };
           return Promise.resolve(
             new Response(JSON.stringify(boundedResult), { status: 200 }),
@@ -322,6 +366,27 @@ describe("requestBroadcastContextDeepseek", () => {
         fetchImplementation: () =>
           Promise.resolve(
             new Response(JSON.stringify({ annotations: [] }), { status: 200 }),
+          ),
+      }),
+    ).rejects.toMatchObject({
+      code: "PROXY_INVALID_RESPONSE",
+    });
+  });
+
+  it("rejects a current result whose normalized range was tampered after AI parsing", async () => {
+    const tampered = {
+      ...result,
+      semanticChapters: result.semanticChapters.map((chapter) => ({
+        ...chapter,
+        startMs: chapter.startMs + 1,
+      })),
+    };
+
+    await expect(
+      requestBroadcastContextDeepseek(input, {
+        fetchImplementation: () =>
+          Promise.resolve(
+            new Response(JSON.stringify(tampered), { status: 200 }),
           ),
       }),
     ).rejects.toMatchObject({
@@ -544,8 +609,17 @@ describe("requestBroadcastContextDeepseek", () => {
 
   it("forwards only a validated closed roster identifier", async () => {
     let receivedBody: unknown;
+    const rosterInput = {
+      ...input,
+      castRosterId: DEFAULT_CANDIDATE_PASS_B_CAST_ROSTER_ID,
+      participantGrounding: createBroadcastParticipantGrounding({
+        sourceDurationMs: input.sourceDurationMs,
+        castRosterId: DEFAULT_CANDIDATE_PASS_B_CAST_ROSTER_ID,
+        chapters: input.chapters,
+      }),
+    };
     await requestBroadcastContextDeepseek(
-      { ...input, castRosterId: DEFAULT_CANDIDATE_PASS_B_CAST_ROSTER_ID },
+      rosterInput,
       {
         fetchImplementation: (_input, init) => {
           if (typeof init?.body !== "string") {
@@ -556,15 +630,11 @@ describe("requestBroadcastContextDeepseek", () => {
         },
       },
     );
-    const normalized = createBroadcastContextRequest({
-      ...input,
-      castRosterId: DEFAULT_CANDIDATE_PASS_B_CAST_ROSTER_ID,
-    });
+    const normalized = createBroadcastContextRequest(rosterInput);
     expect(receivedBody).toEqual({
-      ...input,
+      ...rosterInput,
       participantGrounding: normalized.participantGrounding,
       outputLanguage: "ko",
-      castRosterId: DEFAULT_CANDIDATE_PASS_B_CAST_ROSTER_ID,
     });
   });
 });

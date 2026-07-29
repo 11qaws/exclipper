@@ -1,30 +1,42 @@
 # ExClipper 상태·생애주기 명세
 
+## `0.9.0` current-only 내구 완료 계약
+
+- 새 분석은 현재 schema와 protocol만 사용한다. 이전 schema를 자동 변환하거나 현재 결과로 승격하는 경로는 제공하지 않는다.
+- 빠른 탐색의 공개 체크포인트는 `manifest exact readback → finalResult + terminal exact bundle readback`이다. getter도 소비자도 없는 provisional write는 성공 경로에서 사용하지 않는다.
+- `AnalysisJob`의 `preflight`는 manifest readback 뒤에만 전진하고, `fastPass → seedClustering → commitFastResult`는 final/terminal bundle 전체를 다시 연 뒤에만 전진한다. 탭이 그 사이 닫히면 이미 저장한 bundle을 재사용하고 뒤처진 cursor만 보정한다.
+- 전체 맥락과 의미 정제 세션의 load·CAS·readback은 run ID, input signature, operation token으로 fence한다. transient storage timeout과 CAS 충돌은 같은 checkpoint에서 자동 재개한다. provider 결과가 이미 durable하면 재호출하지 않고, 결과가 불명인 현재 operation만 아래 exact-operation reconciliation을 거친다.
+- context phase ledger `3.0.0`의 복구 전이는 `in-flight | outcome-unknown -> reconciling -> succeeded | retryable-gap | outcome-unknown | failed`다. `reconciling`을 exact readback한 뒤에만 동일 `operationId + inputDigest`의 coordinator cache를 조회하거나 동일 lease transport를 한 번 replay한다. 일치하는 terminal result만 `succeeded`, coordinator가 비전송을 명시적으로 증명한 조각만 `retryable-gap`이 된다. 확인 불능·receipt mismatch·재조정 중 재중단은 같은 operation의 `outcome-unknown` terminal로 먼저 저장한다. 무료 route는 그 조각만 새 generation으로 자동 복구하고, 유료 route는 편집자 승인 전까지 새 operation을 만들지 않는다. `failed`는 현재 입력 계약·인증·설정처럼 반복해도 바뀌지 않는 오류만 사용하며 완료된 형제 unit은 변경하지 않는다.
+- 최종 게시 전 manifest, 빠른 결과, terminal, 맥락 세션, 후보 상세 record를 한 read wave로 다시 열고 성공 certificate를 만든다. 완전 검증 후보가 있으면 `usable`, 모든 근거를 검토한 정상 0개면 `empty`이며, 누락 record나 불완전 후보를 정상 빈 결과로 바꾸지 않는다.
+- 편집자의 승인·제외·구간 revision은 분석 입력이 아니다. 늦게 도착한 의미 후보가 같은 ID의 사람 revision을 초기화하거나, 검토 동작이 유료 분석 cohort를 변경해서는 안 된다.
+
 ## 방송 등장인물 근거화
 
 - canonical 순서는 `transcript sealed → participant grounding sealed/readback → broadcast context`다. context는 grounding 저장 확인보다 먼저 시작하지 않는다.
 - 실제 실행에서는 전사와 방송 단위 visual/voice 자료 준비를 병렬로 시작할 수 있지만 완료 barrier는 바뀌지 않는다. pre-context adapter cell은 source/model/reference manifest fence와 immutable media bundle key를 가지며, transcript/visual/voice의 누락·retryable·outcome-unknown이 모두 0일 때만 하나의 grounding snapshot을 seal한다. post-context 후보 confirmation은 정확히 같은 bundle key만 재사용하고 별도 receipt를 만든다.
 - participant grounding의 terminal은 `sealed` 하나이고 그 안의 adapter receipt가 `completed | unavailable`을 가진다. `unavailable`은 검증된 reference manifest가 없는 현재의 정상 상태이며 실패가 아니다.
 - source prior와 `transcript-name-mention`은 실제 presence/speaker 상태를 만들지 않는다. visual/voice adapter의 `on-screen-name | visual-reference-match | spoken-self-identification | voice-reference-match`가 관측 근거를 반환하기 전에는 진행자 이름과 발화자를 `unknown`으로 유지한다.
-- session schema `1.11.0`의 `participantGroundingInputSignature`, sampling-plan fingerprint와 `participantGroundingCheckpointJson`은 source roster·transcript seal에 묶인 원자적인 집합이다. whole-context exact input JSON과 활성 refinement evidence ledger도 결과와 함께 저장한다. 대사 지도 재생성은 이 집합과 context/refinement 결과를 null로 되돌린다.
-- 자막 없는 의미 refinement의 전사 checkpoint는 `refinementTranscriptInputSignature`와 canonical `refinementTranscriptCheckpointJson`의 원자적인 쌍이다. checkpoint가 고정한 모든 chunk ID·source range·kind와 실제 성공 결과 범위가 정확히 일치해야 하며, `no-speech`는 exact source range·고정 VAD 모델·정책·완전 coverage를 가진 run receipt가 있을 때만 해결된 abstention이다. `no-audio`는 receipt가 없는 별도 decoder abstention이며, `in-flight | decode-failed | transcription-failed | rate-limited | route-changed | outcome-unknown`은 attempt count를 가진 미해결 gap으로 보존한다. `route-changed`는 quota·R2 read·upstream보다 먼저 확인된 non-billable gap이므로 완료 셀을 보존한 채 새 route로 자동 재개하고, `outcome-unknown`만 편집자의 명시적 재결제를 기다린다. parent context invalidate/commit은 이 쌍과 active evidence ledger를 지우고, 같은 context input의 phase-ledger checkpoint만 그대로 보존한다.
+- session schema `1.12.0`의 `participantGroundingInputSignature`, sampling-plan fingerprint와 `participantGroundingCheckpointJson`은 source roster·transcript seal에 묶인 원자적인 집합이다. whole-context exact input JSON과 활성 refinement evidence ledger도 결과와 함께 저장한다. 대사 지도 재생성은 이 집합과 context/refinement 결과를 null로 되돌린다.
+- 자막 없는 의미 refinement의 전사 checkpoint는 `refinementTranscriptInputSignature`와 canonical `refinementTranscriptCheckpointJson`의 원자적인 쌍이다. checkpoint가 고정한 모든 chunk ID·source range·kind와 실제 성공 결과 범위가 정확히 일치해야 하며, `no-speech`는 exact source range·고정 VAD 모델·정책·완전 coverage를 가진 run receipt가 있을 때만 해결된 abstention이다. `no-audio`는 receipt가 없는 별도 decoder abstention이며, `in-flight | decode-failed | transcription-failed | rate-limited | route-changed | outcome-unknown`은 attempt count를 가진 미해결 gap으로 보존한다. `route-changed`는 quota·R2 read·upstream보다 먼저 확인된 non-billable gap이므로 완료 셀을 보존한 채 새 route로 자동 재개한다. `free-r2`의 `outcome-unknown`도 terminal readback 뒤 새 generation으로 자동 복구하고, `paid-direct`만 편집자의 명시적 재결제를 기다린다. parent context invalidate/commit은 이 쌍과 active evidence ledger를 지우고, 같은 context input의 phase-ledger checkpoint만 그대로 보존한다.
 - refinement checkpoint는 현재 v4 input signature와 frozen plan이 정확히 같을 때만 재개한다. signature나 계획이 달라지면 과거 settlement를 이관하지 않고 새 checkpoint를 만들며, 같은 signature 안에서는 성공·abstention을 보존하고 gap만 다시 실행한다.
 - 연속 `route-changed` 전이는 `250ms -> 500ms -> 1s -> … -> 10s`의 bounded delay 뒤 다시 `pending`으로 열린다. 횟수 상한은 없고 non-route 결과 또는 source/run 교체가 count를 0으로 만든다.
-- Candidate Pass B receipt schema `1.4.0`은 후보 ID·원본 범위·routing revision·활성 refinement projection에 더해 `outputLanguage`와 nullable `castRosterId`를 source fence로 고정한다. 1.3 이하 영수증은 진단을 위해 읽을 수 있지만 현재 내구 결과나 최종 후보 근거로는 인정하지 않는다.
+- Candidate Pass B insight record는 current-only `4.0.0`, plan receipt는 `1.0.0`, verification receipt는 `2.0.0`만 인정한다. 현재 버전 밖 기록은 읽거나 승격하지 않는다. plan receipt는 run·input·context input·활성 refinement projection, 순서가 고정된 detail 후보 ID, 각 후보에게 실제 전달할 canonical context packet의 콘텐츠 지문을 함께 묶는다. plan-only checkpoint도 이 packet 원문을 보존하므로 새로고침 뒤 별도 저장하지 않은 YouTube 자막 track이 사라져도 열화된 재계산 packet으로 바꾸지 않는다. verification receipt는 후보 ID·원본 범위·routing revision·`outputLanguage`·nullable `castRosterId`와 실제 화면·오디오 검토 결과를 고정한다.
 - grounding 교체는 과거 context/refinement를 같은 record에서 무효화한다. context/refinement commit은 직전 durable snapshot과 exact match할 때만 성공하는 compare-and-swap이며, 늦은 operation은 새 transcript/session을 덮어쓰지 못한다.
-- 복구는 저장 당시 exact input, transcript seal, catalog version, grounding JSON으로 fingerprint를 다시 계산한다. legacy session의 grounding 또는 exact input이 없으면 저장된 유료 결과를 삭제하지 않지만 grounded whole-context 완료 상태로 복원하지 않는다.
+- 복구는 저장 당시 exact input, transcript seal, catalog version, grounding JSON으로 fingerprint를 다시 계산한다. 현재 계약의 필수 필드가 없으면 해당 session을 완료 결과로 복원하지 않고 새 분석을 요구한다.
 - 실제 visual/voice adapter가 연결된 뒤에는 모든 계획 cell이 modality에 맞는 정상 terminal이고 retryable gap이 0일 때만 `sealed`로 전이한다. transcript-name은 `identified | none`, visual은 `identified | none | unidentified`, voice는 `identified | unidentified | no-speech`만 허용한다.
 - voice runtime은 `clean speech turn receipt → source/PCM fingerprint → pinned WavLM Worker → normalized embedding → verified prototype score → open-set decision` 순서다. PCM과 embedding은 영속 상태가 아니며 receipt와 coverage만 남는다. 현재 18개 추출 파일은 모두 pending이고 전원 방송 30초 표본의 교차검증이 일부 불일치했으므로 production voice adapter는 계속 `unavailable`; runtime 존재만으로 `identified`로 전이하지 않는다.
 
-- 문서 버전: 0.8.9
+- 문서 버전: 0.9.0
 - 기준 제품 계획: PRODUCT_PLAN.md 현재 revision
 - 기준일: 2026-07-29 (Asia/Seoul)
 - 적용 범위: GitHub Pages에서 실행되는 개인 편집 어시스턴트와 선택형 CHZZK 동반 수집기
 - 문서 지위: 구현·회귀 테스트의 canonical 상태 문서
 
-## 다음 배포 후보 · 후보 cohort와 최종 종료 상태
+## `0.9.0` 후보 cohort와 최종 종료 상태
 
 - `candidate ledger`는 fast/semantic discovery가 만든 canonical 원장이다. `context cohort`는 이 원장에서 최대 32개를 골라 whole-context AI에 보낸 집합이고, `detail cohort`는 context가 준비된 항목 중 최대 12개를 골라 화면·오디오 AI에 보내는 집합이다. 세 집합의 상한과 membership을 하나의 `candidateCount`로 추정하지 않는다.
+- detail cohort가 0개여도 순서가 고정된 빈 계획을 plan-only checkpoint로 저장하고 exact readback해야 정상 `completedEmpty`가 될 수 있다. plan callback은 실행 시작 때 잡은 immutable lease와 정확히 일치할 때만 artifact를 저장하며, 늦게 도착한 이전 계획 callback은 새 계획을 덮어쓰지 못한다.
+- 복구된 Candidate Pass B evidence·insight·thumbnail·receipt는 현재 transcript·participant grounding·context·refinement와 plan receipt를 모두 다시 검증하기 전에는 UI나 publication에 노출하지 않는다. 계획이 달라지면 이전 artifact를 부분 재사용하지 않고 빈 current plan checkpoint로 원자적으로 교체한 뒤 필요한 후보만 다시 채운다.
 - context 실행은 exact `contextCandidateIds`와 함께 commit한다. 복구 시 candidate ID·순서·source duration·input signature가 모두 맞아야 현재 context로 사용할 수 있다. detail cohort 밖의 context-qualified 후보는 reservoir에 남지만 `detail-result-missing`이 아니다.
 - detail candidate의 중심 전이는 `pending -> frame-preparing -> four-frames-ready -> media-staged -> remote-review -> receipt-issued | gap`이다. 네 화면이 모두 준비되기 전에는 remote-review를 시작하지 않는다. 후보 하나의 `gap`은 형제 후보를 실패시키지 않으며 run은 모든 candidate가 terminal일 때만 `completed | completedWithGaps`가 된다.
 - `receipt-issued`는 현재 candidate ID·source start/end, context fingerprint, routing model revision, 오디오 검토, 서로 다른 화면 4장, 그중 하나인 thumbnail timestamp와 provider insight가 모두 같은 candidate operation에 연결됐다는 뜻이다. Qwen·Gemini·quota·receipt는 provider 호출 전에 생성된 동일 canonical packet과 source range를 사용하며, receipt와 실제 provider prompt가 다른 silent compaction은 금지한다.

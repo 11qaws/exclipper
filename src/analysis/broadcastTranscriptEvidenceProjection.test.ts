@@ -2,9 +2,6 @@ import { describe, expect, it } from "vitest";
 
 import type { BroadcastContextChapterInput } from "./broadcastContextProtocol";
 import {
-  createBroadcastNoSpeechChapters,
-} from "./broadcastTranscriptChapters";
-import {
   prepareBroadcastTranscriptEvidenceProjection,
 } from "./broadcastTranscriptEvidenceProjection";
 import {
@@ -41,28 +38,6 @@ function dialogueChapter(): BroadcastContextChapterInput {
 }
 
 describe("prepareBroadcastTranscriptEvidenceProjection", () => {
-  it("keeps a legacy no-speech placeholder uncovered until exact VAD evidence is rebuilt", () => {
-    const [legacy] = createBroadcastNoSpeechChapters(
-      [chunks[0]!],
-      180_000,
-    );
-    const prepared = prepareBroadcastTranscriptEvidenceProjection({
-      sourceFingerprint: "source-v1",
-      sourceDurationMs: 180_000,
-      transcriptInputSignature: "transcript-operation-v2",
-      modelRevision: "asr-model-v1",
-      plannedChunks: chunks,
-      storedCheckpointJson: null,
-      storedChapters: [legacy!, dialogueChapter()],
-    });
-
-    expect(prepared.dialogueChapters).toEqual([dialogueChapter()]);
-    expect(prepared.checkpoint.resolvedEvidence).toEqual([]);
-    expect(prepared.coveredRanges).toEqual([
-      { startMs: 90_000, endMs: 180_000 },
-    ]);
-  });
-
   it("rebinds exact stored abstentions to a fresh operation signature", () => {
     let stored = createBroadcastTranscriptResolvedEvidenceCheckpoint({
       sourceFingerprint: "source-v1",
@@ -133,28 +108,21 @@ describe("prepareBroadcastTranscriptEvidenceProjection", () => {
     expect(prepared.checkpoint.resolvedEvidence).toEqual([]);
   });
 
-  it("fails closed when a legacy placeholder cannot be mapped exactly", () => {
-    const [legacy] = createBroadcastNoSpeechChapters(
-      [
-        {
-          chunkId: "old-cell",
-          sourceStartMs: 0,
-          sourceEndMs: 60_000,
-          kind: "uniform",
-        },
-      ],
-      180_000,
-    );
-    expect(() =>
-      prepareBroadcastTranscriptEvidenceProjection({
-        sourceFingerprint: "source-v1",
-        sourceDurationMs: 180_000,
-        transcriptInputSignature: "new-operation",
-        modelRevision: "asr-model-v1",
-        plannedChunks: chunks,
-        storedCheckpointJson: null,
-        storedChapters: [legacy!],
-      }),
-    ).toThrow(RangeError);
+  it("keeps current dialogue chapters separate from resolved abstentions", () => {
+    const prepared = prepareBroadcastTranscriptEvidenceProjection({
+      sourceFingerprint: "source-v1",
+      sourceDurationMs: 180_000,
+      transcriptInputSignature: "current-operation",
+      modelRevision: "asr-model-v1",
+      plannedChunks: chunks,
+      storedCheckpointJson: null,
+      storedChapters: [dialogueChapter()],
+    });
+
+    expect(prepared.dialogueChapters).toEqual([dialogueChapter()]);
+    expect(prepared.checkpoint.resolvedEvidence).toEqual([]);
+    expect(prepared.coveredRanges).toEqual([
+      { startMs: 90_000, endMs: 180_000 },
+    ]);
   });
 });

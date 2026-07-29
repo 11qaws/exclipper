@@ -10,7 +10,6 @@ import {
 import {
   CANDIDATE_PASS_B_CAST_ROSTER_VERSION,
   candidatePassBCastReferences,
-  candidatePassBKnownCastReferences,
   isCandidatePassBCastRosterId,
   type CandidatePassBCastRosterId,
   type CandidatePassBParticipantId,
@@ -24,9 +23,9 @@ import {
 } from "./participantVoiceEnrollmentManifest";
 
 export const BROADCAST_PARTICIPANT_GROUNDING_PLAN_SCHEMA_VERSION =
-  "1.1.0" as const;
+  "1.3.0" as const;
 export const BROADCAST_PARTICIPANT_GROUNDING_PLAN_REVISION =
-  "broadcast-participant-grounding-plan-v2" as const;
+  "broadcast-participant-grounding-plan-v4" as const;
 export const BROADCAST_PARTICIPANT_MEDIA_BUNDLE_KEY_REVISION =
   "participant-media-bundle-v1" as const;
 export const BROADCAST_PARTICIPANT_VOICE_RECOGNITION_POLICY_VERSION =
@@ -126,10 +125,8 @@ export interface BroadcastParticipantVoiceAbsoluteMatchThreshold {
  * the nearest enrolled person.
  */
 export interface BroadcastParticipantVoiceRecognitionPolicy {
-  readonly schemaVersion:
-    typeof BROADCAST_PARTICIPANT_VOICE_RECOGNITION_POLICY_VERSION;
-  readonly domain:
-    typeof BROADCAST_PARTICIPANT_VOICE_RECOGNITION_POLICY_DOMAIN;
+  readonly schemaVersion: typeof BROADCAST_PARTICIPANT_VOICE_RECOGNITION_POLICY_VERSION;
+  readonly domain: typeof BROADCAST_PARTICIPANT_VOICE_RECOGNITION_POLICY_DOMAIN;
   readonly policyRevision: string;
   readonly scoreMetric: "normalized-cosine-similarity";
   readonly decisionMode: "open-set-with-abstention";
@@ -239,10 +236,17 @@ export interface BroadcastParticipantGroundingPlan {
 
 interface BroadcastParticipantGroundingCellReceiptBase {
   readonly schemaVersion: typeof BROADCAST_PARTICIPANT_GROUNDING_PLAN_SCHEMA_VERSION;
+  readonly planRevision: typeof BROADCAST_PARTICIPANT_GROUNDING_PLAN_REVISION;
   readonly planFingerprint: string;
   readonly sourceFingerprint: string;
+  readonly sourceDurationMs: number;
+  readonly transcriptSeal: string;
+  readonly samplingPlanRevision: string;
   readonly adapterFenceKey: string;
   readonly adapter: BroadcastParticipantGroundingPlanAdapter;
+  readonly adapterRevision: string;
+  readonly modelRevision: string | null;
+  readonly referenceManifestHash: string | null;
   readonly cellId: string;
   readonly sourceStartMs: number;
   readonly sourceEndMs: number;
@@ -270,6 +274,37 @@ export type BroadcastParticipantGroundingCellReceipt =
   | BroadcastParticipantGroundingTerminalCellReceipt
   | BroadcastParticipantGroundingGapCellReceipt;
 
+/**
+ * Explicit terminal proof that a planned media modality could not be observed.
+ *
+ * This is not evidence that no person was visible or that no one spoke. It
+ * exists solely to distinguish a caller-confirmed unavailable modality from a
+ * missing receipt. The whole-source range and every source/model fence are
+ * repeated so persisted receipts can be rejected without trusting an opaque
+ * status flag.
+ */
+export interface BroadcastParticipantGroundingNoneObservedReceipt {
+  readonly schemaVersion: typeof BROADCAST_PARTICIPANT_GROUNDING_PLAN_SCHEMA_VERSION;
+  readonly planRevision: typeof BROADCAST_PARTICIPANT_GROUNDING_PLAN_REVISION;
+  readonly planFingerprint: string;
+  readonly sourceFingerprint: string;
+  readonly sourceDurationMs: number;
+  readonly transcriptSeal: string;
+  readonly samplingPlanRevision: string;
+  readonly adapterFenceKey: string;
+  readonly adapter: BroadcastParticipantMediaAdapter;
+  readonly adapterRevision: string;
+  readonly modelRevision: string | null;
+  readonly referenceManifestHash: string | null;
+  readonly sourceStartMs: 0;
+  readonly sourceEndMs: number;
+  readonly operationId: string;
+  readonly attemptOrdinal: number;
+  readonly status: "terminal";
+  readonly outcome: "none-observed";
+  readonly unavailableReason: BroadcastParticipantAdapterUnavailableReason;
+}
+
 export interface CreateBroadcastParticipantGroundingTerminalReceiptInput {
   readonly plan: BroadcastParticipantGroundingPlan;
   readonly adapter: BroadcastParticipantGroundingPlanAdapter;
@@ -292,11 +327,21 @@ export interface CreateBroadcastParticipantGroundingGapReceiptInput {
   readonly reason: BroadcastParticipantGroundingGapReason;
 }
 
+export interface CreateBroadcastParticipantGroundingNoneObservedReceiptInput {
+  readonly plan: BroadcastParticipantGroundingPlan;
+  readonly adapter: BroadcastParticipantMediaAdapter;
+  readonly operationId: string;
+  readonly attemptOrdinal: number;
+}
+
 export interface BroadcastParticipantGroundingCompletionInspection {
   readonly planFingerprint: string;
   readonly plannedCellCount: number;
   readonly terminalCellCount: number;
+  readonly requiredNoneObservedAdapterCount: number;
+  readonly terminalNoneObservedAdapterCount: number;
   readonly missingCellIds: readonly string[];
+  readonly missingNoneObservedAdapters: readonly BroadcastParticipantMediaAdapter[];
   readonly retryableCellIds: readonly string[];
   readonly outcomeUnknownCellIds: readonly string[];
   readonly readyToSeal: boolean;
@@ -323,8 +368,7 @@ export interface BroadcastParticipantVoiceRecognitionScore {
 }
 
 interface BroadcastParticipantVoiceRecognitionProjectionBase {
-  readonly schemaVersion:
-    typeof BROADCAST_PARTICIPANT_VOICE_RECOGNITION_POLICY_VERSION;
+  readonly schemaVersion: typeof BROADCAST_PARTICIPANT_VOICE_RECOGNITION_POLICY_VERSION;
   readonly planFingerprint: string;
   readonly sourceFingerprint: string;
   readonly adapterFenceKey: string;
@@ -395,8 +439,22 @@ export interface SealedBroadcastParticipantGroundingPlan {
   readonly expectedParticipantIds: readonly CandidatePassBParticipantId[];
   readonly adapterReceipts: readonly BroadcastParticipantGroundingAdapterCompletionReceipt[];
   readonly terminalCells: readonly BroadcastParticipantGroundingTerminalCellReceipt[];
+  readonly noneObservedReceipts: readonly BroadcastParticipantGroundingNoneObservedReceipt[];
   readonly bundleReuseIndex: BroadcastParticipantGroundingBundleReuseIndex;
 }
+
+const BROADCAST_PARTICIPANT_ADAPTER_ORDER = [
+  "transcript-names",
+  "visual-identity",
+  "voice-identity",
+] as const satisfies readonly BroadcastParticipantGroundingPlanAdapter[];
+const BROADCAST_PARTICIPANT_UNAVAILABLE_REASONS = new Set<
+  BroadcastParticipantAdapterUnavailableReason
+>([
+  "no-verified-reference-manifest",
+  "source-has-no-modality",
+  "unsupported-runtime",
+]);
 
 export type BroadcastParticipantGroundingPlanContractErrorCode =
   | "INVALID_SOURCE_FENCE"
@@ -464,11 +522,9 @@ function assertSourceFenceInput(
 function expectedParticipantIds(
   castRosterId: CandidatePassBCastRosterId | null,
 ): readonly CandidatePassBParticipantId[] {
-  const references =
-    castRosterId === null
-      ? candidatePassBKnownCastReferences()
-      : candidatePassBCastReferences(castRosterId);
-  return references.map(({ participantId }) => participantId);
+  return candidatePassBCastReferences(castRosterId).map(
+    ({ participantId }) => participantId,
+  );
 }
 
 function canonicalParticipantIds(
@@ -656,11 +712,7 @@ function createCells(
       if (sourceRangeOrder !== 0) return sourceRangeOrder;
       const leftUnitId = left.sourceUnitId ?? "";
       const rightUnitId = right.sourceUnitId ?? "";
-      return leftUnitId < rightUnitId
-        ? -1
-        : leftUnitId > rightUnitId
-          ? 1
-          : 0;
+      return leftUnitId < rightUnitId ? -1 : leftUnitId > rightUnitId ? 1 : 0;
     });
   const rangeIdentities = canonicalRanges.map(
     ({ sourceStartMs, sourceEndMs, sourceUnitId }) =>
@@ -818,14 +870,30 @@ async function createVisualAdapterPlan(
     expectedIds,
   );
   const missingIds = missingParticipantIds(coveredIds, expectedIds);
-  const hasCompleteManifest =
-    input.referenceManifestHash !== null &&
-    input.modelRevision !== null &&
-    missingIds.length === 0;
-  const unavailableReason = unavailableReasonFor(
-    input.unavailableReason,
-    hasCompleteManifest,
-  );
+  if (
+    (input.referenceManifestHash === null && coveredIds.length > 0) ||
+    (input.referenceManifestHash !== null && coveredIds.length === 0)
+  ) {
+    throw new BroadcastParticipantGroundingPlanContractError(
+      "INVALID_ADAPTER_FENCE",
+      "Visual reference participants require an actual non-empty reference manifest.",
+    );
+  }
+  /*
+   * Four reviewed source frames can establish that no person is present or
+   * read an on-screen name without a separate cast-image bundle. A reference
+   * manifest only authorizes appearance matching for the participants it
+   * actually covers; it is not a prerequisite for running visual inspection.
+   */
+  const runtimeReady =
+    input.modelRevision !== null && input.cells.length > 0;
+  const unavailableReason =
+    input.unavailableReason !== null &&
+    input.unavailableReason !== undefined
+      ? input.unavailableReason
+      : runtimeReady
+        ? null
+        : "unsupported-runtime";
   const availability =
     unavailableReason === null
       ? ("enabled" as const)
@@ -864,9 +932,9 @@ async function createVisualAdapterPlan(
     availability,
     adapterRevision: input.adapterRevision,
     modelRevision: input.modelRevision!,
-    referenceManifestHash: input.referenceManifestHash!,
+    referenceManifestHash: input.referenceManifestHash,
     coveredParticipantIds: coveredIds,
-    missingParticipantIds: [],
+    missingParticipantIds: missingIds,
     voiceRecognitionPolicy: null,
     unavailableReason: null,
     adapterFenceKey: fenceKey,
@@ -967,8 +1035,7 @@ function canonicalVoiceRecognitionPolicy(
     decisionMode: "open-set-with-abstention",
     absoluteMatchThresholds: coveredIds.map((participantId) => ({
       participantId,
-      minimumNormalizedSimilarity:
-        thresholdByParticipantId.get(participantId)!,
+      minimumNormalizedSimilarity: thresholdByParticipantId.get(participantId)!,
     })),
     minimumTop1Top2Margin: value.minimumTop1Top2Margin,
     unknownParticipantId: PARTICIPANT_VOICE_UNKNOWN_ID,
@@ -1022,10 +1089,7 @@ async function createVoiceAdapterPlan(
     input.segmentationModelRevision === null || embeddingRevision === null
       ? null
       : `${input.segmentationModelRevision}+${embeddingRevision}`;
-  if (
-    coveredIds.length === 0 &&
-    input.recognitionPolicy !== null
-  ) {
+  if (coveredIds.length === 0 && input.recognitionPolicy !== null) {
     throw new BroadcastParticipantGroundingPlanContractError(
       "INVALID_ADAPTER_FENCE",
       "A voice recognition policy cannot name participants without eligible enrollment.",
@@ -1034,15 +1098,11 @@ async function createVoiceAdapterPlan(
   const recognitionPolicy =
     input.recognitionPolicy === null
       ? null
-      : canonicalVoiceRecognitionPolicy(
-          input.recognitionPolicy,
-          coveredIds,
-        );
+      : canonicalVoiceRecognitionPolicy(input.recognitionPolicy, coveredIds);
   if (
     coveredIds.length > 0 &&
     recognitionPolicy === null &&
-    (input.unavailableReason === null ||
-      input.unavailableReason === undefined)
+    (input.unavailableReason === null || input.unavailableReason === undefined)
   ) {
     throw new BroadcastParticipantGroundingPlanContractError(
       "INVALID_ADAPTER_FENCE",
@@ -1200,6 +1260,370 @@ export async function createBroadcastParticipantGroundingPlan(
   };
 }
 
+function canonicalStoredAdapterPlan(
+  value: unknown,
+  adapter: BroadcastParticipantGroundingPlanAdapter,
+  sourceFence: BroadcastParticipantGroundingSourceFence,
+  participantIds: readonly CandidatePassBParticipantId[],
+): BroadcastParticipantGroundingAdapterPlan | null {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, [
+      "adapter",
+      "availability",
+      "adapterRevision",
+      "modelRevision",
+      "referenceManifestHash",
+      "coveredParticipantIds",
+      "missingParticipantIds",
+      "voiceRecognitionPolicy",
+      "unavailableReason",
+      "adapterFenceKey",
+      "cells",
+    ]) ||
+    value.adapter !== adapter ||
+    !["enabled", "unavailable"].includes(
+      typeof value.availability === "string" ? value.availability : "",
+    ) ||
+    !boundedIdentifier(value.adapterRevision) ||
+    !(
+      value.modelRevision === null ||
+      boundedIdentifier(value.modelRevision)
+    ) ||
+    !(
+      value.referenceManifestHash === null ||
+      (typeof value.referenceManifestHash === "string" &&
+        SHA256_PATTERN.test(value.referenceManifestHash))
+    ) ||
+    !Array.isArray(value.coveredParticipantIds) ||
+    !Array.isArray(value.missingParticipantIds) ||
+    !boundedIdentifier(value.adapterFenceKey) ||
+    !Array.isArray(value.cells)
+  ) {
+    return null;
+  }
+
+  let coveredParticipantIds: readonly CandidatePassBParticipantId[];
+  try {
+    coveredParticipantIds = canonicalParticipantIds(
+      value.coveredParticipantIds as readonly CandidatePassBParticipantId[],
+      participantIds,
+    );
+  } catch {
+    return null;
+  }
+  const missingIds =
+    adapter === "transcript-names"
+      ? []
+      : missingParticipantIds(coveredParticipantIds, participantIds);
+  if (
+    JSON.stringify(value.coveredParticipantIds) !==
+      JSON.stringify(coveredParticipantIds) ||
+    JSON.stringify(value.missingParticipantIds) !== JSON.stringify(missingIds)
+  ) {
+    return null;
+  }
+
+  let voiceRecognitionPolicy: BroadcastParticipantVoiceRecognitionPolicy | null =
+    null;
+  if (adapter === "voice-identity" && value.voiceRecognitionPolicy !== null) {
+    if (!isRecord(value.voiceRecognitionPolicy)) return null;
+    try {
+      voiceRecognitionPolicy = canonicalVoiceRecognitionPolicy(
+        value.voiceRecognitionPolicy as unknown as BroadcastParticipantVoiceRecognitionPolicyInput,
+        coveredParticipantIds,
+      );
+    } catch {
+      return null;
+    }
+    if (
+      JSON.stringify(value.voiceRecognitionPolicy) !==
+      JSON.stringify(voiceRecognitionPolicy)
+    ) {
+      return null;
+    }
+  } else if (value.voiceRecognitionPolicy !== null) {
+    return null;
+  }
+
+  const availability = value.availability as "enabled" | "unavailable";
+  const unavailableReason =
+    typeof value.unavailableReason === "string" &&
+    BROADCAST_PARTICIPANT_UNAVAILABLE_REASONS.has(
+      value.unavailableReason as BroadcastParticipantAdapterUnavailableReason,
+    )
+      ? (value.unavailableReason as BroadcastParticipantAdapterUnavailableReason)
+      : null;
+  if (
+    (availability === "enabled" && value.unavailableReason !== null) ||
+    (availability === "unavailable" &&
+      unavailableReason === null)
+  ) {
+    return null;
+  }
+
+  if (
+    adapter === "transcript-names" &&
+    (availability !== "enabled" ||
+      value.modelRevision === null ||
+      value.referenceManifestHash !== null ||
+      coveredParticipantIds.length !== 0 ||
+      missingIds.length !== 0 ||
+      voiceRecognitionPolicy !== null)
+  ) {
+    return null;
+  }
+  if (
+    adapter === "visual-identity" &&
+    (voiceRecognitionPolicy !== null ||
+      (availability === "enabled" &&
+        (value.modelRevision === null ||
+          (value.referenceManifestHash === null &&
+            coveredParticipantIds.length > 0) ||
+          (value.referenceManifestHash !== null &&
+            coveredParticipantIds.length === 0))))
+  ) {
+    return null;
+  }
+  if (
+    adapter === "voice-identity" &&
+    availability === "enabled" &&
+    (value.modelRevision === null ||
+      value.referenceManifestHash === null ||
+      coveredParticipantIds.length === 0 ||
+      voiceRecognitionPolicy === null)
+  ) {
+    return null;
+  }
+
+  let cells: readonly BroadcastParticipantGroundingCellPlan[] = [];
+  if (availability === "enabled") {
+    if (
+      value.cells.some(
+        (cell) =>
+          !isRecord(cell) ||
+          !hasExactKeys(cell, [
+            "cellId",
+            "adapter",
+            "ordinal",
+            "sourceStartMs",
+            "sourceEndMs",
+            "sourceUnitId",
+            "frameTimestampsMs",
+            "bundleReuse",
+          ]) ||
+          cell.adapter !== adapter ||
+          !Array.isArray(cell.frameTimestampsMs),
+      )
+    ) {
+      return null;
+    }
+    try {
+      cells = createCells(
+        adapter,
+        (value.cells as readonly BroadcastParticipantGroundingCellPlan[]).map(
+          (cell) => ({
+            sourceStartMs: cell.sourceStartMs,
+            sourceEndMs: cell.sourceEndMs,
+            sourceUnitId: cell.sourceUnitId,
+            ...(adapter === "visual-identity"
+              ? { frameTimestampsMs: cell.frameTimestampsMs }
+              : {}),
+          }),
+        ),
+        sourceFence,
+      );
+    } catch {
+      return null;
+    }
+    if (JSON.stringify(value.cells) !== JSON.stringify(cells)) return null;
+  } else if (value.cells.length !== 0) {
+    return null;
+  }
+
+  if (availability === "enabled") {
+    if (value.modelRevision === null) return null;
+    return {
+      adapter,
+      availability,
+      adapterRevision: value.adapterRevision,
+      modelRevision: value.modelRevision,
+      referenceManifestHash: value.referenceManifestHash,
+      coveredParticipantIds,
+      missingParticipantIds: missingIds,
+      voiceRecognitionPolicy,
+      unavailableReason: null,
+      adapterFenceKey: value.adapterFenceKey,
+      cells,
+    };
+  }
+  if (adapter === "transcript-names") return null;
+  return {
+    adapter,
+    availability,
+    adapterRevision: value.adapterRevision,
+    modelRevision: value.modelRevision,
+    referenceManifestHash: value.referenceManifestHash,
+    coveredParticipantIds,
+    missingParticipantIds: missingIds,
+    voiceRecognitionPolicy,
+    unavailableReason: unavailableReason!,
+    adapterFenceKey: value.adapterFenceKey,
+    cells: [],
+  };
+}
+
+/**
+ * Reopens one current-schema plan without trusting its stored fingerprints.
+ * Every cell and adapter fence is rebuilt from the persisted source-time plan,
+ * then the top-level plan fingerprint is recalculated.
+ */
+export async function normalizeBroadcastParticipantGroundingPlan(
+  value: unknown,
+  digestAdapter: ContentDigestAdapter | null = globalThis.crypto?.subtle ??
+    null,
+): Promise<BroadcastParticipantGroundingPlan | null> {
+  if (
+    digestAdapter === null ||
+    !isRecord(value) ||
+    !hasExactKeys(value, [
+      "schemaVersion",
+      "planRevision",
+      "planFingerprint",
+      "sourceFence",
+      "expectedParticipantIds",
+      "adapters",
+      "bundleReuseIndex",
+    ]) ||
+    value.schemaVersion !==
+      BROADCAST_PARTICIPANT_GROUNDING_PLAN_SCHEMA_VERSION ||
+    value.planRevision !== BROADCAST_PARTICIPANT_GROUNDING_PLAN_REVISION ||
+    typeof value.planFingerprint !== "string" ||
+    !SHA256_PATTERN.test(value.planFingerprint) ||
+    !isRecord(value.sourceFence) ||
+    !hasExactKeys(value.sourceFence, [
+      "sourceFingerprint",
+      "sourceDurationMs",
+      "transcriptSeal",
+      "castRosterId",
+      "catalogVersion",
+      "groundingSchemaVersion",
+      "samplingPlanRevision",
+    ]) ||
+    value.sourceFence.catalogVersion !==
+      CANDIDATE_PASS_B_CAST_ROSTER_VERSION ||
+    value.sourceFence.groundingSchemaVersion !==
+      BROADCAST_PARTICIPANT_GROUNDING_SCHEMA_VERSION ||
+    !Array.isArray(value.expectedParticipantIds) ||
+    !Array.isArray(value.adapters) ||
+    value.adapters.length !== BROADCAST_PARTICIPANT_ADAPTER_ORDER.length ||
+    !isRecord(value.bundleReuseIndex)
+  ) {
+    return null;
+  }
+
+  const sourceFence = value.sourceFence as unknown as BroadcastParticipantGroundingSourceFence;
+  try {
+    assertSourceFenceInput({
+      sourceFingerprint: sourceFence.sourceFingerprint,
+      sourceDurationMs: sourceFence.sourceDurationMs,
+      transcriptSeal: sourceFence.transcriptSeal,
+      castRosterId: sourceFence.castRosterId,
+      samplingPlanRevision: sourceFence.samplingPlanRevision,
+      transcript: {
+        adapterRevision: "stored-plan-validation",
+        modelRevision: "stored-plan-validation",
+        cells: [],
+      },
+      visual: {
+        adapterRevision: "stored-plan-validation",
+        modelRevision: null,
+        referenceManifestHash: null,
+        referenceParticipantIds: [],
+        cells: [],
+      },
+      voice: {
+        adapterRevision: "stored-plan-validation",
+        segmentationModelRevision: null,
+        enrollmentManifest: null,
+        recognitionPolicy: null,
+        cells: [],
+      },
+    });
+  } catch {
+    return null;
+  }
+  const participantIds = expectedParticipantIds(sourceFence.castRosterId);
+  if (
+    JSON.stringify(value.expectedParticipantIds) !==
+    JSON.stringify(participantIds)
+  ) {
+    return null;
+  }
+
+  const adapters: BroadcastParticipantGroundingAdapterPlan[] = [];
+  for (const [index, adapter] of BROADCAST_PARTICIPANT_ADAPTER_ORDER.entries()) {
+    const canonical = canonicalStoredAdapterPlan(
+      value.adapters[index],
+      adapter,
+      sourceFence,
+      participantIds,
+    );
+    if (canonical === null) return null;
+    const expectedFenceKey = await adapterFenceKey({
+      sourceFence,
+      adapter,
+      adapterRevision: canonical.adapterRevision,
+      modelRevision: canonical.modelRevision,
+      referenceManifestHash: canonical.referenceManifestHash,
+      coveredParticipantIds: canonical.coveredParticipantIds,
+      missingParticipantIds: canonical.missingParticipantIds,
+      voiceRecognitionPolicy: canonical.voiceRecognitionPolicy,
+      availability: canonical.availability,
+      unavailableReason: canonical.unavailableReason,
+      digestAdapter,
+    });
+    if (canonical.adapterFenceKey !== expectedFenceKey) return null;
+    adapters.push(canonical);
+  }
+
+  const canonicalAdapters = adapters as unknown as BroadcastParticipantGroundingPlan["adapters"];
+  const canonicalBundleReuseIndex = bundleReuseIndex(canonicalAdapters);
+  if (
+    JSON.stringify(value.bundleReuseIndex) !==
+    JSON.stringify(canonicalBundleReuseIndex)
+  ) {
+    return null;
+  }
+  const planFingerprint = await createContentFingerprint(
+    [
+      "exclipper.broadcast-participant-grounding-plan.v1",
+      JSON.stringify({
+        schemaVersion: BROADCAST_PARTICIPANT_GROUNDING_PLAN_SCHEMA_VERSION,
+        planRevision: BROADCAST_PARTICIPANT_GROUNDING_PLAN_REVISION,
+        sourceFence,
+        expectedParticipantIds: participantIds,
+        adapters: canonicalAdapters,
+        bundleReuseIndex: canonicalBundleReuseIndex,
+      }),
+    ],
+    digestAdapter,
+  );
+  if (value.planFingerprint !== planFingerprint) return null;
+  const canonical: BroadcastParticipantGroundingPlan = {
+    schemaVersion: BROADCAST_PARTICIPANT_GROUNDING_PLAN_SCHEMA_VERSION,
+    planRevision: BROADCAST_PARTICIPANT_GROUNDING_PLAN_REVISION,
+    planFingerprint,
+    sourceFence,
+    expectedParticipantIds: participantIds,
+    adapters: canonicalAdapters,
+    bundleReuseIndex: canonicalBundleReuseIndex,
+  };
+  return JSON.stringify(value) === JSON.stringify(canonical)
+    ? canonical
+    : null;
+}
+
 function adapterFor(
   plan: BroadcastParticipantGroundingPlan,
   adapter: BroadcastParticipantGroundingPlanAdapter,
@@ -1261,10 +1685,17 @@ function receiptBase(
   const { adapterPlan, cell } = plannedCellFor(plan, adapter, cellId);
   return {
     schemaVersion: BROADCAST_PARTICIPANT_GROUNDING_PLAN_SCHEMA_VERSION,
+    planRevision: BROADCAST_PARTICIPANT_GROUNDING_PLAN_REVISION,
     planFingerprint: plan.planFingerprint,
     sourceFingerprint: plan.sourceFence.sourceFingerprint,
+    sourceDurationMs: plan.sourceFence.sourceDurationMs,
+    transcriptSeal: plan.sourceFence.transcriptSeal,
+    samplingPlanRevision: plan.sourceFence.samplingPlanRevision,
     adapterFenceKey: adapterPlan.adapterFenceKey,
     adapter,
+    adapterRevision: adapterPlan.adapterRevision,
+    modelRevision: adapterPlan.modelRevision,
+    referenceManifestHash: adapterPlan.referenceManifestHash,
     cellId,
     sourceStartMs: cell.sourceStartMs,
     sourceEndMs: cell.sourceEndMs,
@@ -1405,10 +1836,7 @@ export function projectBroadcastParticipantVoiceRecognition(
   }
 
   const covered = new Set(adapterPlan.coveredParticipantIds);
-  const scoreByParticipantId = new Map<
-    CandidatePassBParticipantId,
-    number
-  >();
+  const scoreByParticipantId = new Map<CandidatePassBParticipantId, number>();
   for (const score of input.scores) {
     if (
       !isRecord(score) ||
@@ -1496,8 +1924,7 @@ export function projectBroadcastParticipantVoiceRecognition(
     };
   }
   if (
-    observedMargin <
-    adapterPlan.voiceRecognitionPolicy.minimumTop1Top2Margin
+    observedMargin < adapterPlan.voiceRecognitionPolicy.minimumTop1Top2Margin
   ) {
     return {
       ...base,
@@ -1613,8 +2040,7 @@ export function createBroadcastParticipantGroundingTerminalReceipt(
             participantIds[0] !== voiceRecognition.participantId ||
             confidence !== voiceRecognition.confidence
           : participantIds.length > 0 || confidence !== null)
-      : input.voiceRecognition !== undefined &&
-        input.voiceRecognition !== null)
+      : input.voiceRecognition !== undefined && input.voiceRecognition !== null)
   ) {
     throw new BroadcastParticipantGroundingPlanContractError(
       "INVALID_CELL_RECEIPT",
@@ -1671,6 +2097,40 @@ export function createBroadcastParticipantGroundingGapReceipt(
   };
 }
 
+export function createBroadcastParticipantGroundingNoneObservedReceipt(
+  input: CreateBroadcastParticipantGroundingNoneObservedReceiptInput,
+): BroadcastParticipantGroundingNoneObservedReceipt {
+  assertOperationIdentity(input.operationId, input.attemptOrdinal);
+  const adapterPlan = adapterFor(input.plan, input.adapter);
+  if (adapterPlan.availability !== "unavailable") {
+    throw new BroadcastParticipantGroundingPlanContractError(
+      "INVALID_CELL_RECEIPT",
+      "A none-observed receipt is valid only for an unavailable media adapter.",
+    );
+  }
+  return {
+    schemaVersion: BROADCAST_PARTICIPANT_GROUNDING_PLAN_SCHEMA_VERSION,
+    planRevision: BROADCAST_PARTICIPANT_GROUNDING_PLAN_REVISION,
+    planFingerprint: input.plan.planFingerprint,
+    sourceFingerprint: input.plan.sourceFence.sourceFingerprint,
+    sourceDurationMs: input.plan.sourceFence.sourceDurationMs,
+    transcriptSeal: input.plan.sourceFence.transcriptSeal,
+    samplingPlanRevision: input.plan.sourceFence.samplingPlanRevision,
+    adapterFenceKey: adapterPlan.adapterFenceKey,
+    adapter: input.adapter,
+    adapterRevision: adapterPlan.adapterRevision,
+    modelRevision: adapterPlan.modelRevision,
+    referenceManifestHash: adapterPlan.referenceManifestHash,
+    sourceStartMs: 0,
+    sourceEndMs: input.plan.sourceFence.sourceDurationMs,
+    operationId: input.operationId,
+    attemptOrdinal: input.attemptOrdinal,
+    status: "terminal",
+    outcome: "none-observed",
+    unavailableReason: adapterPlan.unavailableReason,
+  };
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -1696,10 +2156,17 @@ function receiptMatchesCell(
   return (
     value.schemaVersion ===
       BROADCAST_PARTICIPANT_GROUNDING_PLAN_SCHEMA_VERSION &&
+    value.planRevision === BROADCAST_PARTICIPANT_GROUNDING_PLAN_REVISION &&
     value.planFingerprint === plan.planFingerprint &&
     value.sourceFingerprint === plan.sourceFence.sourceFingerprint &&
+    value.sourceDurationMs === plan.sourceFence.sourceDurationMs &&
+    value.transcriptSeal === plan.sourceFence.transcriptSeal &&
+    value.samplingPlanRevision === plan.sourceFence.samplingPlanRevision &&
     value.adapterFenceKey === adapterPlan.adapterFenceKey &&
     value.adapter === adapterPlan.adapter &&
+    value.adapterRevision === adapterPlan.adapterRevision &&
+    value.modelRevision === adapterPlan.modelRevision &&
+    value.referenceManifestHash === adapterPlan.referenceManifestHash &&
     value.cellId === cell.cellId &&
     value.sourceStartMs === cell.sourceStartMs &&
     value.sourceEndMs === cell.sourceEndMs &&
@@ -1734,10 +2201,17 @@ export function normalizeBroadcastParticipantGroundingCellReceipt(
     if (
       !hasExactKeys(value, [
         "schemaVersion",
+        "planRevision",
         "planFingerprint",
         "sourceFingerprint",
+        "sourceDurationMs",
+        "transcriptSeal",
+        "samplingPlanRevision",
         "adapterFenceKey",
         "adapter",
+        "adapterRevision",
+        "modelRevision",
+        "referenceManifestHash",
         "cellId",
         "sourceStartMs",
         "sourceEndMs",
@@ -1810,10 +2284,17 @@ export function normalizeBroadcastParticipantGroundingCellReceipt(
     value.status !== "gap" ||
     !hasExactKeys(value, [
       "schemaVersion",
+      "planRevision",
       "planFingerprint",
       "sourceFingerprint",
+      "sourceDurationMs",
+      "transcriptSeal",
+      "samplingPlanRevision",
       "adapterFenceKey",
       "adapter",
+      "adapterRevision",
+      "modelRevision",
+      "referenceManifestHash",
       "cellId",
       "sourceStartMs",
       "sourceEndMs",
@@ -1841,26 +2322,116 @@ export function normalizeBroadcastParticipantGroundingCellReceipt(
   return value as unknown as BroadcastParticipantGroundingGapCellReceipt;
 }
 
+export function normalizeBroadcastParticipantGroundingNoneObservedReceipt(
+  value: unknown,
+  plan: BroadcastParticipantGroundingPlan,
+): BroadcastParticipantGroundingNoneObservedReceipt | null {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, [
+      "schemaVersion",
+      "planRevision",
+      "planFingerprint",
+      "sourceFingerprint",
+      "sourceDurationMs",
+      "transcriptSeal",
+      "samplingPlanRevision",
+      "adapterFenceKey",
+      "adapter",
+      "adapterRevision",
+      "modelRevision",
+      "referenceManifestHash",
+      "sourceStartMs",
+      "sourceEndMs",
+      "operationId",
+      "attemptOrdinal",
+      "status",
+      "outcome",
+      "unavailableReason",
+    ]) ||
+    !["visual-identity", "voice-identity"].includes(
+      typeof value.adapter === "string" ? value.adapter : "",
+    )
+  ) {
+    return null;
+  }
+  const adapterPlan = plan.adapters.find(
+    ({ adapter }) => adapter === value.adapter,
+  );
+  if (
+    adapterPlan === undefined ||
+    adapterPlan.availability !== "unavailable" ||
+    value.schemaVersion !==
+      BROADCAST_PARTICIPANT_GROUNDING_PLAN_SCHEMA_VERSION ||
+    value.planRevision !== BROADCAST_PARTICIPANT_GROUNDING_PLAN_REVISION ||
+    value.planFingerprint !== plan.planFingerprint ||
+    value.sourceFingerprint !== plan.sourceFence.sourceFingerprint ||
+    value.sourceDurationMs !== plan.sourceFence.sourceDurationMs ||
+    value.transcriptSeal !== plan.sourceFence.transcriptSeal ||
+    value.samplingPlanRevision !== plan.sourceFence.samplingPlanRevision ||
+    value.adapterFenceKey !== adapterPlan.adapterFenceKey ||
+    value.adapterRevision !== adapterPlan.adapterRevision ||
+    value.modelRevision !== adapterPlan.modelRevision ||
+    value.referenceManifestHash !== adapterPlan.referenceManifestHash ||
+    value.sourceStartMs !== 0 ||
+    value.sourceEndMs !== plan.sourceFence.sourceDurationMs ||
+    value.status !== "terminal" ||
+    value.outcome !== "none-observed" ||
+    value.unavailableReason !== adapterPlan.unavailableReason ||
+    !boundedIdentifier(value.operationId) ||
+    !Number.isSafeInteger(value.attemptOrdinal) ||
+    (value.attemptOrdinal as number) < 0 ||
+    (value.attemptOrdinal as number) > MAX_OPERATION_ATTEMPT_ORDINAL
+  ) {
+    return null;
+  }
+  return value as unknown as BroadcastParticipantGroundingNoneObservedReceipt;
+}
+
+interface CanonicalBroadcastParticipantGroundingReceipts {
+  readonly cellReceipts: readonly BroadcastParticipantGroundingCellReceipt[];
+  readonly noneObservedReceipts: readonly BroadcastParticipantGroundingNoneObservedReceipt[];
+}
+
 function canonicalReceipts(
   plan: BroadcastParticipantGroundingPlan,
   receipts: readonly unknown[],
-): readonly BroadcastParticipantGroundingCellReceipt[] {
-  const normalized = receipts.map((receipt) =>
-    normalizeBroadcastParticipantGroundingCellReceipt(receipt, plan),
-  );
-  if (normalized.some((receipt) => receipt === null)) {
-    throw new BroadcastParticipantGroundingPlanContractError(
-      "INVALID_CELL_RECEIPT",
-      "A participant grounding receipt does not match the source/model/manifest fence.",
+): CanonicalBroadcastParticipantGroundingReceipts {
+  const cellReceipts: BroadcastParticipantGroundingCellReceipt[] = [];
+  const noneObservedReceipts: BroadcastParticipantGroundingNoneObservedReceipt[] =
+    [];
+  for (const receipt of receipts) {
+    const cellReceipt = normalizeBroadcastParticipantGroundingCellReceipt(
+      receipt,
+      plan,
     );
+    const noneObservedReceipt =
+      normalizeBroadcastParticipantGroundingNoneObservedReceipt(receipt, plan);
+    if (
+      (cellReceipt === null && noneObservedReceipt === null) ||
+      (cellReceipt !== null && noneObservedReceipt !== null)
+    ) {
+      throw new BroadcastParticipantGroundingPlanContractError(
+        "INVALID_CELL_RECEIPT",
+        "A participant grounding receipt does not match the source/model/manifest/range fence.",
+      );
+    }
+    if (cellReceipt !== null) {
+      cellReceipts.push(cellReceipt);
+    } else {
+      noneObservedReceipts.push(noneObservedReceipt!);
+    }
   }
-  const canonical = normalized as BroadcastParticipantGroundingCellReceipt[];
   const receiptByCellId = new Map<
     string,
     BroadcastParticipantGroundingCellReceipt
   >();
+  const noneObservedByAdapter = new Map<
+    BroadcastParticipantMediaAdapter,
+    BroadcastParticipantGroundingNoneObservedReceipt
+  >();
   const operationIds = new Set<string>();
-  for (const receipt of canonical) {
+  for (const receipt of cellReceipts) {
     if (receiptByCellId.has(receipt.cellId)) {
       throw new BroadcastParticipantGroundingPlanContractError(
         "DUPLICATE_CELL_RECEIPT",
@@ -1876,15 +2447,53 @@ function canonicalReceipts(
     receiptByCellId.set(receipt.cellId, receipt);
     operationIds.add(receipt.operationId);
   }
+  for (const receipt of noneObservedReceipts) {
+    if (noneObservedByAdapter.has(receipt.adapter)) {
+      throw new BroadcastParticipantGroundingPlanContractError(
+        "DUPLICATE_CELL_RECEIPT",
+        "An unavailable grounding adapter has more than one none-observed receipt.",
+      );
+    }
+    if (operationIds.has(receipt.operationId)) {
+      throw new BroadcastParticipantGroundingPlanContractError(
+        "DUPLICATE_CELL_RECEIPT",
+        "A grounding operation identity was reused for another receipt.",
+      );
+    }
+    noneObservedByAdapter.set(receipt.adapter, receipt);
+    operationIds.add(receipt.operationId);
+  }
   const ordinalByCellId = new Map(
     plan.adapters
       .flatMap(({ cells }) => cells)
       .map((cell, index) => [cell.cellId, index]),
   );
-  return canonical.sort(
-    (left, right) =>
-      (ordinalByCellId.get(left.cellId) ?? Number.MAX_SAFE_INTEGER) -
-      (ordinalByCellId.get(right.cellId) ?? Number.MAX_SAFE_INTEGER),
+  const adapterOrdinal = new Map(
+    plan.adapters.map(({ adapter }, index) => [adapter, index]),
+  );
+  return {
+    cellReceipts: cellReceipts.sort(
+      (left, right) =>
+        (ordinalByCellId.get(left.cellId) ?? Number.MAX_SAFE_INTEGER) -
+        (ordinalByCellId.get(right.cellId) ?? Number.MAX_SAFE_INTEGER),
+    ),
+    noneObservedReceipts: noneObservedReceipts.sort(
+      (left, right) =>
+        (adapterOrdinal.get(left.adapter) ?? Number.MAX_SAFE_INTEGER) -
+        (adapterOrdinal.get(right.adapter) ?? Number.MAX_SAFE_INTEGER),
+    ),
+  };
+}
+
+function requiredNoneObservedAdapters(
+  plan: BroadcastParticipantGroundingPlan,
+): readonly BroadcastParticipantMediaAdapter[] {
+  if (plan.expectedParticipantIds.length === 0) return [];
+  return plan.adapters.flatMap((adapter) =>
+    adapter.adapter !== "transcript-names" &&
+    adapter.availability === "unavailable"
+      ? [adapter.adapter]
+      : [],
   );
 }
 
@@ -1895,34 +2504,47 @@ export function inspectBroadcastParticipantGroundingPlanCompletion(
   const canonical = canonicalReceipts(plan, receipts);
   const plannedCells = plan.adapters.flatMap(({ cells }) => cells);
   const receiptByCellId = new Map(
-    canonical.map((receipt) => [receipt.cellId, receipt]),
+    canonical.cellReceipts.map((receipt) => [receipt.cellId, receipt]),
   );
   const missingCellIds = plannedCells
     .filter(({ cellId }) => !receiptByCellId.has(cellId))
     .map(({ cellId }) => cellId);
-  const retryableCellIds = canonical.flatMap((receipt) =>
+  const retryableCellIds = canonical.cellReceipts.flatMap((receipt) =>
     receipt.status === "gap" && receipt.disposition === "retryable"
       ? [receipt.cellId]
       : [],
   );
-  const outcomeUnknownCellIds = canonical.flatMap((receipt) =>
+  const outcomeUnknownCellIds = canonical.cellReceipts.flatMap((receipt) =>
     receipt.status === "gap" && receipt.disposition === "outcome-unknown"
       ? [receipt.cellId]
       : [],
   );
-  const terminalCellCount = canonical.filter(
+  const terminalCellCount = canonical.cellReceipts.filter(
     ({ status }) => status === "terminal",
   ).length;
+  const requiredAdapters = requiredNoneObservedAdapters(plan);
+  const terminalNoneObservedAdapters = new Set(
+    canonical.noneObservedReceipts.map(({ adapter }) => adapter),
+  );
+  const missingNoneObservedAdapters = requiredAdapters.filter(
+    (adapter) => !terminalNoneObservedAdapters.has(adapter),
+  );
   return {
     planFingerprint: plan.planFingerprint,
     plannedCellCount: plannedCells.length,
     terminalCellCount,
+    requiredNoneObservedAdapterCount: requiredAdapters.length,
+    terminalNoneObservedAdapterCount: requiredAdapters.filter((adapter) =>
+      terminalNoneObservedAdapters.has(adapter),
+    ).length,
     missingCellIds,
+    missingNoneObservedAdapters,
     retryableCellIds,
     outcomeUnknownCellIds,
     readyToSeal:
       terminalCellCount === plannedCells.length &&
       missingCellIds.length === 0 &&
+      missingNoneObservedAdapters.length === 0 &&
       retryableCellIds.length === 0 &&
       outcomeUnknownCellIds.length === 0,
   };
@@ -1939,11 +2561,11 @@ export function sealBroadcastParticipantGroundingPlan(
   if (!inspection.readyToSeal) {
     throw new BroadcastParticipantGroundingPlanContractError(
       "PLAN_INCOMPLETE",
-      "Every enabled transcript, visual, and voice cell must be terminal before participant grounding can be sealed.",
+      "Every enabled transcript, visual, and voice cell and every required unavailable-modality none-observed receipt must be terminal before participant grounding can be sealed.",
     );
   }
   const canonical = canonicalReceipts(plan, receipts);
-  const terminalCells = canonical.filter(
+  const terminalCells = canonical.cellReceipts.filter(
     (receipt): receipt is BroadcastParticipantGroundingTerminalCellReceipt =>
       receipt.status === "terminal",
   );
@@ -1988,6 +2610,7 @@ export function sealBroadcastParticipantGroundingPlan(
     expectedParticipantIds: plan.expectedParticipantIds,
     adapterReceipts,
     terminalCells,
+    noneObservedReceipts: canonical.noneObservedReceipts,
     bundleReuseIndex: plan.bundleReuseIndex,
   };
 }

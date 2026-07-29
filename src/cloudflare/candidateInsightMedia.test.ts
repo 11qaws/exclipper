@@ -297,6 +297,72 @@ describe("candidate insight staged media", () => {
     );
   });
 
+  it("stages an image-only visual bundle with an explicit zero-audio fence", async () => {
+    const { bucket, frames, binding } = await fixture();
+    const bundle = new Uint8Array(
+      frames.reduce((total, frame) => total + frame.byteLength, 0),
+    );
+    let offset = 0;
+    for (const frame of frames) {
+      bundle.set(frame, offset);
+      offset += frame.byteLength;
+    }
+    const digest = new Uint8Array(
+      await crypto.subtle.digest("SHA-256", exactArrayBuffer(bundle)),
+    );
+    const imageOnlyBinding: CandidateInsightMediaBinding = {
+      ...binding,
+      payloadDigest: `sha256:${[...digest]
+        .map((byte) => byte.toString(16).padStart(2, "0"))
+        .join("")}`,
+      audioByteLength: 0,
+      expectedByteLength: bundle.byteLength,
+    };
+
+    const staged = await stageCandidateInsightMedia({
+      bucket,
+      signingKey: SIGNING_KEY,
+      body: streamFor(bundle),
+      binding: imageOnlyBinding,
+      nowMs: NOW_MS,
+    });
+    expect(staged.audioHeader).toHaveLength(0);
+    expect(
+      await resolveCandidateInsightMedia({
+        bucket,
+        signingKey: SIGNING_KEY,
+        mediaTicket: staged.mediaTicket,
+        expectedIdentity: imageOnlyBinding,
+        nowMs: NOW_MS + 1,
+      }),
+    ).toMatchObject({ audioByteLength: 0 });
+
+    const audioResponse = await serveCandidateInsightMediaRequest(
+      new Request(
+        createCandidateInsightMediaCapabilityUrl(
+          "https://worker.example",
+          staged.mediaTicket,
+          "audio",
+        ),
+      ),
+      { bucket, signingKey: SIGNING_KEY, nowMs: NOW_MS + 1 },
+    );
+    expect(audioResponse.status).toBe(404);
+    const firstFrameResponse = await serveCandidateInsightMediaRequest(
+      new Request(
+        createCandidateInsightMediaCapabilityUrl(
+          "https://worker.example",
+          staged.mediaTicket,
+          "0",
+        ),
+      ),
+      { bucket, signingKey: SIGNING_KEY, nowMs: NOW_MS + 1 },
+    );
+    expect(new Uint8Array(await firstFrameResponse.arrayBuffer())).toEqual(
+      frames[0],
+    );
+  });
+
   it("rejects another payload identity and supports best-effort cleanup", async () => {
     const { bucket, bundle, binding } = await fixture();
     const staged = await stageCandidateInsightMedia({

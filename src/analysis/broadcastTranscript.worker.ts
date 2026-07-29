@@ -68,6 +68,7 @@ import {
   isBroadcastTranscriptChunkId,
   isBroadcastTranscriptQuotaOperationScope,
   type BroadcastTranscriptChunkGapReason,
+  type BroadcastTranscriptDispatchIntent,
   type BroadcastTranscriptWorkerIdentity,
   type BroadcastTranscriptWorkerRequest,
   type BroadcastTranscriptWorkerResponse,
@@ -87,6 +88,21 @@ interface ActiveTask {
   cancelled: boolean;
   input: Input<BlobSource> | null;
   readonly fetchControllers: Set<AbortController>;
+  readonly pendingDispatchAcks: Map<
+    string,
+    {
+      readonly operationId: string;
+      readonly resolve: () => void;
+      readonly reject: (reason: unknown) => void;
+    }
+  >;
+  readonly pendingTerminalAcks: Map<
+    string,
+    {
+      readonly resolve: () => void;
+      readonly reject: (reason: unknown) => void;
+    }
+  >;
   speechActivityProcessor: Processor | null;
   speechActivityModel: PreTrainedModel | null;
   speechActivityUnavailable: boolean;
@@ -224,7 +240,53 @@ function isValidCancelRequest(
   );
 }
 
+function isValidDispatchAckRequest(
+  value: unknown,
+): value is Extract<
+  BroadcastTranscriptWorkerRequest,
+  { readonly type: "broadcast-transcript-dispatch-ack" }
+> {
+  return (
+    isRecord(value) &&
+    value.type === "broadcast-transcript-dispatch-ack" &&
+    isValidIdentity(value.identity) &&
+    isBroadcastTranscriptChunkId(value.chunkId) &&
+    typeof value.operationId === "string" &&
+    value.operationId.length > 0 &&
+    value.operationId.length <= 256
+  );
+}
+
+function isValidTerminalAckRequest(
+  value: unknown,
+): value is Extract<
+  BroadcastTranscriptWorkerRequest,
+  { readonly type: "broadcast-transcript-terminal-ack" }
+> {
+  return (
+    isRecord(value) &&
+    value.type === "broadcast-transcript-terminal-ack" &&
+    isValidIdentity(value.identity) &&
+    isBroadcastTranscriptChunkId(value.chunkId)
+  );
+}
+
+function rejectPendingAcks(task: ActiveTask, reason: unknown): void {
+  for (const pending of task.pendingDispatchAcks.values()) {
+    pending.reject(reason);
+  }
+  task.pendingDispatchAcks.clear();
+  for (const pending of task.pendingTerminalAcks.values()) {
+    pending.reject(reason);
+  }
+  task.pendingTerminalAcks.clear();
+}
+
 function disposeTask(task: ActiveTask): void {
+  rejectPendingAcks(
+    task,
+    new DOMException("Broadcast transcript task stopped.", "AbortError"),
+  );
   for (const controller of task.fetchControllers) {
     controller.abort();
   }
@@ -237,6 +299,57 @@ function disposeTask(task: ActiveTask): void {
     }
     task.input = null;
   }
+}
+
+async function waitForDispatchAck(
+  task: ActiveTask,
+  intent: BroadcastTranscriptDispatchIntent,
+): Promise<void> {
+  if (task.cancelled) {
+    throw new DOMException("Broadcast transcript task stopped.", "AbortError");
+  }
+  if (task.pendingDispatchAcks.has(intent.chunkId)) {
+    throw new Error("A transcript dispatch ACK is already pending.");
+  }
+  const acknowledged = new Promise<void>((resolve, reject) => {
+    task.pendingDispatchAcks.set(intent.chunkId, {
+      operationId: intent.operationId,
+      resolve,
+      reject,
+    });
+  });
+  post({
+    type: "broadcast-transcript-dispatch-intent",
+    identity: task.identity,
+    intent,
+  });
+  await acknowledged;
+}
+
+async function waitForTerminalAck(
+  task: ActiveTask,
+  response: Extract<
+    BroadcastTranscriptWorkerResponse,
+    {
+      readonly type:
+        | "broadcast-transcript-partial"
+        | "broadcast-transcript-abstention"
+        | "broadcast-transcript-gap";
+    }
+  >,
+): Promise<void> {
+  const { chunkId } = response;
+  if (task.cancelled) {
+    throw new DOMException("Broadcast transcript task stopped.", "AbortError");
+  }
+  if (task.pendingTerminalAcks.has(chunkId)) {
+    throw new Error("A transcript terminal ACK is already pending.");
+  }
+  const acknowledged = new Promise<void>((resolve, reject) => {
+    task.pendingTerminalAcks.set(chunkId, { resolve, reject });
+  });
+  post(response);
+  await acknowledged;
 }
 
 async function disposeSpeechActivityArtifacts(task: ActiveTask): Promise<void> {
@@ -711,10 +824,10 @@ async function runAnalyze(
     let nextSendAtMs = 0;
     const inFlight = new Set<Promise<void>>();
     let routeChanged = false;
-    const settleRouteChangedGap = (chunkId: string): void => {
+    const settleRouteChangedGap = async (chunkId: string): Promise<void> => {
       gapCount += 1;
       processedCount += 1;
-      post({
+      await waitForTerminalAck(task, {
         type: "broadcast-transcript-gap",
         identity: task.identity,
         chunkId,
@@ -728,14 +841,14 @@ async function runAnalyze(
         left.chunkId.localeCompare(right.chunkId),
     );
     let pendingChunks = [...request.chunks];
-    const settleUndispatchedRouteChangedGaps = (): void => {
+    const settleUndispatchedRouteChangedGaps = async (): Promise<void> => {
       for (const pending of pendingChunks.splice(0)) {
-        settleRouteChangedGap(pending.chunkId);
+        await settleRouteChangedGap(pending.chunkId);
       }
     };
     while (pendingChunks.length > 0) {
       if (routeChanged) {
-        settleUndispatchedRouteChangedGaps();
+        await settleUndispatchedRouteChangedGaps();
         break;
       }
       const chunk = pendingChunks.shift();
@@ -774,7 +887,7 @@ async function runAnalyze(
         processedCount += 1;
         if (decodeFailed) {
           gapCount += 1;
-          post({
+          await waitForTerminalAck(task, {
             type: "broadcast-transcript-gap",
             identity: task.identity,
             chunkId: chunk.chunkId,
@@ -782,7 +895,7 @@ async function runAnalyze(
           });
         } else {
           abstentionCount += 1;
-          post({
+          await waitForTerminalAck(task, {
             type: "broadcast-transcript-abstention",
             identity: task.identity,
             chunkId: chunk.chunkId,
@@ -809,7 +922,7 @@ async function runAnalyze(
         pcm.fill(0);
         abstentionCount += 1;
         processedCount += 1;
-        post({
+        await waitForTerminalAck(task, {
           type: "broadcast-transcript-abstention",
           identity: task.identity,
           chunkId: chunk.chunkId,
@@ -854,13 +967,33 @@ async function runAnalyze(
           }
           if (routeChanged) {
             wav.fill(0);
-            settleRouteChangedGap(chunkId);
-            return Promise.resolve();
+            return settleRouteChangedGap(chunkId);
           }
-          const controller = new AbortController();
-          task.fetchControllers.add(controller);
-          const requestStamp = concurrency.captureRequestWave();
           return (async (): Promise<void> => {
+            const attemptOrdinal = request.quota?.attemptOrdinal ?? 0;
+            const operationNamespace =
+              request.quota?.operationNamespace ?? "uniform";
+            const operationScope = request.quota?.operationScope;
+            const operationId = transcriptFragmentQuotaOperationId(
+              operationNamespace,
+              attemptOrdinal,
+              chunkId,
+              operationScope,
+            );
+            await waitForDispatchAck(task, {
+              operationId,
+              chunkId,
+              sourceStartMs: chunk.sourceStartMs,
+              sourceEndMs: chunk.sourceEndMs,
+              attemptOrdinal,
+              operationNamespace,
+              operationScope: operationScope ?? null,
+              routeManifestFingerprint: request.route.fingerprint,
+            });
+            if (task.cancelled) return;
+            const controller = new AbortController();
+            task.fetchControllers.add(controller);
+            const requestStamp = concurrency.captureRequestWave();
             try {
               const result = await requestBroadcastTranscriptChunkBinary(
                 wav,
@@ -875,19 +1008,14 @@ async function runAnalyze(
                         quota: {
                           participantId: request.quota.participantId,
                           runId: request.quota.runId,
-                          operationId: transcriptFragmentQuotaOperationId(
-                            request.quota.operationNamespace,
-                            request.quota.attemptOrdinal ?? 0,
-                            chunkId,
-                            request.quota.operationScope,
-                          ),
+                          operationId,
                         },
                       }),
                 },
               );
               if (task.cancelled) return;
               successfulCount += 1;
-              post({
+              await waitForTerminalAck(task, {
                 type: "broadcast-transcript-partial",
                 identity: task.identity,
                 chunkId,
@@ -927,7 +1055,7 @@ async function runAnalyze(
                 routeChanged = true;
               }
               gapCount += 1;
-              post({
+              await waitForTerminalAck(task, {
                 type: "broadcast-transcript-gap",
                 identity: task.identity,
                 chunkId,
@@ -966,7 +1094,7 @@ async function runAnalyze(
       await waitForAdaptiveConcurrencyCapacity(inFlight, concurrency);
       if (task.cancelled) return;
       if (routeChanged && pendingChunks.length > 0) {
-        settleUndispatchedRouteChangedGaps();
+        await settleUndispatchedRouteChangedGaps();
       }
     }
 
@@ -1000,6 +1128,26 @@ async function runAnalyze(
 
 self.addEventListener("message", (event: MessageEvent<unknown>) => {
   const value = event.data;
+  if (isValidDispatchAckRequest(value)) {
+    if (activeTask !== null && sameIdentity(activeTask.identity, value.identity)) {
+      const pending = activeTask.pendingDispatchAcks.get(value.chunkId);
+      if (pending !== undefined && pending.operationId === value.operationId) {
+        activeTask.pendingDispatchAcks.delete(value.chunkId);
+        pending.resolve();
+      }
+    }
+    return;
+  }
+  if (isValidTerminalAckRequest(value)) {
+    if (activeTask !== null && sameIdentity(activeTask.identity, value.identity)) {
+      const pending = activeTask.pendingTerminalAcks.get(value.chunkId);
+      if (pending !== undefined) {
+        activeTask.pendingTerminalAcks.delete(value.chunkId);
+        pending.resolve();
+      }
+    }
+    return;
+  }
   if (isValidCancelRequest(value)) {
     if (activeTask !== null && sameIdentity(activeTask.identity, value.identity)) {
       activeTask.cancelled = true;
@@ -1025,6 +1173,8 @@ self.addEventListener("message", (event: MessageEvent<unknown>) => {
     cancelled: false,
     input: null,
     fetchControllers: new Set<AbortController>(),
+    pendingDispatchAcks: new Map(),
+    pendingTerminalAcks: new Map(),
     speechActivityProcessor: null,
     speechActivityModel: null,
     speechActivityUnavailable: false,

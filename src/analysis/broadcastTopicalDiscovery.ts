@@ -5,6 +5,10 @@ import type {
   BroadcastContextDiscoveredLead,
   BroadcastContextSemanticChapter,
 } from "./broadcastContextProtocol";
+import {
+  participantContextForBroadcastRange,
+  type BroadcastParticipantGrounding,
+} from "./broadcastParticipantGrounding";
 
 export const MAX_TOPICAL_DISCOVERY_CALLS = 4;
 export const MAX_MERGED_DISCOVERED_LEADS = 32;
@@ -181,6 +185,7 @@ export function createBroadcastTopicalLeadJuryPlan(
   broadcastSummaryKo: string,
   semanticChapters: readonly BroadcastContextSemanticChapter[],
   leads: readonly BroadcastContextDiscoveredLead[],
+  participantGrounding: BroadcastParticipantGrounding,
 ): BroadcastTopicalLeadJuryPlan {
   const juryLeads = leads.slice(0, MAX_MERGED_DISCOVERED_LEADS);
   const leadIdByCandidateId: Record<string, string> = {};
@@ -195,6 +200,14 @@ export function createBroadcastTopicalLeadJuryPlan(
       eventSummaryKo: boundedText(lead.eventSummaryKo, 1_200) || "사건 요약 재확인 필요",
       reactionSummaryKo:
         boundedText(lead.whyThisMomentKo, 1_200) || "스트리머 반응 재확인 필요",
+      participantContextKo: boundedText(
+        participantContextForBroadcastRange(
+          participantGrounding,
+          lead.startMs,
+          lead.endMs,
+        ),
+        3_000,
+      ),
       chatReactionSummaryKo: null,
     } satisfies BroadcastContextCandidateInput;
   });
@@ -251,19 +264,22 @@ function midpointDistanceMs(
   return Math.abs(leftMidpointMs - rightMidpointMs);
 }
 
-interface JuryApprovedLead {
+interface JuryEligibleLead {
   readonly lead: BroadcastContextDiscoveredLead;
   readonly confidence: number;
 }
 
-function juryApprovedLeads(
+function juryEligibleLeads(
   leads: readonly BroadcastContextDiscoveredLead[],
   juryPlan: BroadcastTopicalLeadJuryPlan,
   annotations: readonly BroadcastContextCandidateAnnotation[],
-): readonly JuryApprovedLead[] {
+  acceptedDecisions: ReadonlySet<
+    BroadcastContextCandidateAnnotation["clipDecision"]
+  >,
+): readonly JuryEligibleLead[] {
   const leadById = new Map(leads.map((lead) => [lead.leadId, lead]));
   return annotations
-    .filter((annotation) => annotation.clipDecision === "select")
+    .filter((annotation) => acceptedDecisions.has(annotation.clipDecision))
     .flatMap((annotation) => {
       const leadId = juryPlan.leadIdByCandidateId[annotation.candidateId];
       const lead = leadId === undefined ? undefined : leadById.get(leadId);
@@ -287,15 +303,20 @@ export function selectBroadcastTopicalJuryApprovedLeadIds(
   juryPlan: BroadcastTopicalLeadJuryPlan,
   annotations: readonly BroadcastContextCandidateAnnotation[],
 ): readonly string[] {
-  return juryApprovedLeads(leads, juryPlan, annotations)
+  return juryEligibleLeads(
+    leads,
+    juryPlan,
+    annotations,
+    new Set(["select"]),
+  )
     .slice(0, MAX_TOPICAL_REFINEMENT_LEADS)
     .map(({ lead }) => lead.leadId);
 }
 
 /**
- * Keeps every bounded jury-approved lead, then spends the remaining ASR-free
- * caption-refinement slots on topic-balanced context reserves. A topic with
- * fewer jury selections receives proportionally more reserve turns, so one
+ * Keeps every bounded non-rejected jury lead, then spends the remaining
+ * ASR-free caption-refinement slots on topic-balanced context reserves. A topic
+ * with fewer jury selections receives proportionally more reserve turns, so one
  * dominant late discussion cannot erase several different events from an
  * earlier topic. Within a topic, farthest-midpoint sampling preserves temporal
  * variety instead of retaining only adjacent high-confidence paraphrases.
@@ -306,7 +327,17 @@ export function selectBroadcastTopicalRefinementLeadIds(
   annotations: readonly BroadcastContextCandidateAnnotation[],
   semanticChapters: readonly BroadcastContextSemanticChapter[],
 ): readonly string[] {
-  const selected = juryApprovedLeads(leads, juryPlan, annotations);
+  /*
+   * `review` is an unresolved jury verdict, not a rejection. It must reach the
+   * evidence refinement lane; otherwise an all-review jury silently becomes a
+   * successful zero-lead result. The fast lane above remains select-only.
+   */
+  const selected = juryEligibleLeads(
+    leads,
+    juryPlan,
+    annotations,
+    new Set(["select", "review"]),
+  );
   if (selected.length === 0) return [];
 
   const primarySelected = selected.slice(0, MAX_TOPICAL_REFINEMENT_LEADS);

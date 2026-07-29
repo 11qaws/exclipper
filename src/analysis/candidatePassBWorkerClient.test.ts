@@ -1,52 +1,65 @@
 import { describe, expect, it, vi } from "vitest";
-
 import {
   CANDIDATE_PASS_B_DEVICE,
   CANDIDATE_PASS_B_DTYPE,
-  CANDIDATE_PASS_B_GEMINI_MODEL_ID,
-  CANDIDATE_PASS_B_GEMINI_MODEL_REVISION,
   CANDIDATE_PASS_B_LANGUAGE,
-  CANDIDATE_PASS_B_MODEL_ID,
-  CANDIDATE_PASS_B_MODEL_REVISION,
   CANDIDATE_PASS_B_SAMPLE_RATE_HZ,
   CANDIDATE_PASS_B_TASK,
-  CandidatePassBWorkerError,
   runCandidatePassBWorker,
-  type CandidatePassBTarget,
   type CandidatePassBTranscriptResult,
+  type CandidatePassBWorkerError,
   type CandidatePassBWorkerIdentity,
   type CandidatePassBWorkerLike,
-  type RunCandidatePassBWorkerOptions,
 } from "./candidatePassBWorkerClient";
 import {
-  candidatePassBWorkerFailureMessage,
+  CANDIDATE_PASS_B_FRAME_EXTRACTION_REVISION,
+  CANDIDATE_PASS_B_SETTLEMENT_SCHEMA_VERSION,
+  createCandidatePassBOperationId,
+  type CandidatePassBDispatchIntent,
+  type CandidatePassBQuotaIdentity,
   type CandidatePassBWorkerRequest,
   type CandidatePassBWorkerResponsePayload,
 } from "./candidatePassBWorkerProtocol";
+import {
+  candidatePassBContextFingerprint,
+} from "./candidateFinalVerification";
+import {
+  currentCandidatePassBContext,
+  currentCandidatePassBDispatch,
+  currentCandidatePassBFrames,
+  currentCandidatePassBInsight,
+  currentCandidatePassBSettlement,
+} from "../testSupport/candidatePassBCurrentFixture";
 
 type WorkerEventType = "message" | "messageerror" | "error";
 type WorkerListener = (event: MessageEvent<unknown> | ErrorEvent) => void;
 
 const identity: CandidatePassBWorkerIdentity = {
   sessionId: "session-1",
-  writerEpoch: 4,
-  analysisRunId: "analysis-1",
-  passBRunId: "pass-b-1",
-  workerEpoch: 2,
+  writerEpoch: 1,
+  analysisRunId: "analysis-run-1",
+  passBRunId: "pass-b-run-1",
+  workerEpoch: 1,
   workerInstanceId: "worker-1",
   taskId: "task-1",
 };
-
-const targets: readonly CandidatePassBTarget[] = [
-  { candidateId: "candidate-1", startMs: 10_000, endMs: 50_000 },
-  { candidateId: "candidate-2", startMs: 70_000, endMs: 120_000 },
-];
+const context = currentCandidatePassBContext();
+const target = {
+  candidateId: "candidate-1",
+  startMs: 60_000,
+  endMs: 105_000,
+  videoFrames: currentCandidatePassBFrames(),
+  frameExtractionRevision: CANDIDATE_PASS_B_FRAME_EXTRACTION_REVISION,
+  context,
+  contextFingerprint: candidatePassBContextFingerprint(context),
+  outputLanguage: "ko",
+  castRosterId: null,
+} as const;
 
 class FakeWorker implements CandidatePassBWorkerLike {
   public readonly listeners = new Map<WorkerEventType, Set<WorkerListener>>();
   public readonly requests: CandidatePassBWorkerRequest[] = [];
   public terminateCount = 0;
-  public throwOnPost = false;
 
   public addEventListener(type: WorkerEventType, listener: WorkerListener): void {
     const listeners = this.listeners.get(type) ?? new Set<WorkerListener>();
@@ -59,9 +72,6 @@ class FakeWorker implements CandidatePassBWorkerLike {
   }
 
   public postMessage(message: CandidatePassBWorkerRequest): void {
-    if (this.throwOnPost) {
-      throw new Error("post failed");
-    }
     this.requests.push(message);
   }
 
@@ -71,760 +81,605 @@ class FakeWorker implements CandidatePassBWorkerLike {
 
   public emitMessage(data: unknown): void {
     const event = new MessageEvent("message", { data });
-    for (const listener of this.listeners.get("message") ?? []) {
-      listener(event);
+    for (const listener of this.listeners.get("message") ?? []) listener(event);
+  }
+
+  public emitError(): void {
+    for (const listener of this.listeners.get("error") ?? []) {
+      listener({} as ErrorEvent);
     }
   }
-}
-
-function transcriptFor(target: CandidatePassBTarget): CandidatePassBTranscriptResult {
-  return {
-    mode: "candidate-pass-b-transcript",
-    candidateId: target.candidateId,
-    sourceStartMs: target.startMs,
-    sourceEndMs: target.endMs,
-    text: "정말 이게 되네 대박",
-    segments: [
-      {
-        startMs: target.startMs + 1_000,
-        endMs: target.startMs + 3_500,
-        text: "정말 이게 되네",
-      },
-      {
-        startMs: target.startMs + 3_500,
-        endMs: target.startMs + 4_500,
-        text: "대박",
-      },
-    ],
-    insight: {
-      eventSummaryKo: "짧은 한국어 발화가 이어져 들려요.",
-      reactionSummaryKo: "목소리가 잠시 커지는 반응 단서가 들려요.",
-      whyGoodClipKo: "발화와 소리 변화가 가까워 먼저 확인할 만해요.",
-      uncertaintiesKo: ["화자와 화면 사건은 오디오만으로 확인할 수 없어요."],
-    },
-    model: {
-      id: CANDIDATE_PASS_B_MODEL_ID,
-      revision: CANDIDATE_PASS_B_MODEL_REVISION,
-      dtype: CANDIDATE_PASS_B_DTYPE,
-      device: CANDIDATE_PASS_B_DEVICE,
-    },
-    language: CANDIDATE_PASS_B_LANGUAGE,
-    task: CANDIDATE_PASS_B_TASK,
-    sampleRateHz: CANDIDATE_PASS_B_SAMPLE_RATE_HZ,
-  };
-}
-
-function startWith(
-  worker: FakeWorker,
-  overrides: Partial<
-    Pick<
-      RunCandidatePassBWorkerOptions,
-      | "targets"
-      | "quota"
-      | "signal"
-      | "onModelProgress"
-      | "onCandidateProgress"
-      | "onPartialResult"
-      | "onCandidateGap"
-      | "onCancellationAcknowledged"
-      | "cancelAcknowledgementTimeoutMs"
-    >
-  > = {},
-) {
-  return runCandidatePassBWorker(
-    new File([new Uint8Array([1, 2, 3])], "source.mp4", {
-      type: "video/mp4",
-    }),
-    {
-      identity,
-      sourceDurationMs: 180_000,
-      device: CANDIDATE_PASS_B_DEVICE,
-      targets: overrides.targets ?? targets,
-      workerFactory: () => worker,
-      ...(overrides.quota === undefined ? {} : { quota: overrides.quota }),
-      ...(overrides.signal === undefined ? {} : { signal: overrides.signal }),
-      ...(overrides.onModelProgress === undefined
-        ? {}
-        : { onModelProgress: overrides.onModelProgress }),
-      ...(overrides.onCandidateProgress === undefined
-        ? {}
-        : { onCandidateProgress: overrides.onCandidateProgress }),
-      ...(overrides.onPartialResult === undefined
-        ? {}
-        : { onPartialResult: overrides.onPartialResult }),
-      ...(overrides.onCandidateGap === undefined
-        ? {}
-        : { onCandidateGap: overrides.onCandidateGap }),
-      ...(overrides.onCancellationAcknowledged === undefined
-        ? {}
-        : {
-            onCancellationAcknowledged:
-              overrides.onCancellationAcknowledged,
-          }),
-      ...(overrides.cancelAcknowledgementTimeoutMs === undefined
-        ? {}
-        : {
-            cancelAcknowledgementTimeoutMs:
-              overrides.cancelAcknowledgementTimeoutMs,
-          }),
-    },
-  );
 }
 
 function emit(
   worker: FakeWorker,
   eventId: string,
   payload: CandidatePassBWorkerResponsePayload,
-  identityOverride: Partial<CandidatePassBWorkerIdentity> = {},
 ): void {
-  worker.emitMessage({
-    ...identity,
-    ...identityOverride,
-    eventId,
-    ...payload,
-  });
+  worker.emitMessage({ ...identity, eventId, ...payload });
 }
 
-describe("runCandidatePassBWorker", () => {
-  it("passes an explicit retry generation to the candidate worker", async () => {
+function transcriptFor(
+  dispatch: CandidatePassBDispatchIntent,
+): CandidatePassBTranscriptResult {
+  const settlement = currentCandidatePassBSettlement(dispatch);
+  return {
+    mode: "candidate-pass-b-transcript",
+    candidateId: target.candidateId,
+    sourceStartMs: target.startMs,
+    sourceEndMs: target.endMs,
+    text: "",
+    segments: [],
+    insight: currentCandidatePassBInsight(),
+    model: {
+      id: settlement.providerModelId,
+      revision: settlement.providerModelRevision,
+      dtype: CANDIDATE_PASS_B_DTYPE,
+      device: CANDIDATE_PASS_B_DEVICE,
+    },
+    language: CANDIDATE_PASS_B_LANGUAGE,
+    task: CANDIDATE_PASS_B_TASK,
+    sampleRateHz: CANDIDATE_PASS_B_SAMPLE_RATE_HZ,
+    settlement,
+  };
+}
+
+function start(
+  worker: FakeWorker,
+  onDispatchIntent: (intent: CandidatePassBDispatchIntent) => Promise<boolean>,
+  options?: {
+    readonly quota?: CandidatePassBQuotaIdentity;
+    readonly signal?: AbortSignal;
+    readonly onPartialResult?: (
+      result: CandidatePassBTranscriptResult,
+    ) => Promise<boolean>;
+    readonly onOutcomeUnknown?: Parameters<
+      typeof runCandidatePassBWorker
+    >[1]["onOutcomeUnknown"];
+  },
+) {
+  return runCandidatePassBWorker(
+    new File([new Uint8Array([1])], "source.mp4", { type: "video/mp4" }),
+    {
+      identity,
+      quota:
+        options?.quota ?? {
+          participantId: "participant_11111111111111111111111111111111",
+          runId: identity.analysisRunId,
+          attemptOrdinal: 0,
+          retryGrantId: null,
+        },
+      sourceFingerprint: "source-fingerprint-1",
+      sourceDurationMs: 180_000,
+      device: CANDIDATE_PASS_B_DEVICE,
+      targets: [target],
+      ...(options?.signal === undefined ? {} : { signal: options.signal }),
+      workerFactory: () => worker,
+      onDispatchIntent,
+      onPartialResult:
+        options?.onPartialResult ?? (() => Promise.resolve(true)),
+      onOutcomeUnknown:
+        options?.onOutcomeUnknown ?? (() => Promise.resolve(true)),
+    },
+  );
+}
+
+async function currentDispatch(
+  attempt: {
+    readonly attemptOrdinal: number;
+    readonly retryGrantId: string | null;
+  } = { attemptOrdinal: 0, retryGrantId: null },
+): Promise<CandidatePassBDispatchIntent> {
+  const dispatch = {
+    ...currentCandidatePassBDispatch(context),
+    ...attempt,
+  };
+  return {
+    ...dispatch,
+    operationId: await createCandidatePassBOperationId({
+      analysisRunId: dispatch.analysisRunId,
+      sourceFingerprint: dispatch.sourceFingerprint,
+      candidateId: dispatch.candidateId,
+      sourceStartMs: dispatch.sourceStartMs,
+      sourceEndMs: dispatch.sourceEndMs,
+      contextFingerprint: dispatch.contextFingerprint,
+      outputLanguage: dispatch.outputLanguage,
+      castRosterId: dispatch.castRosterId,
+      routingModelRevision: dispatch.routingModelRevision,
+      attemptOrdinal: dispatch.attemptOrdinal,
+      retryGrantId: dispatch.retryGrantId,
+      transportMode: dispatch.transportMode,
+      providerPayloadDigest:
+        dispatch.mediaReceipt.providerPayloadDigest,
+    }),
+  };
+}
+
+describe("runCandidatePassBWorker durable dispatch", () => {
+  it("does not acknowledge the Worker until durable arm readback resolves", async () => {
     const worker = new FakeWorker();
-    const controller = new AbortController();
-    const promise = startWith(worker, {
-      quota: {
-        participantId: "participant_11111111111111111111111111111111",
-        runId: "analysis-run-1",
-        attemptOrdinal: 3,
-      },
-      signal: controller.signal,
-      cancelAcknowledgementTimeoutMs: 10,
+    let resolveArm!: (accepted: boolean) => void;
+    const arm = new Promise<boolean>((resolve) => {
+      resolveArm = resolve;
     });
+    const promise = start(worker, () => arm);
+    const dispatch = await currentDispatch();
 
-    expect(worker.requests[0]).toMatchObject({
-      quota: { attemptOrdinal: 3 },
+    emit(worker, "event-intent", {
+      type: "candidate-pass-b-dispatch-intent",
+      intent: dispatch,
     });
-    controller.abort();
-    await expect(promise).rejects.toMatchObject({ code: "ABORTED" });
-  });
-
-  it("streams fenced progress, isolates a candidate gap, and resolves with later partial results", async () => {
-    const worker = new FakeWorker();
-    const onModelProgress = vi.fn();
-    const onCandidateProgress = vi.fn();
-    const onPartialResult = vi.fn();
-    const onCandidateGap = vi.fn();
-    const promise = startWith(worker, {
-      onModelProgress,
-      onCandidateProgress,
-      onPartialResult,
-      onCandidateGap,
-    });
-
+    await Promise.resolve();
     expect(worker.requests).toHaveLength(1);
-    expect(worker.requests[0]).toMatchObject({
-      type: "candidate-pass-b-analyze",
-      identity,
-      sourceDurationMs: 180_000,
-      device: CANDIDATE_PASS_B_DEVICE,
-      targets,
-    });
 
-    emit(worker, "event-1", {
-      type: "candidate-pass-b-model-progress",
-      progress: {
-        stage: "loading",
-        ratio: 0.4,
-        loadedBytes: 40,
-        totalBytes: 100,
-      },
-    });
-    emit(worker, "event-2", {
-      type: "candidate-pass-b-model-progress",
-      progress: {
-        stage: "ready",
-        ratio: 1,
-        loadedBytes: null,
-        totalBytes: null,
-      },
-    });
-    emit(worker, "event-3", {
-      type: "candidate-pass-b-candidate-progress",
-      progress: {
-        candidateId: targets[0]?.candidateId ?? "",
-        candidateOrdinal: 1,
-        targetCount: 2,
-        stage: "decoding",
-        ratio: 0.2,
-      },
-    });
-    emit(worker, "event-4", {
-      type: "candidate-pass-b-candidate-progress",
-      progress: {
-        candidateId: targets[0]?.candidateId ?? "",
-        candidateOrdinal: 1,
-        targetCount: 2,
-        stage: "gap",
-        ratio: 1,
-      },
-    });
-    emit(worker, "event-5", {
-      type: "candidate-pass-b-candidate-gap",
-      gap: {
-        candidateId: "candidate-1",
-        sourceStartMs: 10_000,
-        sourceEndMs: 50_000,
-        reasonCode: "TRANSCRIPTION_FAILED",
-        message: "이 후보 구간을 정밀 분석하는 중 문제가 생겼어요.",
-      },
-    });
-    emit(worker, "event-6", {
-      type: "candidate-pass-b-candidate-progress",
-      progress: {
-        candidateId: targets[1]?.candidateId ?? "",
-        candidateOrdinal: 2,
-        targetCount: 2,
-        stage: "decoding",
-        ratio: 0,
-      },
-    });
-    emit(worker, "event-7", {
-      type: "candidate-pass-b-candidate-progress",
-      progress: {
-        candidateId: targets[1]?.candidateId ?? "",
-        candidateOrdinal: 2,
-        targetCount: 2,
-        stage: "transcribing",
-        ratio: 0.5,
-      },
-    });
-    emit(worker, "event-8", {
-      type: "candidate-pass-b-candidate-progress",
-      progress: {
-        candidateId: targets[1]?.candidateId ?? "",
-        candidateOrdinal: 2,
-        targetCount: 2,
-        stage: "complete",
-        ratio: 1,
-      },
-    });
-    const secondTranscript: CandidatePassBTranscriptResult = {
-      ...transcriptFor(targets[1] as CandidatePassBTarget),
-      model: {
-        id: CANDIDATE_PASS_B_GEMINI_MODEL_ID,
-        revision: CANDIDATE_PASS_B_GEMINI_MODEL_REVISION,
-        dtype: CANDIDATE_PASS_B_DTYPE,
-        device: CANDIDATE_PASS_B_DEVICE,
-      },
-    };
-    emit(worker, "event-9", {
-      type: "candidate-pass-b-partial-result",
-      result: secondTranscript,
-    });
-    emit(worker, "event-10", {
-      type: "candidate-pass-b-completed",
-      summary: { requestedCount: 2, completedCount: 1, gapCount: 1 },
-    });
-
-    await expect(promise).resolves.toEqual({
-      results: [secondTranscript],
-      gaps: [
-        {
-          candidateId: "candidate-1",
-          sourceStartMs: 10_000,
-          sourceEndMs: 50_000,
-          reasonCode: "TRANSCRIPTION_FAILED",
-          message: "이 후보 구간을 정밀 분석하는 중 문제가 생겼어요.",
-        },
-      ],
-      summary: { requestedCount: 2, completedCount: 1, gapCount: 1 },
-    });
-    expect(onModelProgress).toHaveBeenCalledTimes(2);
-    expect(onCandidateProgress).toHaveBeenCalledTimes(5);
-    expect(onCandidateGap).toHaveBeenCalledTimes(1);
-    expect(onPartialResult).toHaveBeenCalledWith(secondTranscript);
-    expect(worker.terminateCount).toBe(1);
-  });
-
-  it("accepts interleaved progress and results from parallel candidate requests", async () => {
-    const worker = new FakeWorker();
-    const onCandidateProgress = vi.fn();
-    const onPartialResult = vi.fn();
-    const onCandidateGap = vi.fn();
-    const promise = startWith(worker, {
-      onCandidateProgress,
-      onPartialResult,
-      onCandidateGap,
-    });
-
-    emit(worker, "parallel-model-ready", {
-      type: "candidate-pass-b-model-progress",
-      progress: {
-        stage: "ready",
-        ratio: 1,
-        loadedBytes: null,
-        totalBytes: null,
-      },
-    });
-    emit(worker, "candidate-1-decoding", {
-      type: "candidate-pass-b-candidate-progress",
-      progress: {
-        candidateId: "candidate-1",
-        candidateOrdinal: 1,
-        targetCount: 2,
-        stage: "decoding",
-        ratio: 0.2,
-      },
-    });
-    emit(worker, "candidate-2-decoding", {
-      type: "candidate-pass-b-candidate-progress",
-      progress: {
-        candidateId: "candidate-2",
-        candidateOrdinal: 2,
-        targetCount: 2,
-        stage: "decoding",
-        ratio: 0.2,
-      },
-    });
-    emit(worker, "candidate-2-transcribing", {
-      type: "candidate-pass-b-candidate-progress",
-      progress: {
-        candidateId: "candidate-2",
-        candidateOrdinal: 2,
-        targetCount: 2,
-        stage: "transcribing",
-        ratio: 0.5,
-      },
-    });
-    emit(worker, "candidate-2-complete", {
-      type: "candidate-pass-b-candidate-progress",
-      progress: {
-        candidateId: "candidate-2",
-        candidateOrdinal: 2,
-        targetCount: 2,
-        stage: "complete",
-        ratio: 1,
-      },
-    });
-    const secondTranscript = transcriptFor(targets[1] as CandidatePassBTarget);
-    emit(worker, "candidate-2-result", {
-      type: "candidate-pass-b-partial-result",
-      result: secondTranscript,
-    });
-    emit(worker, "candidate-1-gap-progress", {
-      type: "candidate-pass-b-candidate-progress",
-      progress: {
-        candidateId: "candidate-1",
-        candidateOrdinal: 1,
-        targetCount: 2,
-        stage: "gap",
-        ratio: 1,
-      },
-    });
-    const firstGap = {
-      candidateId: "candidate-1",
-      sourceStartMs: 10_000,
-      sourceEndMs: 50_000,
-      reasonCode: "TRANSCRIPTION_FAILED" as const,
-      message: "이 후보 구간을 정밀 분석하는 중 문제가 생겼어요.",
-    };
-    emit(worker, "candidate-1-gap", {
-      type: "candidate-pass-b-candidate-gap",
-      gap: firstGap,
-    });
-    emit(worker, "parallel-completed", {
-      type: "candidate-pass-b-completed",
-      summary: { requestedCount: 2, completedCount: 1, gapCount: 1 },
-    });
-
-    await expect(promise).resolves.toEqual({
-      results: [secondTranscript],
-      gaps: [firstGap],
-      summary: { requestedCount: 2, completedCount: 1, gapCount: 1 },
-    });
-    expect(onCandidateProgress).toHaveBeenCalledTimes(5);
-    expect(onPartialResult).toHaveBeenCalledWith(secondTranscript);
-    expect(onCandidateGap).toHaveBeenCalledWith(firstGap);
-    expect(worker.terminateCount).toBe(1);
-  });
-
-  it("rejects a correctly shaped event from a stale Pass B run", async () => {
-    const worker = new FakeWorker();
-    const promise = startWith(worker);
-
-    emit(
-      worker,
-      "event-1",
-      {
-        type: "candidate-pass-b-model-progress",
-        progress: {
-          stage: "loading",
-          ratio: 0,
-          loadedBytes: null,
-          totalBytes: null,
-        },
-      },
-      { passBRunId: "stale-pass-b" },
-    );
-
-    await expect(promise).rejects.toMatchObject({
-      code: "EVENT_FENCE_REJECTED",
-      fenceReason: "pass_b_run_id_mismatch",
-    });
-    expect(worker.terminateCount).toBe(1);
-  });
-
-  it("rejects a duplicate event id before exposing the second event", async () => {
-    const worker = new FakeWorker();
-    const onModelProgress = vi.fn();
-    const promise = startWith(worker, { onModelProgress });
-
-    emit(worker, "same-event", {
-      type: "candidate-pass-b-model-progress",
-      progress: {
-        stage: "loading",
-        ratio: 0.2,
-        loadedBytes: 20,
-        totalBytes: 100,
-      },
-    });
-    emit(worker, "same-event", {
-      type: "candidate-pass-b-model-progress",
-      progress: {
-        stage: "loading",
-        ratio: 0.3,
-        loadedBytes: 30,
-        totalBytes: 100,
-      },
-    });
-
-    await expect(promise).rejects.toMatchObject({
-      code: "EVENT_FENCE_REJECTED",
-      fenceReason: "duplicate_event_id",
-    });
-    expect(onModelProgress).toHaveBeenCalledTimes(1);
-  });
-
-  it("rejects a malformed partial result without exposing transcript text", async () => {
-    const worker = new FakeWorker();
-    const onPartialResult = vi.fn();
-    const promise = startWith(worker, {
-      targets: [targets[0] as CandidatePassBTarget],
-      onPartialResult,
-    });
-    const malformed = {
-      ...transcriptFor(targets[0] as CandidatePassBTarget),
-      model: {
-        ...transcriptFor(targets[0] as CandidatePassBTarget).model,
-        revision: "moving-main-revision",
-      },
-    };
-
-    worker.emitMessage({
-      ...identity,
-      eventId: "event-1",
-      type: "candidate-pass-b-partial-result",
-      result: malformed,
-    });
-
-    await expect(promise).rejects.toMatchObject({
-      code: "WORKER_MESSAGE_ERROR",
-    });
-    expect(onPartialResult).not.toHaveBeenCalled();
-    expect(worker.terminateCount).toBe(1);
-  });
-
-  it("rejects a zero-length transcript segment at the client boundary", async () => {
-    const worker = new FakeWorker();
-    const onPartialResult = vi.fn();
-    const promise = startWith(worker, {
-      targets: [targets[0] as CandidatePassBTarget],
-      onPartialResult,
-    });
-    const result = transcriptFor(targets[0] as CandidatePassBTarget);
-    const firstSegment = result.segments[0];
-    expect(firstSegment).toBeDefined();
-
-    worker.emitMessage({
-      ...identity,
-      eventId: "event-zero-length-segment",
-      type: "candidate-pass-b-partial-result",
-      result: {
-        ...result,
-        segments: [
-          {
-            ...firstSegment,
-            endMs: firstSegment?.startMs,
-          },
-        ],
-      },
-    });
-
-    await expect(promise).rejects.toMatchObject({ code: "WORKER_MESSAGE_ERROR" });
-    expect(onPartialResult).not.toHaveBeenCalled();
-  });
-
-  it("rejects an insight with an extra key before exposing it", async () => {
-    const worker = new FakeWorker();
-    const onPartialResult = vi.fn();
-    const promise = startWith(worker, {
-      targets: [targets[0] as CandidatePassBTarget],
-      onPartialResult,
-    });
-    const result = transcriptFor(targets[0] as CandidatePassBTarget);
-
-    worker.emitMessage({
-      ...identity,
-      eventId: "event-1",
-      type: "candidate-pass-b-partial-result",
-      result: {
-        ...result,
-        insight: { ...result.insight, unexpected: "must-not-cross-boundary" },
-      },
-    });
-
-    await expect(promise).rejects.toMatchObject({
-      code: "WORKER_MESSAGE_ERROR",
-    });
-    expect(onPartialResult).not.toHaveBeenCalled();
-  });
-
-  it("maps a canonical proxy failure without accepting a raw worker error", async () => {
-    const worker = new FakeWorker();
-    const promise = startWith(worker);
-    emit(worker, "event-1", {
-      type: "candidate-pass-b-failed",
-      reasonCode: "PROXY_RATE_LIMITED",
-      message: candidatePassBWorkerFailureMessage("PROXY_RATE_LIMITED"),
-    });
-
-    await expect(promise).rejects.toMatchObject({
-      code: "WORKER_FAILED",
-      workerReasonCode: "PROXY_RATE_LIMITED",
-      message: candidatePassBWorkerFailureMessage("PROXY_RATE_LIMITED"),
-    });
-
-    const malformedWorker = new FakeWorker();
-    const malformedPromise = startWith(malformedWorker);
-    emit(malformedWorker, "event-2", {
-      type: "candidate-pass-b-failed",
-      reasonCode: "PROXY_UNAVAILABLE",
-      message: "raw upstream body with private infrastructure details",
-    });
-    const error = await malformedPromise.catch((cause: unknown) => cause);
-    expect(error).toMatchObject({ code: "WORKER_MESSAGE_ERROR" });
-    expect(String(error)).not.toContain("private infrastructure details");
-    expect(String(error)).not.toContain("raw upstream body");
-  });
-
-  it("waits for a fenced cancellation ACK and reports only the real ACK", async () => {
-    const worker = new FakeWorker();
-    const controller = new AbortController();
-    const onCancellationAcknowledged = vi.fn();
-    const promise = startWith(worker, {
-      signal: controller.signal,
-      onCancellationAcknowledged,
-    });
-    const rejection = expect(promise).rejects.toMatchObject({ code: "ABORTED" });
-
-    controller.abort();
-
-    expect(worker.requests).toHaveLength(2);
-    expect(worker.requests[1]).toEqual({
-      type: "candidate-pass-b-cancel",
-      identity,
-    });
-    expect(worker.terminateCount).toBe(0);
-    expect(onCancellationAcknowledged).not.toHaveBeenCalled();
-
-    emit(worker, "cancel-ack", {
-      type: "candidate-pass-b-cancel-acknowledged",
-    });
-
-    await rejection;
-    expect(onCancellationAcknowledged).toHaveBeenCalledTimes(1);
-    expect(worker.terminateCount).toBe(1);
-  });
-
-  it("does not report a cancellation ACK when the ACK deadline expires", async () => {
-    vi.useFakeTimers();
-    try {
-      const worker = new FakeWorker();
-      const controller = new AbortController();
-      const onCancellationAcknowledged = vi.fn();
-      const promise = startWith(worker, {
-        signal: controller.signal,
-        onCancellationAcknowledged,
-        cancelAcknowledgementTimeoutMs: 50,
+    resolveArm(true);
+    await vi.waitFor(() => {
+      expect(worker.requests[1]).toMatchObject({
+        type: "candidate-pass-b-dispatch-arm-ack",
+        operationId: dispatch.operationId,
+        accepted: true,
       });
-      const rejection = expect(promise).rejects.toMatchObject({ code: "ABORTED" });
-
-      controller.abort();
-      await vi.advanceTimersByTimeAsync(50);
-
-      await rejection;
-      expect(onCancellationAcknowledged).not.toHaveBeenCalled();
-      expect(worker.terminateCount).toBe(1);
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it("cleans up and reports a cancellation ACK callback failure", async () => {
-    const worker = new FakeWorker();
-    const controller = new AbortController();
-    const promise = startWith(worker, {
-      signal: controller.signal,
-      onCancellationAcknowledged: () => {
-        throw new Error("reducer rejected ACK");
-      },
-    });
-    const rejection = expect(promise).rejects.toMatchObject({
-      code: "CANCEL_ACK_CALLBACK_FAILED",
     });
 
-    controller.abort();
-    emit(worker, "cancel-ack", {
-      type: "candidate-pass-b-cancel-acknowledged",
+    emit(worker, "event-result", {
+      type: "candidate-pass-b-partial-result",
+      result: transcriptFor(dispatch),
     });
-
-    await rejection;
-    expect(worker.terminateCount).toBe(1);
-    expect(
-      [...worker.listeners.values()].every((listeners) => listeners.size === 0),
-    ).toBe(true);
-  });
-
-  it("cancels and cleans up if a progress callback throws", async () => {
-    const worker = new FakeWorker();
-    const onModelProgress = vi.fn(() => {
-      throw new Error("render failed");
+    await vi.waitFor(() => {
+      expect(worker.requests.at(-1)).toMatchObject({
+        type: "candidate-pass-b-terminal-result-ack",
+        terminalEventId: "event-result",
+        candidateId: target.candidateId,
+        settlement: transcriptFor(dispatch).settlement,
+        accepted: true,
+      });
     });
-    const promise = startWith(worker, { onModelProgress });
-    const rejection = expect(promise).rejects.toMatchObject({
-      code: "PROGRESS_CALLBACK_FAILED",
-    });
-
-    emit(worker, "event-1", {
-      type: "candidate-pass-b-model-progress",
-      progress: {
-        stage: "loading",
-        ratio: 0,
-        loadedBytes: null,
-        totalBytes: null,
-      },
-    });
-    expect(worker.requests[1]).toEqual({
-      type: "candidate-pass-b-cancel",
-      identity,
-    });
-    emit(worker, "event-2", {
-      type: "candidate-pass-b-cancel-acknowledged",
-    });
-
-    await rejection;
-    expect(worker.terminateCount).toBe(1);
-  });
-
-  it("starts without a per-user credential or consent field in the Worker protocol", async () => {
-    const worker = new FakeWorker();
-    const promise = runCandidatePassBWorker(
-      new File([new Uint8Array([1])], "source.mp4"),
-      {
-        identity,
-        sourceDurationMs: 180_000,
-        device: CANDIDATE_PASS_B_DEVICE,
-        targets: [targets[0] as CandidatePassBTarget],
-        workerFactory: () => worker,
-      },
-    );
-    expect(worker.requests[0]).toMatchObject({
-      type: "candidate-pass-b-analyze",
-      identity,
-      sourceDurationMs: 180_000,
-      device: CANDIDATE_PASS_B_DEVICE,
-      targets: [targets[0]],
-    });
-    expect(Object.keys(worker.requests[0] ?? {})).toEqual([
-      "type",
-      "identity",
-      "file",
-      "sourceDurationMs",
-      "device",
-      "targets",
-    ]);
-    emit(worker, "event-1", {
+    emit(worker, "event-result-progress", {
       type: "candidate-pass-b-candidate-progress",
       progress: {
-        candidateId: "candidate-1",
+        candidateId: target.candidateId,
         candidateOrdinal: 1,
         targetCount: 1,
-        stage: "gap",
+        stage: "complete",
         ratio: 1,
       },
     });
-    emit(worker, "event-2", {
-      type: "candidate-pass-b-candidate-gap",
-      gap: {
-        candidateId: "candidate-1",
-        sourceStartMs: 10_000,
-        sourceEndMs: 50_000,
-        reasonCode: "EMPTY_AUDIO",
-        message: "이 후보 구간에서 이어지는 말소리 단서를 찾지 못했어요.",
+    emit(worker, "event-complete", {
+      type: "candidate-pass-b-completed",
+      summary: { requestedCount: 1, completedCount: 1, gapCount: 0 },
+    });
+    await expect(promise).resolves.toMatchObject({
+      results: [{ candidateId: "candidate-1" }],
+      outcomeUnknowns: [],
+    });
+  });
+
+  it("does not ACK or finish a completed result before durable readback resolves", async () => {
+    const worker = new FakeWorker();
+    let resolveReadback!: (accepted: boolean) => void;
+    const readback = new Promise<boolean>((resolve) => {
+      resolveReadback = resolve;
+    });
+    const promise = start(worker, () => Promise.resolve(true), {
+      onPartialResult: () => readback,
+    });
+    const dispatch = await currentDispatch();
+    emit(worker, "event-intent-terminal-barrier", {
+      type: "candidate-pass-b-dispatch-intent",
+      intent: dispatch,
+    });
+    await vi.waitFor(() => expect(worker.requests).toHaveLength(2));
+
+    emit(worker, "event-result-terminal-barrier", {
+      type: "candidate-pass-b-partial-result",
+      result: transcriptFor(dispatch),
+    });
+    await Promise.resolve();
+    expect(
+      worker.requests.filter(
+        ({ type }) => type === "candidate-pass-b-terminal-result-ack",
+      ),
+    ).toHaveLength(0);
+    let finished = false;
+    void promise.then(
+      () => {
+        finished = true;
+      },
+      () => {
+        finished = true;
+      },
+    );
+    await Promise.resolve();
+    expect(finished).toBe(false);
+
+    resolveReadback(true);
+    await vi.waitFor(() => {
+      expect(worker.requests.at(-1)).toMatchObject({
+        type: "candidate-pass-b-terminal-result-ack",
+        terminalEventId: "event-result-terminal-barrier",
+        accepted: true,
+      });
+    });
+    emit(worker, "event-complete-terminal-barrier", {
+      type: "candidate-pass-b-completed",
+      summary: { requestedCount: 1, completedCount: 1, gapCount: 0 },
+    });
+    await expect(promise).resolves.toMatchObject({
+      results: [{ candidateId: target.candidateId }],
+    });
+  });
+
+  it.each([
+    {
+      label: "returns false",
+      callback: () => Promise.resolve(false),
+    },
+    {
+      label: "throws",
+      callback: () => Promise.reject(new Error("durable storage failed")),
+    },
+  ])(
+    "returns a negative terminal ACK and cancels when durable storage $label",
+    async ({ callback }) => {
+      const worker = new FakeWorker();
+      const promise = start(worker, () => Promise.resolve(true), {
+        onPartialResult: callback,
+      });
+      const dispatch = await currentDispatch();
+      emit(worker, "event-intent-storage-failure", {
+        type: "candidate-pass-b-dispatch-intent",
+        intent: dispatch,
+      });
+      await vi.waitFor(() => expect(worker.requests).toHaveLength(2));
+      emit(worker, "event-result-storage-failure", {
+        type: "candidate-pass-b-partial-result",
+        result: transcriptFor(dispatch),
+      });
+      await vi.waitFor(() => {
+        expect(worker.requests).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              type: "candidate-pass-b-terminal-result-ack",
+              terminalEventId: "event-result-storage-failure",
+              accepted: false,
+            }),
+            expect.objectContaining({
+              type: "candidate-pass-b-cancel",
+            }),
+          ]),
+        );
+      });
+      emit(worker, `event-cancel-${worker.requests.length}`, {
+        type: "candidate-pass-b-cancel-acknowledged",
+      });
+      await expect(promise).rejects.toMatchObject({
+        code: "RESULT_CALLBACK_FAILED",
+      });
+    },
+  );
+
+  it("drains an in-progress terminal readback before rejecting a crashed Worker", async () => {
+    const worker = new FakeWorker();
+    let resolveReadback!: (accepted: boolean) => void;
+    const readback = new Promise<boolean>((resolve) => {
+      resolveReadback = resolve;
+    });
+    const onOutcomeUnknown = vi.fn(() => Promise.resolve(true));
+    const promise = start(worker, () => Promise.resolve(true), {
+      onPartialResult: () => readback,
+      onOutcomeUnknown,
+    });
+    const dispatch = await currentDispatch();
+    emit(worker, "event-intent-before-crash", {
+      type: "candidate-pass-b-dispatch-intent",
+      intent: dispatch,
+    });
+    await vi.waitFor(() => expect(worker.requests).toHaveLength(2));
+    emit(worker, "event-result-before-crash", {
+      type: "candidate-pass-b-partial-result",
+      result: transcriptFor(dispatch),
+    });
+    await Promise.resolve();
+    worker.emitError();
+    let runSettled = false;
+    void promise.then(
+      () => {
+        runSettled = true;
+      },
+      () => {
+        runSettled = true;
+      },
+    );
+    await Promise.resolve();
+    expect(runSettled).toBe(false);
+
+    resolveReadback(true);
+    await expect(promise).rejects.toMatchObject({ code: "WORKER_FAILED" });
+    expect(
+      worker.requests.filter(
+        ({ type }) => type === "candidate-pass-b-terminal-result-ack",
+      ),
+    ).toHaveLength(0);
+    expect(onOutcomeUnknown).not.toHaveBeenCalled();
+  });
+
+  it("persists an armed dispatch as outcome-unknown before rejecting a crashed Worker", async () => {
+    const worker = new FakeWorker();
+    let resolveArm!: (accepted: boolean) => void;
+    const arm = new Promise<boolean>((resolve) => {
+      resolveArm = resolve;
+    });
+    let resolveOutcomeUnknown!: (accepted: boolean) => void;
+    const outcomeUnknownReadback = new Promise<boolean>((resolve) => {
+      resolveOutcomeUnknown = resolve;
+    });
+    const onOutcomeUnknown = vi.fn(() => outcomeUnknownReadback);
+    const promise = start(worker, () => arm, { onOutcomeUnknown });
+    const dispatch = await currentDispatch();
+
+    emit(worker, "event-intent-before-arm-crash", {
+      type: "candidate-pass-b-dispatch-intent",
+      intent: dispatch,
+    });
+    await Promise.resolve();
+    worker.emitError();
+    resolveArm(true);
+
+    await vi.waitFor(() => {
+      expect(onOutcomeUnknown).toHaveBeenCalledWith({
+        candidateId: target.candidateId,
+        sourceStartMs: target.startMs,
+        sourceEndMs: target.endMs,
+        settlement: {
+          schemaVersion: CANDIDATE_PASS_B_SETTLEMENT_SCHEMA_VERSION,
+          status: "outcome-unknown",
+          operationId: dispatch.operationId,
+          providerPayloadDigest: dispatch.mediaReceipt.providerPayloadDigest,
+          outputLanguage: dispatch.outputLanguage,
+          castRosterId: dispatch.castRosterId,
+          reason: "armed-dispatch-interrupted",
+        },
+      });
+    });
+    expect(worker.terminateCount).toBe(0);
+
+    resolveOutcomeUnknown(true);
+    await expect(promise).rejects.toMatchObject({ code: "WORKER_FAILED" });
+    expect(worker.terminateCount).toBe(1);
+  });
+
+  it("rejects a result whose settlement was not preceded by an armed dispatch", async () => {
+    const worker = new FakeWorker();
+    const promise = start(worker, () => Promise.resolve(true));
+    const dispatch = await currentDispatch();
+
+    emit(worker, "event-result", {
+      type: "candidate-pass-b-partial-result",
+      result: transcriptFor(dispatch),
+    });
+
+    await expect(promise).rejects.toMatchObject({
+      code: "WORKER_MESSAGE_ERROR",
+    } satisfies Partial<CandidatePassBWorkerError>);
+  });
+
+  it("rejects a paid result that omits a current decision field", async () => {
+    const worker = new FakeWorker();
+    const promise = start(worker, () => Promise.resolve(true));
+    const dispatch = await currentDispatch();
+    emit(worker, "event-intent", {
+      type: "candidate-pass-b-dispatch-intent",
+      intent: dispatch,
+    });
+    await vi.waitFor(() => expect(worker.requests).toHaveLength(2));
+    const result = transcriptFor(dispatch);
+    const malformedInsight: Record<string, unknown> = {
+      ...result.insight,
+    };
+    delete malformedInsight.clipDecision;
+    worker.emitMessage({
+      ...identity,
+      eventId: "event-malformed-result",
+      type: "candidate-pass-b-partial-result",
+      result: {
+        ...result,
+        insight: malformedInsight,
       },
     });
-    emit(worker, "event-3", {
+
+    await expect(promise).rejects.toMatchObject({
+      code: "WORKER_MESSAGE_ERROR",
+    } satisfies Partial<CandidatePassBWorkerError>);
+  });
+
+  it("rejects dispatch digest/range drift before invoking durable storage", async () => {
+    const worker = new FakeWorker();
+    const onDispatchIntent = vi.fn(() => Promise.resolve(true));
+    const promise = start(worker, onDispatchIntent);
+    const dispatch = await currentDispatch();
+
+    emit(worker, "event-intent", {
+      type: "candidate-pass-b-dispatch-intent",
+      intent: {
+        ...dispatch,
+        sourceEndMs: dispatch.sourceEndMs + 1,
+      },
+    });
+
+    await expect(promise).rejects.toMatchObject({
+      code: "WORKER_MESSAGE_ERROR",
+    });
+    expect(onDispatchIntent).not.toHaveBeenCalled();
+  });
+
+  it("rejects a dispatch whose retry grant differs from the quota fence", async () => {
+    const worker = new FakeWorker();
+    const onDispatchIntent = vi.fn(() => Promise.resolve(true));
+    const quota: CandidatePassBQuotaIdentity = {
+      participantId: "participant_11111111111111111111111111111111",
+      runId: identity.analysisRunId,
+      attemptOrdinal: 1,
+      retryGrantId: "grant-current-1",
+    };
+    const promise = start(worker, onDispatchIntent, { quota });
+    const dispatch = await currentDispatch({
+      attemptOrdinal: 1,
+      retryGrantId: "grant-other-1",
+    });
+
+    emit(worker, "event-retry-grant-drift", {
+      type: "candidate-pass-b-dispatch-intent",
+      intent: dispatch,
+    });
+
+    await expect(promise).rejects.toMatchObject({
+      code: "WORKER_MESSAGE_ERROR",
+    });
+    expect(onDispatchIntent).not.toHaveBeenCalled();
+  });
+
+  it("rejects an operation ID that is not derived from the complete dispatch fence", async () => {
+    const worker = new FakeWorker();
+    const onDispatchIntent = vi.fn(() => Promise.resolve(true));
+    const promise = start(worker, onDispatchIntent);
+    const dispatch = await currentDispatch();
+
+    emit(worker, "event-operation-id-drift", {
+      type: "candidate-pass-b-dispatch-intent",
+      intent: {
+        ...dispatch,
+        operationId: `${dispatch.operationId}0`,
+      },
+    });
+
+    await expect(promise).rejects.toMatchObject({
+      code: "WORKER_MESSAGE_ERROR",
+    });
+    expect(onDispatchIntent).not.toHaveBeenCalled();
+  });
+
+  it("keeps quota outcome-unknown terminal and distinct from a retryable gap", async () => {
+    const worker = new FakeWorker();
+    const onOutcomeUnknown = vi.fn(() => Promise.resolve(true));
+    const promise = start(worker, () => Promise.resolve(true), {
+      onOutcomeUnknown,
+    });
+    const dispatch = await currentDispatch();
+    emit(worker, "event-intent", {
+      type: "candidate-pass-b-dispatch-intent",
+      intent: dispatch,
+    });
+    await vi.waitFor(() => expect(worker.requests).toHaveLength(2));
+    const settlement = {
+      schemaVersion: CANDIDATE_PASS_B_SETTLEMENT_SCHEMA_VERSION,
+      status: "outcome-unknown" as const,
+      operationId: dispatch.operationId,
+      providerPayloadDigest: dispatch.mediaReceipt.providerPayloadDigest,
+      outputLanguage: dispatch.outputLanguage,
+      castRosterId: dispatch.castRosterId,
+      reason: "quota-outcome-unknown" as const,
+    };
+    emit(worker, "event-unknown", {
+      type: "candidate-pass-b-outcome-unknown",
+      outcome: {
+        candidateId: target.candidateId,
+        sourceStartMs: target.startMs,
+        sourceEndMs: target.endMs,
+        settlement,
+      },
+    });
+    await vi.waitFor(() => {
+      expect(worker.requests.at(-1)).toMatchObject({
+        type: "candidate-pass-b-terminal-result-ack",
+        terminalEventId: "event-unknown",
+        candidateId: target.candidateId,
+        settlement,
+        accepted: true,
+      });
+    });
+    emit(worker, "event-complete", {
       type: "candidate-pass-b-completed",
       summary: { requestedCount: 1, completedCount: 0, gapCount: 1 },
     });
+
     await expect(promise).resolves.toMatchObject({
-      summary: { requestedCount: 1, completedCount: 0, gapCount: 1 },
+      results: [],
+      gaps: [],
+      outcomeUnknowns: [{ settlement }],
+    });
+    expect(onOutcomeUnknown).toHaveBeenCalledOnce();
+  });
+
+  it("finishes an in-progress durable arm and terminal settlement before cancellation completes", async () => {
+    const worker = new FakeWorker();
+    const controller = new AbortController();
+    let resolveArm!: (accepted: boolean) => void;
+    const arm = new Promise<boolean>((resolve) => {
+      resolveArm = resolve;
+    });
+    const onOutcomeUnknown = vi.fn(() => Promise.resolve(true));
+    const promise = start(worker, () => arm, {
+      signal: controller.signal,
+      onOutcomeUnknown,
+    });
+    const dispatch = await currentDispatch();
+
+    emit(worker, "event-intent-cancel-race", {
+      type: "candidate-pass-b-dispatch-intent",
+      intent: dispatch,
+    });
+    await Promise.resolve();
+    controller.abort();
+    expect(worker.requests).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ type: "candidate-pass-b-cancel" }),
+      ]),
+    );
+
+    resolveArm(true);
+    await vi.waitFor(() => {
+      expect(worker.requests).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            type: "candidate-pass-b-dispatch-arm-ack",
+            operationId: dispatch.operationId,
+            accepted: true,
+          }),
+        ]),
+      );
     });
 
-  });
-
-  it("rejects before creating a Worker when more than twelve targets are supplied", async () => {
-    let factoryCalls = 0;
-    const tooManyTargets = Array.from({ length: 13 }, (_, index) => ({
-      candidateId: `candidate-${index}`,
-      startMs: index * 1_000,
-      endMs: index * 1_000 + 500,
-    }));
-
-    const promise = runCandidatePassBWorker(
-      new File([new Uint8Array([1])], "source.mp4"),
-      {
-        identity,
-        sourceDurationMs: 180_000,
-        device: CANDIDATE_PASS_B_DEVICE,
-        targets: tooManyTargets,
-        workerFactory: () => {
-          factoryCalls += 1;
-          return new FakeWorker();
-        },
+    const settlement = {
+      schemaVersion: CANDIDATE_PASS_B_SETTLEMENT_SCHEMA_VERSION,
+      status: "outcome-unknown" as const,
+      operationId: dispatch.operationId,
+      providerPayloadDigest: dispatch.mediaReceipt.providerPayloadDigest,
+      outputLanguage: dispatch.outputLanguage,
+      castRosterId: dispatch.castRosterId,
+      reason: "armed-dispatch-interrupted" as const,
+    };
+    emit(worker, "event-outcome-cancel-race", {
+      type: "candidate-pass-b-outcome-unknown",
+      outcome: {
+        candidateId: target.candidateId,
+        sourceStartMs: target.startMs,
+        sourceEndMs: target.endMs,
+        settlement,
       },
-    );
+    });
+    await vi.waitFor(() => {
+      expect(worker.requests.at(-1)).toMatchObject({
+        type: "candidate-pass-b-terminal-result-ack",
+        terminalEventId: "event-outcome-cancel-race",
+        settlement,
+        accepted: true,
+      });
+    });
+    expect(onOutcomeUnknown).toHaveBeenCalledOnce();
 
-    await expect(promise).rejects.toBeInstanceOf(CandidatePassBWorkerError);
-    await expect(promise).rejects.toMatchObject({ code: "INVALID_INPUT" });
-    expect(factoryCalls).toBe(0);
-  });
-
-  it("rejects a candidate longer than sixty seconds before creating a Worker", async () => {
-    let factoryCalls = 0;
-    const promise = runCandidatePassBWorker(
-      new File([new Uint8Array([1])], "source.mp4"),
-      {
-        identity,
-        sourceDurationMs: 180_000,
-        device: CANDIDATE_PASS_B_DEVICE,
-        targets: [{ candidateId: "candidate-too-long", startMs: 0, endMs: 60_001 }],
-        workerFactory: () => {
-          factoryCalls += 1;
-          return new FakeWorker();
-        },
-      },
-    );
-
-    await expect(promise).rejects.toMatchObject({ code: "INVALID_INPUT" });
-    expect(factoryCalls).toBe(0);
+    emit(worker, "event-cancel-after-terminal", {
+      type: "candidate-pass-b-cancel-acknowledged",
+    });
+    await expect(promise).rejects.toMatchObject({ code: "ABORTED" });
   });
 });

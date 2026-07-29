@@ -3,7 +3,6 @@ import { describe, expect, it } from "vitest";
 import {
   AMORETTO_CHANNEL_CAST_ROSTER_ID,
   DEFAULT_CANDIDATE_PASS_B_CAST_ROSTER_ID,
-  LEGACY_CANDIDATE_PASS_B_CAST_ROSTER_ID,
   candidatePassBCastReferenceForName,
   candidatePassBCastReferences,
   candidatePassBCastRosterIdForSourceName,
@@ -47,7 +46,7 @@ describe("participantRoster", () => {
 
   it("does not accept arbitrary public roster identifiers", () => {
     expect(isCandidatePassBCastRosterId(DEFAULT_CANDIDATE_PASS_B_CAST_ROSTER_ID)).toBe(true);
-    expect(isCandidatePassBCastRosterId(LEGACY_CANDIDATE_PASS_B_CAST_ROSTER_ID)).toBe(true);
+    expect(isCandidatePassBCastRosterId("chzzk-video-13996057-v1")).toBe(false);
     expect(isCandidatePassBCastRosterId("user-supplied-prompt")).toBe(false);
     expect(candidatePassBCastReferences(null)).toEqual([]);
   });

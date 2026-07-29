@@ -18,6 +18,7 @@ import {
 } from "./broadcastTranscriptRouteManifest";
 import { BROADCAST_TRANSCRIPT_QWEN_OMNI_MODEL_REVISION } from "./broadcastTranscriptQwen";
 import { createVerifiedNoSpeechRunReceiptForTest } from "../testSupport/broadcastSpeechActivityTestReceipt";
+import { transcriptFragmentQuotaOperationId } from "./broadcastTranscriptFragmentRecovery";
 
 const ROUTE: BroadcastTranscriptRouteSelection = {
   manifest: {
@@ -64,9 +65,340 @@ class FakeWorker {
       listener(new MessageEvent("message", { data: message }));
     }
   }
+  public emitError(): void {
+    for (const listener of this.listeners.get("error") ?? []) {
+      listener(new MessageEvent("error"));
+    }
+  }
+}
+
+function emitDispatchIntent(
+  worker: FakeWorker,
+  analyze: Extract<
+    BroadcastTranscriptWorkerRequest,
+    { readonly type: "broadcast-transcript-analyze" }
+  >,
+  chunkId: string,
+): void {
+  const chunk = analyze.chunks.find((candidate) => candidate.chunkId === chunkId);
+  if (chunk === undefined) throw new Error("Dispatch fixture chunk is missing.");
+  const operationNamespace = analyze.quota?.operationNamespace ?? "uniform";
+  const attemptOrdinal = analyze.quota?.attemptOrdinal ?? 0;
+  const operationScope = analyze.quota?.operationScope;
+  worker.emit({
+    type: "broadcast-transcript-dispatch-intent",
+    identity: analyze.identity,
+    intent: {
+      operationId: transcriptFragmentQuotaOperationId(
+        operationNamespace,
+        attemptOrdinal,
+        chunkId,
+        operationScope,
+      ),
+      chunkId,
+      sourceStartMs: chunk.sourceStartMs,
+      sourceEndMs: chunk.sourceEndMs,
+      attemptOrdinal,
+      operationNamespace,
+      operationScope: operationScope ?? null,
+      routeManifestFingerprint: analyze.route.fingerprint,
+    },
+  });
 }
 
 describe("broadcastTranscriptWorkerClient", () => {
+  it("rejects a dispatch intent whose deterministic operation identity changed", async () => {
+    const worker = new FakeWorker();
+    const onDispatchIntent = vi.fn();
+    const quota = {
+      participantId: "participant_11111111111111111111111111111111",
+      runId: "analysis-run-1",
+      operationNamespace: "uniform" as const,
+      attemptOrdinal: 2,
+    };
+    const promise = runBroadcastTranscriptWorker(
+      new File(["x"], "invalid-dispatch.mp4"),
+      {
+        sourceDurationMs: 1_000,
+        route: ROUTE,
+        chunks: [
+          {
+            chunkId: "asr-001",
+            sourceStartMs: 0,
+            sourceEndMs: 1_000,
+            kind: "uniform",
+          },
+        ],
+        quota,
+        workerFactory: () => worker,
+        onDispatchIntent,
+      },
+    );
+    const analyze = worker.posted[0];
+    if (analyze?.type !== "broadcast-transcript-analyze") {
+      throw new Error("Analyze request was not posted.");
+    }
+    worker.emit({
+      type: "broadcast-transcript-dispatch-intent",
+      identity: analyze.identity,
+      intent: {
+        operationId: "transcript-uniform-g1-asr-001",
+        chunkId: "asr-001",
+        sourceStartMs: 0,
+        sourceEndMs: 1_000,
+        attemptOrdinal: quota.attemptOrdinal,
+        operationNamespace: quota.operationNamespace,
+        operationScope: null,
+        routeManifestFingerprint: ROUTE.fingerprint,
+      },
+    });
+
+    await expect(promise).rejects.toMatchObject({
+      code: "WORKER_MESSAGE_ERROR",
+    });
+    expect(onDispatchIntent).not.toHaveBeenCalled();
+    expect(
+      worker.posted.filter(
+        ({ type }) => type === "broadcast-transcript-dispatch-ack",
+      ),
+    ).toHaveLength(0);
+  });
+
+  it("does not ACK a paid dispatch before durable readback completes", async () => {
+    const worker = new FakeWorker();
+    let releaseReadback!: () => void;
+    const readback = new Promise<void>((resolve) => {
+      releaseReadback = resolve;
+    });
+    const quota = {
+      participantId: "participant_11111111111111111111111111111111",
+      runId: "analysis-run-1",
+      operationNamespace: "uniform" as const,
+      operationScope: "scope_12345678",
+      attemptOrdinal: 3,
+    };
+    const chunk = {
+      chunkId: "asr-001",
+      sourceStartMs: 0,
+      sourceEndMs: 1_000,
+      kind: "uniform" as const,
+    };
+    const promise = runBroadcastTranscriptWorker(
+      new File(["x"], "dispatch-ack.mp4"),
+      {
+        sourceDurationMs: 1_000,
+        route: ROUTE,
+        chunks: [chunk],
+        quota,
+        workerFactory: () => worker,
+        onDispatchIntent: () => readback,
+      },
+    );
+    const analyze = worker.posted[0];
+    if (analyze?.type !== "broadcast-transcript-analyze") {
+      throw new Error("Analyze request was not posted.");
+    }
+    const operationId = transcriptFragmentQuotaOperationId(
+      quota.operationNamespace,
+      quota.attemptOrdinal,
+      chunk.chunkId,
+      quota.operationScope,
+    );
+    worker.emit({
+      type: "broadcast-transcript-dispatch-intent",
+      identity: analyze.identity,
+      intent: {
+        operationId,
+        chunkId: chunk.chunkId,
+        sourceStartMs: chunk.sourceStartMs,
+        sourceEndMs: chunk.sourceEndMs,
+        attemptOrdinal: quota.attemptOrdinal,
+        operationNamespace: quota.operationNamespace,
+        operationScope: quota.operationScope,
+        routeManifestFingerprint: ROUTE.fingerprint,
+      },
+    });
+    await Promise.resolve();
+    expect(
+      worker.posted.filter(
+        ({ type }) => type === "broadcast-transcript-dispatch-ack",
+      ),
+    ).toHaveLength(0);
+
+    releaseReadback();
+    await vi.waitFor(() => {
+      expect(worker.posted.at(-1)).toMatchObject({
+        type: "broadcast-transcript-dispatch-ack",
+        chunkId: chunk.chunkId,
+        operationId,
+      });
+    });
+    worker.emit({
+      type: "broadcast-transcript-gap",
+      identity: analyze.identity,
+      chunkId: chunk.chunkId,
+      reason: "outcome-unknown",
+    });
+    worker.emit({
+      type: "broadcast-transcript-complete",
+      identity: analyze.identity,
+      requestedCount: 1,
+      completedCount: 0,
+      abstentionCount: 0,
+      gapCount: 1,
+      concurrencyOutcome: "test",
+    });
+    await expect(promise).resolves.toMatchObject({
+      gapChunkIds: [chunk.chunkId],
+    });
+  });
+
+  it("does not ACK a terminal settlement or finish before its readback barrier", async () => {
+    const worker = new FakeWorker();
+    let releaseReadback!: () => void;
+    const readback = new Promise<void>((resolve) => {
+      releaseReadback = resolve;
+    });
+    const promise = runBroadcastTranscriptWorker(
+      new File(["x"], "terminal-ack.mp4"),
+      {
+        sourceDurationMs: 1_000,
+        route: ROUTE,
+        chunks: [
+          {
+            chunkId: "asr-001",
+            sourceStartMs: 0,
+            sourceEndMs: 1_000,
+            kind: "uniform",
+          },
+        ],
+        workerFactory: () => worker,
+        onChunkGap: () => readback,
+      },
+    );
+    const analyze = worker.posted[0];
+    if (analyze?.type !== "broadcast-transcript-analyze") {
+      throw new Error("Analyze request was not posted.");
+    }
+    emitDispatchIntent(worker, analyze, "asr-001");
+    worker.emit({
+      type: "broadcast-transcript-gap",
+      identity: analyze.identity,
+      chunkId: "asr-001",
+      reason: "transcription-failed",
+    });
+    worker.emit({
+      type: "broadcast-transcript-complete",
+      identity: analyze.identity,
+      requestedCount: 1,
+      completedCount: 0,
+      abstentionCount: 0,
+      gapCount: 1,
+      concurrencyOutcome: "test",
+    });
+    await Promise.resolve();
+    expect(
+      worker.posted.filter(
+        ({ type }) => type === "broadcast-transcript-terminal-ack",
+      ),
+    ).toHaveLength(0);
+    let finished = false;
+    void promise.finally(() => {
+      finished = true;
+    });
+    await Promise.resolve();
+    expect(finished).toBe(false);
+
+    releaseReadback();
+    await expect(promise).resolves.toMatchObject({
+      gapChunkIds: ["asr-001"],
+    });
+    expect(
+      worker.posted.filter(
+        ({ type }) => type === "broadcast-transcript-terminal-ack",
+      ),
+    ).toHaveLength(1);
+  });
+
+  it("does not leak a delayed dispatch ACK after the worker has failed", async () => {
+    const worker = new FakeWorker();
+    const onChunkGap = vi.fn();
+    let releaseReadback!: () => void;
+    const readback = new Promise<void>((resolve) => {
+      releaseReadback = resolve;
+    });
+    const quota = {
+      participantId: "participant_11111111111111111111111111111111",
+      runId: "analysis-run-1",
+      operationNamespace: "uniform" as const,
+      attemptOrdinal: 0,
+    };
+    const promise = runBroadcastTranscriptWorker(
+      new File(["x"], "failed-before-ack.mp4"),
+      {
+        sourceDurationMs: 1_000,
+        route: ROUTE,
+        chunks: [
+          {
+            chunkId: "asr-001",
+            sourceStartMs: 0,
+            sourceEndMs: 1_000,
+            kind: "uniform",
+          },
+        ],
+        quota,
+        workerFactory: () => worker,
+        onDispatchIntent: () => readback,
+        onChunkGap,
+      },
+    );
+    const analyze = worker.posted[0];
+    if (analyze?.type !== "broadcast-transcript-analyze") {
+      throw new Error("Analyze request was not posted.");
+    }
+    worker.emit({
+      type: "broadcast-transcript-dispatch-intent",
+      identity: analyze.identity,
+      intent: {
+        operationId: transcriptFragmentQuotaOperationId(
+          quota.operationNamespace,
+          quota.attemptOrdinal,
+          "asr-001",
+        ),
+        chunkId: "asr-001",
+        sourceStartMs: 0,
+        sourceEndMs: 1_000,
+        attemptOrdinal: quota.attemptOrdinal,
+        operationNamespace: quota.operationNamespace,
+        operationScope: null,
+        routeManifestFingerprint: ROUTE.fingerprint,
+      },
+    });
+    await Promise.resolve();
+    worker.emit({
+      type: "broadcast-transcript-gap",
+      identity: analyze.identity,
+      chunkId: "asr-001",
+      reason: "transcription-failed",
+    });
+    worker.emitError();
+    await expect(promise).rejects.toMatchObject({ code: "WORKER_FAILED" });
+    releaseReadback();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(
+      worker.posted.filter(
+        ({ type }) => type === "broadcast-transcript-dispatch-ack",
+      ),
+    ).toHaveLength(0);
+    expect(onChunkGap).not.toHaveBeenCalled();
+    expect(
+      worker.posted.filter(
+        ({ type }) => type === "broadcast-transcript-terminal-ack",
+      ),
+    ).toHaveLength(0);
+  });
+
   it("accepts the complete 2h15m food-talk plan within the worker bound", async () => {
     const worker = new FakeWorker();
     const controller = new AbortController();
@@ -119,6 +451,7 @@ describe("broadcastTranscriptWorkerClient", () => {
         },
         signal: controller.signal,
         workerFactory: () => worker,
+        onDispatchIntent: () => undefined,
       },
     );
 
@@ -185,7 +518,9 @@ describe("broadcastTranscriptWorkerClient", () => {
       emotion: null,
       billedSeconds: 1,
     });
+    emitDispatchIntent(worker, analyze, "asr-002");
     worker.emit({ type: "broadcast-transcript-partial", identity: analyze.identity, chunkId: "asr-002", result: result(1_000) });
+    emitDispatchIntent(worker, analyze, "asr-001");
     worker.emit({ type: "broadcast-transcript-partial", identity: analyze.identity, chunkId: "asr-001", result: result(0) });
     worker.emit({
       type: "broadcast-transcript-complete",
@@ -235,6 +570,7 @@ describe("broadcastTranscriptWorkerClient", () => {
     });
     const analyze = worker.posted[0];
     if (analyze?.type !== "broadcast-transcript-analyze") throw new Error("request");
+    emitDispatchIntent(worker, analyze, "asr-001");
     worker.emit({
       type: "broadcast-transcript-gap",
       identity: analyze.identity,

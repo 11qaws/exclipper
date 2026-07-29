@@ -1,8 +1,16 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  BROADCAST_TRANSCRIPT_GROQ_MODEL_REVISION,
+} from "../analysis/broadcastTranscriptQwen";
+import {
+  YOUTUBE_CAPTION_MODEL_REVISION,
+} from "../analysis/youtubeCaptionTrack";
+import {
   canStartTranscriptRun,
+  createCurrentProviderTranscriptSourceIdentityFence,
   createTranscriptSourceIdentityFence,
+  isCurrentTranscriptSealOperationKey,
   transcriptContextReadiness,
   transcriptGapRequiresExplicitBillingRetry,
   transcriptIsSealedForContext,
@@ -162,6 +170,58 @@ describe("transcriptOperationKey", () => {
     ]);
     expect(primary).not.toBe(fallback);
   });
+
+  it("reproduces the exact current provider seal without binding it to one recovery route", async () => {
+    const sourceIdentity =
+      await createCurrentProviderTranscriptSourceIdentityFence(null);
+    const operationKey = transcriptOperationKey(
+      "run-1",
+      "fp",
+      "event-boost",
+      0,
+      sourceIdentity,
+    );
+
+    await expect(
+      isCurrentTranscriptSealOperationKey({
+        operationKey,
+        runId: "run-1",
+        contentFingerprint: "fp",
+        modelRevision: BROADCAST_TRANSCRIPT_GROQ_MODEL_REVISION,
+        sourceCastRosterId: null,
+      }),
+    ).resolves.toBe(true);
+    await expect(
+      isCurrentTranscriptSealOperationKey({
+        operationKey,
+        runId: "run-1",
+        contentFingerprint: "fp",
+        modelRevision:
+          "qwen3.5-omni-flash-audio-transcript-reviewed-2026-07-22",
+        sourceCastRosterId: null,
+      }),
+    ).resolves.toBe(false);
+  });
+
+  it("rejects the removed caption-only seal route", async () => {
+    const operationKey = transcriptOperationKey(
+      "run-1",
+      "fp",
+      "event-boost",
+      0,
+      `caption-v1-ab-cd_efghi-${"a".repeat(64)}`,
+    );
+
+    await expect(
+      isCurrentTranscriptSealOperationKey({
+        operationKey,
+        runId: "run-1",
+        contentFingerprint: "fp",
+        modelRevision: YOUTUBE_CAPTION_MODEL_REVISION,
+        sourceCastRosterId: "amoretto-v1",
+      }),
+    ).resolves.toBe(false);
+  });
 });
 
 describe("canStartTranscriptRun", () => {
@@ -267,6 +327,8 @@ describe("transcriptIsSealedForContext", () => {
         analysisComplete: true,
         broadcastTranscriptStatus: "completed",
         completedChapterCount: 20,
+        visualInspectionPlannedCellCount: 0,
+        visualInspectionSettledCellCount: 0,
         requiredEventBoostOperationKey: eventBoostKey,
         sealedOperationKey: transcriptOperationKey(
           "run-1",
@@ -284,6 +346,8 @@ describe("transcriptIsSealedForContext", () => {
         analysisComplete: true,
         broadcastTranscriptStatus: "completedWithGaps",
         completedChapterCount: 20,
+        visualInspectionPlannedCellCount: 0,
+        visualInspectionSettledCellCount: 0,
         requiredEventBoostOperationKey: eventBoostKey,
         sealedOperationKey: eventBoostKey,
       }),
@@ -296,6 +360,8 @@ describe("transcriptIsSealedForContext", () => {
         analysisComplete: true,
         broadcastTranscriptStatus: "completed",
         completedChapterCount: 20,
+        visualInspectionPlannedCellCount: 0,
+        visualInspectionSettledCellCount: 0,
         requiredEventBoostOperationKey: eventBoostKey,
         sealedOperationKey: eventBoostKey,
       }),
@@ -307,6 +373,8 @@ describe("transcriptIsSealedForContext", () => {
       analysisComplete: true,
       broadcastTranscriptStatus: "completed",
       completedChapterCount: 0,
+      visualInspectionPlannedCellCount: 4,
+      visualInspectionSettledCellCount: 0,
       requiredEventBoostOperationKey: eventBoostKey,
       sealedOperationKey: eventBoostKey,
     };
@@ -317,12 +385,46 @@ describe("transcriptIsSealedForContext", () => {
     expect(transcriptIsSealedForContext(input)).toBe(false);
   });
 
+  it("keeps a mixed transcript blocked until every no-dialogue visual cell is settled", () => {
+    const input = {
+      analysisComplete: true,
+      broadcastTranscriptStatus: "completed",
+      completedChapterCount: 12,
+      visualInspectionPlannedCellCount: 4,
+      visualInspectionSettledCellCount: 3,
+      requiredEventBoostOperationKey: eventBoostKey,
+      sealedOperationKey: eventBoostKey,
+    };
+
+    expect(transcriptContextReadiness(input)).toBe(
+      "visual-evidence-required",
+    );
+    expect(transcriptIsSealedForContext(input)).toBe(false);
+  });
+
+  it("allows a zero-dialogue map after all four-frame cells are settled", () => {
+    const input = {
+      analysisComplete: true,
+      broadcastTranscriptStatus: "completed",
+      completedChapterCount: 0,
+      visualInspectionPlannedCellCount: 4,
+      visualInspectionSettledCellCount: 4,
+      requiredEventBoostOperationKey: eventBoostKey,
+      sealedOperationKey: eventBoostKey,
+    };
+
+    expect(transcriptContextReadiness(input)).toBe("ready");
+    expect(transcriptIsSealedForContext(input)).toBe(true);
+  });
+
   it("does not mistake an unsealed empty map for visual evidence work", () => {
     expect(
       transcriptContextReadiness({
         analysisComplete: true,
         broadcastTranscriptStatus: "completed",
         completedChapterCount: 0,
+        visualInspectionPlannedCellCount: 4,
+        visualInspectionSettledCellCount: 0,
         requiredEventBoostOperationKey: eventBoostKey,
         sealedOperationKey: null,
       }),

@@ -6,14 +6,23 @@ import {
   type BroadcastTranscriptResolvedEvidenceReason,
 } from "./broadcastTranscriptResolvedEvidence";
 import { MAX_BROADCAST_CONTEXT_SOURCE_DURATION_MS } from "./broadcastContextProtocol";
+import type {
+  CandidatePassBParticipantEvidenceBasis,
+  CandidatePassBParticipantPresence,
+  CandidatePassBParticipantRole,
+} from "./candidatePassBWorkerProtocol";
+import type { CandidatePassBParticipantId } from "./participantRoster";
 
 export const BROADCAST_TRANSCRIPT_VISUAL_INSPECTION_SCHEMA_VERSION =
-  "1.0.0" as const;
+  "3.0.0" as const;
 export const BROADCAST_TRANSCRIPT_VISUAL_INSPECTION_PLAN_REVISION =
-  "broadcast-transcript-visual-inspection-plan-v1" as const;
+  "broadcast-transcript-visual-inspection-plan-v3" as const;
 export const BROADCAST_TRANSCRIPT_VISUAL_PROVIDER_LEDGER_SCHEMA_VERSION =
-  "1.0.0" as const;
+  "3.0.0" as const;
+export const BROADCAST_TRANSCRIPT_VISUAL_AUDIO_EXTRACTION_REVISION =
+  "broadcast-transcript-visual-audio-pcm16-v1" as const;
 export const BROADCAST_TRANSCRIPT_VISUAL_FRAME_COUNT = 4 as const;
+export const BROADCAST_TRANSCRIPT_VISUAL_MAX_PARTICIPANT_SAMPLE_COUNT = 12;
 export const DEFAULT_BROADCAST_TRANSCRIPT_VISUAL_PROVIDER_BATCH_SIZE = 12;
 export const MAX_BROADCAST_TRANSCRIPT_VISUAL_PROVIDER_BATCH_SIZE = 24;
 export const MAX_BROADCAST_TRANSCRIPT_VISUAL_PROVIDER_LEDGER_BYTES =
@@ -30,6 +39,14 @@ export type BroadcastTranscriptVisualFrameTimestamps = readonly [
   number,
 ];
 
+export type BroadcastTranscriptVisualInspectionPurpose =
+  | "transcript-abstention"
+  | "participant-grounding";
+
+export type BroadcastTranscriptVisualInspectionReason =
+  | BroadcastTranscriptResolvedEvidenceReason
+  | "dialogue-sample";
+
 export interface BroadcastTranscriptVisualInspectionSourceFence {
   readonly sourceFingerprint: string;
   readonly sourceDurationMs: number;
@@ -43,7 +60,8 @@ export interface BroadcastTranscriptVisualInspectionCell {
   readonly transcriptChunkId: string;
   readonly sourceStartMs: number;
   readonly sourceEndMs: number;
-  readonly transcriptAbstentionReason: BroadcastTranscriptResolvedEvidenceReason;
+  readonly inspectionPurpose: BroadcastTranscriptVisualInspectionPurpose;
+  readonly transcriptAbstentionReason: BroadcastTranscriptVisualInspectionReason;
   readonly frameTimestampsMs: BroadcastTranscriptVisualFrameTimestamps;
   readonly frameBundleKey: string;
 }
@@ -107,6 +125,21 @@ export interface BroadcastTranscriptVisualPreparedFrameReceipt {
     string,
     string,
   ];
+  /**
+   * `no-audio` is the only state allowed to omit audio. A `no-speech` cell
+   * still has decoded audio evidence: VAD found no usable speech, but the
+   * multimodal provider must receive the exact source-fenced audio bytes.
+   */
+  readonly audioEvidence: BroadcastTranscriptVisualPreparedAudioEvidence | null;
+}
+
+export interface BroadcastTranscriptVisualPreparedAudioEvidence {
+  readonly sourceStartMs: number;
+  readonly sourceEndMs: number;
+  readonly codec: string;
+  readonly extractionRevision:
+    typeof BROADCAST_TRANSCRIPT_VISUAL_AUDIO_EXTRACTION_REVISION;
+  readonly contentFingerprint: string;
 }
 
 export interface BroadcastTranscriptVisualProviderTask
@@ -118,6 +151,7 @@ export interface BroadcastTranscriptVisualProviderTask
     string,
     string,
   ];
+  readonly audioEvidence: BroadcastTranscriptVisualPreparedAudioEvidence | null;
 }
 
 export interface BroadcastTranscriptVisualProviderBatch {
@@ -153,6 +187,24 @@ export type BroadcastTranscriptVisualProviderFailureReason =
   | "operation-interrupted"
   | "timeout-after-dispatch";
 
+export interface BroadcastTranscriptVisualParticipantAttribution {
+  readonly participantId: CandidatePassBParticipantId;
+  readonly displayName: string;
+  readonly role: CandidatePassBParticipantRole;
+  readonly evidenceBasis: CandidatePassBParticipantEvidenceBasis;
+  readonly evidenceKo: string;
+  readonly confidence: number;
+  readonly relativeTimestampMs: number;
+  /** Zero-based indices into the same verified four-frame provider bundle. */
+  readonly observedFrameIndices: readonly number[];
+}
+
+export interface BroadcastTranscriptVisualParticipantOutcome {
+  readonly presence: CandidatePassBParticipantPresence;
+  readonly summaryKo: string;
+  readonly participants: readonly BroadcastTranscriptVisualParticipantAttribution[];
+}
+
 export interface BroadcastTranscriptVisualProviderSettlement {
   readonly schemaVersion:
     typeof BROADCAST_TRANSCRIPT_VISUAL_INSPECTION_SCHEMA_VERSION;
@@ -163,7 +215,7 @@ export interface BroadcastTranscriptVisualProviderSettlement {
   readonly sourceStartMs: number;
   readonly sourceEndMs: number;
   readonly frameBundleKey: string;
-  readonly transcriptAbstentionReason: BroadcastTranscriptResolvedEvidenceReason;
+  readonly transcriptAbstentionReason: BroadcastTranscriptVisualInspectionReason;
   readonly providerModelRevision: string;
   readonly operationId: string;
   readonly attemptOrdinal: number;
@@ -180,6 +232,9 @@ export interface BroadcastTranscriptVisualProviderSettlement {
     string,
     string,
   ];
+  readonly requestedAudioEvidence:
+    | BroadcastTranscriptVisualPreparedAudioEvidence
+    | null;
   readonly outcome: BroadcastTranscriptVisualProviderOutcome;
   readonly reviewedFrameTimestampsMs:
     | BroadcastTranscriptVisualFrameTimestamps
@@ -188,6 +243,7 @@ export interface BroadcastTranscriptVisualProviderSettlement {
   readonly providerResponseFingerprint: string | null;
   readonly editorialFinding: BroadcastTranscriptVisualEditorialFinding | null;
   readonly summaryKo: string | null;
+  readonly participantOutcome: BroadcastTranscriptVisualParticipantOutcome | null;
   readonly failureReason: BroadcastTranscriptVisualProviderFailureReason | null;
 }
 
@@ -209,12 +265,14 @@ export type CreateBroadcastTranscriptVisualProviderSettlementInput =
       >;
       readonly summaryKo: string;
       readonly providerResponseFingerprint: string;
+      readonly participantOutcome: BroadcastTranscriptVisualParticipantOutcome;
     })
   | (CreateBroadcastTranscriptVisualProviderSettlementBase & {
       readonly outcome: "excluded-music-only";
       readonly editorialFinding: "music-or-mv-only";
       readonly summaryKo: string;
       readonly providerResponseFingerprint: string;
+      readonly participantOutcome: BroadcastTranscriptVisualParticipantOutcome;
     })
   | (CreateBroadcastTranscriptVisualProviderSettlementBase & {
       readonly outcome: "retryable" | "outcome-unknown";
@@ -404,6 +462,44 @@ function assertFrameTimestamps(
   }
 }
 
+function assertPreparedAudioEvidenceForCell(
+  value: unknown,
+  cell: BroadcastTranscriptVisualInspectionCell,
+  code: "INVALID_FRAME_RECEIPT" | "INVALID_PROVIDER_SETTLEMENT",
+): asserts value is BroadcastTranscriptVisualPreparedAudioEvidence | null {
+  if (cell.transcriptAbstentionReason === "no-audio") {
+    if (value !== null) {
+      throw new BroadcastTranscriptVisualInspectionContractError(
+        code,
+        "A no-audio visual inspection cell must carry explicit null audio evidence.",
+      );
+    }
+    return;
+  }
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, [
+      "sourceStartMs",
+      "sourceEndMs",
+      "codec",
+      "extractionRevision",
+      "contentFingerprint",
+    ]) ||
+    value.sourceStartMs !== cell.sourceStartMs ||
+    value.sourceEndMs !== cell.sourceEndMs ||
+    !boundedString(value.codec, 256) ||
+    value.extractionRevision !==
+      BROADCAST_TRANSCRIPT_VISUAL_AUDIO_EXTRACTION_REVISION ||
+    typeof value.contentFingerprint !== "string" ||
+    !CONTENT_FINGERPRINT_PATTERN.test(value.contentFingerprint)
+  ) {
+    throw new BroadcastTranscriptVisualInspectionContractError(
+      code,
+      "A visual inspection cell with source audio requires exact-range audio evidence with the current extraction revision.",
+    );
+  }
+}
+
 export function assertBroadcastTranscriptVisualInspectionPlan(
   value: unknown,
 ): asserts value is BroadcastTranscriptVisualInspectionPlan {
@@ -460,6 +556,7 @@ export function assertBroadcastTranscriptVisualInspectionPlan(
         "transcriptChunkId",
         "sourceStartMs",
         "sourceEndMs",
+        "inspectionPurpose",
         "transcriptAbstentionReason",
         "frameTimestampsMs",
         "frameBundleKey",
@@ -475,8 +572,13 @@ export function assertBroadcastTranscriptVisualInspectionPlan(
       (rawCell.sourceEndMs as number) <= (rawCell.sourceStartMs as number) ||
       (rawCell.sourceEndMs as number) > sourceFence.sourceDurationMs ||
       (rawCell.sourceStartMs as number) < previousEndMs ||
-      (rawCell.transcriptAbstentionReason !== "no-audio" &&
-        rawCell.transcriptAbstentionReason !== "no-speech") ||
+      !(
+        (rawCell.inspectionPurpose === "transcript-abstention" &&
+          (rawCell.transcriptAbstentionReason === "no-audio" ||
+            rawCell.transcriptAbstentionReason === "no-speech")) ||
+        (rawCell.inspectionPurpose === "participant-grounding" &&
+          rawCell.transcriptAbstentionReason === "dialogue-sample")
+      ) ||
       !boundedString(rawCell.frameBundleKey)
     ) {
       throw new BroadcastTranscriptVisualInspectionContractError(
@@ -532,26 +634,68 @@ export function createBroadcastTranscriptVisualInspectionPlan(
     transcriptModelRevision: evidenceCheckpoint.modelRevision,
     resolvedEvidenceFingerprint,
   };
-  const cells = evidenceCheckpoint.resolvedEvidence.map((entry) => {
-    const frameTimestampsMs = exactFrameTimestamps(
-      entry.sourceStartMs,
-      entry.sourceEndMs,
-    );
-    return {
-      cellId: `visual:${entry.chunkId}`,
+  const resolvedChunkIds = new Set(
+    evidenceCheckpoint.resolvedEvidence.map(({ chunkId }) => chunkId),
+  );
+  const dialogueCells = evidenceCheckpoint.plannedCells.filter(
+    (cell) =>
+      !resolvedChunkIds.has(cell.chunkId) &&
+      cell.sourceEndMs - cell.sourceStartMs >=
+        BROADCAST_TRANSCRIPT_VISUAL_FRAME_COUNT,
+  );
+  const participantSampleCount = Math.min(
+    BROADCAST_TRANSCRIPT_VISUAL_MAX_PARTICIPANT_SAMPLE_COUNT,
+    dialogueCells.length,
+  );
+  const participantSampleCells = Array.from(
+    { length: participantSampleCount },
+    (_, ordinal) =>
+      dialogueCells[
+        Math.floor(
+          ((ordinal * 2 + 1) * dialogueCells.length) /
+            (participantSampleCount * 2),
+        )
+      ]!,
+  );
+  const cells = [
+    ...evidenceCheckpoint.resolvedEvidence.map((entry) => ({
       transcriptChunkId: entry.chunkId,
       sourceStartMs: entry.sourceStartMs,
       sourceEndMs: entry.sourceEndMs,
+      inspectionPurpose: "transcript-abstention" as const,
       transcriptAbstentionReason: entry.reason,
-      frameTimestampsMs,
-      frameBundleKey: exactFrameBundleKey({
-        sourceFingerprint: evidenceCheckpoint.sourceFingerprint,
-        sourceStartMs: entry.sourceStartMs,
-        sourceEndMs: entry.sourceEndMs,
+    })),
+    ...participantSampleCells.map((entry) => ({
+      transcriptChunkId: entry.chunkId,
+      sourceStartMs: entry.sourceStartMs,
+      sourceEndMs: entry.sourceEndMs,
+      inspectionPurpose: "participant-grounding" as const,
+      transcriptAbstentionReason: "dialogue-sample" as const,
+    })),
+  ]
+    .sort(
+      (left, right) =>
+        left.sourceStartMs - right.sourceStartMs ||
+        left.sourceEndMs - right.sourceEndMs ||
+        left.transcriptChunkId.localeCompare(right.transcriptChunkId),
+    )
+    .map((entry) => {
+      const frameTimestampsMs = exactFrameTimestamps(
+        entry.sourceStartMs,
+        entry.sourceEndMs,
+      );
+      return {
+        ...entry,
+        cellId: `visual:${entry.transcriptChunkId}`,
         frameTimestampsMs,
-      }),
-    };
-  });
+        frameBundleKey: exactFrameBundleKey({
+          sourceFingerprint: evidenceCheckpoint.sourceFingerprint,
+          sourceStartMs: entry.sourceStartMs,
+          sourceEndMs: entry.sourceEndMs,
+          frameTimestampsMs,
+        }),
+      };
+    });
   const plan: BroadcastTranscriptVisualInspectionPlan = {
     schemaVersion: BROADCAST_TRANSCRIPT_VISUAL_INSPECTION_SCHEMA_VERSION,
     planRevision: BROADCAST_TRANSCRIPT_VISUAL_INSPECTION_PLAN_REVISION,
@@ -762,6 +906,7 @@ function assertFramePreparationQueueForPlan(
       task.transcriptChunkId !== cell.transcriptChunkId ||
       task.sourceStartMs !== cell.sourceStartMs ||
       task.sourceEndMs !== cell.sourceEndMs ||
+      task.inspectionPurpose !== cell.inspectionPurpose ||
       task.transcriptAbstentionReason !== cell.transcriptAbstentionReason ||
       task.frameBundleKey !== cell.frameBundleKey ||
       JSON.stringify(task.frameTimestampsMs) !==
@@ -823,6 +968,19 @@ function assertPreparedFrameReceiptForPlan(
     "INVALID_FRAME_RECEIPT",
   );
   if (
+    !isRecord(receipt) ||
+    !hasExactKeys(receipt, [
+      "schemaVersion",
+      "planFingerprint",
+      "sourceFingerprint",
+      "cellId",
+      "sourceStartMs",
+      "sourceEndMs",
+      "frameBundleKey",
+      "frameTimestampsMs",
+      "frameContentFingerprints",
+      "audioEvidence",
+    ]) ||
     receipt.schemaVersion !==
       BROADCAST_TRANSCRIPT_VISUAL_INSPECTION_SCHEMA_VERSION ||
     receipt.planFingerprint !== plan.planFingerprint ||
@@ -846,6 +1004,11 @@ function assertPreparedFrameReceiptForPlan(
       "A prepared frame receipt does not match its exact source and frame plan.",
     );
   }
+  assertPreparedAudioEvidenceForCell(
+    receipt.audioEvidence,
+    cell,
+    "INVALID_FRAME_RECEIPT",
+  );
 }
 
 export function createBroadcastTranscriptVisualPreparedFrameReceipt(input: {
@@ -857,6 +1020,7 @@ export function createBroadcastTranscriptVisualPreparedFrameReceipt(input: {
     string,
     string,
   ];
+  readonly audioEvidence: BroadcastTranscriptVisualPreparedAudioEvidence | null;
 }): BroadcastTranscriptVisualPreparedFrameReceipt {
   assertBroadcastTranscriptVisualInspectionPlan(input.plan);
   const cell = cellFor(input.plan, input.cellId);
@@ -870,6 +1034,8 @@ export function createBroadcastTranscriptVisualPreparedFrameReceipt(input: {
     frameBundleKey: cell.frameBundleKey,
     frameTimestampsMs: cell.frameTimestampsMs,
     frameContentFingerprints: input.frameContentFingerprints,
+    audioEvidence:
+      input.audioEvidence === null ? null : { ...input.audioEvidence },
   };
   assertPreparedFrameReceiptForPlan(receipt, input.plan);
   return receipt;
@@ -929,6 +1095,8 @@ export function createBroadcastTranscriptVisualProviderBatchQueue(input: {
       ...cell,
       priorityOrdinal: queued.priorityOrdinal,
       frameContentFingerprints: receipt.frameContentFingerprints,
+      audioEvidence:
+        receipt.audioEvidence === null ? null : { ...receipt.audioEvidence },
     });
   }
   const batches = Array.from(
@@ -961,12 +1129,123 @@ function validProviderFailureForOutcome(
     : ["operation-interrupted", "timeout-after-dispatch"].includes(reason);
 }
 
+const VISUAL_PARTICIPANT_IDS = new Set<CandidatePassBParticipantId>([
+  "sera-professor",
+  "amoretto",
+  "eureka",
+  "sena-arbel",
+  "torori-coco",
+  "mangjing",
+]);
+
+function validVisualParticipantOutcome(
+  value: unknown,
+  cellDurationMs: number,
+): value is BroadcastTranscriptVisualParticipantOutcome {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, ["presence", "summaryKo", "participants"]) ||
+    ![
+      "identified",
+      "present-unidentified",
+      "none-present",
+      "insufficient-evidence",
+    ].includes(String(value.presence)) ||
+    !boundedString(value.summaryKo, 2_000) ||
+    !Array.isArray(value.participants) ||
+    value.participants.length > VISUAL_PARTICIPANT_IDS.size
+  ) {
+    return false;
+  }
+  const participantIds = new Set<CandidatePassBParticipantId>();
+  for (const participant of value.participants) {
+    if (
+      !isRecord(participant) ||
+      !hasExactKeys(participant, [
+        "participantId",
+        "displayName",
+        "role",
+        "evidenceBasis",
+        "evidenceKo",
+        "confidence",
+        "relativeTimestampMs",
+        "observedFrameIndices",
+      ]) ||
+      !VISUAL_PARTICIPANT_IDS.has(
+        participant.participantId as CandidatePassBParticipantId,
+      ) ||
+      participantIds.has(
+        participant.participantId as CandidatePassBParticipantId,
+      ) ||
+      !boundedString(participant.displayName, 256) ||
+      !["streamer", "guest", "unknown"].includes(String(participant.role)) ||
+      ![
+        "on-screen-name",
+        "spoken-name",
+        "provided-cast-reference",
+      ].includes(String(participant.evidenceBasis)) ||
+      !boundedString(participant.evidenceKo, 1_000) ||
+      typeof participant.confidence !== "number" ||
+      !Number.isFinite(participant.confidence) ||
+      participant.confidence < 0 ||
+      participant.confidence > 1 ||
+      typeof participant.relativeTimestampMs !== "number" ||
+      !Number.isSafeInteger(participant.relativeTimestampMs) ||
+      participant.relativeTimestampMs < 0 ||
+      participant.relativeTimestampMs > cellDurationMs ||
+      !Array.isArray(participant.observedFrameIndices) ||
+      participant.observedFrameIndices.some(
+        (index) =>
+          !Number.isSafeInteger(index) ||
+          index < 0 ||
+          index >= BROADCAST_TRANSCRIPT_VISUAL_FRAME_COUNT,
+      ) ||
+      new Set(participant.observedFrameIndices).size !==
+        participant.observedFrameIndices.length
+    ) {
+      return false;
+    }
+    participantIds.add(
+      participant.participantId as CandidatePassBParticipantId,
+    );
+  }
+  return value.presence === "identified"
+    ? value.participants.length > 0
+    : value.participants.length === 0;
+}
+
 function assertProviderSettlementForPlan(
   settlement: BroadcastTranscriptVisualProviderSettlement,
   plan: BroadcastTranscriptVisualInspectionPlan,
 ): void {
   const cell = cellFor(plan, settlement.cellId, "INVALID_PROVIDER_SETTLEMENT");
   if (
+    !isRecord(settlement) ||
+    !hasExactKeys(settlement, [
+      "schemaVersion",
+      "planFingerprint",
+      "sourceFingerprint",
+      "transcriptInputSignature",
+      "cellId",
+      "sourceStartMs",
+      "sourceEndMs",
+      "frameBundleKey",
+      "transcriptAbstentionReason",
+      "providerModelRevision",
+      "operationId",
+      "attemptOrdinal",
+      "requestedInspectionMode",
+      "requestedFrameContentFingerprints",
+      "requestedAudioEvidence",
+      "outcome",
+      "reviewedFrameTimestampsMs",
+      "transcriptAbstentionReviewed",
+      "providerResponseFingerprint",
+      "editorialFinding",
+      "summaryKo",
+      "participantOutcome",
+      "failureReason",
+    ]) ||
     settlement.schemaVersion !==
       BROADCAST_TRANSCRIPT_VISUAL_INSPECTION_SCHEMA_VERSION ||
     settlement.planFingerprint !== plan.planFingerprint ||
@@ -982,7 +1261,6 @@ function assertProviderSettlementForPlan(
     !boundedString(settlement.operationId, 256) ||
     !Number.isSafeInteger(settlement.attemptOrdinal) ||
     settlement.attemptOrdinal < 0 ||
-    settlement.attemptOrdinal > 1_000_000 ||
     settlement.requestedInspectionMode !==
       "multimodal-audio-evidence-and-four-video-frames" ||
     !Array.isArray(settlement.requestedFrameContentFingerprints) ||
@@ -1005,6 +1283,11 @@ function assertProviderSettlementForPlan(
       "A provider settlement does not match its exact visual inspection plan.",
     );
   }
+  assertPreparedAudioEvidenceForCell(
+    settlement.requestedAudioEvidence,
+    cell,
+    "INVALID_PROVIDER_SETTLEMENT",
+  );
 
   const terminal =
     settlement.outcome === "completed" ||
@@ -1024,6 +1307,10 @@ function assertProviderSettlementForPlan(
         settlement.providerResponseFingerprint,
       ) ||
       !boundedString(settlement.summaryKo, 4_000) ||
+      !validVisualParticipantOutcome(
+        settlement.participantOutcome,
+        cell.sourceEndMs - cell.sourceStartMs,
+      ) ||
       settlement.failureReason !== null ||
       (settlement.outcome === "excluded-music-only"
         ? settlement.editorialFinding !== "music-or-mv-only"
@@ -1046,6 +1333,7 @@ function assertProviderSettlementForPlan(
     settlement.providerResponseFingerprint !== null ||
     settlement.editorialFinding !== null ||
     settlement.summaryKo !== null ||
+    settlement.participantOutcome !== null ||
     settlement.failureReason === null ||
     !validProviderFailureForOutcome(
       settlement.outcome,
@@ -1092,6 +1380,10 @@ export function createBroadcastTranscriptVisualProviderSettlement(
       "multimodal-audio-evidence-and-four-video-frames",
     requestedFrameContentFingerprints:
       input.preparedFrameReceipt.frameContentFingerprints,
+    requestedAudioEvidence:
+      input.preparedFrameReceipt.audioEvidence === null
+        ? null
+        : { ...input.preparedFrameReceipt.audioEvidence },
     outcome: input.outcome,
     reviewedFrameTimestampsMs: terminal ? cell.frameTimestampsMs : [],
     transcriptAbstentionReviewed: terminal,
@@ -1100,6 +1392,18 @@ export function createBroadcastTranscriptVisualProviderSettlement(
       : null,
     editorialFinding: terminal ? input.editorialFinding : null,
     summaryKo: terminal ? input.summaryKo : null,
+    participantOutcome: "participantOutcome" in input
+      ? {
+          presence: input.participantOutcome.presence,
+          summaryKo: input.participantOutcome.summaryKo,
+          participants: input.participantOutcome.participants.map(
+            (participant) => ({
+              ...participant,
+              observedFrameIndices: [...participant.observedFrameIndices],
+            }),
+          ),
+        }
+      : null,
     failureReason: terminal ? null : input.failureReason,
   };
   assertProviderSettlementForPlan(settlement, input.plan);
@@ -1348,11 +1652,13 @@ export function inspectBroadcastTranscriptVisualInspectionPublication(input: {
     if (
       preparedReceipt === undefined ||
       JSON.stringify(settlement.requestedFrameContentFingerprints) !==
-        JSON.stringify(preparedReceipt.frameContentFingerprints)
+        JSON.stringify(preparedReceipt.frameContentFingerprints) ||
+      JSON.stringify(settlement.requestedAudioEvidence) !==
+        JSON.stringify(preparedReceipt.audioEvidence)
     ) {
       throw new BroadcastTranscriptVisualInspectionContractError(
         "STALE_SETTLEMENT",
-        "The visual provider settlement was produced from a different prepared frame bundle.",
+        "The visual provider settlement was produced from different prepared media evidence.",
       );
     }
     switch (settlement.outcome) {

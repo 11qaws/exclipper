@@ -4,7 +4,10 @@ import type {
   AnalysisTerminalRecord,
   FinalAnalysisResultRecord,
 } from "./analysisResultStore";
-import { durableCoverageDisposition } from "./durableAnalysisPayload";
+import {
+  DURABLE_ANALYSIS_PERSISTENCE_SCHEMA_VERSION,
+  durableCoverageDisposition,
+} from "./durableAnalysisPayload";
 import type { CandidatePassBInsightsRecord } from "./candidatePassBInsightStore";
 
 export interface RecoverableAnalysisResult {
@@ -28,6 +31,7 @@ function isCompletedTerminal(
   terminal: AnalysisTerminalRecord,
 ): terminal is RecoverableAnalysisResult["terminal"] {
   return (
+    terminal.schemaVersion === DURABLE_ANALYSIS_PERSISTENCE_SCHEMA_VERSION &&
     terminal.resultRecordKind === "finalResult" &&
     (terminal.outcome === "completed" || terminal.outcome === "completedWithGaps")
   );

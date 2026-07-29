@@ -1,9 +1,6 @@
 import type { BroadcastContextChapterInput } from "./broadcastContextProtocol";
 import type { BroadcastContextTranscriptionChunk } from "./broadcastContextSamplingPlan";
 import {
-  broadcastResolvedAbstentionReasonForChapter,
-} from "./broadcastTranscriptChapters";
-import {
   createBroadcastTranscriptResolvedEvidenceCheckpoint,
   parseBroadcastTranscriptResolvedEvidenceCheckpointJson,
   recordBroadcastTranscriptResolvedEvidence,
@@ -40,8 +37,8 @@ function exactPlanJson(
 
 /**
  * Rebinds durable negative transcript evidence to the current operation while
- * keeping it outside the dialogue map. It also performs the one-way migration
- * from ExClipper's own legacy placeholder chapters.
+ * keeping it outside the dialogue map. Current checkpoints already store
+ * abstentions in the resolved-evidence ledger, never as dialogue placeholders.
  */
 export function prepareBroadcastTranscriptEvidenceProjection(
   input: PrepareBroadcastTranscriptEvidenceProjectionInput,
@@ -91,35 +88,7 @@ export function prepareBroadcastTranscriptEvidenceProjection(
     }
   }
 
-  const dialogueChapters: BroadcastContextChapterInput[] = [];
-  for (const chapter of input.storedChapters) {
-    const reason = broadcastResolvedAbstentionReasonForChapter(chapter);
-    if (reason === null) {
-      dialogueChapters.push(chapter);
-      continue;
-    }
-    const planned = plannedCells.find(
-      (cell) =>
-        cell.sourceStartMs === chapter.startMs &&
-        cell.sourceEndMs === chapter.endMs,
-    );
-    if (planned === undefined) {
-      throw new RangeError(
-        "A legacy transcript abstention does not match the current source plan.",
-      );
-    }
-    if (reason === "no-audio") {
-      checkpoint = recordBroadcastTranscriptResolvedEvidence(
-        checkpoint,
-        planned.chunkId,
-        "no-audio",
-        null,
-      );
-    }
-    // Legacy no-speech placeholders have no exact VAD receipt. They remain
-    // uncovered so the current pipeline must re-establish evidence instead of
-    // silently reactivating an unproven dialogue exclusion.
-  }
+  const dialogueChapters = [...input.storedChapters];
 
   return {
     dialogueChapters,

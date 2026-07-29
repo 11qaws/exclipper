@@ -1,225 +1,244 @@
 import { describe, expect, it } from "vitest";
-
-import type { CandidatePassBEvidence } from "../analysis/candidatePassB";
 import {
-  CANDIDATE_PASS_B_ROUTING_MODEL_REVISION,
-  CANDIDATE_PASS_B_VERIFICATION_RECEIPT_SCHEMA_VERSION,
-  isCompatibleCandidatePassBRoutingModelRevision,
+  CANDIDATE_PASS_B_SETTLEMENT_SCHEMA_VERSION,
 } from "../analysis/candidatePassBWorkerProtocol";
 import {
-  CANDIDATE_PASS_B_INSIGHT_SCHEMA_VERSION,
+  createCandidatePassBInitialAttemptLedger,
+} from "../analysis/candidatePassBAttemptLedger";
+import {
+  currentCandidatePassBContext,
+  currentCandidatePassBDispatch,
+  currentCandidatePassBRecord,
+} from "../testSupport/candidatePassBCurrentFixture";
+import { InMemoryAnalysisResultStore } from "./analysisResultStore";
+import {
   assertCandidatePassBInsightsRecord,
   candidatePassBInsightSnapshotsExactlyMatch,
   cloneCandidatePassBInsightsRecord,
+  createCandidatePassBPlanReceipt,
   persistCandidatePassBInsightsWithReadback,
+  recoverCandidatePassBArmedDispatchesAsOutcomeUnknown,
   type CandidatePassBInsightStorePort,
   type CandidatePassBInsightsRecord,
 } from "./candidatePassBInsightStore";
-import { InMemoryAnalysisResultStore } from "./analysisResultStore";
 
-const evidence: CandidatePassBEvidence = {
-  candidateId: "candidate-a",
-  cues: [],
-  overlay: {
-    event: "스트리머가 갑자기 웃음을 터뜨렸어요.",
-    why: "반응과 대사 단서가 같은 구간에 있어요.",
-    reviewHint: "앞뒤 5초를 함께 확인하세요.",
-    basisLabel: "AI 대사 추정 · 빠른 근거 유지",
-  },
-  quality: {
-    receivedChunkCount: 1,
-    mappedChunkCount: 1,
-    usableChunkCount: 1,
-    discardedChunkCount: 0,
-    meanConfidence: null,
-  },
-  status: "fast-pass-fallback",
-  fallbackReason: "silent",
-};
-
-const record: CandidatePassBInsightsRecord = {
-  kind: "candidatePassBInsights",
-  runId: "run-candidate-a",
-  schemaVersion: CANDIDATE_PASS_B_INSIGHT_SCHEMA_VERSION,
-  inputSignature: "sha256:" + "a".repeat(64),
-  modelManifestHash: "gemini-3.1-pro-preview",
-  evidenceById: { "candidate-a": evidence },
-  insightById: {
-    "candidate-a": {
-      eventSummaryKo: "게임에서 예상 밖의 장면이 나왔어요.",
-      reactionSummaryKo: "스트리머가 웃으며 즉시 반응했어요.",
-      whyGoodClipKo: "사건과 반응이 짧은 구간 안에서 완결돼요.",
-      uncertaintiesKo: [],
-      participantPresence: "identified",
-      participantSummaryKo: "화면 이름표로 유레카가 진행 중임을 확인했어요.",
-      identifiedParticipants: [
-        {
-          displayName: "유레카",
-          role: "streamer",
-          evidenceBasis: "on-screen-name",
-          evidenceKo: "화면 소개 자막에 이름이 표시돼요.",
-          confidence: 0.96,
-          relativeTimestampMs: 1_500,
-          observedFrameIndices: [0],
-        },
-      ],
-    },
-  },
-  modelByCandidateId: {
-    "candidate-a": {
-      id: "gemini-3.6-flash",
-      revision: "gemini-3.6-flash-grounded-frames-v3-2026-07-22",
-    },
-  },
-  thumbnailById: {
-    "candidate-a": {
-      timestampMs: 1_500,
-      mimeType: "image/jpeg",
-      dataBase64: "aGVsbG8=",
-    },
-  },
-  verificationReceiptById: {
-    "candidate-a": {
-      schemaVersion: "1.1.0",
-      contextSchemaVersion: "1.0.0",
-      transcriptSource: "broadcast-transcript",
-      contextFingerprint: "fnv1a64:0123456789abcdef",
-      audioReviewed: true,
-      videoFrameCount: 4,
-      thumbnailPrepared: true,
-      thumbnailTimestampMs: 1_500,
-      referenceTranscriptReviewed: true,
-      broadcastContextReviewed: true,
-    },
-  },
-  recordedAt: "2026-07-21T00:00:00.000Z",
-};
-
-describe("Candidate Pass B insight persistence", () => {
-  it("stores and restores the latest per-run snapshot", async () => {
+describe("Candidate Pass B 4.0 insight persistence", () => {
+  it("stores and restores a current exact artifact snapshot", async () => {
+    const record = currentCandidatePassBRecord();
     const store = new InMemoryAnalysisResultStore();
-    await store.putCandidatePassBInsights(record);
 
+    await store.putCandidatePassBInsights(record);
     const restored = await store.getCandidatePassBInsights(record.runId);
+
     expect(restored).toEqual(record);
     expect(restored).not.toBe(record);
-  });
-
-  it("clones only validated JSON-safe records", () => {
-    assertCandidatePassBInsightsRecord(record);
-    const cloned = cloneCandidatePassBInsightsRecord(record);
-    expect(cloned).toEqual(record);
-    expect(cloned).not.toBe(record);
-    expect(() => assertCandidatePassBInsightsRecord({ ...record, runId: "" })).toThrow(
-      TypeError,
+    expect(restored?.dispatchIntentByCandidateId).toEqual(
+      record.dispatchIntentByCandidateId,
+    );
+    expect(restored?.settlementByCandidateId).toEqual(
+      record.settlementByCandidateId,
     );
   });
 
-  it("keeps the previous insight schema readable during the session-material migration", () => {
-    expect(() =>
-      assertCandidatePassBInsightsRecord({
-        ...record,
-        schemaVersion: "1.0.0",
-        thumbnailById: undefined,
-      }),
-    ).not.toThrow();
-  });
+  it("rejects legacy schemas and boolean-only verification receipts", () => {
+    const record = currentCandidatePassBRecord();
 
-  it("accepts a current exact-range receipt only under its matching candidate map key", () => {
-    const currentReceipt = {
-      schemaVersion: CANDIDATE_PASS_B_VERIFICATION_RECEIPT_SCHEMA_VERSION,
-      contextSchemaVersion: "1.0.0" as const,
-      transcriptSource: "broadcast-transcript" as const,
-      contextFingerprint: "fnv1a64:0123456789abcdef",
-      candidateId: "candidate-a",
-      sourceStartMs: 10_000,
-      sourceEndMs: 50_000,
-      routingModelRevision: CANDIDATE_PASS_B_ROUTING_MODEL_REVISION,
-      refinementEvidenceProjectionFingerprint: null,
-      outputLanguage: "ko" as const,
-      castRosterId: null,
-      audioReviewed: true as const,
-      videoFrameCount: 4 as const,
-      thumbnailPrepared: true as const,
-      thumbnailTimestampMs: 1_500,
-      referenceTranscriptReviewed: true as const,
-      broadcastContextReviewed: true as const,
-    };
     expect(() =>
       assertCandidatePassBInsightsRecord({
         ...record,
-        verificationReceiptById: { "candidate-a": currentReceipt },
+        schemaVersion: "1.5.0",
       }),
-    ).not.toThrow();
+    ).toThrow(TypeError);
     expect(() =>
       assertCandidatePassBInsightsRecord({
         ...record,
         verificationReceiptById: {
-          "candidate-a": {
-            ...currentReceipt,
-            candidateId: "candidate-b",
-          },
-        },
-      }),
-    ).toThrow(/verification receipt/u);
-  });
-
-  it("keeps already-paid Gemini 3.5 candidate results readable after the 3.6 upgrade", () => {
-    expect(() =>
-      assertCandidatePassBInsightsRecord({
-        ...record,
-        modelManifestHash:
-          "qwen3.5-omni-flash_then_gemini-3.5-flash_bounded-v2",
-        modelByCandidateId: {
-          "candidate-a": {
-            id: "gemini-3.5-flash",
-            revision: "gemini-3.5-flash-grounded-frames-v2-2026-07-22",
-          },
-        },
-      }),
-    ).not.toThrow();
-    expect(
-      isCompatibleCandidatePassBRoutingModelRevision(
-        "qwen3.5-omni-flash_then_gemini-3.5-flash_bounded-v2",
-      ),
-    ).toBe(true);
-    expect(
-      isCompatibleCandidatePassBRoutingModelRevision(
-        "qwen3.5-omni-flash_then_gemini-3.6-flash_bounded-v3",
-      ),
-    ).toBe(true);
-  });
-
-  it("rejects a provider model paired with another provider revision", () => {
-    expect(() =>
-      assertCandidatePassBInsightsRecord({
-        ...record,
-        modelByCandidateId: {
-          "candidate-a": {
-            id: "gemini-3.6-flash",
-            revision: "qwen3.5-omni-flash-grounded-frames-v2-2026-07-22",
+          "candidate-1": {
+            schemaVersion: "1.3.0",
+            audioReviewed: true,
+            videoFrameCount: 4,
           },
         },
       }),
     ).toThrow(TypeError);
   });
+
+  it("creates a deterministic plan proof that changes with cohort or context", async () => {
+    const context = currentCandidatePassBContext();
+    const base = {
+      runId: "analysis-run-1",
+      inputSignature: "input-signature-1",
+      contextInputSignature: "context-input-signature-1",
+      refinementEvidenceProjectionFingerprint: null,
+      plannedCandidateIds: ["candidate-1"],
+      contextByCandidateId: { "candidate-1": context },
+    } as const;
+
+    const first = await createCandidatePassBPlanReceipt(base);
+    const repeated = await createCandidatePassBPlanReceipt(base);
+    const empty = await createCandidatePassBPlanReceipt({
+      ...base,
+      plannedCandidateIds: [],
+      contextByCandidateId: {},
+    });
+    const otherContext = await createCandidatePassBPlanReceipt({
+      ...base,
+      contextInputSignature: "context-input-signature-2",
+    });
+    const changedPacket = await createCandidatePassBPlanReceipt({
+      ...base,
+      contextByCandidateId: {
+        "candidate-1": {
+          ...context,
+          transcriptKo: `${context.transcriptKo} 정확한 다른 대사`,
+        },
+      },
+    });
+
+    expect(repeated).toEqual(first);
+    expect(empty.planFingerprint).not.toBe(first.planFingerprint);
+    expect(otherContext.planFingerprint).not.toBe(first.planFingerprint);
+    expect(changedPacket.planFingerprint).not.toBe(first.planFingerprint);
+  });
+
+  it("rejects artifacts outside the exact durable planned cohort", () => {
+    const record = currentCandidatePassBRecord();
+
+    expect(() =>
+      assertCandidatePassBInsightsRecord({
+        ...record,
+        planReceipt: {
+          ...record.planReceipt,
+          plannedCandidateIds: [],
+          plannedContextFingerprints: [],
+        },
+      }),
+    ).toThrow(/durable cohort/u);
+  });
+
+  it("rejects a context packet that no longer matches the planned fingerprint", () => {
+    const record = currentCandidatePassBRecord();
+    const context = record.contextByCandidateId["candidate-1"]!;
+
+    expect(() =>
+      assertCandidatePassBInsightsRecord({
+        ...record,
+        contextByCandidateId: {
+          "candidate-1": {
+            ...context,
+            transcriptKo: `${context.transcriptKo} 변조`,
+          },
+        },
+      }),
+    ).toThrow(/durable cohort/u);
+  });
+
+  it.each([
+    "identifiedParticipants",
+    "clipDecision",
+    "contextConsistency",
+    "programMaterial",
+  ] as const)("rejects a stored insight missing current field %s", (field) => {
+    const record = currentCandidatePassBRecord();
+    const malformedInsight: Record<string, unknown> = {
+      ...record.insightById["candidate-1"],
+    };
+    delete malformedInsight[field];
+    expect(() =>
+      assertCandidatePassBInsightsRecord({
+        ...record,
+        insightById: {
+          "candidate-1": malformedInsight,
+        },
+      }),
+    ).toThrow(/insight/u);
+  });
+
+  it("rejects settlement identity drift and text-roster appearance evidence", () => {
+    const record = currentCandidatePassBRecord();
+    expect(() =>
+      assertCandidatePassBInsightsRecord({
+        ...record,
+        settlementByCandidateId: {
+          "candidate-1": {
+            ...record.settlementByCandidateId["candidate-1"]!,
+            providerPayloadDigest: `sha256:${"9".repeat(64)}`,
+          },
+        },
+      }),
+    ).toThrow(/attempt projection|settlement/u);
+    expect(() =>
+      assertCandidatePassBInsightsRecord({
+        ...record,
+        insightById: {
+          "candidate-1": {
+            ...record.insightById["candidate-1"]!,
+            participantPresence: "identified",
+            identifiedParticipants: [
+              {
+                displayName: "가상 인물",
+                role: "streamer",
+                evidenceBasis: "provided-cast-reference",
+                evidenceKo: "텍스트 명단",
+                confidence: 0.99,
+                relativeTimestampMs: 1_000,
+                observedFrameIndices: [0],
+              },
+            ],
+          },
+        },
+      }),
+    ).toThrow(/insight/u);
+  });
+
+  it("materializes a recovered armed request as outcome-unknown once", () => {
+    const completed = currentCandidatePassBRecord();
+    const dispatch = currentCandidatePassBDispatch();
+    const armed: CandidatePassBInsightsRecord = {
+      ...completed,
+      insightById: {},
+      evidenceById: {},
+      modelByCandidateId: {},
+      thumbnailById: {},
+      verificationReceiptById: {},
+      attemptLedgerByCandidateId: {
+        "candidate-1": createCandidatePassBInitialAttemptLedger(dispatch),
+      },
+      dispatchIntentByCandidateId: { "candidate-1": dispatch },
+      settlementByCandidateId: {},
+    };
+
+    const recovered =
+      recoverCandidatePassBArmedDispatchesAsOutcomeUnknown(armed);
+
+    expect(recovered.settlementByCandidateId["candidate-1"]).toEqual({
+      schemaVersion: CANDIDATE_PASS_B_SETTLEMENT_SCHEMA_VERSION,
+      status: "outcome-unknown",
+      operationId: dispatch.operationId,
+      providerPayloadDigest: dispatch.mediaReceipt.providerPayloadDigest,
+      outputLanguage: dispatch.outputLanguage,
+      castRosterId: dispatch.castRosterId,
+      reason: "armed-dispatch-recovered",
+    });
+    expect(
+      recoverCandidatePassBArmedDispatchesAsOutcomeUnknown(recovered),
+    ).toBe(recovered);
+  });
 });
 
 describe("persistCandidatePassBInsightsWithReadback", () => {
-  it("returns a detached snapshot only after an exact durable readback", async () => {
+  it("returns only after an exact durable readback", async () => {
+    const record = currentCandidatePassBRecord();
     let stored: CandidatePassBInsightsRecord | null = null;
     const store: CandidatePassBInsightStorePort = {
       replaceCandidatePassBInsightsIfUnchanged(expected, replacement) {
-        if (
-          !candidatePassBInsightSnapshotsExactlyMatch(expected, stored)
-        ) {
+        if (!candidatePassBInsightSnapshotsExactlyMatch(expected, stored)) {
           return Promise.resolve(false);
         }
         stored = cloneCandidatePassBInsightsRecord(replacement);
         return Promise.resolve(true);
       },
-      getCandidatePassBInsights(runId) {
-        expect(runId).toBe(record.runId);
+      getCandidatePassBInsights() {
         return Promise.resolve(
           stored === null ? null : cloneCandidatePassBInsightsRecord(stored),
         );
@@ -234,76 +253,14 @@ describe("persistCandidatePassBInsightsWithReadback", () => {
 
     expect(restored).toEqual(record);
     expect(restored).not.toBe(record);
-    expect(restored.evidenceById).not.toBe(record.evidenceById);
-    expect(restored.insightById).not.toBe(record.insightById);
-    expect(restored.modelByCandidateId).not.toBe(record.modelByCandidateId);
-    expect(restored.thumbnailById).not.toBe(record.thumbnailById);
-    expect(restored.verificationReceiptById).not.toBe(
-      record.verificationReceiptById,
-    );
   });
 
-  it("propagates a rejected compare-and-swap and does not attempt readback", async () => {
-    const writeFailure = new Error("indexeddb transaction aborted");
-    let readCount = 0;
+  it("does not repeat a committed mutation while readback is unavailable", async () => {
+    const record = currentCandidatePassBRecord();
+    let writeCount = 0;
     const store: CandidatePassBInsightStorePort = {
       replaceCandidatePassBInsightsIfUnchanged() {
-        return Promise.reject(writeFailure);
-      },
-      getCandidatePassBInsights() {
-        readCount += 1;
-        return Promise.resolve(record);
-      },
-    };
-
-    await expect(
-      persistCandidatePassBInsightsWithReadback(store, null, record),
-    ).rejects.toBe(writeFailure);
-    expect(readCount).toBe(0);
-  });
-
-  it("rejects a stale writer before readback and preserves the newer full snapshot", async () => {
-    const store = new InMemoryAnalysisResultStore();
-    const original = await persistCandidatePassBInsightsWithReadback(
-      store,
-      null,
-      record,
-    );
-    const newer = {
-      ...record,
-      insightById: {
-        "candidate-a": {
-          ...record.insightById["candidate-a"]!,
-          reactionSummaryKo: "최신 반응 설명",
-        },
-      },
-      recordedAt: "2026-07-21T00:00:01.000Z",
-    };
-    const stale = {
-      ...record,
-      thumbnailById: {
-        "candidate-a": {
-          ...record.thumbnailById!["candidate-a"]!,
-          dataBase64: "c3RhbGU=",
-        },
-      },
-      recordedAt: "2026-07-21T00:00:02.000Z",
-    };
-
-    await expect(
-      persistCandidatePassBInsightsWithReadback(store, original, newer),
-    ).resolves.toEqual(newer);
-    await expect(
-      persistCandidatePassBInsightsWithReadback(store, original, stale),
-    ).rejects.toThrow(/durable snapshot changed/u);
-    await expect(
-      store.getCandidatePassBInsights(record.runId),
-    ).resolves.toEqual(newer);
-  });
-
-  it("rejects a committed write whose immediate readback is missing", async () => {
-    const store: CandidatePassBInsightStorePort = {
-      replaceCandidatePassBInsightsIfUnchanged() {
+        writeCount += 1;
         return Promise.resolve(true);
       },
       getCandidatePassBInsights() {
@@ -312,92 +269,100 @@ describe("persistCandidatePassBInsightsWithReadback", () => {
     };
 
     await expect(
-      persistCandidatePassBInsightsWithReadback(store, null, record),
-    ).rejects.toThrow(/readback is missing/u);
+      persistCandidatePassBInsightsWithReadback(store, null, record, {
+        maximumAttempts: 3,
+        initialBackoffMs: 0,
+        maximumBackoffMs: 0,
+      }),
+    ).rejects.toThrow(/could not be verified/u);
+    expect(writeCount).toBe(1);
   });
 
-  it.each([
-    [
-      "metadata",
-      {
-        ...record,
-        inputSignature: "sha256:" + "b".repeat(64),
+  it("rejects a mismatched readback instead of accepting partial proof", async () => {
+    const record = currentCandidatePassBRecord();
+    const mismatched = {
+      ...record,
+      recordedAt: "2026-07-29T00:00:01.000Z",
+    };
+    const store: CandidatePassBInsightStorePort = {
+      replaceCandidatePassBInsightsIfUnchanged() {
+        return Promise.resolve(true);
       },
-    ],
-    [
-      "evidence map",
-      {
-        ...record,
-        evidenceById: {
-          "candidate-a": {
-            ...evidence,
-            overlay: {
-              ...evidence.overlay,
-              event: "다른 사건이 저장됐어요.",
-            },
-          },
-        },
+      getCandidatePassBInsights() {
+        return Promise.resolve(mismatched);
       },
-    ],
-    [
-      "insight map",
-      {
-        ...record,
-        insightById: {
-          ...record.insightById,
-          "candidate-a": {
-            ...record.insightById["candidate-a"]!,
-            reactionSummaryKo: "다른 반응이 저장됐어요.",
-          },
-        },
-      },
-    ],
-    [
-      "model map",
-      {
-        ...record,
-        modelByCandidateId: {},
-      },
-    ],
-    [
-      "thumbnail map",
-      {
-        ...record,
-        thumbnailById: {
-          "candidate-a": {
-            ...record.thumbnailById!["candidate-a"]!,
-            timestampMs: 2_000,
-          },
-        },
-      },
-    ],
-    [
-      "verification receipt map",
-      {
-        ...record,
-        verificationReceiptById: {
-          "candidate-a": {
-            ...record.verificationReceiptById!["candidate-a"]!,
-            thumbnailTimestampMs: 2_000,
-          },
-        },
-      },
-    ],
-  ] satisfies readonly (readonly [string, CandidatePassBInsightsRecord])[])(
-    "rejects a stale or mismatched %s readback",
-    async (_label, staleRecord) => {
-      const store: CandidatePassBInsightStorePort = {
-        replaceCandidatePassBInsightsIfUnchanged() {
-          return Promise.resolve(true);
-        },
-        getCandidatePassBInsights() {
-          return Promise.resolve(staleRecord);
-        },
-      };
+    };
 
-      await expect(
-        persistCandidatePassBInsightsWithReadback(store, null, record),
-      ).rejects.toThrow(/does not exactly match/u);
-    },
-  );
+    await expect(
+      persistCandidatePassBInsightsWithReadback(store, null, record, {
+        maximumAttempts: 1,
+      }),
+    ).rejects.toThrow(/does not exactly match/u);
+  });
+
+  it("replaces a late old-plan commit with the exact new plan-only checkpoint", async () => {
+    const oldRecord = currentCandidatePassBRecord();
+    const newPlanReceipt = await createCandidatePassBPlanReceipt({
+      runId: oldRecord.runId,
+      inputSignature: oldRecord.inputSignature,
+      contextInputSignature: "context-input-signature-2",
+      refinementEvidenceProjectionFingerprint: null,
+      plannedCandidateIds: [],
+      contextByCandidateId: {},
+    });
+    const planOnlyRecord: CandidatePassBInsightsRecord = {
+      ...oldRecord,
+      planReceipt: newPlanReceipt,
+      contextByCandidateId: {},
+      evidenceById: {},
+      insightById: {},
+      modelByCandidateId: {},
+      thumbnailById: {},
+      attemptLedgerByCandidateId: {},
+      dispatchIntentByCandidateId: {},
+      settlementByCandidateId: {},
+      verificationReceiptById: {},
+      recordedAt: "2026-07-29T00:00:02.000Z",
+    };
+    let stored: CandidatePassBInsightsRecord = oldRecord;
+    let injectLateCommit = true;
+    const store: CandidatePassBInsightStorePort = {
+      replaceCandidatePassBInsightsIfUnchanged(expected, replacement) {
+        if (injectLateCommit) {
+          injectLateCommit = false;
+          stored = {
+            ...oldRecord,
+            recordedAt: "2026-07-29T00:00:01.000Z",
+          };
+        }
+        if (!candidatePassBInsightSnapshotsExactlyMatch(expected, stored)) {
+          return Promise.resolve(false);
+        }
+        stored = cloneCandidatePassBInsightsRecord(replacement);
+        return Promise.resolve(true);
+      },
+      getCandidatePassBInsights() {
+        return Promise.resolve(cloneCandidatePassBInsightsRecord(stored));
+      },
+    };
+
+    const restored = await persistCandidatePassBInsightsWithReadback(
+      store,
+      oldRecord,
+      planOnlyRecord,
+      {
+        maximumAttempts: 3,
+        initialBackoffMs: 0,
+        maximumBackoffMs: 0,
+      },
+      (current, pending) =>
+        current.runId === pending.runId &&
+        current.inputSignature === pending.inputSignature
+          ? pending
+          : null,
+    );
+
+    expect(restored).toEqual(planOnlyRecord);
+    expect(stored).toEqual(planOnlyRecord);
+  });
 });

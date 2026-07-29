@@ -15,8 +15,10 @@ export interface CandidateVerificationCohortInput<
 /**
  * Selects only candidates whose absence would mean a real verification gap.
  *
- * Context-qualified candidates outside the bounded paid-detail cohort remain
- * in the canonical reservoir, but are not mislabeled as failed API work.
+ * Every whole-context candidate remains in the final verification cohort.
+ * A future batching or quota policy may split detail work into several runs,
+ * but it may never turn an unverified overflow candidate into a valid empty
+ * result.
  */
 export function selectCandidateVerificationCohort<
   TCandidate extends CandidateVerificationIdentity,
@@ -30,9 +32,6 @@ export function selectCandidateVerificationCohort<
     ) {
       return true;
     }
-    return (
-      input.contextScheduledCandidateIds.has(candidate.id) &&
-      input.contextByCandidateId[candidate.id] === undefined
-    );
+    return input.contextScheduledCandidateIds.has(candidate.id);
   });
 }

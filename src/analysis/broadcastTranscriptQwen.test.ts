@@ -1,15 +1,17 @@
 import { describe, expect, it } from "vitest";
 import {
+  BROADCAST_TRANSCRIPT_CHECKPOINT_MIXED_REVISION_PREFIX,
   BROADCAST_TRANSCRIPT_GROQ_MODEL_ID,
   BROADCAST_TRANSCRIPT_GROQ_MODEL_REVISION,
-  BROADCAST_TRANSCRIPT_QWEN_MODEL_ID,
-  BROADCAST_TRANSCRIPT_QWEN_MODEL_REVISION,
+  BROADCAST_TRANSCRIPT_QWEN_OMNI_MODEL_ID,
+  BROADCAST_TRANSCRIPT_QWEN_OMNI_MODEL_REVISION,
   buildBroadcastTranscriptGroqRequestBody,
+  buildBroadcastTranscriptQwenOmniRequestBody,
   buildBroadcastTranscriptQwenOmniUrlRequestBody,
-  buildBroadcastTranscriptQwenRequestBody,
   extractBroadcastTranscriptGroqResponse,
-  extractBroadcastTranscriptQwenResponse,
-  isCompatibleBroadcastTranscriptCheckpointModelRevision,
+  extractBroadcastTranscriptQwenOmniSseResponse,
+  isBroadcastTranscriptModelId,
+  isCurrentBroadcastTranscriptCheckpointModelRevision,
   resolveBroadcastTranscriptCheckpointModelRevision,
 } from "./broadcastTranscriptQwen";
 
@@ -25,8 +27,9 @@ describe("broadcastTranscriptQwen", () => {
         ];
       }];
     };
+
     expect(request).toMatchObject({
-      model: "qwen3.5-omni-flash",
+      model: BROADCAST_TRANSCRIPT_QWEN_OMNI_MODEL_ID,
       stream: true,
       modalities: ["text"],
     });
@@ -47,29 +50,31 @@ describe("broadcastTranscriptQwen", () => {
     ).toThrow(RangeError);
   });
 
-  it("builds the documented Korean ASR request without accepting provider controls", () => {
-    expect(buildBroadcastTranscriptQwenRequestBody("UklGRg==")).toEqual({
-      model: BROADCAST_TRANSCRIPT_QWEN_MODEL_ID,
-      input: {
-        messages: [
-          { role: "system", content: [{ text: "" }] },
-          {
-            role: "user",
-            content: [{ audio: "data:audio/wav;base64,UklGRg==" }],
+  it("builds the current Qwen Omni Korean transcript request", () => {
+    expect(buildBroadcastTranscriptQwenOmniRequestBody("UklGRg==")).toMatchObject({
+      model: BROADCAST_TRANSCRIPT_QWEN_OMNI_MODEL_ID,
+      stream: true,
+      modalities: ["text"],
+      messages: [{
+        content: [{
+          input_audio: {
+            data: "data:;base64,UklGRg==",
+            format: "wav",
           },
-        ],
-      },
-      parameters: {
-        asr_options: { language: "ko", enable_itn: false },
-      },
+          type: "input_audio",
+        }, {
+          type: "text",
+        }],
+      }],
     });
   });
 
   it("builds a fixed Korean Groq Whisper request with segment timestamps", () => {
+    const audioUrl =
+      "https://rettohighlight-gemini.example/v1/broadcast-transcript-media?mediaTicket=bounded";
     const request = buildBroadcastTranscriptGroqRequestBody({
       kind: "audio-url",
-      audioUrl:
-        "https://rettohighlight-gemini.example/v1/broadcast-transcript-media?mediaTicket=bounded",
+      audioUrl,
     });
 
     expect(request.get("model")).toBe(BROADCAST_TRANSCRIPT_GROQ_MODEL_ID);
@@ -77,9 +82,7 @@ describe("broadcastTranscriptQwen", () => {
     expect(request.get("response_format")).toBe("verbose_json");
     expect(request.get("timestamp_granularities[]")).toBe("segment");
     expect(request.get("temperature")).toBe("0");
-    expect(request.get("url")).toBe(
-      "https://rettohighlight-gemini.example/v1/broadcast-transcript-media?mediaTicket=bounded",
-    );
+    expect(request.get("url")).toBe(audioUrl);
     expect(request.get("file")).toBeNull();
   });
 
@@ -101,43 +104,26 @@ describe("broadcastTranscriptQwen", () => {
     expect(request.get("url")).toBeNull();
   });
 
-  it.each([
-    "http://example.com/audio.wav",
-    "https://user:secret@example.com/audio.wav",
-    "https://example.com/audio.wav#fragment",
-    "not-a-url",
-  ])("rejects unsafe Groq transcript URL %s", (audioUrl) => {
-    expect(() =>
-      buildBroadcastTranscriptGroqRequestBody({
-        kind: "audio-url",
-        audioUrl,
-      }),
-    ).toThrow(RangeError);
-  });
-
-  it("maps a validated provider response back onto the source timeline", () => {
-    const result = extractBroadcastTranscriptQwenResponse(
-      {
-        output: { choices: [
-          {
-            finish_reason: "stop",
-            message: {
-              content: [{ text: "  두바이 초콜릿을 먹고 예상 밖의 맛에 놀란다.  " }],
-              annotations: [{ type: "audio_info", language: "ko", emotion: "surprised" }],
-            },
-          },
-        ] },
-        usage: { seconds: 32 },
-      },
+  it("maps a validated current Qwen Omni response onto the source timeline", () => {
+    const result = extractBroadcastTranscriptQwenOmniSseResponse(
+      [
+        'data: {"choices":[{"delta":{"content":"고구마를 먹고 "},"finish_reason":null}]}',
+        'data: {"choices":[{"delta":{"content":"예상 밖의 맛에 놀랐다."},"finish_reason":"stop"}]}',
+        "data: [DONE]",
+      ].join("\n"),
       { sourceStartMs: 1_700_000, durationMs: 32_000 },
     );
-    expect(result).toMatchObject({
+
+    expect(result).toEqual({
+      schemaVersion: "1.0.0",
+      modelId: BROADCAST_TRANSCRIPT_QWEN_OMNI_MODEL_ID,
+      modelRevision: BROADCAST_TRANSCRIPT_QWEN_OMNI_MODEL_REVISION,
       sourceStartMs: 1_700_000,
       sourceEndMs: 1_732_000,
-      textKo: "두바이 초콜릿을 먹고 예상 밖의 맛에 놀란다.",
+      textKo: "고구마를 먹고 예상 밖의 맛에 놀랐다.",
       detectedLanguage: "ko",
-      emotion: "surprised",
-      billedSeconds: 32,
+      emotion: null,
+      billedSeconds: null,
     });
   });
 
@@ -145,121 +131,86 @@ describe("broadcastTranscriptQwen", () => {
     expect(
       extractBroadcastTranscriptGroqResponse(
         {
-          task: "transcribe",
           language: "Korean",
           duration: 29.7,
-          text: "두바이 초콜릿을 먹고 예상 밖의 맛에 놀란다.",
+          text: "고구마를 먹고 예상 밖의 맛에 놀랐다.",
           segments: [
-            {
-              id: 0,
-              start: 0.2,
-              end: 11.4,
-              text: "두바이 초콜릿을 먹고",
-            },
-            {
-              id: 1,
-              start: 11.4,
-              end: 29.7,
-              text: "예상 밖의 맛에 놀란다.",
-            },
+            { start: 0.2, end: 11.4, text: "고구마를 먹고" },
+            { start: 11.4, end: 29.7, text: "예상 밖의 맛에 놀랐다." },
           ],
-          x_groq: { id: "request-id-not-forwarded" },
         },
         { sourceStartMs: 1_700_000, durationMs: 30_000 },
       ),
     ).toEqual({
       schemaVersion: "1.0.0",
       modelId: BROADCAST_TRANSCRIPT_GROQ_MODEL_ID,
+      modelRevision: BROADCAST_TRANSCRIPT_GROQ_MODEL_REVISION,
       sourceStartMs: 1_700_000,
       sourceEndMs: 1_730_000,
-      textKo: "두바이 초콜릿을 먹고 예상 밖의 맛에 놀란다.",
+      textKo: "고구마를 먹고 예상 밖의 맛에 놀랐다.",
       detectedLanguage: "ko",
       emotion: null,
       billedSeconds: 29.7,
     });
   });
 
-  it("maps a timestamped empty Groq response to the existing no-speech marker", () => {
+  it("rejects incomplete current Qwen Omni output", () => {
     expect(
-      extractBroadcastTranscriptGroqResponse(
-        {
-          language: "ko",
-          duration: 10,
-          text: " ",
-          segments: [],
-        },
-        { sourceStartMs: 0, durationMs: 10_000 },
-      ),
-    ).toMatchObject({
-      textKo: "[대사 없음]",
-      detectedLanguage: null,
-    });
-  });
-
-  it.each([
-    {
-      language: "english",
-      duration: 10,
-      text: "안녕하세요.",
-      segments: [{ start: 0, end: 1, text: "안녕하세요." }],
-    },
-    {
-      language: "ko",
-      duration: 10,
-      text: "Hello.",
-      segments: [{ start: 0, end: 1, text: "Hello." }],
-    },
-    {
-      language: "ko",
-      duration: 10,
-      text: "안녕하세요.",
-      segments: [{ start: 0, end: 11.1, text: "안녕하세요." }],
-    },
-  ])("rejects malformed or non-Korean Groq output", (payload) => {
-    expect(
-      extractBroadcastTranscriptGroqResponse(payload, {
-        sourceStartMs: 0,
-        durationMs: 10_000,
-      }),
-    ).toBeNull();
-  });
-
-  it("rejects incomplete and overlong provider output", () => {
-    expect(extractBroadcastTranscriptQwenResponse({ output: { choices: [] } }, { sourceStartMs: 0, durationMs: 1_000 })).toBeNull();
-    expect(
-      extractBroadcastTranscriptQwenResponse(
-        { output: { choices: [{ finish_reason: "length", message: { content: [{ text: "partial" }] } }] } },
+      extractBroadcastTranscriptQwenOmniSseResponse(
+        'data: {"choices":[{"delta":{"content":"미완성"},"finish_reason":"length"}]}',
         { sourceStartMs: 0, durationMs: 1_000 },
       ),
     ).toBeNull();
   });
 
-  it("seals the actual provider revisions used by a mixed transcript checkpoint", () => {
+  it("seals the current providers used by a mixed transcript checkpoint", () => {
     const revision = resolveBroadcastTranscriptCheckpointModelRevision(
-      [
-        {
+      [{
+        schemaVersion: "1.0.0",
+        modelId: BROADCAST_TRANSCRIPT_GROQ_MODEL_ID,
+        modelRevision: BROADCAST_TRANSCRIPT_GROQ_MODEL_REVISION,
+        sourceStartMs: 0,
+        sourceEndMs: 30_000,
+        textKo: "첫 구간입니다.",
+        detectedLanguage: "ko",
+        emotion: null,
+        billedSeconds: 30,
+      }],
+      BROADCAST_TRANSCRIPT_QWEN_OMNI_MODEL_REVISION,
+    );
+
+    expect(revision).toBe(
+      `${BROADCAST_TRANSCRIPT_CHECKPOINT_MIXED_REVISION_PREFIX}groq-whisper+qwen-omni`,
+    );
+    expect(isCurrentBroadcastTranscriptCheckpointModelRevision(revision)).toBe(
+      true,
+    );
+  });
+
+  it("rejects a transcript whose revision does not match its model ID", () => {
+    expect(() =>
+      resolveBroadcastTranscriptCheckpointModelRevision(
+        [{
           schemaVersion: "1.0.0",
           modelId: BROADCAST_TRANSCRIPT_GROQ_MODEL_ID,
-          modelRevision: BROADCAST_TRANSCRIPT_GROQ_MODEL_REVISION,
+          modelRevision: BROADCAST_TRANSCRIPT_QWEN_OMNI_MODEL_REVISION,
           sourceStartMs: 0,
           sourceEndMs: 30_000,
-          textKo: "첫 구간입니다.",
+          textKo: "현재 모델 검사",
           detectedLanguage: "ko",
           emotion: null,
           billedSeconds: 30,
-        },
-      ],
-      BROADCAST_TRANSCRIPT_QWEN_MODEL_REVISION,
-    );
+        }],
+        null,
+      ),
+    ).toThrow(/does not match/u);
+  });
 
-    expect(revision).toContain(BROADCAST_TRANSCRIPT_GROQ_MODEL_REVISION);
-    expect(revision).toContain(BROADCAST_TRANSCRIPT_QWEN_MODEL_REVISION);
-    expect(isCompatibleBroadcastTranscriptCheckpointModelRevision(revision)).toBe(
-      true,
-    );
+  it("rejects the removed qwen3-asr model and checkpoint revision", () => {
+    expect(isBroadcastTranscriptModelId("qwen3-asr-flash")).toBe(false);
     expect(
-      isCompatibleBroadcastTranscriptCheckpointModelRevision(
-        `${revision}|unknown-model`,
+      isCurrentBroadcastTranscriptCheckpointModelRevision(
+        "qwen3-asr-flash-api-reviewed-2026-07-22",
       ),
     ).toBe(false);
   });

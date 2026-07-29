@@ -1,4 +1,5 @@
 import {
+  BROADCAST_CONTEXT_SCHEMA_VERSION,
   createBroadcastContextRequest,
   type BroadcastContextRequestInput,
   type BroadcastContextResult,
@@ -6,8 +7,8 @@ import {
 import { compactBroadcastContextChapters } from "./broadcastContextChapterCompaction";
 import { rebaseBroadcastParticipantGrounding } from "./broadcastParticipantGrounding";
 import {
-  extractBroadcastContextDeepseekResponse,
   MAX_BROADCAST_CONTEXT_DEEPSEEK_RESPONSE_BYTES,
+  parseCurrentBroadcastContextResult,
 } from "./broadcastContextDeepseek";
 import {
   AiQuotaClientError,
@@ -111,19 +112,21 @@ export function broadcastContextFailureDisposition(
   }
   if (
     error.code === "OUTCOME_UNKNOWN" ||
-    error.code === "PROXY_INVALID_RESPONSE" ||
     error.proxyErrorCode === "UPSTREAM_OUTCOME_UNKNOWN" ||
     error.proxyErrorCode === "OPERATION_ALREADY_FINISHED"
   ) {
     return "outcome-unknown";
   }
   if (
+    error.code === "PROXY_INVALID_RESPONSE" ||
     error.proxyErrorCode === "QUOTA_COORDINATOR_UNAVAILABLE" ||
     error.status === 429 ||
     [
       "QUOTA_QUEUE_FULL",
+      "RATE_LIMIT_UNAVAILABLE",
+      "REQUEST_BODY_TIMEOUT",
+      "UPSTREAM_INVALID_RESPONSE",
       "UPSTREAM_RATE_LIMITED",
-      "UPSTREAM_REJECTED",
       "UPSTREAM_UNAVAILABLE",
       "UPSTREAM_TIMEOUT",
     ].includes(error.proxyErrorCode ?? "")
@@ -271,12 +274,12 @@ function createBoundedBroadcastContextInput(
       input.participantGrounding,
       {
         sourceDurationMs: input.sourceDurationMs,
-        castRosterId: input.castRosterId ?? null,
+        castRosterId: input.castRosterId,
         chapters: input.chapters,
       },
       {
         sourceDurationMs: input.sourceDurationMs,
-        castRosterId: input.castRosterId ?? null,
+        castRosterId: input.castRosterId,
         chapters,
       },
     );
@@ -286,12 +289,8 @@ function createBoundedBroadcastContextInput(
       candidates: input.candidates,
       participantGrounding:
         participantGrounding ?? input.participantGrounding,
-      ...(input.castRosterId === undefined
-        ? {}
-        : { castRosterId: input.castRosterId }),
-      ...(input.outputLanguage === undefined
-        ? {}
-        : { outputLanguage: input.outputLanguage }),
+      castRosterId: input.castRosterId,
+      outputLanguage: input.outputLanguage,
     };
   }
   return {
@@ -304,6 +303,12 @@ export function parseBroadcastContextProxyResult(
   payload: unknown,
   input: BroadcastContextRequestInput,
 ): BroadcastContextResult | null {
+  if (
+    !isRecord(payload) ||
+    payload.schemaVersion !== BROADCAST_CONTEXT_SCHEMA_VERSION
+  ) {
+    return null;
+  }
   let request;
   try {
     request = createBroadcastContextRequest(
@@ -312,11 +317,7 @@ export function parseBroadcastContextProxyResult(
   } catch {
     return null;
   }
-  const parsed = extractBroadcastContextDeepseekResponse(
-    { choices: [{ message: { content: JSON.stringify(payload) } }] },
-    request,
-  );
-  return parsed.ok ? parsed.result : null;
+  return parseCurrentBroadcastContextResult(payload, request);
 }
 
 export async function requestBroadcastContextDeepseek(
@@ -347,9 +348,7 @@ export async function requestBroadcastContextDeepseek(
     candidates: request.candidates,
     participantGrounding: request.participantGrounding,
     outputLanguage: request.outputLanguage,
-    ...(request.castRosterId === null
-      ? {}
-      : { castRosterId: request.castRosterId }),
+    castRosterId: request.castRosterId,
     ...(options.analysisMode === undefined || options.analysisMode === "overview"
       ? {}
       : { analysisMode: options.analysisMode }),
@@ -473,15 +472,21 @@ export async function requestBroadcastContextDeepseek(
     );
   }
 
-  const parsed = extractBroadcastContextDeepseekResponse(
-    { choices: [{ message: { content: JSON.stringify(payload) } }] },
-    request,
-  );
-  if (!parsed.ok) {
+  if (
+    !isRecord(payload) ||
+    payload.schemaVersion !== BROADCAST_CONTEXT_SCHEMA_VERSION
+  ) {
+    throw new BroadcastContextDeepseekClientError(
+      "PROXY_INVALID_RESPONSE",
+      "방송 전체 맥락 분석 응답이 현재 스키마가 아니에요.",
+    );
+  }
+  const parsed = parseCurrentBroadcastContextResult(payload, request);
+  if (parsed === null) {
     throw new BroadcastContextDeepseekClientError(
       "PROXY_INVALID_RESPONSE",
       "방송 전체 맥락 분석 응답 형식을 확인하지 못했어요.",
     );
   }
-  return parsed.result;
+  return parsed;
 }

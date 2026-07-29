@@ -325,7 +325,8 @@ export function isCandidateInsightMediaBinding(
     binding.candidateDurationMs <= 0 ||
     binding.candidateDurationMs > 60_000 ||
     !Number.isSafeInteger(binding.audioByteLength) ||
-    binding.audioByteLength < CANDIDATE_INSIGHT_MEDIA_AUDIO_HEADER_BYTES ||
+    (binding.audioByteLength !== 0 &&
+      binding.audioByteLength < CANDIDATE_INSIGHT_MEDIA_AUDIO_HEADER_BYTES) ||
     binding.audioByteLength > CANDIDATE_INSIGHT_MEDIA_MAX_AUDIO_BYTES ||
     !isCandidateInsightMediaFrames(binding.frames)
   ) {
@@ -410,13 +411,16 @@ async function validateBundleSignatures(
   key: string,
   binding: CandidateInsightMediaBinding,
 ): Promise<Uint8Array | null> {
-  const audioHeader = await readExactRange(
-    bucket,
-    key,
-    binding.expectedByteLength,
-    0,
-    CANDIDATE_INSIGHT_MEDIA_AUDIO_HEADER_BYTES,
-  );
+  const audioHeader =
+    binding.audioByteLength === 0
+      ? new Uint8Array(0)
+      : await readExactRange(
+          bucket,
+          key,
+          binding.expectedByteLength,
+          0,
+          CANDIDATE_INSIGHT_MEDIA_AUDIO_HEADER_BYTES,
+        );
   if (audioHeader === null) return null;
   let offset = binding.audioByteLength;
   for (const frame of binding.frames) {
@@ -511,7 +515,8 @@ function parseTicketPayload(value: unknown): TicketPayload | null {
     (value.d as number) <= 0 ||
     (value.d as number) > 60_000 ||
     !Number.isSafeInteger(value.a) ||
-    (value.a as number) < CANDIDATE_INSIGHT_MEDIA_AUDIO_HEADER_BYTES ||
+    ((value.a as number) !== 0 &&
+      (value.a as number) < CANDIDATE_INSIGHT_MEDIA_AUDIO_HEADER_BYTES) ||
     !Array.isArray(value.f) ||
     value.f.length !== 4
   ) {

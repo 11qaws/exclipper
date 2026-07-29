@@ -40,12 +40,16 @@ describe("summarizeFinalVerificationGaps", () => {
       b: "detail-result-missing",
       c: "verification-receipt-missing",
       d: "evidence-incomplete",
-      e: "context-excluded",
-      f: "program-material-excluded",
-      g: "context-conflict",
-      h: "detail-not-recommended",
+      e: "context-insufficient",
+      f: "detail-uncertain",
+      g: "program-material-unclear",
+      h: "detail-verdict-incoherent",
+      i: "context-excluded",
+      j: "program-material-excluded",
+      k: "context-conflict",
+      l: "detail-not-recommended",
     });
-    expect(summary).toHaveLength(8);
+    expect(summary).toHaveLength(12);
     for (const entry of summary) {
       expect(entry.label.length).toBeGreaterThan(0);
       expect(entry.detail.length).toBeGreaterThan(0);
@@ -118,6 +122,10 @@ describe("isPipelineGap", () => {
     expect(isPipelineGap("detail-result-missing")).toBe(true);
     expect(isPipelineGap("verification-receipt-missing")).toBe(true);
     expect(isPipelineGap("evidence-incomplete")).toBe(true);
+    expect(isPipelineGap("context-insufficient")).toBe(true);
+    expect(isPipelineGap("detail-uncertain")).toBe(true);
+    expect(isPipelineGap("program-material-unclear")).toBe(true);
+    expect(isPipelineGap("detail-verdict-incoherent")).toBe(true);
   });
 
   it("treats a completed judgement as not a pipeline problem", () => {

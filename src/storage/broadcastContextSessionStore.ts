@@ -1,12 +1,18 @@
 import {
   createBroadcastContextRequest,
-  MAX_BROADCAST_CONTEXT_CHAPTERS,
+  MAX_BROADCAST_CONTEXT_SUMMARY_LENGTH,
   MAX_BROADCAST_CONTEXT_SOURCE_DURATION_MS,
   type BroadcastContextChapterInput,
   type BroadcastContextRequestInput,
 } from "../analysis/broadcastContextProtocol";
 import { compactBroadcastContextChapters } from "../analysis/broadcastContextChapterCompaction";
-import { isBroadcastParticipantGroundingForInput } from "../analysis/broadcastParticipantGrounding";
+import { rebaseBroadcastParticipantGrounding } from "../analysis/broadcastParticipantGrounding";
+import {
+  isBroadcastParticipantPreContextResultShape,
+  normalizeBroadcastParticipantPreContextResult,
+  type BroadcastParticipantPreContextResult,
+  type BroadcastParticipantPreContextResultFence,
+} from "../analysis/broadcastParticipantPreContextOrchestration";
 import {
   broadcastContextPhaseLedgerMatchesFence,
   parseBroadcastContextPhaseLedgerJson,
@@ -42,19 +48,17 @@ import {
   inspectBroadcastTranscriptProviderReceiptSettlement,
   parseBroadcastTranscriptProviderReceiptCheckpointJson,
 } from "../analysis/broadcastTranscriptProviderReceiptCheckpoint";
+import {
+  MAX_BROADCAST_TRANSCRIPT_VISUAL_INSPECTION_CHECKPOINT_BYTES,
+  mergeBroadcastTranscriptAndVisualContextChapters,
+  projectBroadcastTranscriptVisualContext,
+  visualInspectionPlanCellIds,
+} from "../analysis/broadcastTranscriptVisualContextProjection";
+import { createBroadcastTranscriptVisualInspectionPlan } from "../analysis/broadcastTranscriptVisualInspectionQueue";
 
-export const BROADCAST_CONTEXT_SESSION_SCHEMA_VERSION = "1.11.0" as const;
-const LEGACY_BROADCAST_CONTEXT_SESSION_SCHEMA_VERSION_1_10 = "1.10.0" as const;
-const LEGACY_BROADCAST_CONTEXT_SESSION_SCHEMA_VERSION_1_9 = "1.9.0" as const;
-const LEGACY_BROADCAST_CONTEXT_SESSION_SCHEMA_VERSION_1_8 = "1.8.0" as const;
-const LEGACY_BROADCAST_CONTEXT_SESSION_SCHEMA_VERSION_1_7 = "1.7.0" as const;
-const LEGACY_BROADCAST_CONTEXT_SESSION_SCHEMA_VERSION_1_6 = "1.6.0" as const;
-const LEGACY_BROADCAST_CONTEXT_SESSION_SCHEMA_VERSION_1_5 = "1.5.0" as const;
-const LEGACY_BROADCAST_CONTEXT_SESSION_SCHEMA_VERSION_1_4 = "1.4.0" as const;
-const LEGACY_BROADCAST_CONTEXT_SESSION_SCHEMA_VERSION_1_3 = "1.3.0" as const;
-const LEGACY_BROADCAST_CONTEXT_SESSION_SCHEMA_VERSION_1_2 = "1.2.0" as const;
+export const BROADCAST_CONTEXT_SESSION_SCHEMA_VERSION = "1.12.0" as const;
 const MAX_STORED_BROADCAST_CONTEXT_CHAPTERS = 4_096;
-const MAX_PARTICIPANT_GROUNDING_CHECKPOINT_BYTES = 64 * 1024;
+export const MAX_PARTICIPANT_GROUNDING_CHECKPOINT_BYTES = 64 * 1024 * 1024;
 /** Matches the Worker's bounded whole-context ingress ceiling. */
 const MAX_CONTEXT_INPUT_CHECKPOINT_BYTES = 8 * 1024 * 1024;
 export const MAX_CONTEXT_PHASE_LEDGER_CHECKPOINT_BYTES = 4 * 1024 * 1024;
@@ -90,6 +94,7 @@ export interface BroadcastContextSessionRecord {
   readonly fragmentGaps: readonly StoredBroadcastTranscriptGap[];
   readonly transcriptEvidenceInputSignature: string | null;
   readonly transcriptEvidenceCheckpointJson: string | null;
+  readonly transcriptVisualInspectionCheckpointJson: string | null;
   readonly transcriptProviderReceiptInputSignature: string | null;
   readonly transcriptProviderReceiptCheckpointJson: string | null;
   readonly modelRevision: string;
@@ -109,16 +114,6 @@ export interface BroadcastContextSessionRecord {
   readonly refinementCandidatesJson: string | null;
   readonly recordedAt: string;
 }
-
-/**
- * Transitional initial-write shape for callers created before schema 1.11.
- * Durable readbacks are always normalized to BroadcastContextSessionRecord.
- */
-export type BroadcastContextSessionInitialWriteRecord =
-  | BroadcastContextSessionRecord
-  | (Omit<BroadcastContextSessionRecord, "refinementEvidenceLedgerJson"> & {
-      readonly refinementEvidenceLedgerJson?: null;
-    });
 
 export interface BroadcastContextSessionContextCommit {
   readonly contextInputSignature: string;
@@ -164,11 +159,24 @@ export interface BroadcastContextSessionTranscriptCheckpoint {
   readonly recordedAt: string;
 }
 
+export interface BroadcastContextSessionVisualInspectionCheckpoint {
+  readonly transcriptVisualInspectionCheckpointJson: string;
+  readonly recordedAt: string;
+}
+
 export interface BroadcastParticipantGroundingSignatureInput {
   readonly inputSignature: string;
   readonly transcriptSealOperationKey: string;
   readonly participantGroundingPlanFingerprint: string;
   readonly participantGroundingCheckpointJson: string;
+}
+
+export interface BroadcastParticipantPreContextCheckpointFence {
+  readonly sourceDurationMs: number;
+  readonly sourceCastRosterId: CandidatePassBCastRosterId | null;
+  readonly transcriptSealOperationKey: string;
+  readonly dialogueChapters: readonly BroadcastContextChapterInput[];
+  readonly participantGroundingPlanFingerprint?: string;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -197,8 +205,152 @@ function boundedString(value: unknown, maximumLength = 512): value is string {
   );
 }
 
+function boundedBroadcastContextText(
+  value: unknown,
+  maximumLength: number,
+): value is string {
+  if (typeof value !== "string") return false;
+  const controlCheckValue = value.replace(/[\n\r\t]/gu, "");
+  return (
+    value.trim() === value &&
+    Array.from(value).length > 0 &&
+    Array.from(value).length <= maximumLength &&
+    !/[\p{Cc}\p{Cf}]/u.test(controlCheckValue)
+  );
+}
+
+function assertStoredBroadcastContextChapters(
+  value: readonly unknown[],
+  sourceDurationMs: number,
+): asserts value is readonly BroadcastContextChapterInput[] {
+  for (const chapter of value) {
+    if (
+      !isRecord(chapter) ||
+      !hasExactKeys(chapter, [
+        "chapterId",
+        "startMs",
+        "endMs",
+        "evidenceMode",
+        "evidenceCoverageRatio",
+        "summaryKo",
+      ]) ||
+      !boundedString(chapter.chapterId, 256) ||
+      !Number.isSafeInteger(chapter.startMs) ||
+      !Number.isSafeInteger(chapter.endMs) ||
+      (chapter.startMs as number) < 0 ||
+      (chapter.endMs as number) <= (chapter.startMs as number) ||
+      (chapter.endMs as number) > sourceDurationMs ||
+      ![
+        "complete-transcript",
+        "sampled-audio-video",
+        "candidate-context-only",
+      ].includes(chapter.evidenceMode as string) ||
+      typeof chapter.evidenceCoverageRatio !== "number" ||
+      !Number.isFinite(chapter.evidenceCoverageRatio) ||
+      chapter.evidenceCoverageRatio <= 0 ||
+      chapter.evidenceCoverageRatio > 1 ||
+      !boundedBroadcastContextText(
+        chapter.summaryKo,
+        MAX_BROADCAST_CONTEXT_SUMMARY_LENGTH,
+      )
+    ) {
+      throw new TypeError(
+        "Stored broadcast context chapter is not canonical.",
+      );
+    }
+  }
+}
+
 function utf8ByteLength(value: string): number {
   return new TextEncoder().encode(value).byteLength;
+}
+
+function participantPreContextResultFence(
+  fence: BroadcastParticipantPreContextCheckpointFence,
+): BroadcastParticipantPreContextResultFence {
+  return {
+    sourceDurationMs: fence.sourceDurationMs,
+    castRosterId: fence.sourceCastRosterId,
+    transcriptSeal: fence.transcriptSealOperationKey,
+    dialogueChapters: fence.dialogueChapters,
+    ...(fence.participantGroundingPlanFingerprint === undefined
+      ? {}
+      : {
+          planFingerprint:
+            fence.participantGroundingPlanFingerprint,
+        }),
+  };
+}
+
+function parseBroadcastParticipantPreContextCheckpointShapeJson(
+  json: string,
+  fence: BroadcastParticipantPreContextCheckpointFence,
+): BroadcastParticipantPreContextResult | null {
+  if (
+    json.length === 0 ||
+    utf8ByteLength(json) > MAX_PARTICIPANT_GROUNDING_CHECKPOINT_BYTES
+  ) {
+    return null;
+  }
+  try {
+    const parsed: unknown = JSON.parse(json);
+    return isBroadcastParticipantPreContextResultShape(
+      parsed,
+      participantPreContextResultFence(fence),
+    )
+      ? parsed
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Parses and fully replays one current-schema durable participant checkpoint.
+ * Grounding-only JSON and packets whose plan hash, receipts, or projected
+ * grounding drifted are rejected rather than migrated.
+ */
+export async function parseBroadcastParticipantPreContextCheckpointJson(
+  json: string,
+  fence: BroadcastParticipantPreContextCheckpointFence,
+  digestAdapter: ContentDigestAdapter | null = globalThis.crypto?.subtle ??
+    null,
+): Promise<BroadcastParticipantPreContextResult | null> {
+  const shaped = parseBroadcastParticipantPreContextCheckpointShapeJson(
+    json,
+    fence,
+  );
+  if (shaped === null) return null;
+  return normalizeBroadcastParticipantPreContextResult(
+    shaped,
+    participantPreContextResultFence(fence),
+    digestAdapter,
+  );
+}
+
+export async function serializeBroadcastParticipantPreContextCheckpoint(
+  result: BroadcastParticipantPreContextResult,
+  fence: BroadcastParticipantPreContextCheckpointFence,
+  digestAdapter: ContentDigestAdapter | null = globalThis.crypto?.subtle ??
+    null,
+): Promise<string> {
+  const canonical = await normalizeBroadcastParticipantPreContextResult(
+    result,
+    participantPreContextResultFence(fence),
+    digestAdapter,
+  );
+  if (canonical === null) {
+    throw new TypeError(
+      "Broadcast participant pre-context checkpoint is not canonical.",
+    );
+  }
+  const json = JSON.stringify(canonical);
+  if (utf8ByteLength(json) > MAX_PARTICIPANT_GROUNDING_CHECKPOINT_BYTES) {
+    throw new RangeError(
+      "Broadcast participant pre-context checkpoint exceeds its durable byte limit.",
+    );
+  }
+  return json;
 }
 
 /**
@@ -226,6 +378,7 @@ export async function createBroadcastParticipantGroundingInputSignature(
   }
   return createContentFingerprint(
     [
+      "exclipper.broadcast-participant-pre-context-checkpoint.v1",
       input.inputSignature,
       input.transcriptSealOperationKey,
       `cast-catalog:${CANDIDATE_PASS_B_CAST_ROSTER_VERSION}`,
@@ -253,6 +406,7 @@ export function assertBroadcastContextSessionRecord(
       "fragmentGaps",
       "transcriptEvidenceInputSignature",
       "transcriptEvidenceCheckpointJson",
+      "transcriptVisualInspectionCheckpointJson",
       "transcriptProviderReceiptInputSignature",
       "transcriptProviderReceiptCheckpointJson",
       "modelRevision",
@@ -295,6 +449,13 @@ export function assertBroadcastContextSessionRecord(
         value.transcriptEvidenceCheckpointJson.length > 0 &&
         utf8ByteLength(value.transcriptEvidenceCheckpointJson) <=
           MAX_BROADCAST_TRANSCRIPT_RESOLVED_EVIDENCE_BYTES)
+    ) ||
+    !(
+      value.transcriptVisualInspectionCheckpointJson === null ||
+      (typeof value.transcriptVisualInspectionCheckpointJson === "string" &&
+        value.transcriptVisualInspectionCheckpointJson.length > 0 &&
+        utf8ByteLength(value.transcriptVisualInspectionCheckpointJson) <=
+          MAX_BROADCAST_TRANSCRIPT_VISUAL_INSPECTION_CHECKPOINT_BYTES)
     ) ||
     !(
       (value.transcriptProviderReceiptInputSignature === null &&
@@ -386,10 +547,11 @@ export function assertBroadcastContextSessionRecord(
   }
   if (
     value.participantGroundingCheckpointJson !== null &&
-    value.transcriptSealOperationKey === null
+    (value.transcriptSealOperationKey === null ||
+      value.participantGroundingPlanFingerprint === null)
   ) {
     throw new TypeError(
-      "Broadcast participant grounding requires a sealed transcript operation.",
+      "Broadcast participant grounding requires a sealed transcript operation and plan fingerprint.",
     );
   }
   if (
@@ -401,6 +563,10 @@ export function assertBroadcastContextSessionRecord(
       "Broadcast participant grounding plan requires a complete grounding checkpoint.",
     );
   }
+  assertStoredBroadcastContextChapters(
+    value.chapters as readonly unknown[],
+    value.sourceDurationMs as number,
+  );
   const gapChunkIds = new Set(value.gapChunkIds as readonly string[]);
   const fragmentGapIds = new Set<string>();
   let previousGapEndMs = -1;
@@ -467,6 +633,60 @@ export function assertBroadcastContextSessionRecord(
       "Broadcast transcript resolved evidence does not match its durable source, plan, model, or gap fence.",
     );
   }
+  const transcriptVisualPlan =
+    transcriptEvidenceCheckpoint === null
+      ? null
+      : createBroadcastTranscriptVisualInspectionPlan(
+          transcriptEvidenceCheckpoint,
+        );
+  const transcriptVisualProjection =
+    value.transcriptVisualInspectionCheckpointJson === null ||
+    transcriptEvidenceCheckpoint === null
+      ? null
+      : projectBroadcastTranscriptVisualContext(
+          transcriptEvidenceCheckpoint,
+          value.transcriptVisualInspectionCheckpointJson,
+        );
+  if (
+    value.transcriptVisualInspectionCheckpointJson !== null &&
+    transcriptVisualProjection === null
+  ) {
+    throw new TypeError(
+      "Broadcast transcript visual inspection does not match its exact resolved-evidence plan.",
+    );
+  }
+  const participantTranscriptVisualCellIds =
+    transcriptVisualPlan === null
+      ? new Set<string>()
+      : visualInspectionPlanCellIds(transcriptVisualPlan);
+  const participantDialogueChapters = compactBroadcastContextChapters(
+    (value.chapters as readonly BroadcastContextChapterInput[]).filter(
+      ({ chapterId }) => !participantTranscriptVisualCellIds.has(chapterId),
+    ),
+  );
+  const hasGroundingOrContextDescendant =
+    value.participantGroundingInputSignature !== null ||
+    value.participantGroundingPlanFingerprint !== null ||
+    value.participantGroundingCheckpointJson !== null ||
+    value.contextInputSignature !== null ||
+    value.contextInputCheckpointJson !== null ||
+    value.contextPhaseLedgerJson !== null ||
+    value.contextResultJson !== null ||
+    value.refinementTranscriptInputSignature !== null ||
+    value.refinementTranscriptCheckpointJson !== null ||
+    value.refinementEvidenceLedgerJson !== null ||
+    value.refinementInputSignature !== null ||
+    value.refinementCandidatesJson !== null;
+  if (
+    hasGroundingOrContextDescendant &&
+    transcriptVisualPlan !== null &&
+    transcriptVisualPlan.cells.length > 0 &&
+    transcriptVisualProjection?.publication.publicationReady !== true
+  ) {
+    throw new TypeError(
+      "Broadcast grounding and context descendants require every transcript visual inspection cell to be publication-ready.",
+    );
+  }
   const transcriptProviderReceiptCheckpoint =
     value.transcriptProviderReceiptCheckpointJson === null
       ? null
@@ -502,41 +722,61 @@ export function assertBroadcastContextSessionRecord(
       throw new TypeError("Broadcast context result JSON is invalid.");
     }
   }
-  if (typeof value.participantGroundingCheckpointJson === "string") {
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(value.participantGroundingCheckpointJson);
-    } catch {
-      throw new TypeError("Broadcast participant grounding JSON is invalid.");
-    }
-    const parsedRosterId =
-      isRecord(parsed) && "castRosterId" in parsed
-        ? parsed.castRosterId
-        : undefined;
-    if (
-      parsedRosterId !== null &&
-      !isCandidatePassBCastRosterId(parsedRosterId)
-    ) {
-      throw new TypeError("Broadcast participant roster is invalid.");
-    }
-    if (parsedRosterId !== value.sourceCastRosterId) {
-      throw new TypeError(
-        "Broadcast participant roster does not match the stored source roster.",
-      );
-    }
-    if (
-      !isBroadcastParticipantGroundingForInput(parsed, {
-        sourceDurationMs: value.sourceDurationMs as number,
-        castRosterId: parsedRosterId,
-        chapters: compactBroadcastContextChapters(
-          value.chapters as readonly BroadcastContextChapterInput[],
-        ),
-      })
-    ) {
-      throw new TypeError(
-        "Broadcast participant grounding does not match the stored transcript map.",
-      );
-    }
+  const participantPreContextCheckpoint =
+    typeof value.participantGroundingCheckpointJson === "string" &&
+    value.transcriptSealOperationKey !== null &&
+    value.participantGroundingPlanFingerprint !== null
+      ? parseBroadcastParticipantPreContextCheckpointShapeJson(
+          value.participantGroundingCheckpointJson,
+          {
+            sourceDurationMs: Number(value.sourceDurationMs),
+            sourceCastRosterId: value.sourceCastRosterId,
+            transcriptSealOperationKey: value.transcriptSealOperationKey,
+            dialogueChapters: participantDialogueChapters,
+            participantGroundingPlanFingerprint:
+              value.participantGroundingPlanFingerprint,
+          },
+        )
+      : null;
+  if (
+    value.participantGroundingCheckpointJson !== null &&
+    participantPreContextCheckpoint === null
+  ) {
+    throw new TypeError(
+      "Broadcast participant pre-context checkpoint does not match its source, transcript, plan, receipts, or grounding.",
+    );
+  }
+  const contextRequestChapters = compactBroadcastContextChapters(
+    value.chapters as readonly BroadcastContextChapterInput[],
+  );
+  const participantGroundingSourceChapters =
+    mergeBroadcastTranscriptAndVisualContextChapters(
+      participantDialogueChapters,
+      transcriptVisualProjection?.chapters ?? [],
+    );
+  const contextParticipantGrounding =
+    participantPreContextCheckpoint === null
+      ? null
+      : rebaseBroadcastParticipantGrounding(
+          participantPreContextCheckpoint.grounding,
+          {
+            sourceDurationMs: value.sourceDurationMs as number,
+            castRosterId: value.sourceCastRosterId,
+            chapters: participantGroundingSourceChapters,
+          },
+          {
+            sourceDurationMs: value.sourceDurationMs as number,
+            castRosterId: value.sourceCastRosterId,
+            chapters: contextRequestChapters,
+          },
+        );
+  if (
+    participantPreContextCheckpoint !== null &&
+    contextParticipantGrounding === null
+  ) {
+    throw new TypeError(
+      "Broadcast participant grounding could not be rebased to the compacted context chapter map.",
+    );
   }
   if (typeof value.contextInputCheckpointJson === "string") {
     let parsed: unknown;
@@ -564,14 +804,10 @@ export function assertBroadcastContextSessionRecord(
       canonical.sourceDurationMs !== value.sourceDurationMs ||
       canonical.castRosterId !== value.sourceCastRosterId ||
       JSON.stringify(canonical.chapters) !==
-        JSON.stringify(
-          compactBroadcastContextChapters(
-            value.chapters as readonly BroadcastContextChapterInput[],
-          ),
-        ) ||
-      value.participantGroundingCheckpointJson === null ||
+        JSON.stringify(contextRequestChapters) ||
+      contextParticipantGrounding === null ||
       JSON.stringify(canonical.participantGrounding) !==
-        value.participantGroundingCheckpointJson
+        JSON.stringify(contextParticipantGrounding)
     ) {
       throw new TypeError(
         "Broadcast context input checkpoint does not match its durable source map.",
@@ -654,6 +890,32 @@ export function assertBroadcastContextSessionRecord(
     }
   }
   const chapters = value.chapters as readonly BroadcastContextChapterInput[];
+  const transcriptVisualCellIds =
+    transcriptVisualPlan === null
+      ? new Set<string>()
+      : visualInspectionPlanCellIds(transcriptVisualPlan);
+  const visualChapters = chapters.filter(({ chapterId }) =>
+    transcriptVisualCellIds.has(chapterId),
+  );
+  const transcriptChapters = chapters.filter(
+    ({ chapterId }) => !transcriptVisualCellIds.has(chapterId),
+  );
+  if (
+    transcriptChapters.some(({ chapterId }) => chapterId.startsWith("visual:")) ||
+    JSON.stringify(visualChapters) !==
+      JSON.stringify(transcriptVisualProjection?.chapters ?? []) ||
+    JSON.stringify(chapters) !==
+      JSON.stringify(
+        mergeBroadcastTranscriptAndVisualContextChapters(
+          transcriptChapters,
+          visualChapters,
+        ),
+      )
+  ) {
+    throw new TypeError(
+      "Stored broadcast visual chapters must exactly match terminal visual settlements and remain distinct from transcript cells.",
+    );
+  }
   const chapterIds = new Set<string>();
   let previousChapterEndMs = 0;
   for (const chapter of chapters) {
@@ -673,7 +935,7 @@ export function assertBroadcastContextSessionRecord(
       try {
         return inspectBroadcastTranscriptEvidenceSettlement({
           checkpoint: transcriptEvidenceCheckpoint,
-          chapterRanges: chapters.map(({ startMs, endMs }) => ({
+          chapterRanges: transcriptChapters.map(({ startMs, endMs }) => ({
             startMs,
             endMs,
           })),
@@ -699,7 +961,7 @@ export function assertBroadcastContextSessionRecord(
           ))) ||
       (value.transcriptSealOperationKey !== null &&
         !settlement.isPlanSettled) ||
-      (chapters.length === 0 &&
+      (transcriptChapters.length === 0 &&
         value.gapChunkIds.length === 0 &&
         !settlement.isDialogueEmptyButResolved)
     ) {
@@ -712,10 +974,7 @@ export function assertBroadcastContextSessionRecord(
         try {
           return inspectBroadcastTranscriptProviderReceiptSettlement({
             checkpoint: transcriptProviderReceiptCheckpoint,
-            chapterRanges: chapters.map(({ startMs, endMs }) => ({
-              startMs,
-              endMs,
-            })),
+            chapterRanges: transcriptChapters,
             resolvedChunkIds:
               transcriptEvidenceCheckpoint.resolvedEvidence.map(
                 ({ chunkId }) => chunkId,
@@ -738,236 +997,217 @@ export function assertBroadcastContextSessionRecord(
         );
       }
     }
-  } else if (chapters.length === 0) {
-    if (
-      value.completeAudioCoverage ||
-      value.gapChunkIds.length === 0 ||
-      value.transcriptSealOperationKey !== null
-    ) {
-      throw new TypeError(
-        "An empty legacy broadcast transcript map must preserve its evidence gaps.",
-      );
-    }
-    return;
+  } else if (transcriptChapters.length === 0) {
+    throw new TypeError(
+      "An empty broadcast transcript map requires current resolved evidence.",
+    );
   }
-  for (
-    let startIndex = 0;
-    startIndex < chapters.length;
-    startIndex += MAX_BROADCAST_CONTEXT_CHAPTERS
-  ) {
+  if (contextParticipantGrounding !== null) {
     createBroadcastContextRequest({
       sourceDurationMs: value.sourceDurationMs as number,
-      chapters: chapters.slice(
-        startIndex,
-        startIndex + MAX_BROADCAST_CONTEXT_CHAPTERS,
-      ),
+      chapters: contextRequestChapters,
       candidates: [],
+      participantGrounding: contextParticipantGrounding,
+      castRosterId: value.sourceCastRosterId,
+      outputLanguage: "ko",
     });
   }
-}
-
-function migrateLegacyBroadcastContextSessionRecord(value: unknown): unknown {
-  let migrated = value;
-  if (
-    isRecord(migrated) &&
-    migrated.schemaVersion ===
-      LEGACY_BROADCAST_CONTEXT_SESSION_SCHEMA_VERSION_1_2 &&
-    !Object.hasOwn(migrated, "fragmentGaps")
-  ) {
-    migrated = {
-      ...migrated,
-      schemaVersion: LEGACY_BROADCAST_CONTEXT_SESSION_SCHEMA_VERSION_1_3,
-      fragmentGaps: [],
-    };
-  }
-  if (
-    isRecord(migrated) &&
-    migrated.schemaVersion ===
-      LEGACY_BROADCAST_CONTEXT_SESSION_SCHEMA_VERSION_1_3 &&
-    !Object.hasOwn(migrated, "participantGroundingInputSignature") &&
-    !Object.hasOwn(migrated, "participantGroundingCheckpointJson")
-  ) {
-    migrated = {
-      ...migrated,
-      schemaVersion: LEGACY_BROADCAST_CONTEXT_SESSION_SCHEMA_VERSION_1_4,
-      participantGroundingInputSignature: null,
-      participantGroundingCheckpointJson: null,
-    };
-  }
-  if (
-    isRecord(migrated) &&
-    migrated.schemaVersion ===
-      LEGACY_BROADCAST_CONTEXT_SESSION_SCHEMA_VERSION_1_4 &&
-    !Object.hasOwn(migrated, "sourceCastRosterId") &&
-    !Object.hasOwn(migrated, "transcriptSealOperationKey") &&
-    !Object.hasOwn(migrated, "contextInputCheckpointJson")
-  ) {
-    migrated = {
-      ...migrated,
-      schemaVersion: LEGACY_BROADCAST_CONTEXT_SESSION_SCHEMA_VERSION_1_5,
-      sourceCastRosterId: null,
-      transcriptSealOperationKey: null,
-      contextInputCheckpointJson: null,
-    };
-  }
-  if (
-    isRecord(migrated) &&
-    migrated.schemaVersion ===
-      LEGACY_BROADCAST_CONTEXT_SESSION_SCHEMA_VERSION_1_5 &&
-    !Object.hasOwn(migrated, "contextPhaseLedgerJson")
-  ) {
-    migrated = {
-      ...migrated,
-      schemaVersion: LEGACY_BROADCAST_CONTEXT_SESSION_SCHEMA_VERSION_1_6,
-      contextPhaseLedgerJson: null,
-    };
-  }
-  if (
-    isRecord(migrated) &&
-    migrated.schemaVersion ===
-      LEGACY_BROADCAST_CONTEXT_SESSION_SCHEMA_VERSION_1_6 &&
-    !Object.hasOwn(migrated, "refinementTranscriptInputSignature") &&
-    !Object.hasOwn(migrated, "refinementTranscriptCheckpointJson")
-  ) {
-    migrated = {
-      ...migrated,
-      schemaVersion: LEGACY_BROADCAST_CONTEXT_SESSION_SCHEMA_VERSION_1_7,
-      refinementTranscriptInputSignature: null,
-      refinementTranscriptCheckpointJson: null,
-    };
-  }
-  if (
-    isRecord(migrated) &&
-    migrated.schemaVersion ===
-      LEGACY_BROADCAST_CONTEXT_SESSION_SCHEMA_VERSION_1_7 &&
-    !Object.hasOwn(migrated, "transcriptEvidenceInputSignature") &&
-    !Object.hasOwn(migrated, "transcriptEvidenceCheckpointJson")
-  ) {
-    migrated = {
-      ...migrated,
-      schemaVersion: LEGACY_BROADCAST_CONTEXT_SESSION_SCHEMA_VERSION_1_8,
-      transcriptEvidenceInputSignature: null,
-      transcriptEvidenceCheckpointJson: null,
-    };
-  }
-  if (
-    isRecord(migrated) &&
-    migrated.schemaVersion ===
-      LEGACY_BROADCAST_CONTEXT_SESSION_SCHEMA_VERSION_1_8
-  ) {
-    const hasReceiptInput = Object.hasOwn(
-      migrated,
-      "transcriptProviderReceiptInputSignature",
-    );
-    const hasReceiptCheckpoint = Object.hasOwn(
-      migrated,
-      "transcriptProviderReceiptCheckpointJson",
-    );
-    if (hasReceiptInput !== hasReceiptCheckpoint) return migrated;
-    migrated = {
-      ...migrated,
-      schemaVersion: LEGACY_BROADCAST_CONTEXT_SESSION_SCHEMA_VERSION_1_9,
-      ...(hasReceiptInput
-        ? {}
-        : {
-            transcriptProviderReceiptInputSignature: null,
-            transcriptProviderReceiptCheckpointJson: null,
-          }),
-    };
-  }
-  if (
-    isRecord(migrated) &&
-    migrated.schemaVersion ===
-      LEGACY_BROADCAST_CONTEXT_SESSION_SCHEMA_VERSION_1_9
-  ) {
-    migrated = {
-      ...migrated,
-      schemaVersion: LEGACY_BROADCAST_CONTEXT_SESSION_SCHEMA_VERSION_1_10,
-      ...(Object.hasOwn(migrated, "participantGroundingPlanFingerprint")
-        ? {}
-        : { participantGroundingPlanFingerprint: null }),
-    };
-  }
-  if (
-    isRecord(migrated) &&
-    migrated.schemaVersion ===
-      LEGACY_BROADCAST_CONTEXT_SESSION_SCHEMA_VERSION_1_10
-  ) {
-    migrated = {
-      ...migrated,
-      schemaVersion: BROADCAST_CONTEXT_SESSION_SCHEMA_VERSION,
-      ...(Object.hasOwn(migrated, "refinementEvidenceLedgerJson")
-        ? {}
-        : { refinementEvidenceLedgerJson: null }),
-    };
-  }
-  if (
-    isRecord(migrated) &&
-    migrated.schemaVersion === BROADCAST_CONTEXT_SESSION_SCHEMA_VERSION &&
-    typeof migrated.transcriptEvidenceCheckpointJson === "string"
-  ) {
-    let legacyEvidence: unknown = null;
-    try {
-      legacyEvidence = JSON.parse(
-        migrated.transcriptEvidenceCheckpointJson,
-      );
-    } catch {
-      // Malformed current checkpoints remain invalid and fail normal parsing.
-    }
-    if (
-      isRecord(legacyEvidence) &&
-      legacyEvidence.schemaVersion === "1.0.0"
-    ) {
-      /*
-       * Schema 1.0 reduced no-speech to a reason/range pair and cannot prove
-       * which VAD model, policy, or source coverage authorized the exclusion.
-       * Preserve paid chapters/provider receipts, but reopen every semantic
-       * descendant and the transcript seal until current evidence is rebuilt.
-       */
-      migrated = {
-        ...migrated,
-        transcriptEvidenceInputSignature: null,
-        transcriptEvidenceCheckpointJson: null,
-        transcriptSealOperationKey: null,
-        participantGroundingInputSignature: null,
-        participantGroundingPlanFingerprint: null,
-        participantGroundingCheckpointJson: null,
-        contextInputSignature: null,
-        contextInputCheckpointJson: null,
-        contextPhaseLedgerJson: null,
-        contextResultJson: null,
-        refinementTranscriptInputSignature: null,
-        refinementTranscriptCheckpointJson: null,
-        refinementEvidenceLedgerJson: null,
-        refinementInputSignature: null,
-        refinementCandidatesJson: null,
-      };
-    }
-  }
-  return migrated;
 }
 
 export function cloneBroadcastContextSessionRecord(
   value: unknown,
 ): BroadcastContextSessionRecord {
-  const migrated = migrateLegacyBroadcastContextSessionRecord(value);
-  assertBroadcastContextSessionRecord(migrated);
+  assertBroadcastContextSessionRecord(value);
   return {
-    ...migrated,
-    chapters: migrated.chapters.map((chapter) => ({ ...chapter })),
-    gapChunkIds: [...migrated.gapChunkIds],
-    fragmentGaps: migrated.fragmentGaps.map((gap) => ({ ...gap })),
+    ...value,
+    chapters: value.chapters.map((chapter) => ({ ...chapter })),
+    gapChunkIds: [...value.gapChunkIds],
+    fragmentGaps: value.fragmentGaps.map((gap) => ({ ...gap })),
   };
 }
 
-export function cloneBroadcastContextSessionInitialWriteRecord(
-  value: BroadcastContextSessionInitialWriteRecord,
-): BroadcastContextSessionRecord {
-  return cloneBroadcastContextSessionRecord(
-    Object.hasOwn(value, "refinementEvidenceLedgerJson")
-      ? value
-      : { ...value, refinementEvidenceLedgerJson: null },
+export interface BroadcastContextSessionChapterPartition {
+  readonly transcriptChapters: readonly BroadcastContextChapterInput[];
+  readonly visualInspectionChapters: readonly BroadcastContextChapterInput[];
+}
+
+/**
+ * Separates the mixed durable chapter map without trusting a name prefix by
+ * itself. A visual chapter must be an exact terminal projection of one cell in
+ * this session's source-fenced visual plan; every malformed or colliding
+ * `visual:` chapter fails closed.
+ */
+export function partitionBroadcastContextSessionChapters(
+  value: BroadcastContextSessionRecord,
+): BroadcastContextSessionChapterPartition {
+  if (
+    value.kind !== "broadcastContextSession" ||
+    value.schemaVersion !== BROADCAST_CONTEXT_SESSION_SCHEMA_VERSION ||
+    !Array.isArray(value.chapters) ||
+    value.chapters.length > MAX_STORED_BROADCAST_CONTEXT_CHAPTERS
+  ) {
+    throw new TypeError(
+      "Broadcast chapter partitioning requires one current-schema session.",
+    );
+  }
+  const evidence =
+    value.transcriptEvidenceCheckpointJson === null
+      ? null
+      : parseBroadcastTranscriptResolvedEvidenceCheckpointJson(
+          value.transcriptEvidenceCheckpointJson,
+        );
+  const plan =
+    evidence === null
+      ? null
+      : createBroadcastTranscriptVisualInspectionPlan(evidence);
+  if (
+    (value.transcriptEvidenceCheckpointJson !== null && evidence === null) ||
+    (plan !== null &&
+      (plan.sourceFence.sourceFingerprint !== value.inputSignature ||
+        plan.sourceFence.sourceDurationMs !== value.sourceDurationMs ||
+        plan.sourceFence.transcriptInputSignature !==
+          value.transcriptEvidenceInputSignature ||
+        plan.sourceFence.transcriptModelRevision !== value.modelRevision))
+  ) {
+    throw new TypeError(
+      "Broadcast visual chapter plan does not match the durable source and transcript fence.",
+    );
+  }
+  const projection =
+    evidence === null ||
+    value.transcriptVisualInspectionCheckpointJson === null
+      ? null
+      : projectBroadcastTranscriptVisualContext(
+          evidence,
+          value.transcriptVisualInspectionCheckpointJson,
+        );
+  if (
+    value.transcriptVisualInspectionCheckpointJson !== null &&
+    projection === null
+  ) {
+    throw new TypeError(
+      "Broadcast visual chapters require one exact current visual inspection checkpoint.",
+    );
+  }
+  const plannedCellById = new Map(
+    (plan?.cells ?? []).map((cell) => [cell.cellId, cell]),
   );
+  const projectedChapterById = new Map(
+    (projection?.chapters ?? []).map((chapter) => [
+      chapter.chapterId,
+      chapter,
+    ]),
+  );
+  const chapters =
+    value.chapters as readonly BroadcastContextChapterInput[];
+  const transcriptChapters: BroadcastContextChapterInput[] = [];
+  const visualInspectionChapters: BroadcastContextChapterInput[] = [];
+  const chapterIds = new Set<string>();
+  let previousEndMs = -1;
+
+  for (const chapter of chapters) {
+    if (
+      typeof chapter.chapterId !== "string" ||
+      chapter.chapterId.length === 0 ||
+      chapterIds.has(chapter.chapterId) ||
+      !Number.isSafeInteger(chapter.startMs) ||
+      !Number.isSafeInteger(chapter.endMs) ||
+      chapter.startMs < 0 ||
+      chapter.endMs <= chapter.startMs ||
+      chapter.endMs > value.sourceDurationMs ||
+      chapter.startMs < previousEndMs
+    ) {
+      throw new TypeError(
+        "Broadcast chapters must be unique, source-bounded, and ordered before partitioning.",
+      );
+    }
+    chapterIds.add(chapter.chapterId);
+    previousEndMs = chapter.endMs;
+    if (!chapter.chapterId.startsWith("visual:")) {
+      transcriptChapters.push(chapter);
+      continue;
+    }
+    const plannedCell = plannedCellById.get(chapter.chapterId);
+    const projectedChapter = projectedChapterById.get(chapter.chapterId);
+    if (
+      plannedCell === undefined ||
+      projectedChapter === undefined ||
+      chapter.evidenceMode !== "sampled-audio-video" ||
+      chapter.evidenceCoverageRatio !== 1 ||
+      chapter.startMs !== plannedCell.sourceStartMs ||
+      chapter.endMs !== plannedCell.sourceEndMs ||
+      JSON.stringify(chapter) !== JSON.stringify(projectedChapter)
+    ) {
+      throw new TypeError(
+        "A stored visual chapter is not an exact source-fenced terminal visual inspection projection.",
+      );
+    }
+    visualInspectionChapters.push(chapter);
+  }
+
+  if (
+    JSON.stringify(visualInspectionChapters) !==
+    JSON.stringify(projection?.chapters ?? [])
+  ) {
+    throw new TypeError(
+      "Stored visual chapters collide with or omit their terminal visual inspection projection.",
+    );
+  }
+  return {
+    transcriptChapters,
+    visualInspectionChapters,
+  };
+}
+
+/**
+ * Restores the complete participant pre-context proof from one current durable
+ * session. Callers pass only the returned `.grounding` to the context request;
+ * the plan and receipts remain the durable audit/recovery packet.
+ */
+export async function restoreBroadcastParticipantPreContextCheckpoint(
+  value: BroadcastContextSessionRecord,
+  digestAdapter: ContentDigestAdapter | null = globalThis.crypto?.subtle ??
+    null,
+): Promise<BroadcastParticipantPreContextResult | null> {
+  if (
+    value.participantGroundingCheckpointJson === null ||
+    value.participantGroundingInputSignature === null ||
+    value.participantGroundingPlanFingerprint === null ||
+    value.transcriptSealOperationKey === null
+  ) {
+    return null;
+  }
+  const { transcriptChapters } =
+    partitionBroadcastContextSessionChapters(value);
+  const restored = await parseBroadcastParticipantPreContextCheckpointJson(
+    value.participantGroundingCheckpointJson,
+    {
+      sourceDurationMs: value.sourceDurationMs,
+      sourceCastRosterId: value.sourceCastRosterId,
+      transcriptSealOperationKey: value.transcriptSealOperationKey,
+      dialogueChapters:
+        compactBroadcastContextChapters(transcriptChapters),
+      participantGroundingPlanFingerprint:
+        value.participantGroundingPlanFingerprint,
+    },
+    digestAdapter,
+  );
+  if (restored === null) return null;
+  const expectedSignature =
+    await createBroadcastParticipantGroundingInputSignature(
+      {
+        inputSignature: value.inputSignature,
+        transcriptSealOperationKey: value.transcriptSealOperationKey,
+        participantGroundingPlanFingerprint:
+          value.participantGroundingPlanFingerprint,
+        participantGroundingCheckpointJson:
+          value.participantGroundingCheckpointJson,
+      },
+      digestAdapter,
+    );
+  return expectedSignature === value.participantGroundingInputSignature
+    ? restored
+    : null;
 }
 
 /**
@@ -1019,10 +1259,11 @@ function transcriptCheckpointComparableJson(
     | "modelRevision"
     | "transcriptSealOperationKey"
   >,
+  chapters: readonly BroadcastContextChapterInput[] = value.chapters,
 ): string {
   return JSON.stringify({
     completeAudioCoverage: value.completeAudioCoverage,
-    chapters: value.chapters,
+    chapters,
     gapChunkIds: value.gapChunkIds,
     fragmentGaps: value.fragmentGaps,
     transcriptEvidenceInputSignature:
@@ -1064,12 +1305,20 @@ export function checkpointBroadcastContextSessionTranscript(
     modelRevision: checkpoint.modelRevision,
     transcriptSealOperationKey: checkpoint.transcriptSealOperationKey,
   };
+  const { transcriptChapters: currentTranscriptChapters } =
+    partitionBroadcastContextSessionChapters(current);
   const exactTranscriptStateUnchanged =
-    transcriptCheckpointComparableJson(current) ===
+    transcriptCheckpointComparableJson(current, currentTranscriptChapters) ===
     transcriptCheckpointComparableJson(nextTranscriptState);
   return cloneBroadcastContextSessionRecord({
     ...current,
     ...nextTranscriptState,
+    chapters: exactTranscriptStateUnchanged
+      ? current.chapters
+      : checkpoint.chapters,
+    transcriptVisualInspectionCheckpointJson: exactTranscriptStateUnchanged
+      ? current.transcriptVisualInspectionCheckpointJson
+      : null,
     participantGroundingInputSignature: exactTranscriptStateUnchanged
       ? current.participantGroundingInputSignature
       : null,
@@ -1104,6 +1353,85 @@ export function checkpointBroadcastContextSessionTranscript(
       ? current.refinementInputSignature
       : null,
     refinementCandidatesJson: exactTranscriptStateUnchanged
+      ? current.refinementCandidatesJson
+      : null,
+    recordedAt: checkpoint.recordedAt,
+  });
+}
+
+/**
+ * Installs one partial or terminal visual runner checkpoint on the exact
+ * transcript-evidence plan. Terminal visual chapters are rebuilt from the
+ * checkpoint; callers cannot supply or reorder them independently.
+ */
+export function checkpointBroadcastContextSessionVisualInspection(
+  value: BroadcastContextSessionRecord,
+  checkpoint: BroadcastContextSessionVisualInspectionCheckpoint,
+): BroadcastContextSessionRecord {
+  const current = cloneBroadcastContextSessionRecord(value);
+  if (current.transcriptEvidenceCheckpointJson === null) {
+    throw new TypeError(
+      "Broadcast visual inspection requires a resolved transcript evidence plan.",
+    );
+  }
+  const nextProjection = projectBroadcastTranscriptVisualContext(
+    parseBroadcastTranscriptResolvedEvidenceCheckpointJson(
+      current.transcriptEvidenceCheckpointJson,
+    )!,
+    checkpoint.transcriptVisualInspectionCheckpointJson,
+  );
+  if (nextProjection === null) {
+    throw new TypeError(
+      "Broadcast visual inspection checkpoint does not match its exact transcript evidence plan.",
+    );
+  }
+  const { transcriptChapters } =
+    partitionBroadcastContextSessionChapters(current);
+  const exactCheckpointUnchanged =
+    current.transcriptVisualInspectionCheckpointJson ===
+    checkpoint.transcriptVisualInspectionCheckpointJson;
+  return cloneBroadcastContextSessionRecord({
+    ...current,
+    chapters: mergeBroadcastTranscriptAndVisualContextChapters(
+      transcriptChapters,
+      nextProjection.chapters,
+    ),
+    transcriptVisualInspectionCheckpointJson:
+      checkpoint.transcriptVisualInspectionCheckpointJson,
+    participantGroundingInputSignature: exactCheckpointUnchanged
+      ? current.participantGroundingInputSignature
+      : null,
+    participantGroundingPlanFingerprint: exactCheckpointUnchanged
+      ? current.participantGroundingPlanFingerprint
+      : null,
+    participantGroundingCheckpointJson: exactCheckpointUnchanged
+      ? current.participantGroundingCheckpointJson
+      : null,
+    contextInputSignature: exactCheckpointUnchanged
+      ? current.contextInputSignature
+      : null,
+    contextInputCheckpointJson: exactCheckpointUnchanged
+      ? current.contextInputCheckpointJson
+      : null,
+    contextPhaseLedgerJson: exactCheckpointUnchanged
+      ? current.contextPhaseLedgerJson
+      : null,
+    contextResultJson: exactCheckpointUnchanged
+      ? current.contextResultJson
+      : null,
+    refinementTranscriptInputSignature: exactCheckpointUnchanged
+      ? current.refinementTranscriptInputSignature
+      : null,
+    refinementTranscriptCheckpointJson: exactCheckpointUnchanged
+      ? current.refinementTranscriptCheckpointJson
+      : null,
+    refinementEvidenceLedgerJson: exactCheckpointUnchanged
+      ? current.refinementEvidenceLedgerJson
+      : null,
+    refinementInputSignature: exactCheckpointUnchanged
+      ? current.refinementInputSignature
+      : null,
+    refinementCandidatesJson: exactCheckpointUnchanged
       ? current.refinementCandidatesJson
       : null,
     recordedAt: checkpoint.recordedAt,

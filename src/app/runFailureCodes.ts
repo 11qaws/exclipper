@@ -44,9 +44,8 @@ export function candidatePassBFailureReason(
     case "UNSUPPORTED_AUDIO_CODEC":
     case "AUDIO_DECODE_FAILED":
       return "audio_decode_failed";
-    case "EMPTY_AUDIO":
-      return "audio_extraction_failed";
     case "TRANSCRIPTION_FAILED":
+    case "OUTCOME_UNKNOWN":
       return "transcription_failed";
   }
 }

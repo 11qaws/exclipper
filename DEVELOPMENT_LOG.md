@@ -1,5 +1,137 @@
 # Development Log
 
+## 2026-07-30 v0.9.0 current-only 완주형 파이프라인 릴리스 후보
+
+### 실패 지점과 복구 방식
+
+- 이번 버전은 정식 배포 전의 단일 current schema만 지원한다. 과거 DB·작업 ID·체크포인트를
+  변환하거나 추측해 복원하지 않는다. 분석 DB는 `exclipper-analysis-results-v1`,
+  원본 파일 핸들 DB는 `exclipper-source-handles-v1`, 작업 identity는
+  `exclipper-input-signature-v1`로 분리했다.
+- 전사와 보강 전사는 조각별 terminal receipt를 즉시 저장하고 exact readback한 뒤 다음
+  조각으로 이동한다. 한 invocation은 최대 3회까지만 provider를 시도하지만, 저장된
+  checkpoint를 바탕으로 1·2·4·8·16·30초 backoff의 새 generation을 계속 열 수 있다.
+  성공·무발화 조각은 다시 호출하지 않는다.
+- 무료 `free-r2` 요청의 응답 여부가 불명확하면 동일 operation의 terminal readback을 먼저
+  수행하고, 끝내 결과가 없을 때만 결과불명 영수증을 저장한 뒤 해당 조각만 새 operation으로
+  자동 복구한다. 유료 직접 호출만 중복 과금 위험 때문에 편집자 승인을 요구한다.
+- 후보 화면 해석도 같은 무료 복구 계약을 사용한다. 서로 다른 JPEG 4장과 준비 영수증이
+  모두 저장된 셀만 AI에 들어가며, 완료 셀의 프레임·결과는 이웃 셀 재시도 중 다시 만들지
+  않는다.
+- Candidate Pass B는 저장 ledger·dispatch·settlement가 정확히 일치하는 미실행 후보 또는
+  무료 결과불명 후보만 선택한다. 재시도 직전 durable record를 다시 확인하고 grant를
+  저장·readback한 뒤 새 attempt가 이를 소비한다. 이미 성공한 형제 후보는 그대로 보존한다.
+- `candidate-plan-invalid`는 전사·출연자·전체 맥락을 지우지 않고 Candidate Pass B 계획과
+  그 파생 상세 결과만 CAS로 재구성한다. 실제 source/run/context fence 불일치에만 상류
+  재구축을 허용한다.
+
+### 최종 인증 경계
+
+- 최종 방송 맥락은 주제 구간과 의미 단서 지원이 모두 확인된 최종 result만 허용한다.
+  discovery overview와 jury selection의 입력·결과 fingerprint, jury가 본 최종 맥락
+  fingerprint를 ledger부터 certificate까지 연결한다. 중간 discovery/selection 결과와
+  알 수 없는 `analysisMode`는 최종 결과로 표시하거나 인증하지 않는다.
+- 분석 언어와 출연진 상태는 암묵 기본값이 없다. `outputLanguage`와
+  `castRosterId: roster | null`을 요청·operation ID·dispatch·settlement·source fence·
+  verification receipt·최종 인증 전체에서 동일하게 검증한다.
+- `AnalysisJobRecord`는 current schema와 정확한 중첩 상태를 검사한다. 완료 표시는 현재
+  manifest·fast terminal·전사·화면·출연자·전체 맥락·후보 계획·후보별 상세 영수증을
+  다시 연 뒤 발급한 `usable` 또는 근거가 완결된 의도적 `empty` certificate에만 허용한다.
+
+### 릴리스 게이트
+
+- `npm run check`: TypeScript strict, ESLint warning 0, Vitest 161개 파일
+  1,964개 테스트, 음성 등록 CLI 9개 테스트 전부 통과.
+- 현재 AI smoke 계약 4개 통과: 전사 raw WAV stage/resolve/cleanup, 명시적 429 재시도,
+  sealed grounding 전체 맥락, WAV+JPEG 4장 후보 해석.
+- production Vite build 통과. main bundle 1,220.69 KiB(334.67 KiB gzip),
+  Candidate Pass B worker 371.49 KiB.
+- Wrangler dry-run 통과. Worker 461.02 KiB(86.90 KiB gzip), Qwen·`free-r2`·
+  quota required·최대 동시 편집자 5명 계약을 확인했다.
+- 이 항목 작성 시점에는 실제 Worker와 Pages 배포 전이다. 같은 commit의 실제 health,
+  CORS, 세 가지 current smoke와 Pages 브라우저 검증을 통과한 뒤 배포 완료로 갱신한다.
+
+## 2026-07-29 Context/refinement exact-operation reconciliation
+
+> 중간 구현 기록이다. 결과불명 terminal 이후의 무료 자동 generation과 최종 검증 수치는
+> 위 `2026-07-30` 릴리스 후보 계약이 이 항목을 대체한다.
+
+- **Before:** 새로고침에서 context/refinement `in-flight`를 곧바로
+  `outcome-unknown`으로 봉인했다. coordinator가 첫 요청을 받지 않았거나 terminal
+  result를 보관한 경우에도 같은 operation을 확인할 계약이 없어, 이미 끝난 형제
+  unit을 보존하더라도 막힌 unit을 복구할 수 없었다.
+- **After:** phase ledger를 current-only `3.0.0`으로 교체하고
+  `UNIT_RECONCILIATION_STARTED | SUCCEEDED | NOT_DISPATCHED | UNRESOLVED`를
+  추가했다. runner는 `reconciling` exact readback 뒤 기존
+  `operationId + inputDigest`만 1회 조회/replay한다. 일치하는 result만 성공으로
+  소비하고 명시적 비전송 증명만 `retryable-gap`으로 바꾼다. 나머지는 같은
+  operation의 `outcome-unknown`과 `reconcile-current-operation` action으로 남긴다.
+- context/refinement wrapper는 현재 proxy에 별도 terminal-result query API가 없는
+  동안 동일 operation transport replay를 기본으로 사용한다.
+  `reconcileOperation(identity, replaySameOperation)` hook을 함께 노출해 이후
+  coordinator cache/query 응답을 연결할 수 있게 했다. 성공을 추측하는 fallback은
+  없다.
+- `in-flight | reconciling`에서는 새 operation을 발급하지 않는다. exact-operation
+  reconciliation이 결과불명으로 닫히면 무료 route는 durable terminal readback 뒤
+  자동으로 새 generation을 열고, 유료 route만 명시적 편집자 승인을 요구한다.
+- 당시 집중 검증에는 interruption/reload/mismatched receipt/non-dispatch/sibling
+  preservation 회귀를 포함했다. 최종 전체 검증 수치는 위 릴리스 후보 항목을 따른다.
+
+## 2026-07-29 Participant pre-context durable proof packet
+
+- 현재 스키마만 지원한다. 과거 grounding-only JSON을 재해석하거나 마이그레이션하는 경로는 추가하지 않았다.
+- durable checkpoint는 canonical participant plan, terminal/none-observed receipts, sealed plan, 최종 grounding을 한 패킷으로 저장한다. 복구 시 plan/adapter/cell fingerprint를 다시 계산하고 receipts를 다시 seal한 뒤 grounding을 재투영한다.
+- participant source fence는 별도로 재해시하지 않고 transcript evidence와 session이 쓰는 동일한 canonical `sha256` source fingerprint를 그대로 사용한다.
+- terminal visual settlement는 동일 source/range/4-frame plan일 때만 visual-identity receipt로 바뀐다. 화면에 연결되지 않은 spoken name이나 channel prior는 identified 근거로 인정하지 않는다.
+- durable restore는 checkpoint signature까지 다시 계산해 session signature와 일치할 때만 성공하므로, 맥락 API 요청 전에 잘못된 packet을 차단한다.
+- 집중 검증: participant/storage/context 관련 148개 테스트 통과, scoped ESLint 통과.
+
+## 2026-07-29 v0.9.0 current-only 내구 파이프라인
+
+### Before / After
+
+- 이전에는 manifest, final result, terminal, 맥락 session, 의미 정제 결과, 최종
+  성공 판정의 바깥 저장 shell 일부가 one-shot이었다. IndexedDB timeout이나 CAS
+  충돌 한 번이 이미 계산한 AI 결과까지 실패 화면으로 보내고, 자동 operation key를
+  잠근 채 수동 처음부터 다시 분석하도록 만들 수 있었다.
+- 이제 빠른 탐색은 immutable manifest와 final/terminal bundle을 저장하고 exact
+  readback한 뒤에만 job cursor를 전진시킨다. provisional write는 성공 계약에서
+  제거했다. 탭 종료로 terminal과 cursor가 어긋나도 bundle을 다시 쓰거나 분석하지
+  않고 누락 cursor만 순서대로 보정한다.
+- 전체 맥락과 의미 정제의 session load, participant grounding, evidence ledger,
+  phase ledger, semantic candidate commit은 공통 run/input/operation fence,
+  watchdog, CAS rebase, exact readback을 사용한다. transient failure가 내부 retry
+  한도를 넘으면 1~30초 backoff로 같은 checkpoint를 계속 열며 provider 결과는
+  다시 구매하지 않는다.
+- 최종 결과는 manifest·fast result·terminal·context session·candidate detail을
+  모두 다시 연 뒤 certificate를 발급한다. 검증된 후보가 있는 `usable`과 근거를
+  끝까지 확인한 정상 `empty`만 job terminal로 인정한다.
+- 현재는 배포 전 개발 계약이므로 legacy schema migration을 추가하지 않았다.
+  current schema 밖의 record는 완료로 승격하지 않고 새 분석 대상으로 남긴다.
+
+### 편집 상태와 회귀 방지
+
+- 분석 후보 cohort는 review state를 입력으로 사용하지 않는다. 승인·제외가 유료
+  맥락/상세 분석을 다시 시작하거나 후보를 사라지게 하지 않는다.
+- 늦게 도착한 semantic 후보는 같은 ID의 review state와 승인 경계 revision을
+  보존한다. dependency 교체 시 이전 controller를 즉시 취소해 오래된 operation이
+  새 입력에 provider 요청이나 저장을 이어가지 못하게 했다.
+- participant grounding과 context/refinement CAS는 처음 읽은 parent snapshot과
+  현재 snapshot이 같은 경우에만 rebase한다. 더 최신 grounding·ledger·candidate
+  projection을 이전 operation이 덮어쓰지 않는다.
+
+### 검증
+
+- current-only usable, 정상 empty, transient CAS 복구, terminal 저장 뒤 cursor만
+  뒤처진 탭 종료 복구를 통합 테스트로 고정했다.
+- durable mutation, AnalysisJob, fast artifact bundle, context session, pipeline
+  certificate의 timeout·abort·stale·conflict·exact readback 테스트를 추가했다.
+- 독립 게이트에서 strict TypeScript, ESLint warning 0, Vitest 148개 파일
+  1,784개 테스트, 음성 등록 도구 9개 테스트, production Vite build와 Wrangler
+  dry-run이 통과했다. Pages main bundle은 1,025.66 KiB(286.32 KiB gzip),
+  Worker dry-run은 479.10 KiB(90.72 KiB gzip)이며 Worker 설정은 계속
+  Qwen·free-r2·quota required·최대 5명이다.
+
 ## 2026-07-29 v0.8.9 전사 경로 고정·체크포인트 복구
 
 ### Before / After
@@ -1033,7 +1165,7 @@ PassB가 정상 동작해도 `context-missing` 6개는 남는다. 대사 텍스�
 - 준비 완료 상태를 같은 높이의 1:1 작업대로 합쳤다. 왼쪽 pane은 선택한 원본의 이름·길이·형식·크기와 교체 동작만 담당하고, 오른쪽 pane은 실제 원본 길이의 시간축, `전체 훑기 → 맥락 확장 → 여러 후보 정리` 경로, 화면·오디오/선택형 채팅 준비 상태, 분석 시작 동작을 한 흐름으로 제공한다. 중복 검사 결과 카드와 떨어져 있던 CTA는 준비 완료 상태에서 제거했다.
 - `sourceReadyTimelinePresentation`을 별도 순수 projection으로 추가했다. 모든 30분 경계와 정확한 끝 시각을 보존하되 3시간·6시간·12시간 길이에 따라 글자 라벨만 단계적으로 줄인다. 이 projection은 알려진 원본 길이만 사용하고 후보·주제·잠재 점수를 미리 만들거나 저장하지 않는다.
 - blocked source를 `AI 분석 준비 완료`로 잘못 표시할 수 있던 상태 문구를 `분석 시작 불가`로 교정했다. 준비 CTA가 분석 시작과 함께 사라져 취소 버튼도 접근할 수 없던 경로는 실제 progress panel로 옮겼다. source check, persistence schema, Worker API, Candidate Ledger와 유료 AI 실행 순서는 바꾸지 않았다.
-- 실제 `D:\\opencode\\StreamSaver\\downloads\\2026 07 17 - 음식 토크[KzAW3yow80Q].mp4`를 로컬 앱에 연결했다. preflight가 02:15:14·476 MB·MP4로 완료됐고, 00:00:00부터 02:15:14까지 정확히 6개의 30분/끝 눈금, 화면·오디오 준비, 선택형 채팅, 분석 시작 버튼을 렌더링했다. 최대화 2,552×1,308 화면에서 두 pane은 각각 759×468px로 폭·높이가 일치했고 CTA는 첫 viewport 안에 있었으며 가로 overflow와 warning/error 로그는 0개였다.
+- 실제 로컬 음식 토크 샘플을 앱에 연결했다. preflight가 02:15:14·476 MB·MP4로 완료됐고, 00:00:00부터 02:15:14까지 정확히 6개의 30분/끝 눈금, 화면·오디오 준비, 선택형 채팅, 분석 시작 버튼을 렌더링했다. 최대화 2,552×1,308 화면에서 두 pane은 각각 759×468px로 폭·높이가 일치했고 CTA는 첫 viewport 안에 있었으며 가로 overflow와 warning/error 로그는 0개였다.
 - production CSS를 사용한 반응형 검증에서 760px은 두 pane을 단일 열로 전환하면서 세 단계·전체 시각 라벨을 유지했고, 620px은 분석 단계와 신호 카드를 한 열로 바꾸고 시간 라벨을 시작/끝 두 개로 줄였다. 두 폭 모두 가로 overflow가 없었다. 강제 색상 모드에는 pane·시간축·단계·신호의 명시적 경계와 Highlight 점·선 fallback을 유지한다.
 - 최종 release gate는 strict TypeScript, ESLint warning 0, 73개 테스트 파일 784개 테스트, production Vite build, Wrangler dry-run을 통과했다. main JS는 634.23 kB(183.53 kB gzip), CSS는 102.62 kB(17.73 kB gzip), 변경하지 않은 Worker upload는 213.12 KiB(41.58 KiB gzip)다. 정적 Pages commit·push·deploy는 프로젝트 승인 규칙에 따라 사용자 승인 전에는 실행하지 않는다.
 
@@ -1305,7 +1437,7 @@ PassB가 정상 동작해도 `context-missing` 6개는 남는다. 대사 텍스�
 
 ### 적용한 공용 규칙
 
-- `C:\Users\Qumin\.claude\CLAUDE.md` 전체 확인
+- 공용 Claude 개발 지침 전체 확인
 - 초심자 중심, 기본값만으로 완주, 단방향 시각 흐름
 - Before/After, 리스크와 2차 파급 검토
 - GitHub Pages의 CORS·라우팅·백엔드·비밀값 제약 선제 반영
@@ -1314,7 +1446,7 @@ PassB가 정상 동작해도 `context-missing` 6개는 남는다. 대사 텍스�
 
 ### 저장소 상태
 
-- `D:\Agents\rettohighlight`는 시작 시 비어 있었고 Git 저장소가 아니었음
+- 초기 프로젝트 작업공간은 비어 있었고 Git 저장소가 아니었음
 - 다른 서비스 작업 폴더와 분리해 이 문서만 `Codex/workspace`에 생성
 
 ### 조사 결과
@@ -1414,7 +1546,7 @@ PassB가 정상 동작해도 `context-missing` 6개는 남는다. 대사 텍스�
 
 ### StreamSaver UI 기준 반영
 
-- 확인한 실제 원본: `D:\Agents\StreamSaver\Opencode\workspace\index.html`
+- 확인한 실제 원본: StreamSaver 작업공간의 `index.html`
 - 원본에는 standalone CSS가 없고 `<style>` 블록이 567줄·24,514자였음
 - 별도 LICENSE/NOTICE 파일은 발견되지 않아 reference 파일에 출처와 확인 필요 사항을 남김
 - `styles/streamsaver-reference.css`: 원본 style block 스냅샷, 수정 금지
@@ -1460,11 +1592,11 @@ PassB가 정상 동작해도 `context-missing` 6개는 남는다. 대사 텍스�
 
 ### 다시 읽은 지침과 안전 조치
 
-- `C:\Users\Qumin\.codex\AGENTS.md` 확인: 모든 작업 전 `~/.claude/CLAUDE.md`를 함께 적용하고 더 구체적인 프로젝트 지시를 우선
-- `C:\Users\Qumin\.claude\CLAUDE.md` 전체 재확인
+- 공용 `AGENTS.md` 확인: 모든 작업 전 `~/.claude/CLAUDE.md`를 함께 적용하고 더 구체적인 프로젝트 지시를 우선
+- 공용 Claude 개발 지침 전체 재확인
 - 새 핵심 규칙은 9절 `상태와 생애주기 모델링`과 10절 `소규모 서비스 운영 완성도`
-- 비교를 위해 `C:\Users\Qumin\.gemini\config\AGENTS.md`도 읽었으며 1~7절까지만 가진 이전 계열임을 확인
-- 공용 지침에 따라 `C:\Users\Qumin\.claude\CLOUD_CONNECTIONS.md`의 기존 연결 패턴을 읽었으나, 이번 프로젝트는 공유·클라우드 구성을 쓰지 않기로 확정
+- 비교를 위해 Gemini 계열 `AGENTS.md`도 읽었으며 1~7절까지만 가진 이전 계열임을 확인
+- 공용 지침의 기존 연결 패턴을 읽었으나, 이번 프로젝트는 공유·클라우드 구성을 쓰지 않기로 확정
 - 연결 문서의 비밀값·식별값을 계획서, 로그, 대화, 명령 출력에 복사하지 않았고 외부 resource를 생성·수정하지 않음
 - 프로젝트 지시가 공유 서비스 기본값보다 구체적이므로 개인용 Pages-only 경계를 명시적 예외로 기록
 
@@ -2481,3 +2613,12 @@ PassB가 정상 동작해도 `context-missing` 6개는 남는다. 대사 텍스�
 - **복구:** `1.0.0 | 1.1.0`과 과거 routing revision의 `1.2.0`은 이미 결제한 insight를 잃지 않도록 저장 계층에서 계속 읽는다. 다만 source range 전체를 증명하지 못하거나 현재 routing revision과 다르므로 `candidatePassBReceiptMatchesContext`와 final publication은 항상 거부하고 해당 candidate만 다시 분석 대상으로 남긴다.
 - **저장 무결성:** current receipt 안의 `candidateId`가 `verificationReceiptById` map key와 다르면 record 자체를 거부한다. durability readback과 analysis outstanding 판정도 현재 `sourceFenceByCandidateId`가 없거나 한 필드라도 다르면 fail-closed한다.
 - **검증:** exact context parity, candidate ID/start/end/routing mismatch, legacy receipt, 이전 routing receipt, range 밖 frame, source fence 누락, 저장 map-key mismatch, durability 재실행을 포함한 관련 6개 파일 81개 테스트, 전체 TypeScript typecheck와 대상 ESLint가 통과했다. `App.tsx`는 별도 통합 작업자에게 정확한 4th argument와 `sourceFenceByCandidateId` 연결 지점을 전달했으며 이 작업에서는 수정하지 않았다.
+
+### 전사 체크포인트 단조 복구와 안전한 자동 재개 · 2026-07-29
+
+- **현재 스키마 전용:** 출시 전 코드이므로 과거 체크포인트 변환이나 호환 분기를 추가하지 않았다. 현재 ASR 계획·영수증·근거 체크포인트가 정확히 일치하지 않으면 병합하지 않고 새 분석 경로가 다시 생성한다.
+- **부분 복구:** 결과가 불명확한 **유료 직접 요청** 셀만 편집자의 명시적 재시도 전까지 다시 결제하지 않는다. 무료 R2 ASR의 동일 상태는 결제 위험이 없으므로 새 세대에서 자동 복구한다. 유료 셀이 보류되어도 같은 계획의 `pending`·디코드 실패·전사 실패·속도 제한 셀은 막지 않고 즉시 이어서 처리한다. 200셀 중 190셀이 불명확하고 10셀이 아직 미요청인 충돌 사례에서 유료는 10개만, 무료는 200개 모두 재개되는 계약을 순수 선택 테스트로 고정했다.
+- **세대별 자동 재개:** 디코드 실패·전사 실패·속도 제한은 최대 3회짜리 한 묶음이 끝난 뒤 체크포인트를 먼저 저장하고, 재사용되지 않는 새 요청 세대로 자동 이어 간다. 경로 변경은 같은 호출에서 낡은 경로를 반복하지 않고 다음 호출에서 갱신된 경로로 해당 셀만 한 번 재개한다.
+- **단조 병합:** 메인 전사와 보강 전사 모두 셀 단위로 CAS 재기반한다. 이미 성공하거나 무발화로 확정된 셀은 오래된 `in-flight`·실패 셀로 되돌아가지 않으며, 실패 셀끼리는 더 큰 시도 횟수와 더 안전한 결제 상태가 우선한다. 서로 다른 탭이 독립적으로 완료한 셀은 하나의 완결 체크포인트로 합쳐진다.
+- **직렬화 계약 수정:** 런타임 전사 셀의 `kind`가 영속 계획에 섞여 저장기는 쓰지만 파서는 읽지 못하던 자기 불일치를 제거했다. 영속 셀은 현재 스키마의 `{chunkId, sourceStartMs, sourceEndMs}`만 기록한다.
+- **검증:** 관련 7개 파일의 46개 테스트, 전체 TypeScript typecheck, production build가 통과했다. 빌드의 기존 대형 청크 경고 외 오류는 없다.

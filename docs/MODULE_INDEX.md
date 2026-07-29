@@ -36,8 +36,8 @@
 
 | DB | 무엇 | 왜 갈렸나 |
 |---|---|---|
-| `retto-highlight-analysis-results` | 작업 + 실행 결과 | 작업을 지울 때 그 작업의 실행 결과도 **한 트랜잭션**에서 지워야 한다 |
-| `retto-highlight-source-handles` | 파일 핸들만 | 핸들은 JSON 이 아니다. 결과 저장소의 JSON 전용 검증에 구멍을 내지 않는다 |
+| `exclipper-analysis-results-v1` | 현재 ExClipper 작업 + 실행 결과 | 구버전 DB를 열거나 마이그레이션하지 않으며, 작업을 지울 때 그 작업의 실행 결과도 **한 트랜잭션**에서 지워야 한다 |
+| `exclipper-source-handles-v1` | 현재 ExClipper 파일 핸들만 | 구버전 핸들을 재사용하지 않으며, 핸들은 JSON 이 아니므로 결과 저장소의 JSON 전용 검증에 구멍을 내지 않는다 |
 
 핸들은 경로 참조라 아주 작으므로 고아가 남아도 `deleteOrphans` 로 쓸면 된다.
 실행 결과는 그렇지 않다 — 남으면 화면에 안 보이는 채로 용량을 계속 차지한다.

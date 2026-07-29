@@ -14,6 +14,17 @@ import {
   createContentFingerprint,
   type ContentDigestAdapter,
 } from "../security/contentFingerprint";
+import {
+  BROADCAST_SPEECH_ACTIVITY_MODEL_REVISION,
+  BROADCAST_SPEECH_ACTIVITY_POLICY_REVISION,
+} from "../analysis/broadcastSpeechActivity";
+import {
+  currentBroadcastTranscriptModelPolicyRevision,
+  isCurrentBroadcastTranscriptCheckpointModelRevision,
+} from "../analysis/broadcastTranscriptQwen";
+import {
+  BROADCAST_TRANSCRIPT_WORKER_VERSION,
+} from "../analysis/broadcastTranscriptWorkerProtocol";
 
 export type TranscriptPhase = "uniform" | "event-boost";
 
@@ -185,10 +196,95 @@ export async function createTranscriptSourceIdentityFence(
   );
 }
 
+const CURRENT_PROVIDER_TRANSCRIPT_IDENTITY_PREFIX = "provider-v1-" as const;
+const SHA256_HEX_PATTERN = /^[a-f0-9]{64}$/u;
+
+export function currentTranscriptSourceIdentityDescriptor(
+  sourceCastRosterId: string | null,
+): string {
+  if (
+    sourceCastRosterId !== null &&
+    (sourceCastRosterId.length === 0 ||
+      sourceCastRosterId.length > 180 ||
+      /[\p{Cc}\p{Cf}]/u.test(sourceCastRosterId))
+  ) {
+    throw new TypeError("Transcript cast-roster identity is invalid.");
+  }
+  return (
+    `cast-${sourceCastRosterId ?? "none"}` +
+    `:models-${currentBroadcastTranscriptModelPolicyRevision()}` +
+    `:worker-${BROADCAST_TRANSCRIPT_WORKER_VERSION}` +
+    `:vad-${BROADCAST_SPEECH_ACTIVITY_MODEL_REVISION}` +
+    `:policy-${BROADCAST_SPEECH_ACTIVITY_POLICY_REVISION}`
+  );
+}
+
+async function currentTranscriptIdentityDigest(
+  parts: readonly string[],
+  adapter: ContentDigestAdapter | null = globalThis.crypto?.subtle ?? null,
+): Promise<string> {
+  const fingerprint = await createTranscriptSourceIdentityFence(parts, adapter);
+  const digest = fingerprint.startsWith("sha256:")
+    ? fingerprint.slice("sha256:".length)
+    : "";
+  if (!SHA256_HEX_PATTERN.test(digest)) {
+    throw new Error("Transcript identity digest is invalid.");
+  }
+  return digest;
+}
+
+export async function createCurrentProviderTranscriptSourceIdentityFence(
+  sourceCastRosterId: string | null,
+  adapter: ContentDigestAdapter | null = globalThis.crypto?.subtle ?? null,
+): Promise<string> {
+  const digest = await currentTranscriptIdentityDigest(
+    [
+      "provider",
+      currentTranscriptSourceIdentityDescriptor(sourceCastRosterId),
+    ],
+    adapter,
+  );
+  return `${CURRENT_PROVIDER_TRANSCRIPT_IDENTITY_PREFIX}${digest}`;
+}
+
+export async function isCurrentTranscriptSealOperationKey(input: {
+  readonly operationKey: string;
+  readonly runId: string;
+  readonly contentFingerprint: string;
+  readonly modelRevision: string;
+  readonly sourceCastRosterId: string | null;
+  readonly phase?: TranscriptPhase;
+  readonly adapter?: ContentDigestAdapter | null;
+}): Promise<boolean> {
+  const phase = input.phase ?? "event-boost";
+  const base = transcriptOperationKey(
+    input.runId,
+    input.contentFingerprint,
+    phase,
+  );
+  const identityPrefix = `${base}:identity-`;
+  if (!input.operationKey.startsWith(identityPrefix)) return false;
+  const sourceIdentityFence = input.operationKey.slice(identityPrefix.length);
+  const adapter = input.adapter ?? globalThis.crypto?.subtle ?? null;
+
+  if (
+    !isCurrentBroadcastTranscriptCheckpointModelRevision(input.modelRevision)
+  ) {
+    return false;
+  }
+  const expected = await createCurrentProviderTranscriptSourceIdentityFence(
+    input.sourceCastRosterId,
+    adapter,
+  );
+  return sourceIdentityFence === expected;
+}
+
 export interface TranscriptContextSealInput {
   readonly analysisComplete: boolean;
   readonly broadcastTranscriptStatus: string;
   readonly completedChapterCount: number;
+  readonly visualInspectionPlannedCellCount: number;
+  readonly visualInspectionSettledCellCount: number;
   readonly requiredEventBoostOperationKey: string | null;
   readonly sealedOperationKey: string | null;
 }
@@ -273,9 +369,22 @@ export function transcriptContextReadiness(
     input.requiredEventBoostOperationKey !== null &&
     input.sealedOperationKey === input.requiredEventBoostOperationKey;
   if (!exactFinalSeal) return "not-ready";
-  return (
-    input.completedChapterCount > 0
-      ? "ready"
-      : "visual-evidence-required"
-  );
+  const validVisualSettlement =
+    Number.isSafeInteger(input.visualInspectionPlannedCellCount) &&
+    Number.isSafeInteger(input.visualInspectionSettledCellCount) &&
+    input.visualInspectionPlannedCellCount >= 0 &&
+    input.visualInspectionSettledCellCount >= 0 &&
+    input.visualInspectionSettledCellCount <=
+      input.visualInspectionPlannedCellCount;
+  if (!validVisualSettlement) return "not-ready";
+  if (
+    input.visualInspectionSettledCellCount <
+    input.visualInspectionPlannedCellCount
+  ) {
+    return "visual-evidence-required";
+  }
+  return input.completedChapterCount > 0 ||
+    input.visualInspectionPlannedCellCount > 0
+    ? "ready"
+    : "visual-evidence-required";
 }

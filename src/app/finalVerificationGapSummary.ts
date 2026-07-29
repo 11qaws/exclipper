@@ -39,6 +39,26 @@ const GAP_PRESENTATION: Readonly<
     label: "근거 묶음이 불완전함",
     detail: "대표 화면 4장·대표 썸네일·오디오·맥락 중 일부가 빠졌어요.",
   },
+  "context-insufficient": {
+    label: "맥락 판정 보강 필요",
+    detail:
+      "AI가 방송 전체 흐름과 후보 장면의 관계를 충분히 확인하지 못했어요. 이 후보는 다시 분석해야 합니다.",
+  },
+  "detail-uncertain": {
+    label: "세부 판정 보강 필요",
+    detail:
+      "화면·오디오 검토는 끝났지만 AI가 추천 또는 제외를 확정하지 못했어요. 이 후보는 다시 분석해야 합니다.",
+  },
+  "program-material-unclear": {
+    label: "방송 소재 판정 보강 필요",
+    detail:
+      "일상 진행인지 사건인지 확정하지 못했어요. 추가 맥락으로 다시 판정해야 합니다.",
+  },
+  "detail-verdict-incoherent": {
+    label: "AI 판정 조합 불일치",
+    detail:
+      "추천 여부, 맥락 일치 여부, 방송 소재 판정이 서로 모순돼요. 같은 후보를 다시 분석해야 합니다.",
+  },
   "program-material-excluded": {
     label: "음악·오프닝·일상 진행으로 판정",
     detail: "방송 사건이 아니라 음악, 대기 화면, 평범한 진행으로 판단했어요.",
@@ -59,6 +79,10 @@ const GAP_ORDER: readonly CandidateFinalVerificationGap[] = [
   "detail-result-missing",
   "verification-receipt-missing",
   "evidence-incomplete",
+  "context-insufficient",
+  "detail-uncertain",
+  "program-material-unclear",
+  "detail-verdict-incoherent",
   "context-excluded",
   "program-material-excluded",
   "context-conflict",
@@ -90,6 +114,10 @@ export function isPipelineGap(gap: CandidateFinalVerificationGap): boolean {
     gap === "context-missing" ||
     gap === "detail-result-missing" ||
     gap === "verification-receipt-missing" ||
-    gap === "evidence-incomplete"
+    gap === "evidence-incomplete" ||
+    gap === "context-insufficient" ||
+    gap === "detail-uncertain" ||
+    gap === "program-material-unclear" ||
+    gap === "detail-verdict-incoherent"
   );
 }

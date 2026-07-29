@@ -9,6 +9,8 @@ export const CANDIDATE_INSIGHT_MEDIA_BUNDLE_CONTENT_TYPE =
   "application/vnd.exclipper.candidate-media-bundle" as const;
 export const CANDIDATE_INSIGHT_MEDIA_RESOLVE_CONTENT_TYPE =
   "application/vnd.exclipper.candidate-media-resolve+json" as const;
+export const BROADCAST_TRANSCRIPT_VISUAL_MEDIA_RESOLVE_CONTENT_TYPE =
+  "application/vnd.exclipper.transcript-visual-media-resolve+json" as const;
 export const CANDIDATE_INSIGHT_MEDIA_TICKET_MAX_LENGTH = 1_024;
 
 export interface CandidateInsightMediaStagedResponse {
@@ -25,6 +27,19 @@ export interface CandidateInsightMediaResolveRequest {
   readonly schemaVersion: typeof CANDIDATE_INSIGHT_MEDIA_SCHEMA_VERSION;
   readonly mediaTicket: string;
   readonly candidateDurationMs: number;
+  readonly castRosterId: CandidatePassBCastRosterId | null;
+  readonly outputLanguage: AnalysisLanguage;
+  readonly context: CandidatePassBContextPacket;
+}
+
+export interface BroadcastTranscriptVisualMediaResolveRequest {
+  readonly schemaVersion: typeof CANDIDATE_INSIGHT_MEDIA_SCHEMA_VERSION;
+  readonly mediaTicket: string;
+  readonly candidateDurationMs: number;
+  readonly transcriptAbstentionReason:
+    | "no-speech"
+    | "no-audio"
+    | "dialogue-sample";
   readonly castRosterId: CandidatePassBCastRosterId | null;
   readonly outputLanguage: AnalysisLanguage;
   readonly context: CandidatePassBContextPacket | null;
@@ -92,7 +107,7 @@ export function createCandidateInsightMediaResolveRequest(
   candidateDurationMs: number,
   castRosterId: CandidatePassBCastRosterId | null,
   outputLanguage: AnalysisLanguage,
-  context: CandidatePassBContextPacket | null,
+  context: CandidatePassBContextPacket,
 ): CandidateInsightMediaResolveRequest {
   if (!isCandidateInsightMediaTicket(mediaTicket)) {
     throw new RangeError("Candidate media ticket is invalid.");
@@ -101,6 +116,31 @@ export function createCandidateInsightMediaResolveRequest(
     schemaVersion: CANDIDATE_INSIGHT_MEDIA_SCHEMA_VERSION,
     mediaTicket,
     candidateDurationMs,
+    castRosterId,
+    outputLanguage,
+    context,
+  };
+}
+
+export function createBroadcastTranscriptVisualMediaResolveRequest(
+  mediaTicket: string,
+  candidateDurationMs: number,
+  transcriptAbstentionReason:
+    | "no-speech"
+    | "no-audio"
+    | "dialogue-sample",
+  castRosterId: CandidatePassBCastRosterId | null,
+  outputLanguage: AnalysisLanguage,
+  context: CandidatePassBContextPacket | null,
+): BroadcastTranscriptVisualMediaResolveRequest {
+  if (!isCandidateInsightMediaTicket(mediaTicket)) {
+    throw new RangeError("Candidate media ticket is invalid.");
+  }
+  return {
+    schemaVersion: CANDIDATE_INSIGHT_MEDIA_SCHEMA_VERSION,
+    mediaTicket,
+    candidateDurationMs,
+    transcriptAbstentionReason,
     castRosterId,
     outputLanguage,
     context,

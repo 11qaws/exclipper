@@ -20,6 +20,7 @@ import {
   type AnalysisLanguage,
 } from "../domain/analysisLanguage";
 import { canonicalizeCandidatePassBContextPacket } from "./candidatePassBContextBudget";
+import { isCandidatePassBContextPacket } from "./candidateFinalVerification";
 
 export const CANDIDATE_PASS_B_PROXY_ENDPOINT =
   "https://rettohighlight-gemini.11qaws.workers.dev/v1/candidate-insights" as const;
@@ -85,10 +86,15 @@ export interface CandidatePassBGeminiRequestBody {
 export interface CandidatePassBProxyRequestBody {
   readonly audioBase64: string;
   readonly candidateDurationMs: number;
-  readonly videoFrames?: readonly CandidatePassBVideoFrame[];
-  readonly castRosterId?: CandidatePassBCastRosterId;
-  readonly outputLanguage?: AnalysisLanguage;
-  readonly context?: CandidatePassBContextPacket;
+  readonly videoFrames: readonly [
+    CandidatePassBVideoFrame,
+    CandidatePassBVideoFrame,
+    CandidatePassBVideoFrame,
+    CandidatePassBVideoFrame,
+  ];
+  readonly castRosterId: CandidatePassBCastRosterId | null;
+  readonly outputLanguage: AnalysisLanguage;
+  readonly context: CandidatePassBContextPacket;
 }
 
 export type CandidatePassBGeminiParseOutcome =
@@ -179,7 +185,7 @@ const RESPONSE_SCHEMA = Object.freeze({
           },
           evidenceBasis: {
             type: "string",
-            enum: ["on-screen-name", "spoken-name", "provided-cast-reference"],
+            enum: ["on-screen-name", "spoken-name"],
           },
           evidenceKo: {
             type: "string",
@@ -368,15 +374,14 @@ export function buildCandidatePassBPrompt(
   const canonicalContext =
     context === null ? null : canonicalizeCandidatePassBContextPacket(context);
   const castReferences = candidatePassBCastReferences(castRosterId);
-  const participantRule = castReferences.length === 0
-    ? "identifiedParticipants에는 화면에 이름이 적혀 있거나 실제 발화로 이름이 불린 출연자만 적으세요. 아바타 외형·목소리 느낌만으로 이름을 추측하지 말고, 확인할 수 없으면 빈 배열을 출력하세요. evidenceKo에는 이름을 확인한 글자나 호명 근거를 적으세요. 이번 요청에는 별도 출연진 기준 자료가 없으므로 evidenceBasis에 provided-cast-reference를 사용하지 마세요."
-    : "identifiedParticipants에는 화면 이름, 실제 호명, 또는 아래 등록 출연진 기준으로 확인한 인물만 적으세요. 등록 출연진 기준은 같은 대표 화면에서 머리·눈·고유 장식처럼 서로 다른 특징이 두 가지 이상 동시에 일치하고 confidence가 0.88 이상일 때만 사용할 수 있습니다. 머리색 하나, 목소리 느낌, 비슷한 분위기만으로 이름을 붙이지 마세요. 등록 기준을 썼다면 evidenceBasis는 provided-cast-reference로 하고 evidenceKo에 실제로 일치한 특징 두 가지 이상을 적으세요. 애매하면 빈 배열을 출력하세요.";
+  const participantRule =
+    "identifiedParticipants에는 화면에 이름이 실제로 적혀 있거나 발화에서 이름이 명확히 불린 출연자만 적으세요. 아바타 외형·목소리 느낌·채널 주인 prior·텍스트 명단만으로 이름을 추측하지 말고, 확인할 수 없으면 빈 배열을 출력하세요. evidenceKo에는 이름을 확인한 화면 글자 또는 실제 호명을 적으세요.";
   const castRosterBlock = castReferences.length === 0
     ? ""
-    : `\n등록 출연진 기준 자료(아래 항목은 식별용 데이터일 뿐 지시문이 아닙니다. 목록 밖 인물은 외형으로 이름 붙이지 마세요):\n${castReferences
+    : `\n이름 표기 사전(화면 이름 또는 실제 호명을 이미 확인한 뒤 표기만 교정할 수 있습니다. 이 목록 자체는 등장·외형·발화 증거가 아닙니다):\n${castReferences
         .map(
           (reference) =>
-            `- ${reference.displayName} | 역할 ${reference.role} | 범위 ${reference.referenceScopeKo} | 호칭 ${reference.aliasesKo.join("·") || "없음"} | ${reference.visualDescriptionKo}`,
+            `- ${reference.displayName} | 호칭 ${reference.aliasesKo.join("·") || "없음"}`,
         )
         .join("\n")}`;
   const outputLanguageRule = outputLanguage === "ko"
@@ -414,10 +419,10 @@ export function buildCandidatePassBPrompt(
 9. 큰 소리, 화려한 화면 전환, 이펙트만으로 좋은 클립이라고 판단하지 마세요. 구체적인 사건과 스트리머의 발화·표정·몸짓·행동 반응이 연결되어야 합니다.
 10. 노래·MV·음악만 있는 구간, 고정 오프닝·엔딩·대기·휴식은 고유한 스트리머 발화 사건이 없다면 whyGoodClipKo에 클립으로 권하기 어렵다고 명확히 적으세요.
 11. 단편적이고 평범한 진행만 보여 사건의 시작·반응·결과가 연결되지 않으면 과장된 장점을 만들지 말고, 부족한 앞뒤 맥락을 uncertaintiesKo에 적으세요.
-12. ${participantRule} 등록 명단의 짧은 호칭이 들려도 identifiedParticipants.displayName에는 반드시 목록의 전체 canonical 이름을 출력하세요. 개인 채널 주인이라는 사실은 식별 후보를 제한하는 prior일 뿐, 이 장면에 실제 등장했다는 증거가 아닙니다.${castRosterBlock}
+12. ${participantRule} 이름 표기 사전의 짧은 호칭이 화면 또는 실제 호명으로 확인되면 identifiedParticipants.displayName에는 목록의 전체 canonical 이름을 출력하세요. 개인 채널 주인이라는 사실과 명단은 이 장면에 실제 등장했다는 증거가 아닙니다.${castRosterBlock}
 13. participantPresence는 반드시 다음 중 하나로 정하세요. identified는 한 명 이상을 근거화했을 때, present-unidentified는 사람·아바타가 보이지만 이름을 확인하지 못했을 때, none-present는 네 화면 어디에도 사람·아바타가 없을 때, insufficient-evidence는 전환·가림 때문에 존재 여부를 판단할 수 없을 때입니다. 빈 identifiedParticipants만으로 이유를 생략하지 마세요.
 14. participantSummaryKo에는 맥락의 주체를 반드시 적으세요. 확인된 이름이 있으면 이름과 역할을, 이름을 모르면 화면상 위치·외형을, 없으면 정확히 등장인물이 없다고 쓰세요. eventSummaryKo와 reactionSummaryKo도 이 판정과 모순되면 안 됩니다.
-15. observedFrameIndices는 첨부 순서 기준 0~${Math.max(0, frameCount - 1)}입니다. provided-cast-reference는 같은 인물이 서로 다른 대표 화면 두 장 이상에서 반복 확인된 경우만 허용합니다. 화면 이름은 이름이 보인 화면을, 실제 호명만 있는 경우에는 동시에 인물이 보인 화면만 적고 보이지 않으면 빈 배열을 적으세요.
+15. observedFrameIndices는 첨부 순서 기준 0~${Math.max(0, frameCount - 1)}입니다. 화면 이름은 이름이 보인 화면을, 실제 호명만 있는 경우에는 동시에 인물이 보인 화면만 적고 보이지 않으면 빈 배열을 적으세요.
 16. 스키마 이외의 키나 설명 문장은 출력하지 마세요.
 17. 모든 한국어 서술은 현대 한글로만 작성하세요. 한자·중국어 문자를 섞거나 한국어 단어를 한자로 치환하지 마세요.
 18. clipDecision은 전체 흐름, 참고 대사, 실제 오디오, 네 대표 화면이 모두 연결되어 독립된 클립 사건으로 성립할 때만 recommend로 정하세요.
@@ -428,10 +433,10 @@ export function buildCandidatePassBPrompt(
 export function buildCandidatePassBGeminiRequestBody(
   base64Wav: string,
   candidateDurationMs: number,
-  videoFrames: readonly CandidatePassBVideoFrame[] = [],
-  castRosterId: CandidatePassBCastRosterId | null = null,
-  outputLanguage: AnalysisLanguage = "ko",
-  context: CandidatePassBContextPacket | null = null,
+  videoFrames: readonly CandidatePassBVideoFrame[],
+  castRosterId: CandidatePassBCastRosterId | null,
+  outputLanguage: AnalysisLanguage,
+  context: CandidatePassBContextPacket,
 ): CandidatePassBGeminiRequestBody {
   if (
     typeof base64Wav !== "string" ||
@@ -441,13 +446,16 @@ export function buildCandidatePassBGeminiRequestBody(
     candidateDurationMs <= 0 ||
     candidateDurationMs > MAX_CANDIDATE_PASS_B_TARGET_DURATION_MS ||
     (castRosterId !== null && !isCandidatePassBCastRosterId(castRosterId)) ||
-    !isAnalysisLanguage(outputLanguage)
+    !isAnalysisLanguage(outputLanguage) ||
+    !isCandidatePassBContextPacket(context)
   ) {
     throw new RangeError("Invalid Gemini request input.");
   }
-  const normalizedFrames = normalizeVideoFrames(videoFrames);
-  const canonicalContext =
-    context === null ? null : canonicalizeCandidatePassBContextPacket(context);
+  const normalizedFrames = normalizeRequiredVideoFrames(
+    videoFrames,
+    candidateDurationMs,
+  );
+  const canonicalContext = canonicalizeCandidatePassBContextPacket(context);
   return {
     contents: [
       {
@@ -488,10 +496,10 @@ export function buildCandidatePassBGeminiRequestBody(
 export function buildCandidatePassBProxyRequestBody(
   audioBase64: string,
   candidateDurationMs: number,
-  videoFrames: readonly CandidatePassBVideoFrame[] = [],
-  castRosterId: CandidatePassBCastRosterId | null = null,
-  outputLanguage: AnalysisLanguage = "ko",
-  context: CandidatePassBContextPacket | null = null,
+  videoFrames: readonly CandidatePassBVideoFrame[],
+  castRosterId: CandidatePassBCastRosterId | null,
+  outputLanguage: AnalysisLanguage,
+  context: CandidatePassBContextPacket,
 ): CandidatePassBProxyRequestBody {
   if (
     typeof audioBase64 !== "string" ||
@@ -501,27 +509,40 @@ export function buildCandidatePassBProxyRequestBody(
     candidateDurationMs <= 0 ||
     candidateDurationMs > MAX_CANDIDATE_PASS_B_TARGET_DURATION_MS ||
     (castRosterId !== null && !isCandidatePassBCastRosterId(castRosterId)) ||
-    !isAnalysisLanguage(outputLanguage)
+    !isAnalysisLanguage(outputLanguage) ||
+    !isCandidatePassBContextPacket(context)
   ) {
     throw new RangeError("Invalid candidate proxy request input.");
   }
-  const normalizedFrames = normalizeVideoFrames(videoFrames);
-  const canonicalContext =
-    context === null ? null : canonicalizeCandidatePassBContextPacket(context);
+  const normalizedFrames = normalizeRequiredVideoFrames(
+    videoFrames,
+    candidateDurationMs,
+  );
+  const canonicalContext = canonicalizeCandidatePassBContextPacket(context);
   return {
     audioBase64,
     candidateDurationMs,
-    ...(normalizedFrames.length === 0 ? {} : { videoFrames: normalizedFrames }),
-    ...(castRosterId === null ? {} : { castRosterId }),
-    ...(outputLanguage === "ko" ? {} : { outputLanguage }),
-    ...(canonicalContext === null ? {} : { context: canonicalContext }),
+    videoFrames: normalizedFrames,
+    castRosterId,
+    outputLanguage,
+    context: canonicalContext,
   };
 }
 
-function normalizeVideoFrames(
+function normalizeRequiredVideoFrames(
   frames: readonly CandidatePassBVideoFrame[],
-): readonly CandidatePassBVideoFrame[] {
-  const values: readonly unknown[] = Array.isArray(frames) ? frames : [];
+  candidateDurationMs: number,
+): readonly [
+  CandidatePassBVideoFrame,
+  CandidatePassBVideoFrame,
+  CandidatePassBVideoFrame,
+  CandidatePassBVideoFrame,
+] {
+  const values: readonly unknown[] =
+    Array.isArray(frames) &&
+    frames.length === MAX_CANDIDATE_PASS_B_VIDEO_FRAMES
+      ? frames
+      : [];
   const normalized: CandidatePassBVideoFrame[] = [];
   for (const value of values) {
     if (!isRecord(value)) continue;
@@ -530,17 +551,18 @@ function normalizeVideoFrames(
     const dataBase64 =
       typeof value.dataBase64 === "string" ? value.dataBase64 : null;
     if (
-      normalized.length >= MAX_CANDIDATE_PASS_B_VIDEO_FRAMES ||
       timestampMs === null ||
       !Number.isSafeInteger(timestampMs) ||
       timestampMs < 0 ||
-      timestampMs > MAX_CANDIDATE_PASS_B_TARGET_DURATION_MS ||
+      timestampMs >= candidateDurationMs ||
       value.mimeType !== "image/jpeg" ||
       dataBase64 === null ||
       dataBase64.length === 0 ||
       dataBase64.length > MAX_CANDIDATE_PASS_B_VIDEO_FRAME_BASE64_LENGTH
     ) {
-      continue;
+      throw new RangeError(
+        "Candidate analysis requires four valid source-bounded video frames.",
+      );
     }
     normalized.push({
       timestampMs,
@@ -548,7 +570,21 @@ function normalizeVideoFrames(
       dataBase64,
     });
   }
-  return normalized;
+  if (
+    normalized.length !== MAX_CANDIDATE_PASS_B_VIDEO_FRAMES ||
+    new Set(normalized.map(({ timestampMs }) => timestampMs)).size !==
+      MAX_CANDIDATE_PASS_B_VIDEO_FRAMES
+  ) {
+    throw new RangeError(
+      "Candidate analysis requires four distinct source-bounded video frames.",
+    );
+  }
+  return normalized as unknown as readonly [
+    CandidatePassBVideoFrame,
+    CandidatePassBVideoFrame,
+    CandidatePassBVideoFrame,
+    CandidatePassBVideoFrame,
+  ];
 }
 
 export function parseCandidatePassBGeminiAnalysis(
@@ -570,23 +606,18 @@ export function parseCandidatePassBGeminiAnalysis(
     "contextConsistency",
     "programMaterial",
   ] as const;
-  const legacyResponseKeys = currentResponseKeys.slice(0, -3);
-  const hasCurrentDecisionFields =
-    isRecord(value) && hasExactKeys(value, currentResponseKeys);
   if (
     !Number.isSafeInteger(candidateDurationMs) ||
     candidateDurationMs <= 0 ||
     !isRecord(value) ||
-    (!hasExactKeys(value, currentResponseKeys) &&
-      !hasExactKeys(value, legacyResponseKeys)) ||
+    !hasExactKeys(value, currentResponseKeys) ||
     !Array.isArray(value.segments) ||
     value.segments.length > MAX_CANDIDATE_PASS_B_TRANSCRIPT_SEGMENTS ||
     !Array.isArray(value.uncertaintiesKo) ||
     value.uncertaintiesKo.length > MAX_CANDIDATE_PASS_B_UNCERTAINTIES ||
-    (value.identifiedParticipants !== undefined &&
-      !Array.isArray(value.identifiedParticipants)) ||
-    (Array.isArray(value.identifiedParticipants) &&
-      value.identifiedParticipants.length > MAX_CANDIDATE_PASS_B_IDENTIFIED_PARTICIPANTS)
+    !Array.isArray(value.identifiedParticipants) ||
+    value.identifiedParticipants.length >
+      MAX_CANDIDATE_PASS_B_IDENTIFIED_PARTICIPANTS
   ) {
     return { ok: false };
   }
@@ -659,28 +690,22 @@ export function parseCandidatePassBGeminiAnalysis(
   ].includes(value.participantPresence as string)
     ? value.participantPresence as CandidatePassBParticipantPresence
     : null;
-  const clipDecision = !hasCurrentDecisionFields
-    ? undefined
-    : ["recommend", "reject", "uncertain"].includes(value.clipDecision as string)
-    ? value.clipDecision as NonNullable<CandidatePassBInsight["clipDecision"]>
+  const clipDecision = ["recommend", "reject", "uncertain"].includes(
+    value.clipDecision as string,
+  )
+    ? value.clipDecision as CandidatePassBInsight["clipDecision"]
     : null;
-  const contextConsistency = !hasCurrentDecisionFields
-    ? undefined
-    : ["consistent", "conflict", "insufficient"].includes(
-        value.contextConsistency as string,
-      )
-    ? value.contextConsistency as NonNullable<
-        CandidatePassBInsight["contextConsistency"]
-      >
+  const contextConsistency = ["consistent", "conflict", "insufficient"].includes(
+    value.contextConsistency as string,
+  )
+    ? value.contextConsistency as CandidatePassBInsight["contextConsistency"]
     : null;
-  const programMaterial = !hasCurrentDecisionFields
-    ? undefined
-    : [
-        "streamer-event",
-        "music-or-intermission",
-        "routine-or-unclear",
-      ].includes(value.programMaterial as string)
-    ? value.programMaterial as NonNullable<CandidatePassBInsight["programMaterial"]>
+  const programMaterial = [
+    "streamer-event",
+    "music-or-intermission",
+    "routine-or-unclear",
+  ].includes(value.programMaterial as string)
+    ? value.programMaterial as CandidatePassBInsight["programMaterial"]
     : null;
   const rawParticipantSummaryKo = normalizeNarrativeText(
     value.participantSummaryKo,
@@ -690,10 +715,9 @@ export function parseCandidatePassBGeminiAnalysis(
   if (
     participantPresence === null ||
     rawParticipantSummaryKo === null ||
-    (hasCurrentDecisionFields &&
-      (clipDecision === null ||
-        contextConsistency === null ||
-        programMaterial === null))
+    clipDecision === null ||
+    contextConsistency === null ||
+    programMaterial === null
   ) {
     return { ok: false };
   }
@@ -713,11 +737,7 @@ export function parseCandidatePassBGeminiAnalysis(
 
   const identifiedParticipants: CandidatePassBParticipantAttribution[] = [];
   const seenParticipantNames = new Set<string>();
-  const participantValues: readonly unknown[] = Array.isArray(
-    value.identifiedParticipants,
-  )
-    ? value.identifiedParticipants
-    : [];
+  const participantValues: readonly unknown[] = value.identifiedParticipants;
   for (const rawParticipant of participantValues) {
     if (
       !isRecord(rawParticipant) ||
@@ -731,7 +751,7 @@ export function parseCandidatePassBGeminiAnalysis(
         "observedFrameIndices",
       ]) ||
       !["streamer", "guest", "unknown"].includes(rawParticipant.role as string) ||
-      !["on-screen-name", "spoken-name", "provided-cast-reference"].includes(
+      !["on-screen-name", "spoken-name"].includes(
         rawParticipant.evidenceBasis as string,
       ) ||
       typeof rawParticipant.confidence !== "number" ||
@@ -784,14 +804,6 @@ export function parseCandidatePassBGeminiAnalysis(
       displayName,
     ) ?? undefined;
     if (
-      evidenceBasis === "provided-cast-reference" &&
-      (castReference === undefined ||
-        rawParticipant.confidence < 0.88 ||
-        observedFrameIndices.length < 2)
-    ) {
-      continue;
-    }
-    if (
       evidenceBasis === "on-screen-name" &&
       observedFrameIndices.length === 0
     ) {
@@ -805,10 +817,7 @@ export function parseCandidatePassBGeminiAnalysis(
     seenParticipantNames.add(canonicalNameKey);
     identifiedParticipants.push({
       displayName: canonicalDisplayName,
-      role:
-        evidenceBasis === "provided-cast-reference" && castReference !== undefined
-          ? castReference.role
-          : rawParticipant.role as CandidatePassBParticipantAttribution["role"],
+      role: rawParticipant.role as CandidatePassBParticipantAttribution["role"],
       evidenceBasis,
       evidenceKo,
       confidence: rawParticipant.confidence,
@@ -823,19 +832,7 @@ export function parseCandidatePassBGeminiAnalysis(
   ) {
     return { ok: false };
   }
-  const participantSummaryKo =
-    participantPresence === "none-present"
-      ? outputLanguage === "ko"
-        ? "준비된 대표 화면 네 장에는 확인할 수 있는 등장인물이 없습니다."
-        : "No person or person-like avatar is visible in the four prepared frames."
-      : rawParticipantSummaryKo;
-  const decisionInsight = hasCurrentDecisionFields
-    ? {
-        clipDecision: clipDecision!,
-        contextConsistency: contextConsistency!,
-        programMaterial: programMaterial!,
-      }
-    : {};
+  const participantSummaryKo = rawParticipantSummaryKo;
 
   return {
     ok: true,
@@ -849,7 +846,9 @@ export function parseCandidatePassBGeminiAnalysis(
         participantPresence,
         participantSummaryKo,
         identifiedParticipants,
-        ...decisionInsight,
+        clipDecision,
+        contextConsistency,
+        programMaterial,
       },
     },
   };
@@ -900,50 +899,6 @@ export function extractCandidatePassBGeminiResponse(
     castRosterId,
     outputLanguage,
   );
-}
-
-/**
- * Keeps the paid-for transcript when browser frame capture failed, but removes
- * provider-authored visual and causal claims. Audio-only output must never be
- * presented as if the model saw the game, avatar, captions, or screen event.
- */
-export function buildCandidatePassBAudioOnlySafeResponse(
-  value: unknown,
-  candidateDurationMs: number,
-): Record<string, unknown> | null {
-  const parsed = extractCandidatePassBGeminiResponse(value, candidateDurationMs);
-  if (!parsed.ok) return null;
-  const safeAnalysis = {
-    segments: parsed.analysis.segments,
-    eventSummaryKo:
-      "대표 화면을 확보하지 못해 오디오에서 확인된 실제 발화만 기록했습니다. 화면에서 일어난 사건과 발화의 원인은 원본 재생으로 확인해야 합니다.",
-    reactionSummaryKo:
-      "목소리와 발화 변화는 들을 수 있지만 표정·몸짓·게임 또는 다른 화면 상황은 확인하지 못했습니다.",
-    whyGoodClipKo:
-      "화면 증거가 없어 이 구간의 클립 적합성은 자동으로 확정하지 않았습니다. 대사 위치부터 직접 재생해 확인해 주세요.",
-    uncertaintiesKo: [
-      "대표 화면 캡처가 준비되지 않아 화면 상황과 사건 원인을 판단하지 않았습니다.",
-      ...parsed.analysis.insight.uncertaintiesKo,
-    ].slice(0, MAX_CANDIDATE_PASS_B_UNCERTAINTIES),
-    participantPresence: "insufficient-evidence",
-    participantSummaryKo:
-      "대표 화면이 없어 등장인물의 존재와 신원을 판단하지 않았습니다.",
-    identifiedParticipants:
-      parsed.analysis.insight.identifiedParticipants?.filter(
-        ({ evidenceBasis }) => evidenceBasis === "spoken-name",
-      ) ?? [],
-    clipDecision: "uncertain",
-    contextConsistency: "insufficient",
-    programMaterial: "routine-or-unclear",
-  };
-  return {
-    candidates: [
-      {
-        finishReason: "STOP",
-        content: { parts: [{ text: JSON.stringify(safeAnalysis) }] },
-      },
-    ],
-  };
 }
 
 export function classifyCandidatePassBProxyHttpFailure(

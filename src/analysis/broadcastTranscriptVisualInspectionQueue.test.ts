@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  BROADCAST_TRANSCRIPT_VISUAL_AUDIO_EXTRACTION_REVISION,
   BroadcastTranscriptVisualInspectionContractError,
   createBroadcastTranscriptVisualFramePreparationQueue,
   createBroadcastTranscriptVisualInspectionPlan,
@@ -32,6 +33,12 @@ const FRAME_FINGERPRINTS = [
   `sha256:${"3".repeat(64)}`,
   `sha256:${"4".repeat(64)}`,
 ] as const;
+const AUDIO_FINGERPRINT = `sha256:${"9".repeat(64)}`;
+const NO_PARTICIPANTS = {
+  presence: "none-present",
+  summaryKo: "등장인물이 확인되지 않았습니다.",
+  participants: [],
+} as const;
 
 function recordBroadcastTranscriptResolvedEvidence(
   current: BroadcastTranscriptResolvedEvidenceCheckpoint,
@@ -99,6 +106,22 @@ function prepared(
     plan: currentPlan,
     cellId,
     frameContentFingerprints: FRAME_FINGERPRINTS,
+    audioEvidence:
+      currentPlan.cells.find((cell) => cell.cellId === cellId)
+        ?.transcriptAbstentionReason === "no-audio"
+        ? null
+        : {
+            sourceStartMs:
+              currentPlan.cells.find((cell) => cell.cellId === cellId)!
+                .sourceStartMs,
+            sourceEndMs:
+              currentPlan.cells.find((cell) => cell.cellId === cellId)!
+                .sourceEndMs,
+            codec: "audio/wav;codecs=pcm_s16le",
+            extractionRevision:
+              BROADCAST_TRANSCRIPT_VISUAL_AUDIO_EXTRACTION_REVISION,
+            contentFingerprint: AUDIO_FINGERPRINT,
+          },
   });
 }
 
@@ -128,6 +151,7 @@ function settlement(
         editorialFinding: "quiet-success",
         summaryKo: "큰 소리는 없지만 화면에서 조용한 성공이 확인됐다.",
         providerResponseFingerprint: `sha256:${"b".repeat(64)}`,
+        participantOutcome: NO_PARTICIPANTS,
       });
     case "excluded-music-only":
       return createBroadcastTranscriptVisualProviderSettlement({
@@ -136,6 +160,7 @@ function settlement(
         editorialFinding: "music-or-mv-only",
         summaryKo: "네 화면과 음성 부정 근거를 함께 검토한 결과 MV 구간이다.",
         providerResponseFingerprint: `sha256:${"c".repeat(64)}`,
+        participantOutcome: NO_PARTICIPANTS,
       });
     case "retryable":
       return createBroadcastTranscriptVisualProviderSettlement({
@@ -153,6 +178,163 @@ function settlement(
 }
 
 describe("broadcastTranscriptVisualInspectionQueue", () => {
+  it("adds at most twelve source-distributed dialogue cells for participant grounding", () => {
+    const plannedCells = Array.from({ length: 30 }, (_, index) => ({
+      chunkId: `dialogue-${String(index + 1).padStart(2, "0")}`,
+      sourceStartMs: index * 30_000,
+      sourceEndMs: (index + 1) * 30_000,
+    }));
+    const evidence = createBroadcastTranscriptResolvedEvidenceCheckpoint({
+      sourceFingerprint: SOURCE_FINGERPRINT,
+      sourceDurationMs: 900_000,
+      transcriptInputSignature: "participant-dialogue-plan",
+      modelRevision: "qwen-asr-v1",
+      plannedCells,
+    });
+
+    const current = createBroadcastTranscriptVisualInspectionPlan(evidence);
+    const participantCells = current.cells.filter(
+      ({ inspectionPurpose }) =>
+        inspectionPurpose === "participant-grounding",
+    );
+
+    expect(participantCells).toHaveLength(12);
+    expect(
+      participantCells.every(
+        ({ transcriptAbstentionReason }) =>
+          transcriptAbstentionReason === "dialogue-sample",
+      ),
+    ).toBe(true);
+    expect(participantCells[0]!.sourceStartMs).toBeLessThan(90_000);
+    expect(participantCells.at(-1)!.sourceEndMs).toBeGreaterThan(810_000);
+    expect(
+      participantCells.every(
+        (cell, index) =>
+          index === 0 ||
+          participantCells[index - 1]!.sourceEndMs <= cell.sourceStartMs,
+      ),
+    ).toBe(true);
+  });
+
+  it("source-fences the participant outcome from the same terminal four-frame review", () => {
+    const current = plan();
+    const terminal = createBroadcastTranscriptVisualProviderSettlement({
+      plan: current,
+      cellId: "visual:asr-a",
+      preparedFrameReceipt: prepared(current, "visual:asr-a"),
+      providerModelRevision: "qwen-omni-visual-v1",
+      operationId: "visual-participant-operation",
+      attemptOrdinal: 0,
+      outcome: "completed",
+      editorialFinding: "quiet-success",
+      summaryKo: "대표 화면에서 조용한 사건과 반응을 함께 확인했습니다.",
+      providerResponseFingerprint: `sha256:${"e".repeat(64)}`,
+      participantOutcome: {
+        presence: "identified",
+        summaryKo: "화면 이름표로 출연자를 확인했습니다.",
+        participants: [
+          {
+            participantId: "amoretto",
+            displayName: "아모레또",
+            role: "streamer",
+            evidenceBasis: "on-screen-name",
+            evidenceKo: "첫 번째와 세 번째 대표 화면의 이름표를 확인했습니다.",
+            confidence: 0.97,
+            relativeTimestampMs: 5_000,
+            observedFrameIndices: [0, 2],
+          },
+        ],
+      },
+    });
+
+    expect(terminal).toMatchObject({
+      sourceFingerprint: current.sourceFence.sourceFingerprint,
+      requestedFrameContentFingerprints: FRAME_FINGERPRINTS,
+      participantOutcome: {
+        presence: "identified",
+        participants: [{ participantId: "amoretto", confidence: 0.97 }],
+      },
+    });
+    expect(() =>
+      createBroadcastTranscriptVisualProviderSettlement({
+        plan: current,
+        cellId: "visual:asr-a",
+        preparedFrameReceipt: prepared(current, "visual:asr-a"),
+        providerModelRevision: "qwen-omni-visual-v1",
+        operationId: "visual-invalid-participant-operation",
+        attemptOrdinal: 0,
+        outcome: "completed",
+        editorialFinding: "quiet-success",
+        summaryKo: "잘못된 인물 근거는 정착시키지 않습니다.",
+        providerResponseFingerprint: `sha256:${"f".repeat(64)}`,
+        participantOutcome: {
+          presence: "identified",
+          summaryKo: "신뢰도 범위를 벗어난 결과입니다.",
+          participants: [
+            {
+              participantId: "amoretto",
+              displayName: "아모레또",
+              role: "streamer",
+              evidenceBasis: "on-screen-name",
+              evidenceKo: "대표 화면의 이름표를 확인했습니다.",
+              confidence: 2,
+              relativeTimestampMs: 5_000,
+              observedFrameIndices: [0],
+            },
+          ],
+        },
+      }),
+    ).toThrow(BroadcastTranscriptVisualInspectionContractError);
+  });
+
+  it("requires exact audio evidence for no-speech and explicit null for no-audio", () => {
+    const current = plan();
+    expect(prepared(current, "visual:asr-a").audioEvidence).toMatchObject({
+      sourceStartMs: 0,
+      sourceEndMs: 30_000,
+      extractionRevision:
+        BROADCAST_TRANSCRIPT_VISUAL_AUDIO_EXTRACTION_REVISION,
+      contentFingerprint: AUDIO_FINGERPRINT,
+    });
+    expect(prepared(current, "visual:asr-b").audioEvidence).toBeNull();
+    expect(
+      settlement(current, "visual:asr-a", "completed")
+        .requestedAudioEvidence,
+    ).toEqual(prepared(current, "visual:asr-a").audioEvidence);
+    expect(
+      settlement(current, "visual:asr-b", "completed")
+        .requestedAudioEvidence,
+    ).toBeNull();
+
+    expect(() =>
+      createBroadcastTranscriptVisualPreparedFrameReceipt({
+        plan: current,
+        cellId: "visual:asr-a",
+        frameContentFingerprints: FRAME_FINGERPRINTS,
+        audioEvidence: null,
+      }),
+    ).toThrowError(
+      expect.objectContaining({ code: "INVALID_FRAME_RECEIPT" }),
+    );
+    expect(() =>
+      createBroadcastTranscriptVisualPreparedFrameReceipt({
+        plan: current,
+        cellId: "visual:asr-b",
+        frameContentFingerprints: FRAME_FINGERPRINTS,
+        audioEvidence: {
+          sourceStartMs: 30_000,
+          sourceEndMs: 60_000,
+          codec: "audio/wav;codecs=pcm_s16le",
+          extractionRevision:
+            BROADCAST_TRANSCRIPT_VISUAL_AUDIO_EXTRACTION_REVISION,
+          contentFingerprint: AUDIO_FINGERPRINT,
+        },
+      }),
+    ).toThrowError(
+      expect.objectContaining({ code: "INVALID_FRAME_RECEIPT" }),
+    );
+  });
+
   it("creates exactly four deterministic source-time frames for every transcript abstention", () => {
     const current = plan();
     expect(current.cells).toHaveLength(3);
@@ -410,6 +592,7 @@ describe("broadcastTranscriptVisualInspectionQueue", () => {
         editorialFinding: "no-usable-event",
         summaryKo: "화면에 별도의 편집 사건은 확인되지 않았다.",
         providerResponseFingerprint: `sha256:${"d".repeat(64)}`,
+        participantOutcome: NO_PARTICIPANTS,
       }),
     );
     const status = inspectBroadcastTranscriptVisualInspectionPublication({
@@ -470,6 +653,7 @@ describe("broadcastTranscriptVisualInspectionQueue", () => {
           `sha256:${"7".repeat(64)}`,
           `sha256:${"8".repeat(64)}`,
         ],
+        audioEvidence: receipt.audioEvidence,
       });
     const reviewedLedger =
       recordBroadcastTranscriptVisualProviderSettlement(

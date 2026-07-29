@@ -3,27 +3,6 @@ import {
   type BroadcastContextChapterInput,
 } from "./broadcastContextProtocol";
 import type { BroadcastTranscriptQwenResult } from "./broadcastTranscriptQwen";
-import type { BroadcastContextTranscriptionChunk } from "./broadcastContextSamplingPlan";
-
-const BROADCAST_NO_AUDIO_SUMMARY_KO =
-  "이 구간에서는 정상 디코딩된 오디오에서 분석 가능한 발화나 소리를 감지하지 못했습니다.";
-const BROADCAST_NO_SPEECH_SUMMARY_KO =
-  "이 구간에서는 음성 활동 모델이 확신할 수 있는 사람 발화를 감지하지 못했습니다. 화면 사건 분석 대상은 그대로 유지됩니다.";
-
-export type BroadcastResolvedAbstentionReason = "no-audio" | "no-speech";
-
-/**
- * Recognizes only ExClipper's own legacy placeholder text. It exists solely to
- * migrate pre-ledger sessions; new checkpoints keep these ranges out of the
- * dialogue chapter array.
- */
-export function broadcastResolvedAbstentionReasonForChapter(
-  chapter: Pick<BroadcastContextChapterInput, "summaryKo">,
-): BroadcastResolvedAbstentionReason | null {
-  if (chapter.summaryKo === BROADCAST_NO_AUDIO_SUMMARY_KO) return "no-audio";
-  if (chapter.summaryKo === BROADCAST_NO_SPEECH_SUMMARY_KO) return "no-speech";
-  return null;
-}
 
 function representativeCodePoints(value: string, maximumLength: number): string {
   const points = Array.from(value);
@@ -87,88 +66,6 @@ export function createBroadcastTranscriptChapters(
         `${emotionPrefix}${transcript.textKo}`,
         MAX_BROADCAST_CONTEXT_SUMMARY_LENGTH,
       ),
-    };
-  });
-}
-
-/**
- * Records a successfully decoded range that contains no usable audio.
- *
- * This is resolved negative evidence, not a failed transcript gap. Keeping its
- * exact source fence in the checkpoint prevents reloads and later phases from
- * repeatedly paying to inspect the same silent range.
- */
-export function createBroadcastNoAudioChapters(
-  chunks: readonly BroadcastContextTranscriptionChunk[],
-  sourceDurationMs: number,
-): readonly BroadcastContextChapterInput[] {
-  return createBroadcastResolvedAbstentionChapters(
-    chunks,
-    sourceDurationMs,
-    "no-audio",
-  );
-}
-
-/**
- * Records a source range whose every valid VAD frame confidently selected the
- * pinned model's NO_SPEAKER class.
- *
- * This only removes the range from dialogue transcription. It deliberately
- * says nothing about music, effects, or visually meaningful events, so the
- * video/context pipeline may continue to inspect the same source range.
- */
-export function createBroadcastNoSpeechChapters(
-  chunks: readonly BroadcastContextTranscriptionChunk[],
-  sourceDurationMs: number,
-): readonly BroadcastContextChapterInput[] {
-  return createBroadcastResolvedAbstentionChapters(
-    chunks,
-    sourceDurationMs,
-    "no-speech",
-  );
-}
-
-function createBroadcastResolvedAbstentionChapters(
-  chunks: readonly BroadcastContextTranscriptionChunk[],
-  sourceDurationMs: number,
-  reason: "no-audio" | "no-speech",
-): readonly BroadcastContextChapterInput[] {
-  if (!Number.isSafeInteger(sourceDurationMs) || sourceDurationMs <= 0) {
-    throw new RangeError(
-      "Broadcast transcript abstention source duration is invalid.",
-    );
-  }
-  const ordered = [...chunks].sort(
-    (left, right) =>
-      left.sourceStartMs - right.sourceStartMs ||
-      left.sourceEndMs - right.sourceEndMs ||
-      left.chunkId.localeCompare(right.chunkId),
-  );
-  let previousEndMs = -1;
-  return ordered.map((chunk, index) => {
-    if (
-      !Number.isSafeInteger(chunk.sourceStartMs) ||
-      !Number.isSafeInteger(chunk.sourceEndMs) ||
-      chunk.sourceStartMs < 0 ||
-      chunk.sourceEndMs <= chunk.sourceStartMs ||
-      chunk.sourceEndMs > sourceDurationMs ||
-      chunk.sourceStartMs < previousEndMs
-    ) {
-      throw new RangeError(
-        "Broadcast transcript abstention cells must be ordered source ranges.",
-      );
-    }
-    previousEndMs = chunk.sourceEndMs;
-    return {
-      chapterId: `${reason}-${String(index + 1).padStart(3, "0")}`,
-      startMs: chunk.sourceStartMs,
-      endMs: chunk.sourceEndMs,
-      evidenceMode: "sampled-audio-video",
-      evidenceCoverageRatio: 1,
-      summaryKo:
-        reason === "no-audio"
-          ? BROADCAST_NO_AUDIO_SUMMARY_KO
-          : BROADCAST_NO_SPEECH_SUMMARY_KO,
     };
   });
 }

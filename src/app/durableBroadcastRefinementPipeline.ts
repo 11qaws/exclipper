@@ -1,4 +1,5 @@
 import {
+  BroadcastContextDeepseekClientError,
   broadcastContextFailureDisposition,
   parseBroadcastContextProxyResult,
   requestBroadcastContextDeepseek,
@@ -9,16 +10,21 @@ import {
   broadcastContextPhaseLedgerMatchesFence,
   extendBroadcastContextPhaseLedgerPlan,
   normalizeBroadcastContextPhaseLedger,
+  replanBroadcastContextPhaseLedgerAfterEditorRetry,
   replaceBroadcastContextRefinementPhaseLedgerPlan,
   serializeBroadcastContextPhaseLedger,
   type BroadcastContextPhaseLedger,
   type BroadcastContextPhaseLedgerFence,
   type BroadcastContextPhaseLedgerJsonValue,
   type BroadcastContextPhaseLedgerPlannedUnit,
+  type BroadcastContextPhaseLedgerUnitIdentity,
 } from "../analysis/broadcastContextPhaseLedger";
 import {
   runBroadcastContextPhaseLedger,
+  type BroadcastContextPhaseExecutionResult,
   type BroadcastContextPhasePersistedTransition,
+  type BroadcastContextPhaseReconciliationResult,
+  type BroadcastContextPhaseRecoveryAction,
   type BroadcastContextPhaseRunnerResult,
 } from "../analysis/broadcastContextPhaseRunner";
 import {
@@ -40,8 +46,9 @@ export const DURABLE_BROADCAST_REFINEMENT_ABSTENTION_SCHEMA_VERSION =
 
 const REFINEMENT_UNIT_INPUT_DOMAIN =
   "exclipper.broadcast-refinement-unit-input.v2";
-const MAXIMUM_REFINEMENT_ATTEMPTS = 8;
 const MAXIMUM_REFINEMENT_EXECUTIONS_PER_INVOCATION = 3;
+const INITIAL_AUTOMATIC_REFINEMENT_RETRY_BACKOFF_MS = 1_000;
+const MAXIMUM_AUTOMATIC_REFINEMENT_RETRY_BACKOFF_MS = 30_000;
 const MAX_LEAD_ID_LENGTH = 256;
 const MAX_CANONICAL_JSON_DEPTH = 32;
 const MAX_CANONICAL_JSON_NODES = 100_000;
@@ -50,6 +57,10 @@ export type DurableBroadcastRefinementMode = Extract<
   BroadcastContextAnalysisMode,
   "refinement" | "refinement-fast"
 >;
+
+export type DurableBroadcastRefinementRetryMode =
+  | "automatic-free-tier"
+  | "editor-approved-paid";
 
 export interface DurableBroadcastRefinementLeadInput {
   readonly leadId: string;
@@ -82,6 +93,10 @@ type RefinementRequest = typeof requestBroadcastContextDeepseek;
 type RefinementFingerprint = (
   parts: readonly string[],
 ) => Promise<string>;
+export type DurableBroadcastRefinementReconcileOperation = (
+  identity: BroadcastContextPhaseLedgerUnitIdentity,
+  replaySameOperation: () => Promise<BroadcastContextPhaseExecutionResult>,
+) => Promise<BroadcastContextPhaseReconciliationResult>;
 
 export interface DurableBroadcastRefinementPipelineInput {
   readonly ledger: BroadcastContextPhaseLedger;
@@ -94,6 +109,7 @@ export interface DurableBroadcastRefinementPipelineInput {
   /** Exact provider/model routing policy used for every unit in this plan. */
   readonly routingManifestSignature: string;
   readonly operationGeneration: number;
+  readonly retryMode: DurableBroadcastRefinementRetryMode;
   readonly signal: AbortSignal;
   /**
    * This callback must atomically persist ledgerJson and read the exact value
@@ -103,6 +119,15 @@ export interface DurableBroadcastRefinementPipelineInput {
   readonly request?: RefinementRequest;
   readonly fingerprint?: RefinementFingerprint;
   readonly maximumConcurrency?: number;
+  readonly waitForAutomaticRetry?: (
+    delayMs: number,
+    signal: AbortSignal,
+  ) => Promise<void>;
+  /**
+   * Optional coordinator-cache/query adapter. The default path replays only
+   * the exact persisted operation and never allocates a replacement identity.
+   */
+  readonly reconcileOperation?: DurableBroadcastRefinementReconcileOperation;
 }
 
 export type DurableBroadcastRefinementLeadResult =
@@ -146,6 +171,8 @@ export class DurableBroadcastRefinementPipelineError extends Error {
     message: string,
     public readonly ledger: BroadcastContextPhaseLedger | null,
     public readonly causeValue: unknown = null,
+    public readonly recoveryActions: readonly BroadcastContextPhaseRecoveryAction[] =
+      Object.freeze([]),
   ) {
     super(message);
   }
@@ -168,6 +195,10 @@ class InvalidProviderRefinementResultError extends Error {
   public readonly name = "InvalidProviderRefinementResultError";
 }
 
+class RefinementLocalContractError extends Error {
+  public readonly name = "RefinementLocalContractError";
+}
+
 function throwIfAborted(signal: AbortSignal): void {
   if (signal.aborted) {
     throw new DOMException(
@@ -175,6 +206,60 @@ function throwIfAborted(signal: AbortSignal): void {
       "AbortError",
     );
   }
+}
+
+function waitForRefinementRetry(
+  delayMs: number,
+  signal: AbortSignal,
+): Promise<void> {
+  throwIfAborted(signal);
+  return new Promise<void>((resolve, reject) => {
+    let timeout: ReturnType<typeof globalThis.setTimeout> | null = null;
+    const cleanup = (): void => {
+      if (timeout !== null) {
+        globalThis.clearTimeout(timeout);
+        timeout = null;
+      }
+      signal.removeEventListener("abort", onAbort);
+    };
+    const onAbort = (): void => {
+      cleanup();
+      reject(
+        new DOMException(
+          "Broadcast refinement retry was aborted.",
+          "AbortError",
+        ),
+      );
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+    timeout = globalThis.setTimeout(() => {
+      cleanup();
+      resolve();
+    }, delayMs);
+  });
+}
+
+function automaticRefinementRetryBackoffMs(
+  ledger: BroadcastContextPhaseLedger,
+): number {
+  const highestAttemptOrdinal = Math.max(
+    0,
+    ...ledger.units
+      .filter(
+        ({ phase, status }) =>
+          phase === "refinement" &&
+          (status === "retryable-gap" ||
+            status === "outcome-unknown" ||
+            status === "in-flight" ||
+            status === "reconciling"),
+      )
+      .map(({ attemptOrdinal }) => attemptOrdinal),
+  );
+  return Math.min(
+    MAXIMUM_AUTOMATIC_REFINEMENT_RETRY_BACKOFF_MS,
+    INITIAL_AUTOMATIC_REFINEMENT_RETRY_BACKOFF_MS *
+      2 ** Math.min(highestAttemptOrdinal, 5),
+  );
 }
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
@@ -289,9 +374,7 @@ function canonicalRequestInput(
     candidates: request.candidates,
     participantGrounding: request.participantGrounding,
     outputLanguage: request.outputLanguage,
-    ...(request.castRosterId === null
-      ? {}
-      : { castRosterId: request.castRosterId }),
+    castRosterId: request.castRosterId,
   });
 }
 
@@ -306,10 +389,9 @@ function canonicalEmptyRequestDescriptor(
     input.chapters.length !== 0 ||
     !Array.isArray(input.candidates) ||
     input.candidates.length !== 0 ||
-    (input.castRosterId !== undefined &&
+    (input.castRosterId !== null &&
       !isCandidatePassBCastRosterId(input.castRosterId)) ||
-    (input.outputLanguage !== undefined &&
-      !isAnalysisLanguage(input.outputLanguage))
+    !isAnalysisLanguage(input.outputLanguage)
   ) {
     throw new TypeError("Empty refinement request is not canonical.");
   }
@@ -318,9 +400,9 @@ function canonicalEmptyRequestDescriptor(
     sourceDurationMs: input.sourceDurationMs,
     chapters: Object.freeze([]),
     candidates: Object.freeze([]),
-    castRosterId: input.castRosterId ?? null,
+    castRosterId: input.castRosterId,
     participantGrounding: input.participantGrounding ?? null,
-    outputLanguage: input.outputLanguage ?? "ko",
+    outputLanguage: input.outputLanguage,
     localDisposition: "no-usable-chapters",
   });
 }
@@ -357,24 +439,51 @@ function parseLocalAbstention(
   );
 }
 
-function classifyRefinementFailure(error: unknown) {
+function classifyRefinementFailure(
+  error: unknown,
+  retryMode: DurableBroadcastRefinementRetryMode,
+) {
+  if (error instanceof RefinementLocalContractError) {
+    return {
+      disposition: "failed" as const,
+      reasonCode: "local_refinement_contract_invalid",
+    };
+  }
+  if (
+    error instanceof InvalidProviderRefinementResultError ||
+    (error instanceof BroadcastContextDeepseekClientError &&
+      error.code === "PROXY_INVALID_RESPONSE")
+  ) {
+    return retryMode === "automatic-free-tier"
+      ? {
+          disposition: "retryable-gap" as const,
+          reasonCode: "provider_refinement_result_invalid",
+        }
+      : {
+          disposition: "outcome-unknown" as const,
+          reasonCode: "provider_refinement_result_invalid",
+        };
+  }
   const disposition = broadcastContextFailureDisposition(error);
-  return disposition === "retryable"
-    ? {
-        disposition: "retryable-gap" as const,
-        reasonCode: "provider_explicitly_retryable",
-      }
-    : {
-        disposition: "outcome-unknown" as const,
-        reasonCode:
-          error instanceof InvalidProviderRefinementResultError
-            ? "provider_refinement_result_invalid"
-            : disposition === "aborted"
-              ? "client_aborted_after_possible_dispatch"
-              : disposition === "fatal"
-                ? "provider_rejected_requires_editor_retry"
-                : "provider_outcome_unknown",
-      };
+  if (disposition === "retryable") {
+    return {
+      disposition: "retryable-gap" as const,
+      reasonCode: "provider_explicitly_retryable",
+    };
+  }
+  if (disposition === "fatal") {
+    return {
+      disposition: "failed" as const,
+      reasonCode: "provider_configuration_or_request_rejected",
+    };
+  }
+  return {
+    disposition: "outcome-unknown" as const,
+    reasonCode:
+      disposition === "aborted"
+        ? "client_aborted_after_possible_dispatch"
+        : "provider_outcome_unknown",
+  };
 }
 
 function assertParentPhasesSucceeded(
@@ -553,12 +662,19 @@ function assertRunnerComplete(
   const ambiguousCount = outcome.blockingUnits.filter(
     ({ status }) => status === "outcome-unknown",
   ).length;
+  const failedCount = outcome.blockingUnits.filter(
+    ({ status }) => status === "failed",
+  ).length;
   throw new DurableBroadcastRefinementPipelineError(
     "PIPELINE_BLOCKED",
-    ambiguousCount > 0
+    failedCount > 0
+      ? `${failedCount} refinement unit(s) cannot succeed with the current input or provider configuration.`
+      : ambiguousCount > 0
       ? `${ambiguousCount} refinement result(s) may already have been billed, so automatic retry stopped.`
       : `${outcome.blockingUnits.length} refinement unit(s) did not finish within the bounded retry wave.`,
     outcome.ledger,
+    null,
+    outcome.recoveryActions,
   );
 }
 
@@ -669,7 +785,7 @@ export async function runDurableBroadcastRefinementPipeline(
           analysisMode: lead.analysisMode,
           requestInput:
             request === null ? null : canonicalRequestInput(request),
-          outputLanguage: lead.requestInput.outputLanguage ?? "ko",
+          outputLanguage: lead.requestInput.outputLanguage,
           inputDigest,
         }),
       );
@@ -709,6 +825,7 @@ export async function runDurableBroadcastRefinementPipeline(
   );
 
   let activeLedger = normalizedLedger;
+  let activeOperationGeneration = options.operationGeneration;
   const existingRefinementUnits = activeLedger.units.filter(
     ({ phase }) => phase === "refinement",
   );
@@ -737,9 +854,9 @@ export async function runDurableBroadcastRefinementPipeline(
   };
 
   /*
-   * A legacy or malformed "succeeded" unit may already represent a billed
-   * provider call. Reject it before replacing the plan so a schema migration
-   * cannot silently turn that ambiguous receipt into another automatic spend.
+   * A malformed current "succeeded" unit may already represent a provider
+   * call. Reject it before replacing the plan so invalid current data cannot
+   * silently become another operation.
    */
   for (const runtime of runtimeLeads) {
     assertSucceededUnitReceipt(activeLedger, runtime, options);
@@ -766,91 +883,214 @@ export async function runDurableBroadcastRefinementPipeline(
     runtimeLeads.map(({ unitId }, index) => [unitId, index]),
   );
   const request = options.request ?? requestBroadcastContextDeepseek;
-  const runner = await runBroadcastContextPhaseLedger({
-    ledger: activeLedger,
-    maximumAttemptCount: MAXIMUM_REFINEMENT_ATTEMPTS,
-    maximumExecutionsPerInvocation:
-      MAXIMUM_REFINEMENT_EXECUTIONS_PER_INVOCATION,
-    maximumConcurrency,
-    execute: async (identity) => {
-      if (identity.phase !== "refinement") {
-        throw new Error("The refinement runner received a parent-phase unit.");
-      }
-      const runtime = runtimeByUnitId.get(identity.unitId);
-      if (
-        runtime === undefined ||
-        runtime.inputDigest !== identity.inputDigest
-      ) {
-        throw new Error(
-          "The refinement execution does not match its exact planned input.",
-        );
-      }
-      if (runtime.requestInput === null) {
-        return {
-          result: asLedgerJsonValue(
-            localAbstentionResult(runtime.leadId),
-          ),
-          modelReceipt: {
-            routingManifestSignature: options.routingManifestSignature,
-            evidenceManifestSignature: options.evidenceManifestSignature,
-            outputLanguage: runtime.outputLanguage,
-            analysisMode: runtime.analysisMode,
-            providerDispatch: false,
-          },
-        };
-      }
-      throwIfAborted(options.signal);
-      const providerResult = await request(runtime.requestInput, {
-        signal: options.signal,
-        analysisMode: runtime.analysisMode,
-        quota: {
-          participantId: options.quotaParticipantId,
-          runId: options.runId,
-          operationId: identity.operationId,
-        },
-      });
-      const parsed = parseBroadcastContextProxyResult(
-        providerResult,
-        runtime.requestInput,
+  const executeUnit = async (
+    identity: BroadcastContextPhaseLedgerUnitIdentity,
+  ): Promise<BroadcastContextPhaseExecutionResult> => {
+    if (identity.phase !== "refinement") {
+      throw new RefinementLocalContractError(
+        "The refinement runner received a parent-phase unit.",
       );
-      if (parsed === null || parsed.discoveredLeadsSupported !== true) {
-        throw new InvalidProviderRefinementResultError(
-          "The provider refinement result failed strict local validation.",
-        );
-      }
+    }
+    const runtime = runtimeByUnitId.get(identity.unitId);
+    if (
+      runtime === undefined ||
+      runtime.inputDigest !== identity.inputDigest
+    ) {
+      throw new RefinementLocalContractError(
+        "The refinement execution does not match its exact planned input.",
+      );
+    }
+    if (runtime.requestInput === null) {
       return {
-        result: asLedgerJsonValue(parsed),
+        result: asLedgerJsonValue(
+          localAbstentionResult(runtime.leadId),
+        ),
         modelReceipt: {
           routingManifestSignature: options.routingManifestSignature,
           evidenceManifestSignature: options.evidenceManifestSignature,
           outputLanguage: runtime.outputLanguage,
           analysisMode: runtime.analysisMode,
-          providerDispatch: true,
+          providerDispatch: false,
         },
       };
-    },
-    classifyFailure: classifyRefinementFailure,
-    createRetryOperationId: ({
-      identity,
-      nextAttemptOrdinal,
-      usedOperationIds: usedIds,
-    }) => {
-      const unitIndex = unitIndexById.get(identity.unitId);
-      if (unitIndex === undefined) {
-        throw new Error("The refinement retry unit is not in the exact plan.");
-      }
-      return uniqueOperationId(
-        `context-refinement-${unitIndex}` +
-          `-g${options.operationGeneration}` +
-          `-a${nextAttemptOrdinal}` +
-          `-${identity.inputDigest.slice(-16)}`,
-        new Set(usedIds),
+    }
+    throwIfAborted(options.signal);
+    const providerResult = await request(runtime.requestInput, {
+      signal: options.signal,
+      analysisMode: runtime.analysisMode,
+      quota: {
+        participantId: options.quotaParticipantId,
+        runId: options.runId,
+        operationId: identity.operationId,
+      },
+    });
+    const parsed = parseBroadcastContextProxyResult(
+      providerResult,
+      runtime.requestInput,
+    );
+    if (parsed === null || parsed.discoveredLeadsSupported !== true) {
+      throw new InvalidProviderRefinementResultError(
+        "The provider refinement result failed strict local validation.",
       );
-    },
-    persist: (ledger, transition) =>
-      persist(ledger, "runner-transition", transition),
-  });
-  activeLedger = runner.ledger;
+    }
+    return {
+      result: asLedgerJsonValue(parsed),
+      modelReceipt: {
+        routingManifestSignature: options.routingManifestSignature,
+        evidenceManifestSignature: options.evidenceManifestSignature,
+        outputLanguage: runtime.outputLanguage,
+        analysisMode: runtime.analysisMode,
+        providerDispatch: true,
+      },
+    };
+  };
+  const reconcileUnit = async (
+    identity: BroadcastContextPhaseLedgerUnitIdentity,
+  ): Promise<BroadcastContextPhaseReconciliationResult> => {
+    const replaySameOperation = (): Promise<BroadcastContextPhaseExecutionResult> =>
+      executeUnit(identity);
+    if (options.reconcileOperation !== undefined) {
+      return options.reconcileOperation(identity, replaySameOperation);
+    }
+    try {
+      const replayed = await replaySameOperation();
+      if (!Object.hasOwn(replayed, "result")) {
+        return {
+          disposition: "unresolved",
+          operationId: identity.operationId,
+          inputDigest: identity.inputDigest,
+          reasonCode: "same_operation_replay_returned_no_terminal_result",
+        };
+      }
+      return {
+        disposition: "succeeded",
+        operationId: identity.operationId,
+        inputDigest: identity.inputDigest,
+        result: replayed.result!,
+        ...(replayed.modelReceipt === undefined
+          ? {}
+          : { modelReceipt: replayed.modelReceipt }),
+      };
+    } catch {
+      return {
+        disposition: "unresolved",
+        operationId: identity.operationId,
+        inputDigest: identity.inputDigest,
+        reasonCode: "same_operation_replay_outcome_unresolved",
+      };
+    }
+  };
+  const runLedger = (): Promise<BroadcastContextPhaseRunnerResult> =>
+    runBroadcastContextPhaseLedger({
+      ledger: activeLedger,
+      maximumExecutionsPerInvocation:
+        MAXIMUM_REFINEMENT_EXECUTIONS_PER_INVOCATION,
+      maximumConcurrency,
+      reconcile: reconcileUnit,
+      execute: executeUnit,
+      classifyFailure: (error) =>
+        classifyRefinementFailure(error, options.retryMode),
+      createRetryOperationId: ({
+        identity,
+        nextAttemptOrdinal,
+        usedOperationIds: usedIds,
+      }) => {
+        const unitIndex = unitIndexById.get(identity.unitId);
+        if (unitIndex === undefined) {
+          throw new RefinementLocalContractError(
+            "The refinement retry unit is not in the exact plan.",
+          );
+        }
+        return uniqueOperationId(
+          `context-refinement-${unitIndex}` +
+            `-g${activeOperationGeneration}` +
+            `-a${nextAttemptOrdinal}` +
+            `-${identity.inputDigest.slice(-16)}`,
+          new Set(usedIds),
+        );
+      },
+      persist: (ledger, transition) =>
+        persist(ledger, "runner-transition", transition),
+    });
+
+  let runner: BroadcastContextPhaseRunnerResult;
+  const waitForAutomaticRetry =
+    options.waitForAutomaticRetry ?? waitForRefinementRetry;
+  while (true) {
+    const ambiguousOperationIdsBeforeRun = new Set(
+      activeLedger.units
+        .filter(
+          ({ phase, status }) =>
+            phase === "refinement" &&
+            (status === "in-flight" ||
+              status === "outcome-unknown" ||
+              status === "reconciling"),
+        )
+        .map(({ operationId }) => operationId),
+    );
+    runner = await runLedger();
+    activeLedger = runner.ledger;
+    if (
+      runner.complete ||
+      options.retryMode !== "automatic-free-tier" ||
+      runner.blockingUnits.some(({ status }) => status === "failed")
+    ) {
+      break;
+    }
+
+    await waitForAutomaticRetry(
+      automaticRefinementRetryBackoffMs(activeLedger),
+      options.signal,
+    );
+    throwIfAborted(options.signal);
+    if (activeOperationGeneration === Number.MAX_SAFE_INTEGER) {
+      throw new DurableBroadcastRefinementPipelineError(
+        "INVALID_OPERATION_GENERATION",
+        "The automatic refinement retry generation overflowed.",
+        activeLedger,
+      );
+    }
+    activeOperationGeneration += 1;
+    if (
+      activeLedger.units.some(
+        ({ phase, status }) =>
+          phase === "refinement" &&
+          (status === "in-flight" || status === "reconciling"),
+      )
+    ) {
+      continue;
+    }
+
+    const ambiguousUnits = activeLedger.units.filter(
+      ({ phase, status }) =>
+        phase === "refinement" && status === "outcome-unknown",
+    );
+    if (
+      ambiguousUnits.length > 0 &&
+      ambiguousUnits.every(({ operationId }) =>
+        ambiguousOperationIdsBeforeRun.has(operationId),
+      )
+    ) {
+      const nextAttemptOrdinal = Math.max(
+        ...ambiguousUnits.map(({ attemptOrdinal }) => attemptOrdinal + 1),
+      );
+      const replanned = replanBroadcastContextPhaseLedgerAfterEditorRetry(
+        activeLedger,
+        {
+          confirmationId:
+            `automatic-free-tier-refinement-retry:` +
+            `g${activeOperationGeneration}:a${nextAttemptOrdinal}:` +
+            options.evidenceManifestSignature.slice(-24),
+          nextOperationId: (unit) =>
+            `context-refinement-${unit.unitId}` +
+            `-free-g${activeOperationGeneration}` +
+            `-a${unit.attemptOrdinal + 1}` +
+            `-${unit.inputDigest.slice(-16)}`,
+        },
+      );
+      await persist(replanned, "runner-transition", null);
+    }
+  }
   assertRunnerComplete(runner);
   if (
     !broadcastContextPhaseLedgerCanComplete(activeLedger) ||

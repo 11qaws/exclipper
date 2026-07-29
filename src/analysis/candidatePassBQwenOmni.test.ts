@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   CANDIDATE_PASS_B_QWEN_MAX_SHARED_PROMPT_UTF8_BYTES,
+  buildBroadcastTranscriptVisualQwenOmniUrlRequestBody,
   buildCandidatePassBQwenOmniSharedPrompt,
   buildCandidatePassBQwenOmniRequestBody,
+  buildCandidatePassBQwenOmniUrlRequestBody,
   extractCandidatePassBQwenOmniSseResponse,
 } from "./candidatePassBQwenOmni";
 import {
@@ -10,7 +12,6 @@ import {
   extractCandidatePassBGeminiResponse,
 } from "./candidatePassBGemini";
 import {
-  CANDIDATE_PASS_B_ROUTING_MODEL_REVISION,
   MAX_CANDIDATE_PASS_B_CONTEXT_TEXT_LENGTH,
   type CandidatePassBContextPacket,
 } from "./candidatePassBWorkerProtocol";
@@ -19,10 +20,7 @@ import {
   CANDIDATE_PASS_B_CONTEXT_OMISSION_MARKER,
   canonicalizeCandidatePassBContextPacket,
 } from "./candidatePassBContextBudget";
-import {
-  candidatePassBContextFingerprint,
-  createCandidatePassBVerificationReceipt,
-} from "./candidateFinalVerification";
+import { candidatePassBContextFingerprint } from "./candidateFinalVerification";
 
 function contextPacket(
   overrides: Partial<CandidatePassBContextPacket> = {},
@@ -59,12 +57,14 @@ describe("candidatePassBQwenOmni", () => {
     const body = buildCandidatePassBQwenOmniRequestBody("AA==", 30_000, [
       { timestampMs: 5_000, mimeType: "image/jpeg", dataBase64: "AQ==" },
       { timestampMs: 15_000, mimeType: "image/jpeg", dataBase64: "Ag==" },
-    ]);
+      { timestampMs: 22_000, mimeType: "image/jpeg", dataBase64: "Aw==" },
+      { timestampMs: 28_000, mimeType: "image/jpeg", dataBase64: "BA==" },
+    ], null, "ko", contextPacket());
     expect(body.model).toBe("qwen3.5-omni-flash");
     expect(body.stream).toBe(true);
     expect(body.modalities).toEqual(["text"]);
     expect(body.max_tokens).toBe(2_048);
-    expect(body.messages[0].content).toHaveLength(6);
+    expect(body.messages[0].content).toHaveLength(10);
     const serializedContent = JSON.stringify(body.messages[0].content);
     expect(serializedContent).toContain("input_audio");
     expect(serializedContent).toContain("5.0초");
@@ -77,7 +77,77 @@ describe("candidatePassBQwenOmni", () => {
           "type" in item &&
           item.type === "image_url",
     ),
-    ).toHaveLength(2);
+    ).toHaveLength(4);
+  });
+
+  it("keeps no-audio visual inspection on its explicit pre-context contract", () => {
+    const body = buildBroadcastTranscriptVisualQwenOmniUrlRequestBody(
+      null,
+      30_000,
+      [1_000, 10_000, 20_000, 29_000].map((timestampMs, index) => ({
+        timestampMs,
+        url: `https://media.example/frame-${index}.jpg`,
+      })),
+      null,
+      "ko",
+      null,
+    );
+    const typedParts = body.messages[0].content.filter(
+      (part): part is Record<string, unknown> =>
+        typeof part === "object" && part !== null,
+    );
+    expect(typedParts.some(({ type }) => type === "input_audio")).toBe(false);
+    expect(
+      typedParts.filter(({ type }) => type === "image_url"),
+    ).toHaveLength(4);
+  });
+
+  it("requires current candidate URL requests to carry audio, four frames, and context", () => {
+    const body = buildCandidatePassBQwenOmniUrlRequestBody(
+      "https://media.example/candidate.wav",
+      30_000,
+      [1_000, 10_000, 20_000, 29_000].map((timestampMs, index) => ({
+        timestampMs,
+        url: `https://media.example/candidate-frame-${index}.jpg`,
+      })),
+      null,
+      "ko",
+      contextPacket(),
+    );
+    const serialized = JSON.stringify(body);
+    expect(serialized).toContain("https://media.example/candidate.wav");
+    expect(serialized).toContain("방송 전체 흐름");
+  });
+
+  it("rejects legacy candidate requests with fewer than four frames or no context", () => {
+    const threeFrames = [1_000, 10_000, 20_000].map((timestampMs, index) => ({
+      timestampMs,
+      url: `https://media.example/candidate-frame-${index}.jpg`,
+    }));
+    expect(() =>
+      buildCandidatePassBQwenOmniUrlRequestBody(
+        "https://media.example/candidate.wav",
+        30_000,
+        threeFrames,
+        null,
+        "ko",
+        contextPacket(),
+      ),
+    ).toThrow(RangeError);
+    expect(() =>
+      buildCandidatePassBQwenOmniRequestBody(
+        "AA==",
+        30_000,
+        [1_000, 10_000, 20_000, 29_000].map((timestampMs, index) => ({
+          timestampMs,
+          mimeType: "image/jpeg" as const,
+          dataBase64: btoa(`frame-${index}`),
+        })),
+        null,
+        "ko",
+        null as unknown as CandidatePassBContextPacket,
+      ),
+    ).toThrow(RangeError);
   });
 
   it("preserves normal Korean and English context without compaction", () => {
@@ -303,26 +373,8 @@ describe("candidatePassBQwenOmni", () => {
         outputLanguage,
         canonicalContext,
       );
-      const frames = [1_000, 15_000, 30_000, 45_000].map((timestampMs) => ({
-        timestampMs,
-      }));
-      const receipt = createCandidatePassBVerificationReceipt(
-        rawContext,
-        frames,
-        1_000,
-        {
-          candidateId: "candidate-shared-prompt",
-          sourceStartMs: 0,
-          sourceEndMs: 60_000,
-          routingModelRevision: CANDIDATE_PASS_B_ROUTING_MODEL_REVISION,
-          refinementEvidenceProjectionFingerprint: null,
-          outputLanguage,
-          castRosterId: DEFAULT_CANDIDATE_PASS_B_CAST_ROSTER_ID,
-        },
-      );
-
       expect(prompt).toBe(canonicalPrompt);
-      expect(receipt?.contextFingerprint).toBe(
+      expect(candidatePassBContextFingerprint(rawContext)).toBe(
         candidatePassBContextFingerprint(canonicalContext),
       );
       expect(
@@ -357,6 +409,9 @@ describe("candidatePassBQwenOmni", () => {
           observedFrameIndices: [0],
         },
       ],
+      clipDecision: "recommend",
+      contextConsistency: "consistent",
+      programMaterial: "streamer-event",
     };
     const sse = [
       `data: ${JSON.stringify({ choices: [{ delta: { content: JSON.stringify(analysis) }, finish_reason: null }] })}`,
@@ -373,6 +428,26 @@ describe("candidatePassBQwenOmni", () => {
         displayName: "유레카",
         evidenceBasis: "on-screen-name",
       });
+    }
+    for (const field of [
+      "segments",
+      "identifiedParticipants",
+      "clipDecision",
+      "contextConsistency",
+      "programMaterial",
+    ] as const) {
+      const malformed: Record<string, unknown> = { ...analysis };
+      delete malformed[field];
+      const malformedSse = [
+        `data: ${JSON.stringify({ choices: [{ delta: { content: JSON.stringify(malformed) }, finish_reason: null }] })}`,
+        `data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: "stop" }] })}`,
+        "data: [DONE]",
+        "",
+      ].join("\n");
+      expect(
+        extractCandidatePassBQwenOmniSseResponse(malformedSse, 30_000),
+        field,
+      ).toBeNull();
     }
   });
 });

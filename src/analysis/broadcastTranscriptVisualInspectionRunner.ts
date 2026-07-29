@@ -16,13 +16,22 @@ import {
   type BroadcastTranscriptVisualPreparedFrameReceipt,
   type BroadcastTranscriptVisualEditorialFinding,
   type BroadcastTranscriptVisualProviderFailureReason,
+  type BroadcastTranscriptVisualParticipantOutcome,
   type BroadcastTranscriptVisualProviderSettlement,
   type BroadcastTranscriptVisualProviderSettlementLedger,
   type BroadcastTranscriptVisualProviderTask,
 } from "./broadcastTranscriptVisualInspectionQueue";
+import {
+  verifyBroadcastTranscriptVisualHydratedMediaEvidence,
+  type BroadcastTranscriptVisualHydratedMediaEvidence,
+  type BroadcastTranscriptVisualMediaFingerprinter,
+  type BroadcastTranscriptVisualPreparedMediaEvidence,
+  type BroadcastTranscriptVisualVerifiedMediaEvidence,
+} from "./broadcastTranscriptVisualMediaEvidence";
 
 export const BROADCAST_TRANSCRIPT_VISUAL_INSPECTION_RUNNER_SCHEMA_VERSION =
-  "1.0.0" as const;
+  "3.0.0" as const;
+export const BROADCAST_TRANSCRIPT_VISUAL_TRANSPORT_MODE = "free-r2" as const;
 export const DEFAULT_BROADCAST_TRANSCRIPT_VISUAL_FRAME_CONCURRENCY = 2;
 export const MAX_BROADCAST_TRANSCRIPT_VISUAL_FRAME_CONCURRENCY = 8;
 export const DEFAULT_BROADCAST_TRANSCRIPT_VISUAL_PROVIDER_ATTEMPT_COUNT = 3;
@@ -32,12 +41,14 @@ type FourFrameContentFingerprints =
   BroadcastTranscriptVisualPreparedFrameReceipt["frameContentFingerprints"];
 
 export interface BroadcastTranscriptVisualProviderDispatchIntent {
+  readonly transportMode: typeof BROADCAST_TRANSCRIPT_VISUAL_TRANSPORT_MODE;
   readonly cellId: string;
   readonly operationId: string;
   readonly attemptOrdinal: number;
   readonly providerModelRevision: string;
   readonly frameBundleKey: string;
   readonly requestedFrameContentFingerprints: FourFrameContentFingerprints;
+  readonly requestedAudioEvidence: BroadcastTranscriptVisualPreparedFrameReceipt["audioEvidence"];
   readonly replacesOutcomeUnknown: boolean;
 }
 
@@ -47,8 +58,8 @@ export interface BroadcastTranscriptVisualProviderDispatchIntent {
  * transition before it permits another provider request.
  */
 export interface BroadcastTranscriptVisualInspectionRunnerCheckpoint {
-  readonly schemaVersion:
-    typeof BROADCAST_TRANSCRIPT_VISUAL_INSPECTION_RUNNER_SCHEMA_VERSION;
+  readonly schemaVersion: typeof BROADCAST_TRANSCRIPT_VISUAL_INSPECTION_RUNNER_SCHEMA_VERSION;
+  readonly transportMode: typeof BROADCAST_TRANSCRIPT_VISUAL_TRANSPORT_MODE;
   readonly planFingerprint: string;
   readonly sourceFingerprint: string;
   readonly revision: number;
@@ -83,12 +94,14 @@ export interface BroadcastTranscriptVisualFrameAdapterRequest {
 }
 
 export interface BroadcastTranscriptVisualProviderAttemptRequest {
+  readonly transportMode: typeof BROADCAST_TRANSCRIPT_VISUAL_TRANSPORT_MODE;
   readonly planFingerprint: string;
   readonly sourceFingerprint: string;
   readonly task: BroadcastTranscriptVisualProviderTask;
   readonly providerModelRevision: string;
   readonly operationId: string;
   readonly attemptOrdinal: number;
+  readonly mediaEvidence: BroadcastTranscriptVisualVerifiedMediaEvidence;
 }
 
 interface BroadcastTranscriptVisualProviderAdapterResultBase {
@@ -105,12 +118,14 @@ export type BroadcastTranscriptVisualProviderAdapterResult =
       >;
       readonly summaryKo: string;
       readonly providerResponseFingerprint: string;
+      readonly participantOutcome: BroadcastTranscriptVisualParticipantOutcome;
     })
   | (BroadcastTranscriptVisualProviderAdapterResultBase & {
       readonly outcome: "excluded-music-only";
       readonly editorialFinding: "music-or-mv-only";
       readonly summaryKo: string;
       readonly providerResponseFingerprint: string;
+      readonly participantOutcome: BroadcastTranscriptVisualParticipantOutcome;
     })
   | (BroadcastTranscriptVisualProviderAdapterResultBase & {
       readonly outcome: "retryable" | "outcome-unknown";
@@ -136,16 +151,26 @@ export interface RunBroadcastTranscriptVisualInspectionOptions {
   readonly providerModelRevision: string;
   readonly maximumFrameConcurrency?: number;
   readonly maximumProviderBatchSize?: number;
-  readonly maximumProviderAttemptCount?: number;
   /**
-   * Consent is bound to the exact unknown operation, not merely a cell. A
-   * confirmation therefore cannot silently authorize another unknown retry.
+   * Additional attempts allowed for each unsettled cell in this invocation.
+   * A later invocation receives a fresh bounded budget and continues with the
+   * next durable attempt ordinal.
    */
-  readonly confirmedOutcomeUnknownOperationIds?: readonly string[];
+  readonly maximumProviderAttemptCount?: number;
   readonly signal?: AbortSignal;
-  readonly prepareFrames: (
-    request: BroadcastTranscriptVisualFrameAdapterRequest,
-  ) => Promise<FourFrameContentFingerprints>;
+  readonly mediaEvidence: {
+    readonly prepare: (
+      request: BroadcastTranscriptVisualFrameAdapterRequest,
+    ) => Promise<BroadcastTranscriptVisualPreparedMediaEvidence>;
+    readonly hydrate: (request: {
+      readonly planFingerprint: string;
+      readonly sourceFingerprint: string;
+      readonly task: BroadcastTranscriptVisualProviderTask;
+      readonly preparedReceipt: BroadcastTranscriptVisualPreparedFrameReceipt;
+      readonly signal?: AbortSignal;
+    }) => Promise<BroadcastTranscriptVisualHydratedMediaEvidence>;
+    readonly fingerprint: BroadcastTranscriptVisualMediaFingerprinter;
+  };
   readonly executeProviderBatch: (
     requests: readonly BroadcastTranscriptVisualProviderAttemptRequest[],
     signal?: AbortSignal,
@@ -177,7 +202,7 @@ export interface BroadcastTranscriptVisualInspectionRunnerStatistics {
   readonly providerBatchExecutionCount: number;
   readonly providerCellExecutionCount: number;
   readonly automaticRetryCount: number;
-  readonly confirmedOutcomeUnknownRetryCount: number;
+  readonly freeOutcomeUnknownRetryCount: number;
   readonly persistedTransitionCount: number;
 }
 
@@ -235,7 +260,7 @@ interface MutableRunnerStatistics {
   providerBatchExecutionCount: number;
   providerCellExecutionCount: number;
   automaticRetryCount: number;
-  confirmedOutcomeUnknownRetryCount: number;
+  freeOutcomeUnknownRetryCount: number;
   persistedTransitionCount: number;
 }
 
@@ -294,6 +319,13 @@ function frameFingerprintsEqual(
   return left.every((fingerprint, index) => fingerprint === right[index]);
 }
 
+function audioEvidenceEqual(
+  left: BroadcastTranscriptVisualPreparedFrameReceipt["audioEvidence"],
+  right: BroadcastTranscriptVisualPreparedFrameReceipt["audioEvidence"],
+): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
 function cellOrdinalMap(
   plan: BroadcastTranscriptVisualInspectionPlan,
 ): ReadonlyMap<string, number> {
@@ -340,6 +372,7 @@ function validateCheckpoint(
     !isRecord(checkpoint) ||
     !hasExactKeys(checkpoint, [
       "schemaVersion",
+      "transportMode",
       "planFingerprint",
       "sourceFingerprint",
       "revision",
@@ -349,6 +382,7 @@ function validateCheckpoint(
     ]) ||
     checkpoint.schemaVersion !==
       BROADCAST_TRANSCRIPT_VISUAL_INSPECTION_RUNNER_SCHEMA_VERSION ||
+    checkpoint.transportMode !== BROADCAST_TRANSCRIPT_VISUAL_TRANSPORT_MODE ||
     checkpoint.planFingerprint !== plan.planFingerprint ||
     checkpoint.sourceFingerprint !== plan.sourceFence.sourceFingerprint ||
     !Number.isSafeInteger(checkpoint.revision) ||
@@ -398,6 +432,10 @@ function validateCheckpoint(
       !frameFingerprintsEqual(
         receipt.frameContentFingerprints,
         settlement.requestedFrameContentFingerprints,
+      ) ||
+      !audioEvidenceEqual(
+        receipt.audioEvidence,
+        settlement.requestedAudioEvidence,
       )
     ) {
       throw new BroadcastTranscriptVisualInspectionRunnerError(
@@ -412,9 +450,8 @@ function validateCheckpoint(
   if (
     typed.activeProviderDispatches.length >
       MAX_BROADCAST_TRANSCRIPT_VISUAL_PROVIDER_BATCH_SIZE ||
-    new Set(
-      typed.activeProviderDispatches.map(({ cellId }) => cellId),
-    ).size !== typed.activeProviderDispatches.length ||
+    new Set(typed.activeProviderDispatches.map(({ cellId }) => cellId)).size !==
+      typed.activeProviderDispatches.length ||
     new Set(
       typed.activeProviderDispatches.map(({ operationId }) => operationId),
     ).size !== typed.activeProviderDispatches.length
@@ -434,12 +471,14 @@ function validateCheckpoint(
     if (
       !isRecord(rawDispatch) ||
       !hasExactKeys(rawDispatch, [
+        "transportMode",
         "cellId",
         "operationId",
         "attemptOrdinal",
         "providerModelRevision",
         "frameBundleKey",
         "requestedFrameContentFingerprints",
+        "requestedAudioEvidence",
         "replacesOutcomeUnknown",
       ])
     ) {
@@ -459,19 +498,22 @@ function validateCheckpoint(
     );
     if (
       receipt === undefined ||
+      dispatch.transportMode !== BROADCAST_TRANSCRIPT_VISUAL_TRANSPORT_MODE ||
       !boundedString(dispatch.operationId, 256) ||
       usedOperationIds.has(dispatch.operationId) ||
       !boundedString(dispatch.providerModelRevision, 512) ||
       !Number.isSafeInteger(dispatch.attemptOrdinal) ||
       dispatch.attemptOrdinal < 0 ||
-      dispatch.attemptOrdinal >=
-        MAX_BROADCAST_TRANSCRIPT_VISUAL_PROVIDER_ATTEMPT_COUNT ||
       dispatch.frameBundleKey !== receipt.frameBundleKey ||
       !Array.isArray(dispatch.requestedFrameContentFingerprints) ||
       dispatch.requestedFrameContentFingerprints.length !== 4 ||
       !frameFingerprintsEqual(
         dispatch.requestedFrameContentFingerprints,
         receipt.frameContentFingerprints,
+      ) ||
+      !audioEvidenceEqual(
+        dispatch.requestedAudioEvidence,
+        receipt.audioEvidence,
       ) ||
       typeof dispatch.replacesOutcomeUnknown !== "boolean" ||
       previous?.outcome === "completed" ||
@@ -508,8 +550,8 @@ export function createBroadcastTranscriptVisualInspectionRunnerCheckpoint(input:
 }): BroadcastTranscriptVisualInspectionRunnerCheckpoint {
   assertBroadcastTranscriptVisualInspectionPlan(input.plan);
   const checkpoint: BroadcastTranscriptVisualInspectionRunnerCheckpoint = {
-    schemaVersion:
-      BROADCAST_TRANSCRIPT_VISUAL_INSPECTION_RUNNER_SCHEMA_VERSION,
+    schemaVersion: BROADCAST_TRANSCRIPT_VISUAL_INSPECTION_RUNNER_SCHEMA_VERSION,
+    transportMode: BROADCAST_TRANSCRIPT_VISUAL_TRANSPORT_MODE,
     planFingerprint: input.plan.planFingerprint,
     sourceFingerprint: input.plan.sourceFence.sourceFingerprint,
     revision: input.revision ?? 0,
@@ -554,9 +596,7 @@ function configurationInteger(
   minimum: number,
   maximum: number,
 ): boolean {
-  return (
-    Number.isSafeInteger(value) && value >= minimum && value <= maximum
-  );
+  return Number.isSafeInteger(value) && value >= minimum && value <= maximum;
 }
 
 function validProviderFailureClassification(
@@ -564,9 +604,11 @@ function validProviderFailureClassification(
 ): value is BroadcastTranscriptVisualProviderFailureClassification {
   if (!isRecord(value)) return false;
   if (value.outcome === "retryable") {
-    return ["rate-limited", "provider-unavailable", "invalid-response"].includes(
-      String(value.failureReason),
-    );
+    return [
+      "rate-limited",
+      "provider-unavailable",
+      "invalid-response",
+    ].includes(String(value.failureReason));
   }
   return (
     value.outcome === "outcome-unknown" &&
@@ -580,10 +622,7 @@ function statusForPublication(
   publication: BroadcastTranscriptVisualInspectionPublicationStatus,
   frameFailureCount: number,
 ): BroadcastTranscriptVisualInspectionRunnerBlockedStatus {
-  if (
-    frameFailureCount > 0 ||
-    publication.missingPreparedCellIds.length > 0
-  ) {
+  if (frameFailureCount > 0 || publication.missingPreparedCellIds.length > 0) {
     return "blocked-frame-preparation";
   }
   if (publication.outcomeUnknownCellIds.length > 0) {
@@ -622,10 +661,7 @@ function buildResult(
     };
   }
   return {
-    status: statusForPublication(
-      publication,
-      framePreparationFailures.length,
-    ),
+    status: statusForPublication(publication, framePreparationFailures.length),
     complete: false,
     checkpoint,
     publication,
@@ -655,8 +691,8 @@ function providerAdapterResultToSettlement(input: {
         outcome: input.result.outcome,
         editorialFinding: input.result.editorialFinding,
         summaryKo: input.result.summaryKo,
-        providerResponseFingerprint:
-          input.result.providerResponseFingerprint,
+        providerResponseFingerprint: input.result.providerResponseFingerprint,
+        participantOutcome: input.result.participantOutcome,
       });
     case "excluded-music-only":
       return createBroadcastTranscriptVisualProviderSettlement({
@@ -664,8 +700,8 @@ function providerAdapterResultToSettlement(input: {
         outcome: input.result.outcome,
         editorialFinding: input.result.editorialFinding,
         summaryKo: input.result.summaryKo,
-        providerResponseFingerprint:
-          input.result.providerResponseFingerprint,
+        providerResponseFingerprint: input.result.providerResponseFingerprint,
+        participantOutcome: input.result.participantOutcome,
       });
     case "retryable":
     case "outcome-unknown":
@@ -727,13 +763,15 @@ function validatedProviderResults(
 }
 
 /**
- * Executes the no-speech/no-audio visual lane without allowing an unverified
- * write, an unknown provider outcome, or a missing frame bundle to disappear.
+ * Executes both transcript-abstention review and bounded participant-dialogue
+ * sampling without allowing an unverified write, unknown provider outcome, or
+ * missing four-frame bundle to disappear.
  *
- * Local frame extraction is bounded and parallel. Provider batches are
- * deliberately sequential: a batch is durably armed before dispatch and every
- * resulting settlement is persisted and read back before another paid request
- * may start.
+ * Local frame extraction is a bounded producer. The provider is a sequential
+ * consumer that may start as soon as one or more complete media receipts have
+ * been persisted and read back; it never waits for unrelated later cells.
+ * Every free-r2 provider batch is still durably armed before dispatch and
+ * completely settled before another batch may start.
  */
 export async function runBroadcastTranscriptVisualInspection(
   options: RunBroadcastTranscriptVisualInspectionOptions,
@@ -776,23 +814,20 @@ export async function runBroadcastTranscriptVisualInspection(
     );
   }
 
-  const confirmedUnknownOperationIds = new Set(
-    options.confirmedOutcomeUnknownOperationIds ?? [],
-  );
-  if (
-    confirmedUnknownOperationIds.size !==
-      (options.confirmedOutcomeUnknownOperationIds ?? []).length ||
-    [...confirmedUnknownOperationIds].some(
-      (operationId) => !boundedString(operationId, 256),
-    )
-  ) {
-    throw new BroadcastTranscriptVisualInspectionRunnerError(
-      "INVALID_CONFIGURATION",
-      "Outcome-unknown confirmations must be unique exact operation IDs.",
-      options.checkpoint,
-      null,
-    );
-  }
+  /*
+   * This current-only lane is always free-r2. Only unknown operations already
+   * present at the invocation boundary may be replaced automatically. An
+   * unknown produced by this invocation therefore closes the bounded unit of
+   * work; the App persists it, backs off, and starts a fresh generation.
+   */
+  const freeOutcomeUnknownOperationIds = new Set([
+    ...options.checkpoint.providerLedger.settlements
+      .filter(({ outcome }) => outcome === "outcome-unknown")
+      .map(({ operationId }) => operationId),
+    ...options.checkpoint.activeProviderDispatches.map(
+      ({ operationId }) => operationId,
+    ),
+  ]);
 
   let checkpoint = options.checkpoint;
   const statistics: MutableRunnerStatistics = {
@@ -802,7 +837,7 @@ export async function runBroadcastTranscriptVisualInspection(
     providerBatchExecutionCount: 0,
     providerCellExecutionCount: 0,
     automaticRetryCount: 0,
-    confirmedOutcomeUnknownRetryCount: 0,
+    freeOutcomeUnknownRetryCount: 0,
     persistedTransitionCount: 0,
   };
 
@@ -852,6 +887,8 @@ export async function runBroadcastTranscriptVisualInspection(
     checkpoint = readback;
     statistics.persistedTransitionCount += 1;
   };
+  const checkpointTransitionMutex = new AsyncTransitionMutex();
+  let notifyFrameProducers: () => void = () => undefined;
 
   const receiptFor = (
     cellId: string,
@@ -872,43 +909,41 @@ export async function runBroadcastTranscriptVisualInspection(
 
   const commitSettlement = async (
     settlement: BroadcastTranscriptVisualProviderSettlement,
-    cause:
-      | "provider-settled"
-      | "recovered-dispatch-sealed",
+    cause: "provider-settled" | "recovered-dispatch-sealed",
   ): Promise<void> => {
-    const dispatch = checkpoint.activeProviderDispatches.find(
-      ({ cellId }) => cellId === settlement.cellId,
-    );
-    if (
-      dispatch === undefined ||
-      dispatch.operationId !== settlement.operationId ||
-      dispatch.attemptOrdinal !== settlement.attemptOrdinal
-    ) {
-      throw new BroadcastTranscriptVisualInspectionRunnerError(
-        "INVALID_CHECKPOINT",
-        "A provider settlement does not match the durably armed dispatch.",
-        checkpoint,
-        null,
+    await checkpointTransitionMutex.runExclusive(async () => {
+      const dispatch = checkpoint.activeProviderDispatches.find(
+        ({ cellId }) => cellId === settlement.cellId,
       );
-    }
-    const providerLedger =
-      recordBroadcastTranscriptVisualProviderSettlement(
+      if (
+        dispatch === undefined ||
+        dispatch.operationId !== settlement.operationId ||
+        dispatch.attemptOrdinal !== settlement.attemptOrdinal
+      ) {
+        throw new BroadcastTranscriptVisualInspectionRunnerError(
+          "INVALID_CHECKPOINT",
+          "A provider settlement does not match the durably armed dispatch.",
+          checkpoint,
+          null,
+        );
+      }
+      const providerLedger = recordBroadcastTranscriptVisualProviderSettlement(
         checkpoint.providerLedger,
         options.plan,
         settlement,
         {
-          allowOutcomeUnknownReplacement:
-            dispatch.replacesOutcomeUnknown,
+          allowOutcomeUnknownReplacement: dispatch.replacesOutcomeUnknown,
         },
       );
-    const attempted = checkpointWith(checkpoint, options.plan, {
-      providerLedger,
-      activeProviderDispatches:
-        checkpoint.activeProviderDispatches.filter(
+      const attempted = checkpointWith(checkpoint, options.plan, {
+        providerLedger,
+        activeProviderDispatches: checkpoint.activeProviderDispatches.filter(
           ({ cellId }) => cellId !== settlement.cellId,
         ),
+      });
+      await persist(attempted, cause, [settlement.cellId]);
     });
-    await persist(attempted, cause, [settlement.cellId]);
+    notifyFrameProducers();
   };
 
   // A recovered armed request may already have reached the provider. Seal it
@@ -937,8 +972,9 @@ export async function runBroadcastTranscriptVisualInspection(
     );
   }
 
-  const frameQueue =
-    createBroadcastTranscriptVisualFramePreparationQueue(options.plan);
+  const frameQueue = createBroadcastTranscriptVisualFramePreparationQueue(
+    options.plan,
+  );
   const preparedCellIds = new Set(
     checkpoint.preparedFrameReceipts.map(({ cellId }) => cellId),
   );
@@ -947,82 +983,589 @@ export async function runBroadcastTranscriptVisualInspection(
   );
   const framePreparationFailures: BroadcastTranscriptVisualFramePreparationFailure[] =
     [];
-  const frameTransitionMutex = new AsyncTransitionMutex();
+  const consumedFreeOutcomeUnknownOperationIds = new Set<string>();
+  const mediaEvidenceBlockedCellIds = new Set<string>();
+  // The configured bound applies only to this invocation. Durable attempt
+  // ordinals keep increasing across resumes, so a temporarily exhausted run
+  // remains recoverable without erasing its receipt or settlement history.
+  const providerAttemptCountThisInvocation = new Map<string, number>();
   let nextFrameTaskIndex = 0;
   let fatalFrameError: unknown = null;
-  const runFrameWorker = async (): Promise<void> => {
-    while (fatalFrameError === null) {
-      const taskIndex = nextFrameTaskIndex;
-      nextFrameTaskIndex += 1;
-      const task = missingFrameTasks[taskIndex];
-      if (task === undefined) return;
-      if (signalIsAborted(options.signal)) {
-        fatalFrameError =
-          new BroadcastTranscriptVisualInspectionRunnerError(
-            "INTERRUPTED",
-            "The visual inspection run was interrupted during frame preparation.",
-            checkpoint,
-            null,
-          );
-        return;
+  let fatalProviderError: unknown = null;
+  let activeFramePreparationCount = 0;
+  let activeFrameWorkerCount = Math.min(
+    maximumFrameConcurrency,
+    missingFrameTasks.length,
+  );
+  let frameProductionComplete = activeFrameWorkerCount === 0;
+  const maximumPreparedCellWindow = Math.max(
+    maximumFrameConcurrency,
+    maximumProviderBatchSize,
+  );
+  let resolveProviderWake: () => void = () => undefined;
+  const createProviderWakePromise = (): Promise<void> =>
+    new Promise<void>((resolve) => {
+      resolveProviderWake = resolve;
+    });
+  let providerWakePromise = createProviderWakePromise();
+  const notifyProviderConsumer = (): void => {
+    const releaseCurrentWaiters = resolveProviderWake;
+    providerWakePromise = createProviderWakePromise();
+    releaseCurrentWaiters();
+  };
+  let resolveFrameProducerWake: () => void = () => undefined;
+  const createFrameProducerWakePromise = (): Promise<void> =>
+    new Promise<void>((resolve) => {
+      resolveFrameProducerWake = resolve;
+    });
+  let frameProducerWakePromise = createFrameProducerWakePromise();
+  notifyFrameProducers = (): void => {
+    const releaseCurrentWaiters = resolveFrameProducerWake;
+    frameProducerWakePromise = createFrameProducerWakePromise();
+    releaseCurrentWaiters();
+  };
+  const abortWakeListener = (): void => {
+    notifyProviderConsumer();
+    notifyFrameProducers();
+  };
+  options.signal?.addEventListener("abort", abortWakeListener, {
+    once: true,
+  });
+
+  const preparedCellOccupiesWindow = (cellId: string): boolean => {
+    if (
+      checkpoint.activeProviderDispatches.some(
+        (dispatch) => dispatch.cellId === cellId,
+      )
+    ) {
+      return true;
+    }
+    if (mediaEvidenceBlockedCellIds.has(cellId)) return false;
+    const previous = providerSettlementForCell(
+      checkpoint.providerLedger,
+      cellId,
+    );
+    if (
+      previous?.outcome === "completed" ||
+      previous?.outcome === "excluded-music-only"
+    ) {
+      return false;
+    }
+    if (
+      (providerAttemptCountThisInvocation.get(cellId) ?? 0) >=
+      maximumProviderAttemptCount
+    ) {
+      return false;
+    }
+    if (previous?.outcome === "outcome-unknown") {
+      return (
+        freeOutcomeUnknownOperationIds.has(previous.operationId) &&
+        !consumedFreeOutcomeUnknownOperationIds.has(previous.operationId)
+      );
+    }
+    return true;
+  };
+  const acquireFrameTask = async (): Promise<
+    BroadcastTranscriptVisualFramePreparationTask | undefined
+  > => {
+    while (true) {
+      const wakePromiseObservedBeforeInspection = frameProducerWakePromise;
+      if (fatalFrameError !== null || fatalProviderError !== null) {
+        return undefined;
       }
-      let receipt: BroadcastTranscriptVisualPreparedFrameReceipt;
-      try {
-        const frameContentFingerprints = await options.prepareFrames({
-          planFingerprint: options.plan.planFingerprint,
-          sourceFingerprint: options.plan.sourceFence.sourceFingerprint,
-          task,
-          ...(options.signal === undefined
-            ? {}
-            : { signal: options.signal }),
-        });
-        receipt = createBroadcastTranscriptVisualPreparedFrameReceipt({
-          plan: options.plan,
-          cellId: task.cellId,
-          frameContentFingerprints,
-        });
-      } catch (error) {
-        framePreparationFailures.push({
-          cellId: task.cellId,
-          causeValue: error,
-        });
+      if (signalIsAborted(options.signal)) {
+        fatalFrameError = new BroadcastTranscriptVisualInspectionRunnerError(
+          "INTERRUPTED",
+          "The visual inspection run was interrupted during frame preparation.",
+          checkpoint,
+          null,
+        );
+        notifyProviderConsumer();
+        notifyFrameProducers();
+        return undefined;
+      }
+      const task = missingFrameTasks[nextFrameTaskIndex];
+      if (task === undefined) return undefined;
+      const preparedWindowCount = checkpoint.preparedFrameReceipts.filter(
+        ({ cellId }) => preparedCellOccupiesWindow(cellId),
+      ).length;
+      if (
+        activeFramePreparationCount + preparedWindowCount <
+        maximumPreparedCellWindow
+      ) {
+        nextFrameTaskIndex += 1;
+        activeFramePreparationCount += 1;
+        return task;
+      }
+      await wakePromiseObservedBeforeInspection;
+    }
+  };
+
+  const runFrameWorker = async (): Promise<void> => {
+    try {
+      while (fatalFrameError === null && fatalProviderError === null) {
+        const task = await acquireFrameTask();
+        if (task === undefined) return;
+        try {
+          let receipt: BroadcastTranscriptVisualPreparedFrameReceipt;
+          try {
+            const preparedMedia = await options.mediaEvidence.prepare({
+              planFingerprint: options.plan.planFingerprint,
+              sourceFingerprint: options.plan.sourceFence.sourceFingerprint,
+              task,
+              ...(options.signal === undefined
+                ? {}
+                : { signal: options.signal }),
+            });
+            receipt = createBroadcastTranscriptVisualPreparedFrameReceipt({
+              plan: options.plan,
+              cellId: task.cellId,
+              frameContentFingerprints: preparedMedia.frameContentFingerprints,
+              audioEvidence: preparedMedia.audioEvidence,
+            });
+          } catch (error) {
+            if (signalIsAborted(options.signal)) {
+              fatalFrameError =
+                new BroadcastTranscriptVisualInspectionRunnerError(
+                  "INTERRUPTED",
+                  "The visual inspection run was interrupted during frame preparation.",
+                  checkpoint,
+                  null,
+                  error,
+                );
+              notifyProviderConsumer();
+              return;
+            }
+            framePreparationFailures.push({
+              cellId: task.cellId,
+              causeValue: error,
+            });
+            continue;
+          }
+
+          if (fatalFrameError !== null || fatalProviderError !== null) {
+            return;
+          }
+          try {
+            let persisted = false;
+            await checkpointTransitionMutex.runExclusive(async () => {
+              if (fatalFrameError !== null || fatalProviderError !== null) {
+                return;
+              }
+              const alreadyPersisted = checkpoint.preparedFrameReceipts.some(
+                ({ cellId }) => cellId === receipt.cellId,
+              );
+              if (alreadyPersisted) return;
+              const attempted = checkpointWith(checkpoint, options.plan, {
+                preparedFrameReceipts: [
+                  ...checkpoint.preparedFrameReceipts,
+                  receipt,
+                ],
+              });
+              await persist(attempted, "frame-prepared", [receipt.cellId]);
+              statistics.preparedFrameCount += 1;
+              persisted = true;
+            });
+            if (persisted) notifyProviderConsumer();
+          } catch (error) {
+            if (fatalFrameError === null) fatalFrameError = error;
+            notifyProviderConsumer();
+            return;
+          }
+        } finally {
+          activeFramePreparationCount -= 1;
+          notifyFrameProducers();
+        }
+      }
+    } catch (error) {
+      if (fatalFrameError === null) fatalFrameError = error;
+      notifyProviderConsumer();
+    } finally {
+      activeFrameWorkerCount -= 1;
+      if (activeFrameWorkerCount === 0) {
+        frameProductionComplete = true;
+      }
+      notifyProviderConsumer();
+      notifyFrameProducers();
+    }
+  };
+
+  const runProviderConsumer = async (): Promise<void> => {
+    while (true) {
+      const wakePromiseObservedBeforeInspection = providerWakePromise;
+      if (signalIsAborted(options.signal)) {
+        if (statistics.providerBatchExecutionCount > 0) return;
+        throw new BroadcastTranscriptVisualInspectionRunnerError(
+          "INTERRUPTED",
+          "The visual inspection run was interrupted before provider dispatch.",
+          checkpoint,
+          null,
+        );
+      }
+      if (fatalFrameError !== null) return;
+
+      const providerQueue = createBroadcastTranscriptVisualProviderBatchQueue({
+        plan: options.plan,
+        framePreparationQueue: frameQueue,
+        preparedFrameReceipts: checkpoint.preparedFrameReceipts,
+        maximumBatchSize: maximumProviderBatchSize,
+      });
+      const providerTasks = providerQueue.batches.flatMap(({ tasks }) => tasks);
+      const eligible = providerTasks
+        .filter(({ cellId }) => !mediaEvidenceBlockedCellIds.has(cellId))
+        .map((task) => {
+          const previous = providerSettlementForCell(
+            checkpoint.providerLedger,
+            task.cellId,
+          );
+          if (
+            previous?.outcome === "completed" ||
+            previous?.outcome === "excluded-music-only"
+          ) {
+            return null;
+          }
+          if (
+            previous?.outcome === "outcome-unknown" &&
+            (!freeOutcomeUnknownOperationIds.has(previous.operationId) ||
+              consumedFreeOutcomeUnknownOperationIds.has(previous.operationId))
+          ) {
+            return null;
+          }
+          const attemptOrdinal =
+            previous === undefined ? 0 : previous.attemptOrdinal + 1;
+          if (
+            (providerAttemptCountThisInvocation.get(task.cellId) ?? 0) >=
+            maximumProviderAttemptCount
+          ) {
+            return null;
+          }
+          return {
+            task,
+            previous,
+            attemptOrdinal,
+          };
+        })
+        .filter(
+          (
+            value,
+          ): value is {
+            readonly task: BroadcastTranscriptVisualProviderTask;
+            readonly previous:
+              BroadcastTranscriptVisualProviderSettlement | undefined;
+            readonly attemptOrdinal: number;
+          } => value !== null,
+        );
+      if (eligible.length === 0) {
+        if (frameProductionComplete) return;
+        await wakePromiseObservedBeforeInspection;
         continue;
       }
 
-      try {
-        await frameTransitionMutex.runExclusive(async () => {
-          if (fatalFrameError !== null) return;
-          const alreadyPersisted =
-            checkpoint.preparedFrameReceipts.some(
-              ({ cellId }) => cellId === receipt.cellId,
-            );
-          if (alreadyPersisted) return;
-          const attempted = checkpointWith(checkpoint, options.plan, {
-            preparedFrameReceipts: [
-              ...checkpoint.preparedFrameReceipts,
-              receipt,
-            ],
+      const batch = eligible.slice(0, maximumProviderBatchSize);
+      const verifiedBatch: Array<{
+        readonly task: BroadcastTranscriptVisualProviderTask;
+        readonly previous:
+          BroadcastTranscriptVisualProviderSettlement | undefined;
+        readonly attemptOrdinal: number;
+        readonly mediaEvidence: BroadcastTranscriptVisualVerifiedMediaEvidence;
+      }> = [];
+      for (const entry of batch) {
+        const preparedReceipt = receiptFor(entry.task.cellId);
+        try {
+          const hydrated = await options.mediaEvidence.hydrate({
+            planFingerprint: options.plan.planFingerprint,
+            sourceFingerprint: options.plan.sourceFence.sourceFingerprint,
+            task: entry.task,
+            preparedReceipt,
+            ...(options.signal === undefined ? {} : { signal: options.signal }),
           });
-          await persist(attempted, "frame-prepared", [receipt.cellId]);
-          statistics.preparedFrameCount += 1;
+          const mediaEvidence =
+            await verifyBroadcastTranscriptVisualHydratedMediaEvidence({
+              plan: options.plan,
+              task: entry.task,
+              preparedReceipt,
+              hydrated,
+              fingerprint: options.mediaEvidence.fingerprint,
+            });
+          verifiedBatch.push({ ...entry, mediaEvidence });
+        } catch (error) {
+          mediaEvidenceBlockedCellIds.add(entry.task.cellId);
+          framePreparationFailures.push({
+            cellId: entry.task.cellId,
+            causeValue: error,
+          });
+          notifyFrameProducers();
+        }
+      }
+      if (verifiedBatch.length === 0) continue;
+      if (fatalFrameError !== null) return;
+
+      const usedOperationIds = [
+        ...checkpoint.providerLedger.settlements.map(
+          ({ operationId }) => operationId,
+        ),
+      ];
+      const requests: BroadcastTranscriptVisualProviderAttemptRequest[] = [];
+      const dispatches: BroadcastTranscriptVisualProviderDispatchIntent[] = [];
+      for (const entry of verifiedBatch) {
+        let operationId: string;
+        try {
+          operationId = await options.createProviderOperationId({
+            planFingerprint: options.plan.planFingerprint,
+            sourceFingerprint: options.plan.sourceFence.sourceFingerprint,
+            cellId: entry.task.cellId,
+            attemptOrdinal: entry.attemptOrdinal,
+            usedOperationIds: [...usedOperationIds],
+          });
+        } catch (error) {
+          throw new BroadcastTranscriptVisualInspectionRunnerError(
+            "OPERATION_ID_FAILED",
+            "A fresh provider operation ID could not be created.",
+            checkpoint,
+            null,
+            error,
+          );
+        }
+        if (
+          !boundedString(operationId, 256) ||
+          usedOperationIds.includes(operationId)
+        ) {
+          throw new BroadcastTranscriptVisualInspectionRunnerError(
+            "OPERATION_ID_FAILED",
+            "A provider operation ID is invalid or already used.",
+            checkpoint,
+            null,
+            operationId,
+          );
+        }
+        usedOperationIds.push(operationId);
+        requests.push({
+          transportMode: BROADCAST_TRANSCRIPT_VISUAL_TRANSPORT_MODE,
+          planFingerprint: options.plan.planFingerprint,
+          sourceFingerprint: options.plan.sourceFence.sourceFingerprint,
+          task: entry.task,
+          providerModelRevision: options.providerModelRevision,
+          operationId,
+          attemptOrdinal: entry.attemptOrdinal,
+          mediaEvidence: entry.mediaEvidence,
         });
-      } catch (error) {
-        fatalFrameError = error;
+        dispatches.push({
+          transportMode: BROADCAST_TRANSCRIPT_VISUAL_TRANSPORT_MODE,
+          cellId: entry.task.cellId,
+          operationId,
+          attemptOrdinal: entry.attemptOrdinal,
+          providerModelRevision: options.providerModelRevision,
+          frameBundleKey: entry.task.frameBundleKey,
+          requestedFrameContentFingerprints:
+            entry.task.frameContentFingerprints,
+          requestedAudioEvidence:
+            entry.task.audioEvidence === null
+              ? null
+              : { ...entry.task.audioEvidence },
+          replacesOutcomeUnknown: entry.previous?.outcome === "outcome-unknown",
+        });
+      }
+
+      const armed = await checkpointTransitionMutex.runExclusive(async () => {
+        if (fatalFrameError !== null || signalIsAborted(options.signal)) {
+          return false;
+        }
+        if (checkpoint.activeProviderDispatches.length > 0) {
+          throw new BroadcastTranscriptVisualInspectionRunnerError(
+            "INVALID_CHECKPOINT",
+            "A new provider batch cannot replace an active durable dispatch.",
+            checkpoint,
+            null,
+          );
+        }
+        const armedCheckpoint = checkpointWith(checkpoint, options.plan, {
+          activeProviderDispatches: dispatches,
+        });
+        await persist(
+          armedCheckpoint,
+          "provider-dispatch-armed",
+          dispatches.map(({ cellId }) => cellId),
+        );
+        return true;
+      });
+      if (!armed) continue;
+
+      for (const entry of verifiedBatch) {
+        providerAttemptCountThisInvocation.set(
+          entry.task.cellId,
+          (providerAttemptCountThisInvocation.get(entry.task.cellId) ?? 0) + 1,
+        );
+        if (entry.previous?.outcome === "retryable") {
+          statistics.automaticRetryCount += 1;
+        } else if (entry.previous?.outcome === "outcome-unknown") {
+          consumedFreeOutcomeUnknownOperationIds.add(
+            entry.previous.operationId,
+          );
+          statistics.freeOutcomeUnknownRetryCount += 1;
+        }
+      }
+      statistics.providerBatchExecutionCount += 1;
+      statistics.providerCellExecutionCount += requests.length;
+      let adapterResults:
+        readonly BroadcastTranscriptVisualProviderAdapterResult[] | null;
+      try {
+        const returned = await options.executeProviderBatch(
+          requests,
+          options.signal,
+        );
+        adapterResults = validatedProviderResults(requests, returned);
+      } catch (providerError) {
+        let classification: BroadcastTranscriptVisualProviderFailureClassification;
+        if (signalIsAborted(options.signal)) {
+          classification = {
+            outcome: "outcome-unknown",
+            failureReason: "operation-interrupted",
+          };
+        } else {
+          try {
+            classification = await options.classifyProviderFailure(
+              providerError,
+              requests,
+            );
+          } catch (classificationError) {
+            classification = {
+              outcome: "outcome-unknown",
+              failureReason: "operation-interrupted",
+            };
+            for (const request of requests) {
+              const unknownSettlement = providerAdapterResultToSettlement({
+                result: syntheticFailureResult(request, classification),
+                request,
+                plan: options.plan,
+                receipt: receiptFor(request.task.cellId),
+              });
+              await commitSettlement(unknownSettlement, "provider-settled");
+            }
+            throw new BroadcastTranscriptVisualInspectionRunnerError(
+              "PROVIDER_FAILURE_CLASSIFICATION_FAILED",
+              "The provider failure could not be classified; every armed operation was sealed as outcome-unknown.",
+              checkpoint,
+              null,
+              classificationError,
+            );
+          }
+          if (!validProviderFailureClassification(classification)) {
+            classification = {
+              outcome: "outcome-unknown",
+              failureReason: "operation-interrupted",
+            };
+          }
+        }
+        adapterResults = requests.map((request) =>
+          syntheticFailureResult(request, classification),
+        );
+      }
+
+      if (adapterResults === null) {
+        const classification: BroadcastTranscriptVisualProviderFailureClassification =
+          {
+            outcome: "outcome-unknown",
+            failureReason: "operation-interrupted",
+          };
+        adapterResults = requests.map((request) =>
+          syntheticFailureResult(request, classification),
+        );
+      }
+
+      for (const [index, request] of requests.entries()) {
+        const result = adapterResults[index];
+        if (result === undefined) {
+          throw new BroadcastTranscriptVisualInspectionRunnerError(
+            "INVALID_CHECKPOINT",
+            "A normalized provider batch result unexpectedly lost a cell.",
+            checkpoint,
+            null,
+          );
+        }
+        let settlement: BroadcastTranscriptVisualProviderSettlement;
+        try {
+          settlement = providerAdapterResultToSettlement({
+            result,
+            request,
+            plan: options.plan,
+            receipt: receiptFor(request.task.cellId),
+          });
+        } catch {
+          settlement = createBroadcastTranscriptVisualProviderSettlement({
+            plan: options.plan,
+            cellId: request.task.cellId,
+            preparedFrameReceipt: receiptFor(request.task.cellId),
+            providerModelRevision: request.providerModelRevision,
+            operationId: request.operationId,
+            attemptOrdinal: request.attemptOrdinal,
+            outcome: "outcome-unknown",
+            failureReason: "operation-interrupted",
+          });
+        }
+        await commitSettlement(settlement, "provider-settled");
       }
     }
   };
-  await Promise.all(
-    Array.from(
-      {
-        length: Math.min(
-          maximumFrameConcurrency,
-          missingFrameTasks.length,
-        ),
-      },
-      () => runFrameWorker(),
-    ),
+
+  const frameWorkerPromises = Array.from(
+    { length: activeFrameWorkerCount },
+    () => runFrameWorker(),
   );
+  const providerConsumerPromise = runProviderConsumer().catch(
+    (error: unknown) => {
+      fatalProviderError = error;
+      notifyProviderConsumer();
+      notifyFrameProducers();
+    },
+  );
+  try {
+    await Promise.all(frameWorkerPromises);
+    await providerConsumerPromise;
+  } finally {
+    options.signal?.removeEventListener("abort", abortWakeListener);
+  }
+
+  if (fatalProviderError !== null) {
+    if (fatalProviderError instanceof Error) throw fatalProviderError;
+    throw new BroadcastTranscriptVisualInspectionRunnerError(
+      "INVALID_CHECKPOINT",
+      "Provider consumption stopped with an invalid fatal error value.",
+      checkpoint,
+      null,
+      fatalProviderError,
+    );
+  }
   if (fatalFrameError !== null) {
+    if (
+      fatalFrameError instanceof
+        BroadcastTranscriptVisualInspectionRunnerError &&
+      fatalFrameError.code === "INTERRUPTED" &&
+      statistics.providerBatchExecutionCount > 0
+    ) {
+      return buildResult(
+        checkpoint,
+        options.plan,
+        framePreparationFailures,
+        statistics,
+      );
+    }
+    if (
+      fatalFrameError instanceof BroadcastTranscriptVisualInspectionRunnerError
+    ) {
+      if (
+        fatalFrameError.lastPersistedCheckpoint?.revision !==
+        checkpoint.revision
+      ) {
+        throw new BroadcastTranscriptVisualInspectionRunnerError(
+          fatalFrameError.code,
+          fatalFrameError.message,
+          checkpoint,
+          fatalFrameError.attemptedCheckpoint,
+          fatalFrameError.causeValue,
+        );
+      }
+      throw fatalFrameError;
+    }
     if (fatalFrameError instanceof Error) throw fatalFrameError;
     throw new BroadcastTranscriptVisualInspectionRunnerError(
       "INVALID_CHECKPOINT",
@@ -1031,254 +1574,6 @@ export async function runBroadcastTranscriptVisualInspection(
       null,
       fatalFrameError,
     );
-  }
-
-  const providerQueue = createBroadcastTranscriptVisualProviderBatchQueue({
-    plan: options.plan,
-    framePreparationQueue: frameQueue,
-    preparedFrameReceipts: checkpoint.preparedFrameReceipts,
-    maximumBatchSize: maximumProviderBatchSize,
-  });
-  const providerTasks = providerQueue.batches.flatMap(({ tasks }) => tasks);
-  const consumedUnknownConfirmations = new Set<string>();
-
-  while (true) {
-    if (signalIsAborted(options.signal)) {
-      if (statistics.providerBatchExecutionCount > 0) break;
-      throw new BroadcastTranscriptVisualInspectionRunnerError(
-        "INTERRUPTED",
-        "The visual inspection run was interrupted before provider dispatch.",
-        checkpoint,
-        null,
-      );
-    }
-
-    const eligible = providerTasks
-      .map((task) => {
-        const previous = providerSettlementForCell(
-          checkpoint.providerLedger,
-          task.cellId,
-        );
-        if (
-          previous?.outcome === "completed" ||
-          previous?.outcome === "excluded-music-only"
-        ) {
-          return null;
-        }
-        if (
-          previous?.outcome === "outcome-unknown" &&
-          (!confirmedUnknownOperationIds.has(previous.operationId) ||
-            consumedUnknownConfirmations.has(previous.operationId))
-        ) {
-          return null;
-        }
-        const attemptOrdinal =
-          previous === undefined ? 0 : previous.attemptOrdinal + 1;
-        if (attemptOrdinal >= maximumProviderAttemptCount) return null;
-        return {
-          task,
-          previous,
-          attemptOrdinal,
-        };
-      })
-      .filter(
-        (
-          value,
-        ): value is {
-          readonly task: BroadcastTranscriptVisualProviderTask;
-          readonly previous:
-            | BroadcastTranscriptVisualProviderSettlement
-            | undefined;
-          readonly attemptOrdinal: number;
-        } => value !== null,
-      );
-    if (eligible.length === 0) break;
-
-    const batch = eligible.slice(0, maximumProviderBatchSize);
-    const usedOperationIds = [
-      ...checkpoint.providerLedger.settlements.map(
-        ({ operationId }) => operationId,
-      ),
-    ];
-    const requests: BroadcastTranscriptVisualProviderAttemptRequest[] = [];
-    const dispatches: BroadcastTranscriptVisualProviderDispatchIntent[] = [];
-    for (const entry of batch) {
-      let operationId: string;
-      try {
-        operationId = await options.createProviderOperationId({
-          planFingerprint: options.plan.planFingerprint,
-          sourceFingerprint: options.plan.sourceFence.sourceFingerprint,
-          cellId: entry.task.cellId,
-          attemptOrdinal: entry.attemptOrdinal,
-          usedOperationIds: [...usedOperationIds],
-        });
-      } catch (error) {
-        throw new BroadcastTranscriptVisualInspectionRunnerError(
-          "OPERATION_ID_FAILED",
-          "A fresh provider operation ID could not be created.",
-          checkpoint,
-          null,
-          error,
-        );
-      }
-      if (
-        !boundedString(operationId, 256) ||
-        usedOperationIds.includes(operationId)
-      ) {
-        throw new BroadcastTranscriptVisualInspectionRunnerError(
-          "OPERATION_ID_FAILED",
-          "A provider operation ID is invalid or already used.",
-          checkpoint,
-          null,
-          operationId,
-        );
-      }
-      usedOperationIds.push(operationId);
-      const request: BroadcastTranscriptVisualProviderAttemptRequest = {
-        planFingerprint: options.plan.planFingerprint,
-        sourceFingerprint: options.plan.sourceFence.sourceFingerprint,
-        task: entry.task,
-        providerModelRevision: options.providerModelRevision,
-        operationId,
-        attemptOrdinal: entry.attemptOrdinal,
-      };
-      requests.push(request);
-      dispatches.push({
-        cellId: entry.task.cellId,
-        operationId,
-        attemptOrdinal: entry.attemptOrdinal,
-        providerModelRevision: options.providerModelRevision,
-        frameBundleKey: entry.task.frameBundleKey,
-        requestedFrameContentFingerprints:
-          entry.task.frameContentFingerprints,
-        replacesOutcomeUnknown:
-          entry.previous?.outcome === "outcome-unknown",
-      });
-      if (entry.previous?.outcome === "retryable") {
-        statistics.automaticRetryCount += 1;
-      } else if (entry.previous?.outcome === "outcome-unknown") {
-        consumedUnknownConfirmations.add(entry.previous.operationId);
-        statistics.confirmedOutcomeUnknownRetryCount += 1;
-      }
-    }
-
-    const armedCheckpoint = checkpointWith(checkpoint, options.plan, {
-      activeProviderDispatches: dispatches,
-    });
-    await persist(
-      armedCheckpoint,
-      "provider-dispatch-armed",
-      dispatches.map(({ cellId }) => cellId),
-    );
-
-    statistics.providerBatchExecutionCount += 1;
-    statistics.providerCellExecutionCount += requests.length;
-    let adapterResults:
-      | readonly BroadcastTranscriptVisualProviderAdapterResult[]
-      | null;
-    try {
-      const returned = await options.executeProviderBatch(
-        requests,
-        options.signal,
-      );
-      adapterResults = validatedProviderResults(requests, returned);
-    } catch (providerError) {
-      let classification: BroadcastTranscriptVisualProviderFailureClassification;
-      if (signalIsAborted(options.signal)) {
-        classification = {
-          outcome: "outcome-unknown",
-          failureReason: "operation-interrupted",
-        };
-      } else {
-        try {
-          classification = await options.classifyProviderFailure(
-            providerError,
-            requests,
-          );
-        } catch (classificationError) {
-          classification = {
-            outcome: "outcome-unknown",
-            failureReason: "operation-interrupted",
-          };
-          for (const request of requests) {
-            const unknownSettlement =
-              providerAdapterResultToSettlement({
-                result: syntheticFailureResult(
-                  request,
-                  classification,
-                ),
-                request,
-                plan: options.plan,
-                receipt: receiptFor(request.task.cellId),
-              });
-            await commitSettlement(
-              unknownSettlement,
-              "provider-settled",
-            );
-          }
-          throw new BroadcastTranscriptVisualInspectionRunnerError(
-            "PROVIDER_FAILURE_CLASSIFICATION_FAILED",
-            "The provider failure could not be classified; every armed operation was sealed as outcome-unknown.",
-            checkpoint,
-            null,
-            classificationError,
-          );
-        }
-        if (!validProviderFailureClassification(classification)) {
-          classification = {
-            outcome: "outcome-unknown",
-            failureReason: "operation-interrupted",
-          };
-        }
-      }
-      adapterResults = requests.map((request) =>
-        syntheticFailureResult(request, classification),
-      );
-    }
-
-    if (adapterResults === null) {
-      const classification: BroadcastTranscriptVisualProviderFailureClassification =
-        {
-          outcome: "outcome-unknown",
-          failureReason: "operation-interrupted",
-        };
-      adapterResults = requests.map((request) =>
-        syntheticFailureResult(request, classification),
-      );
-    }
-
-    for (const [index, request] of requests.entries()) {
-      const result = adapterResults[index];
-      if (result === undefined) {
-        throw new BroadcastTranscriptVisualInspectionRunnerError(
-          "INVALID_CHECKPOINT",
-          "A normalized provider batch result unexpectedly lost a cell.",
-          checkpoint,
-          null,
-        );
-      }
-      let settlement: BroadcastTranscriptVisualProviderSettlement;
-      try {
-        settlement = providerAdapterResultToSettlement({
-          result,
-          request,
-          plan: options.plan,
-          receipt: receiptFor(request.task.cellId),
-        });
-      } catch {
-        settlement = createBroadcastTranscriptVisualProviderSettlement({
-          plan: options.plan,
-          cellId: request.task.cellId,
-          preparedFrameReceipt: receiptFor(request.task.cellId),
-          providerModelRevision: request.providerModelRevision,
-          operationId: request.operationId,
-          attemptOrdinal: request.attemptOrdinal,
-          outcome: "outcome-unknown",
-          failureReason: "operation-interrupted",
-        });
-      }
-      await commitSettlement(settlement, "provider-settled");
-    }
   }
 
   return buildResult(

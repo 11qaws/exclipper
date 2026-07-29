@@ -1,4 +1,4 @@
-export const BROADCAST_CONTEXT_PHASE_LEDGER_SCHEMA_VERSION = "1.0.0";
+export const BROADCAST_CONTEXT_PHASE_LEDGER_SCHEMA_VERSION = "3.0.0";
 
 export const BROADCAST_CONTEXT_PHASE_LEDGER_PHASES = [
   "discovery",
@@ -9,13 +9,14 @@ export const BROADCAST_CONTEXT_PHASE_LEDGER_PHASES = [
 export const BROADCAST_CONTEXT_PHASE_LEDGER_STATUSES = [
   "pending",
   "in-flight",
+  "reconciling",
   "succeeded",
   "retryable-gap",
   "outcome-unknown",
+  "failed",
 ] as const;
 
 const MAX_LEDGER_UNITS = 4_096;
-const MAX_USED_OPERATION_IDS = 16_384;
 const MAX_IDENTIFIER_LENGTH = 512;
 const MAX_JSON_DEPTH = 32;
 const MAX_JSON_NODES = 100_000;
@@ -58,7 +59,7 @@ interface BroadcastContextPhaseLedgerUnitBase {
 
 export type BroadcastContextPhaseLedgerUnit =
   | (BroadcastContextPhaseLedgerUnitBase & {
-      readonly status: "pending" | "in-flight";
+      readonly status: "pending" | "in-flight" | "reconciling";
     })
   | (BroadcastContextPhaseLedgerUnitBase & {
       readonly status: "succeeded";
@@ -74,6 +75,11 @@ export type BroadcastContextPhaseLedgerUnit =
       readonly status: "outcome-unknown";
       readonly reasonCode: string;
       readonly modelReceipt?: BroadcastContextPhaseLedgerModelReceipt;
+    })
+  | (BroadcastContextPhaseLedgerUnitBase & {
+      readonly status: "failed";
+      readonly reasonCode: string;
+      readonly modelReceipt?: BroadcastContextPhaseLedgerModelReceipt;
     });
 
 export type BroadcastContextPhaseLedgerRetryableUnit = Extract<
@@ -86,8 +92,11 @@ export interface BroadcastContextPhaseLedger {
   readonly fence: BroadcastContextPhaseLedgerFence;
   readonly units: readonly BroadcastContextPhaseLedgerUnit[];
   /**
-   * Every operation identity ever assigned to a unit, including superseded
-   * retry attempts. Keeping this history prevents accidental double billing.
+   * The exact operation identity currently assigned to every unit.
+   *
+   * Retired IDs are deliberately not accumulated. Internal callers create IDs
+   * from monotonically increasing attempt + generation fences, so a retired
+   * identity cannot be regenerated and ledger storage stays O(unit count).
    */
   readonly usedOperationIds: readonly string[];
 }
@@ -120,12 +129,25 @@ export type BroadcastContextPhaseLedgerEvent =
       readonly type: "UNIT_STARTED";
     })
   | (BroadcastContextPhaseLedgerUnitIdentity & {
-      readonly type: "UNIT_SUCCEEDED";
+      /**
+       * A recovery query/replay is safe only for the exact existing operation.
+       * Persist this state before contacting the coordinator so a second crash
+       * can never allocate a replacement billing identity.
+       */
+      readonly type: "UNIT_RECONCILIATION_STARTED";
+    })
+  | (BroadcastContextPhaseLedgerUnitIdentity & {
+      readonly type: "UNIT_SUCCEEDED" | "UNIT_RECONCILIATION_SUCCEEDED";
       readonly result?: unknown;
       readonly modelReceipt?: unknown;
     })
   | (BroadcastContextPhaseLedgerUnitIdentity & {
-      readonly type: "UNIT_RETRYABLE_GAP" | "UNIT_OUTCOME_UNKNOWN";
+      readonly type:
+        | "UNIT_RETRYABLE_GAP"
+        | "UNIT_OUTCOME_UNKNOWN"
+        | "UNIT_FAILED"
+        | "UNIT_RECONCILIATION_NOT_DISPATCHED"
+        | "UNIT_RECONCILIATION_UNRESOLVED";
       readonly reasonCode: string;
       readonly modelReceipt?: unknown;
     })
@@ -178,9 +200,11 @@ export interface BroadcastContextPhaseLedgerSummary {
   readonly requiredSucceededCount: number;
   readonly pendingCount: number;
   readonly inFlightCount: number;
+  readonly reconcilingCount: number;
   readonly succeededCount: number;
   readonly retryableGapCount: number;
   readonly outcomeUnknownCount: number;
+  readonly failedCount: number;
   readonly complete: boolean;
 }
 
@@ -304,6 +328,18 @@ function normalizeModelReceipt(
   return normalized;
 }
 
+export function serializeBroadcastContextLedgerJsonValue(
+  value: unknown,
+): string {
+  const normalized = normalizeJsonValue(value, 0, {
+    remainingNodes: MAX_JSON_NODES,
+  });
+  if (normalized === INVALID_JSON) {
+    throw new TypeError("Broadcast context ledger JSON value is invalid.");
+  }
+  return JSON.stringify(normalized);
+}
+
 function normalizeFence(
   value: unknown,
 ): BroadcastContextPhaseLedgerFence | null {
@@ -366,7 +402,9 @@ function normalizeUnit(
   ] as const;
   const status = value.status;
   if (
-    (status === "pending" || status === "in-flight") &&
+    (status === "pending" ||
+      status === "in-flight" ||
+      status === "reconciling") &&
     !hasExactKeys(value, baseKeys)
   ) {
     return null;
@@ -378,7 +416,9 @@ function normalizeUnit(
     return null;
   }
   if (
-    (status === "retryable-gap" || status === "outcome-unknown") &&
+    (status === "retryable-gap" ||
+      status === "outcome-unknown" ||
+      status === "failed") &&
     !hasExactKeys(value, [...baseKeys, "reasonCode"], ["modelReceipt"])
   ) {
     return null;
@@ -407,7 +447,11 @@ function normalizeUnit(
     attemptOrdinal: value.attemptOrdinal as number,
     required: value.required,
   };
-  if (status === "pending" || status === "in-flight") {
+  if (
+    status === "pending" ||
+    status === "in-flight" ||
+    status === "reconciling"
+  ) {
     return Object.freeze({ ...base, status });
   }
   if (status === "succeeded") {
@@ -479,7 +523,7 @@ export function normalizeBroadcastContextPhaseLedger(
     !Array.isArray(value.units) ||
     value.units.length > MAX_LEDGER_UNITS ||
     !Array.isArray(value.usedOperationIds) ||
-    value.usedOperationIds.length > MAX_USED_OPERATION_IDS
+    value.usedOperationIds.length > MAX_LEDGER_UNITS
   ) {
     return null;
   }
@@ -512,6 +556,7 @@ export function normalizeBroadcastContextPhaseLedger(
     usedOperationIds.add(operationId);
   }
   if (
+    usedOperationIds.size !== currentOperationIds.size ||
     [...currentOperationIds].some(
       (operationId) => !usedOperationIds.has(operationId),
     )
@@ -587,7 +632,7 @@ export function extendBroadcastContextPhaseLedgerPlan(
       ...units.map((unit) => ({ ...unit, status: "pending" })),
     ],
     usedOperationIds: [
-      ...normalized.usedOperationIds,
+      ...normalized.units.map(({ operationId }) => operationId),
       ...units.map(({ operationId }) => operationId),
     ],
   });
@@ -599,8 +644,9 @@ export function extendBroadcastContextPhaseLedgerPlan(
 
 /**
  * Replaces only the child refinement slice after its exact input or routing
- * manifest changes. Parent discovery/jury evidence stays immutable, while all
- * retired operation IDs remain in the history so none can ever be reused.
+ * manifest changes. Parent discovery/jury evidence stays immutable. Retired
+ * operation IDs do not need storage because every replacement is fenced by a
+ * monotonically increasing generation and attempt ordinal.
  */
 export function replaceBroadcastContextRefinementPhaseLedgerPlan(
   ledger: BroadcastContextPhaseLedger,
@@ -623,7 +669,9 @@ export function replaceBroadcastContextRefinementPhaseLedgerPlan(
       ...units.map((unit) => ({ ...unit, status: "pending" })),
     ],
     usedOperationIds: [
-      ...normalized.usedOperationIds,
+      ...normalized.units
+        .filter(({ phase }) => phase !== "refinement")
+        .map(({ operationId }) => operationId),
       ...units.map(({ operationId }) => operationId),
     ],
   });
@@ -671,9 +719,11 @@ export function summarizeBroadcastContextPhaseLedger(
   let requiredSucceededCount = 0;
   let pendingCount = 0;
   let inFlightCount = 0;
+  let reconcilingCount = 0;
   let succeededCount = 0;
   let retryableGapCount = 0;
   let outcomeUnknownCount = 0;
+  let failedCount = 0;
 
   for (const unit of ledger.units) {
     if (unit.required) {
@@ -687,6 +737,9 @@ export function summarizeBroadcastContextPhaseLedger(
       case "in-flight":
         inFlightCount += 1;
         break;
+      case "reconciling":
+        reconcilingCount += 1;
+        break;
       case "succeeded":
         succeededCount += 1;
         break;
@@ -695,6 +748,9 @@ export function summarizeBroadcastContextPhaseLedger(
         break;
       case "outcome-unknown":
         outcomeUnknownCount += 1;
+        break;
+      case "failed":
+        failedCount += 1;
         break;
     }
   }
@@ -705,9 +761,11 @@ export function summarizeBroadcastContextPhaseLedger(
     requiredSucceededCount,
     pendingCount,
     inFlightCount,
+    reconcilingCount,
     succeededCount,
     retryableGapCount,
     outcomeUnknownCount,
+    failedCount,
     complete: requiredSucceededCount === requiredCount,
   });
 }
@@ -731,9 +789,9 @@ export function selectBroadcastContextPhaseRetryableUnits(
 
 /**
  * Preserves every successful unit while preparing only unfinished work for an
- * editor-requested retry. A recovered `in-flight` unit is first sealed as an
- * ambiguous outcome; that ambiguity can then be retried only through the
- * explicit confirmation transition.
+ * editor-requested retry. Recovered `in-flight | outcome-unknown` work must
+ * finish exact-operation reconciliation first; an unresolved result can then
+ * receive a new operation only through the explicit confirmation transition.
  */
 export function replanBroadcastContextPhaseLedgerAfterEditorRetry(
   ledger: BroadcastContextPhaseLedger,
@@ -744,7 +802,7 @@ export function replanBroadcastContextPhaseLedgerAfterEditorRetry(
   }
   let nextLedger = ledger;
   for (const initialUnit of ledger.units) {
-    let unit = nextLedger.units.find(
+    const unit = nextLedger.units.find(
       (candidate) =>
         candidate.phase === initialUnit.phase &&
         candidate.unitId === initialUnit.unitId,
@@ -752,34 +810,18 @@ export function replanBroadcastContextPhaseLedgerAfterEditorRetry(
     if (unit === undefined) {
       throw new TypeError("Broadcast context retry unit is missing.");
     }
-    const identity = (): BroadcastContextPhaseLedgerUnitIdentity => ({
+    const identity: BroadcastContextPhaseLedgerUnitIdentity = {
       fence: nextLedger.fence,
-      phase: unit!.phase,
-      unitId: unit!.unitId,
-      inputDigest: unit!.inputDigest,
-      operationId: unit!.operationId,
-      attemptOrdinal: unit!.attemptOrdinal,
-    });
-    if (unit.status === "in-flight") {
-      const sealed = reduceBroadcastContextPhaseLedger(nextLedger, {
-        type: "UNIT_OUTCOME_UNKNOWN",
-        ...identity(),
-        reasonCode: "editor_retry_after_interrupted_in_flight",
-      });
-      if (!sealed.accepted) {
-        throw new TypeError(
-          `Broadcast context interrupted unit could not be sealed: ${sealed.reason}.`,
-        );
-      }
-      nextLedger = sealed.ledger;
-      unit = nextLedger.units.find(
-        (candidate) =>
-          candidate.phase === initialUnit.phase &&
-          candidate.unitId === initialUnit.unitId,
+      phase: unit.phase,
+      unitId: unit.unitId,
+      inputDigest: unit.inputDigest,
+      operationId: unit.operationId,
+      attemptOrdinal: unit.attemptOrdinal,
+    };
+    if (unit.status === "in-flight" || unit.status === "reconciling") {
+      throw new TypeError(
+        "Broadcast context interrupted work must reconcile its exact operation before editor retry.",
       );
-      if (unit === undefined) {
-        throw new TypeError("Broadcast context retry unit is missing.");
-      }
     }
     if (
       unit.status !== "retryable-gap" &&
@@ -793,12 +835,12 @@ export function replanBroadcastContextPhaseLedgerAfterEditorRetry(
       unit.status === "retryable-gap"
         ? {
             type: "UNIT_RETRY_PLANNED",
-            ...identity(),
+            ...identity,
             nextOperationId,
           }
         : {
             type: "UNIT_OUTCOME_UNKNOWN_RETRY_CONFIRMED",
-            ...identity(),
+            ...identity,
             nextOperationId,
             confirmationId: input.confirmationId,
           },
@@ -830,7 +872,6 @@ function replaceUnit(
   ledger: BroadcastContextPhaseLedger,
   index: number,
   unit: BroadcastContextPhaseLedgerUnit,
-  usedOperationIds: readonly string[] = ledger.usedOperationIds,
 ): BroadcastContextPhaseLedger {
   const units = [...ledger.units];
   units[index] = Object.freeze(unit);
@@ -838,7 +879,9 @@ function replaceUnit(
     schemaVersion: BROADCAST_CONTEXT_PHASE_LEDGER_SCHEMA_VERSION,
     fence: ledger.fence,
     units: Object.freeze(units),
-    usedOperationIds: Object.freeze([...usedOperationIds].sort()),
+    usedOperationIds: Object.freeze(
+      units.map(({ operationId }) => operationId).sort(),
+    ),
   });
 }
 
@@ -900,8 +943,27 @@ export function reduceBroadcastContextPhaseLedger(
     );
   }
 
-  if (event.type === "UNIT_SUCCEEDED") {
-    if (unit.status !== "in-flight") {
+  if (event.type === "UNIT_RECONCILIATION_STARTED") {
+    if (
+      unit.status !== "in-flight" &&
+      unit.status !== "outcome-unknown"
+    ) {
+      return reject(ledger, "undefined_transition");
+    }
+    return accept(
+      replaceUnit(ledger, unitIndex, { ...base, status: "reconciling" }),
+    );
+  }
+
+  if (
+    event.type === "UNIT_SUCCEEDED" ||
+    event.type === "UNIT_RECONCILIATION_SUCCEEDED"
+  ) {
+    if (
+      (event.type === "UNIT_SUCCEEDED" && unit.status !== "in-flight") ||
+      (event.type === "UNIT_RECONCILIATION_SUCCEEDED" &&
+        unit.status !== "reconciling")
+    ) {
       return reject(ledger, "undefined_transition");
     }
     let hasResult = false;
@@ -936,9 +998,19 @@ export function reduceBroadcastContextPhaseLedger(
 
   if (
     event.type === "UNIT_RETRYABLE_GAP" ||
-    event.type === "UNIT_OUTCOME_UNKNOWN"
+    event.type === "UNIT_OUTCOME_UNKNOWN" ||
+    event.type === "UNIT_FAILED" ||
+    event.type === "UNIT_RECONCILIATION_NOT_DISPATCHED" ||
+    event.type === "UNIT_RECONCILIATION_UNRESOLVED"
   ) {
-    if (unit.status !== "in-flight") {
+    const isExecutionSettlement =
+      event.type === "UNIT_RETRYABLE_GAP" ||
+      event.type === "UNIT_OUTCOME_UNKNOWN" ||
+      event.type === "UNIT_FAILED";
+    if (
+      (isExecutionSettlement && unit.status !== "in-flight") ||
+      (!isExecutionSettlement && unit.status !== "reconciling")
+    ) {
       return reject(ledger, "undefined_transition");
     }
     const reasonCode = normalizeIdentifier(event.reasonCode);
@@ -955,8 +1027,11 @@ export function reduceBroadcastContextPhaseLedger(
       replaceUnit(ledger, unitIndex, {
         ...base,
         status:
-          event.type === "UNIT_RETRYABLE_GAP"
+          event.type === "UNIT_RETRYABLE_GAP" ||
+          event.type === "UNIT_RECONCILIATION_NOT_DISPATCHED"
             ? "retryable-gap"
+            : event.type === "UNIT_FAILED"
+              ? "failed"
             : "outcome-unknown",
         reasonCode,
         ...(modelReceipt === undefined ? {} : { modelReceipt }),
@@ -990,16 +1065,11 @@ export function reduceBroadcastContextPhaseLedger(
     return reject(ledger, "attempt_ordinal_overflow");
   }
   return accept(
-    replaceUnit(
-      ledger,
-      unitIndex,
-      {
-        ...base,
-        operationId: nextOperationId,
-        attemptOrdinal: unit.attemptOrdinal + 1,
-        status: "pending",
-      },
-      [...ledger.usedOperationIds, nextOperationId],
-    ),
+    replaceUnit(ledger, unitIndex, {
+      ...base,
+      operationId: nextOperationId,
+      attemptOrdinal: unit.attemptOrdinal + 1,
+      status: "pending",
+    }),
   );
 }

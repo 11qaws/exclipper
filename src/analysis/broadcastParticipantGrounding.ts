@@ -1,13 +1,12 @@
 import {
   CANDIDATE_PASS_B_CAST_ROSTER_VERSION,
-  candidatePassBKnownCastReferences,
   candidatePassBCastReferences,
   isCandidatePassBCastRosterId,
   type CandidatePassBCastRosterId,
   type CandidatePassBParticipantId,
 } from "./participantRoster";
 
-export const BROADCAST_PARTICIPANT_GROUNDING_SCHEMA_VERSION = "1.0.0" as const;
+export const BROADCAST_PARTICIPANT_GROUNDING_SCHEMA_VERSION = "1.2.0" as const;
 export const MAX_BROADCAST_PARTICIPANT_MENTIONS_PER_PERSON = 6;
 export const MAX_BROADCAST_PARTICIPANT_OBSERVED_EVIDENCE = 96;
 
@@ -137,6 +136,12 @@ export interface BroadcastParticipantGrounding {
   readonly sourceDurationMs: number;
   readonly castRosterId: CandidatePassBCastRosterId | null;
   readonly catalogVersion: typeof CANDIDATE_PASS_B_CAST_ROSTER_VERSION;
+  /**
+   * Exact ordered subset of the parent context map inspected by the
+   * transcript-name adapter. Visual-only context chapters must never be
+   * silently promoted to transcript-name evidence.
+   */
+  readonly transcriptSourceChapterIds: readonly string[];
   readonly adapterReceipts: readonly BroadcastParticipantAdapterReceipt[];
   readonly participants: readonly BroadcastParticipantGroundingPerson[];
   readonly evidence: readonly BroadcastParticipantGroundingEvidence[];
@@ -325,10 +330,7 @@ function sourceReferencesForInput(
   const sourceReferences = candidatePassBCastReferences(input.castRosterId);
   return {
     sourceReferences,
-    references:
-      input.castRosterId === null
-        ? candidatePassBKnownCastReferences()
-        : sourceReferences,
+    references: sourceReferences,
   };
 }
 
@@ -436,6 +438,9 @@ export function createBroadcastParticipantGrounding(
     sourceDurationMs: input.sourceDurationMs,
     castRosterId: input.castRosterId,
     catalogVersion: CANDIDATE_PASS_B_CAST_ROSTER_VERSION,
+    transcriptSourceChapterIds: input.chapters.map(
+      ({ chapterId }) => chapterId,
+    ),
     adapterReceipts: [
       {
         adapter: "transcript-names",
@@ -594,6 +599,7 @@ export function normalizeBroadcastParticipantGroundingForInput(
       "sourceDurationMs",
       "castRosterId",
       "catalogVersion",
+      "transcriptSourceChapterIds",
       "adapterReceipts",
       "participants",
       "evidence",
@@ -603,6 +609,7 @@ export function normalizeBroadcastParticipantGroundingForInput(
     value.sourceDurationMs !== input.sourceDurationMs ||
     value.castRosterId !== input.castRosterId ||
     value.catalogVersion !== CANDIDATE_PASS_B_CAST_ROSTER_VERSION ||
+    !Array.isArray(value.transcriptSourceChapterIds) ||
     !Array.isArray(value.adapterReceipts) ||
     value.adapterReceipts.length !== 3 ||
     !Array.isArray(value.evidence) ||
@@ -610,9 +617,34 @@ export function normalizeBroadcastParticipantGroundingForInput(
   ) {
     return null;
   }
+  const chapterById = new Map(
+    input.chapters.map((chapter, index) => [
+      chapter.chapterId,
+      { chapter, index },
+    ]),
+  );
+  const transcriptSourceChapters: BroadcastParticipantGroundingChapter[] = [];
+  let previousChapterIndex = -1;
+  for (const chapterId of value.transcriptSourceChapterIds) {
+    if (!boundedText(chapterId, 256)) return null;
+    const source = chapterById.get(chapterId);
+    if (
+      source === undefined ||
+      source.index <= previousChapterIndex
+    ) {
+      return null;
+    }
+    previousChapterIndex = source.index;
+    transcriptSourceChapters.push(source.chapter);
+  }
+  const groundingInput: CreateBroadcastParticipantGroundingInput = {
+    sourceDurationMs: input.sourceDurationMs,
+    castRosterId: input.castRosterId,
+    chapters: transcriptSourceChapters,
+  };
   const adapterReceipts = value.adapterReceipts as readonly unknown[];
 
-  const base = createBroadcastParticipantGrounding(input);
+  const base = createBroadcastParticipantGrounding(groundingInput);
   const baseEvidenceJson = JSON.stringify(
     value.evidence.slice(0, base.evidence.length),
   );
@@ -632,7 +664,7 @@ export function normalizeBroadcastParticipantGroundingForInput(
     return null;
   }
 
-  const { references } = sourceReferencesForInput(input);
+  const { references } = sourceReferencesForInput(groundingInput);
   const allowedParticipantIds = new Set(
     references.map(({ participantId }) => participantId),
   );
@@ -640,7 +672,7 @@ export function normalizeBroadcastParticipantGroundingForInput(
   if (
     observedEvidence.length > MAX_BROADCAST_PARTICIPANT_OBSERVED_EVIDENCE ||
     !observedEvidence.every((item) =>
-      isValidObservedEvidence(item, input, allowedParticipantIds),
+      isValidObservedEvidence(item, groundingInput, allowedParticipantIds),
     )
   ) {
     return null;
@@ -671,7 +703,7 @@ export function normalizeBroadcastParticipantGroundingForInput(
     return null;
   }
 
-  const canonical = createBroadcastParticipantGrounding(input, {
+  const canonical = createBroadcastParticipantGrounding(groundingInput, {
     visualIdentity: {
       receipt: visualReceipt,
       evidence: observedEvidence.filter(
@@ -720,6 +752,31 @@ export function rebaseBroadcastParticipantGrounding(
     (evidence): evidence is BroadcastParticipantObservedEvidence =>
       OBSERVED_EVIDENCE_KINDS.has(evidence.kind),
   );
+  const previousTranscriptSourceChapterIds = new Set(
+    normalized.transcriptSourceChapterIds,
+  );
+  const previousChapterKinds = previousInput.chapters.map((chapter) => ({
+    chapter,
+    isTranscriptSource: previousTranscriptSourceChapterIds.has(
+      chapter.chapterId,
+    ),
+  }));
+  const nextTranscriptSourceChapters = nextInput.chapters.filter(
+    (nextChapter) => {
+      if (previousTranscriptSourceChapterIds.has(nextChapter.chapterId)) {
+        return true;
+      }
+      const overlapping = previousChapterKinds.filter(
+        ({ chapter }) =>
+          chapter.startMs < nextChapter.endMs &&
+          chapter.endMs > nextChapter.startMs,
+      );
+      return (
+        overlapping.length > 0 &&
+        overlapping.every(({ isTranscriptSource }) => isTranscriptSource)
+      );
+    },
+  );
   const outputFor = (
     adapter: BroadcastParticipantMediaAdapter,
   ): BroadcastParticipantMediaAdapterOutput => ({
@@ -728,10 +785,16 @@ export function rebaseBroadcastParticipantGrounding(
       (evidence) => evidence.adapter === adapter,
     ),
   });
-  return createBroadcastParticipantGrounding(nextInput, {
-    visualIdentity: outputFor("visual-identity"),
-    voiceIdentity: outputFor("voice-identity"),
-  });
+  return createBroadcastParticipantGrounding(
+    {
+      ...nextInput,
+      chapters: nextTranscriptSourceChapters,
+    },
+    {
+      visualIdentity: outputFor("visual-identity"),
+      voiceIdentity: outputFor("voice-identity"),
+    },
+  );
 }
 
 export function participantContextForBroadcastRange(

@@ -53,9 +53,9 @@ function makeInput(
       sourceDurationMs: 180_000,
     },
     model: {
-      modelId: "onnx-community/whisper-small",
+      modelId: "candidate-insight-router",
       modelRevision: "model-revision-1",
-      runtimeDevice: "wasm",
+      runtimeDevice: "remote",
     },
     candidates,
   };
@@ -989,6 +989,16 @@ describe("CandidatePassBRun reducer", () => {
         identity: { ...IDENTITY, passBRunId: "  " },
       }),
     ).toThrow(/passBRunId/);
+
+    expect(() =>
+      createCandidatePassBRun({
+        ...makeInput(),
+        model: {
+          ...makeInput().model,
+          runtimeDevice: "wasm",
+        },
+      } as unknown as CreateCandidatePassBRunInput),
+    ).toThrow(/current remote pipeline/);
   });
 
   it("detects impossible externally fabricated completion states", () => {

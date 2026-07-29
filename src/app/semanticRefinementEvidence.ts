@@ -87,23 +87,20 @@ export function createSemanticRefinementLeadInputs(
       input.transcripts,
       `${parent.eventSummaryKo} / ${parent.evidenceCueKo}`,
     );
-    const participantGrounding =
-      chapters.length === 0
-        ? undefined
-        : rebaseBroadcastParticipantGrounding(
-            input.participantGrounding,
-            {
-              sourceDurationMs: input.sourceDurationMs,
-              castRosterId: input.castRosterId,
-              chapters: input.wholeBroadcastChapters,
-            },
-            {
-              sourceDurationMs: input.sourceDurationMs,
-              castRosterId: input.castRosterId,
-              chapters,
-            },
-          );
-    if (chapters.length > 0 && participantGrounding === null) {
+    const participantGrounding = rebaseBroadcastParticipantGrounding(
+      input.participantGrounding,
+      {
+        sourceDurationMs: input.sourceDurationMs,
+        castRosterId: input.castRosterId,
+        chapters: input.wholeBroadcastChapters,
+      },
+      {
+        sourceDurationMs: input.sourceDurationMs,
+        castRosterId: input.castRosterId,
+        chapters,
+      },
+    );
+    if (participantGrounding === null) {
       throw new RangeError(
         `Participant grounding could not be projected to refinement lead ${leadId}.`,
       );
@@ -117,14 +114,9 @@ export function createSemanticRefinementLeadInputs(
         sourceDurationMs: input.sourceDurationMs,
         chapters,
         candidates: [],
-        ...(participantGrounding === undefined ||
-        participantGrounding === null
-          ? {}
-          : { participantGrounding }),
+        participantGrounding,
         outputLanguage: input.outputLanguage,
-        ...(input.castRosterId === null
-          ? {}
-          : { castRosterId: input.castRosterId }),
+        castRosterId: input.castRosterId,
       },
     };
   });

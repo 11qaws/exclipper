@@ -2,11 +2,6 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { BroadcastContextTranscriptionChunk } from "../analysis/broadcastContextSamplingPlan";
 import {
-  createBroadcastContextPhaseLedger,
-  serializeBroadcastContextPhaseLedger,
-} from "../analysis/broadcastContextPhaseLedger";
-import { createBroadcastParticipantGrounding } from "../analysis/broadcastParticipantGrounding";
-import {
   createBroadcastRefinementTranscriptCheckpoint,
   recordBroadcastRefinementTranscriptGap,
   recordBroadcastRefinementTranscriptSuccess,
@@ -21,11 +16,14 @@ import type { BroadcastTranscriptVerifiedResult } from "../analysis/broadcastTra
 import type { BroadcastTranscriptWorkerRunResult } from "../analysis/broadcastTranscriptWorkerClient";
 import type { AnalysisResultStore } from "../storage/analysisResultStore";
 import {
-  BROADCAST_CONTEXT_SESSION_SCHEMA_VERSION,
   type BroadcastContextSessionRecord,
 } from "../storage/broadcastContextSessionStore";
-import { runDurableBroadcastRefinementTranscriptPipeline } from "./durableBroadcastRefinementTranscriptPipeline";
+import {
+  runDurableBroadcastRefinementTranscriptPipeline,
+  type DurableBroadcastRefinementTranscriptAttemptPersistence,
+} from "./durableBroadcastRefinementTranscriptPipeline";
 import { createVerifiedNoSpeechRunReceiptForTest } from "../testSupport/broadcastSpeechActivityTestReceipt";
+import { createCurrentVisualParticipantPipelineFixture } from "../testSupport/currentVisualParticipantPipelineFixture";
 
 const chunks: readonly BroadcastContextTranscriptionChunk[] = [
   {
@@ -41,6 +39,13 @@ const chunks: readonly BroadcastContextTranscriptionChunk[] = [
     kind: "event",
   },
 ];
+
+/* Removed pre-visual participant fixture:
+    summaryKo: "스트리머가 방송에서 여러 음식에 관해 이야기한다.",
+*/
+
+const currentSessionFixture =
+  await createCurrentVisualParticipantPipelineFixture();
 
 function transcript(
   chunk: BroadcastContextTranscriptionChunk,
@@ -69,69 +74,9 @@ function transcript(
 function session(
   overrides: Partial<BroadcastContextSessionRecord> = {},
 ): BroadcastContextSessionRecord {
-  const chapters = [
-    {
-      chapterId: "transcript-001",
-      startMs: 0,
-      endMs: 120_000,
-      evidenceMode: "complete-transcript" as const,
-      evidenceCoverageRatio: 1,
-      summaryKo: "스트리머가 방송에서 여러 음식에 관해 이야기한다.",
-    },
-  ];
-  const participantGrounding = createBroadcastParticipantGrounding({
-    sourceDurationMs: 120_000,
-    castRosterId: null,
-    chapters,
-  });
   const base: BroadcastContextSessionRecord = {
-    kind: "broadcastContextSession",
+    ...currentSessionFixture.input.session,
     runId: "run-1",
-    schemaVersion: BROADCAST_CONTEXT_SESSION_SCHEMA_VERSION,
-    inputSignature: "input-1",
-    sourceDurationMs: 120_000,
-    completeAudioCoverage: true,
-    chapters,
-    gapChunkIds: [],
-    fragmentGaps: [],
-    transcriptEvidenceInputSignature: null,
-    transcriptEvidenceCheckpointJson: null,
-    transcriptProviderReceiptInputSignature: null,
-    transcriptProviderReceiptCheckpointJson: null,
-    modelRevision: "test-model",
-    sourceCastRosterId: null,
-    transcriptSealOperationKey: "transcript-seal",
-    participantGroundingInputSignature: "grounding-signature",
-    participantGroundingPlanFingerprint: "grounding-plan-fingerprint-v1",
-    participantGroundingCheckpointJson: JSON.stringify(participantGrounding),
-    contextInputSignature: "context-signature",
-    contextInputCheckpointJson: JSON.stringify({
-      sourceDurationMs: 120_000,
-      chapters,
-      candidates: [],
-      participantGrounding,
-      outputLanguage: "ko",
-    }),
-    contextPhaseLedgerJson: serializeBroadcastContextPhaseLedger(
-      createBroadcastContextPhaseLedger({
-        fence: {
-          parentContextSignature: "context-signature",
-          transcriptSignature: "transcript-seal",
-          groundingSignature: "grounding-signature",
-        },
-        units: [
-          {
-            phase: "discovery",
-            unitId: "overview",
-            inputDigest: "discovery-digest",
-            operationId: "discovery-operation",
-            attemptOrdinal: 0,
-            required: true,
-          },
-        ],
-      }),
-    ),
-    contextResultJson: "{}",
     refinementTranscriptInputSignature: null,
     refinementTranscriptCheckpointJson: null,
     refinementEvidenceLedgerJson: null,
@@ -165,7 +110,11 @@ function storeFor(initial: BroadcastContextSessionRecord): {
           expected: BroadcastContextSessionRecord,
           replacement: BroadcastContextSessionRecord,
         ) => {
-          if (expected !== holder.current) return Promise.resolve(false);
+          if (
+            JSON.stringify(expected) !== JSON.stringify(holder.current)
+          ) {
+            return Promise.resolve(false);
+          }
           holder.current = replacement;
           return Promise.resolve(true);
         },
@@ -220,20 +169,64 @@ function settled(
   };
 }
 
+async function settleWithPersistence(
+  requested: readonly BroadcastContextTranscriptionChunk[],
+  quotaAttemptOrdinal: number,
+  persistence: DurableBroadcastRefinementTranscriptAttemptPersistence,
+  result: BroadcastTranscriptWorkerRunResult = settled(requested),
+): Promise<BroadcastTranscriptWorkerRunResult> {
+  const fragmentById = new Map(
+    result.fragments.map((fragment) => [fragment.chunkId, fragment]),
+  );
+  const abstentionById = new Map(
+    result.abstentions.map((abstention) => [abstention.chunkId, abstention]),
+  );
+  const gapById = new Map(result.gaps.map((gap) => [gap.chunkId, gap]));
+  for (const chunk of requested) {
+    const abstention = abstentionById.get(chunk.chunkId);
+    if (abstention !== undefined) {
+      await persistence.onChunkAbstention(abstention);
+      continue;
+    }
+    await persistence.onDispatchIntent({
+      operationId: `transcript-refinement-g${quotaAttemptOrdinal}-${chunk.chunkId}`,
+      chunkId: chunk.chunkId,
+      sourceStartMs: chunk.sourceStartMs,
+      sourceEndMs: chunk.sourceEndMs,
+      attemptOrdinal: quotaAttemptOrdinal,
+      operationNamespace: "refinement",
+      operationScope: null,
+      routeManifestFingerprint: `sha256:${"1".repeat(64)}`,
+    });
+    const fragment = fragmentById.get(chunk.chunkId);
+    if (fragment !== undefined) {
+      await persistence.onPartialResult(fragment.chunkId, fragment.result);
+      continue;
+    }
+    const gap = gapById.get(chunk.chunkId);
+    if (gap === undefined) {
+      throw new Error("Test settlement fixture is incomplete.");
+    }
+    await persistence.onChunkGap(gap.chunkId, gap.reason);
+  }
+  return result;
+}
+
 describe("runDurableBroadcastRefinementTranscriptPipeline", () => {
   it("seals in-flight before dispatch and read-backs every successful settlement", async () => {
     const holder = storeFor(session());
     const runAttempt = vi.fn(
-      (requested: readonly BroadcastContextTranscriptionChunk[]) => {
-        const checkpoint = JSON.parse(
-          holder.current.refinementTranscriptCheckpointJson!,
-        ) as { gaps: readonly { reason: string }[] };
-        expect(checkpoint.gaps.map(({ reason }) => reason)).toEqual([
-          "in-flight",
-          "in-flight",
-        ]);
-        return Promise.resolve(settled(requested));
-      },
+      async (
+        requested: readonly BroadcastContextTranscriptionChunk[],
+        quotaAttemptOrdinal: number,
+        _attemptIndex: number,
+        persistence: DurableBroadcastRefinementTranscriptAttemptPersistence,
+      ) =>
+        settleWithPersistence(
+          requested,
+          quotaAttemptOrdinal,
+          persistence,
+        ),
     );
 
     const result = await runDurableBroadcastRefinementTranscriptPipeline({
@@ -252,7 +245,7 @@ describe("runDurableBroadcastRefinementTranscriptPipeline", () => {
     expect(result.checkpoint.gaps).toEqual([]);
     expect(
       holder.store.replaceBroadcastContextSessionIfUnchanged,
-    ).toHaveBeenCalledTimes(3);
+    ).toHaveBeenCalledTimes(5);
   });
 
   it("resumes successful fragments and requests only a retryable gap", async () => {
@@ -278,8 +271,17 @@ describe("runDurableBroadcastRefinementTranscriptPipeline", () => {
       }),
     );
     const runAttempt = vi.fn(
-      (requested: readonly BroadcastContextTranscriptionChunk[]) =>
-        Promise.resolve(settled(requested)),
+      (
+        requested: readonly BroadcastContextTranscriptionChunk[],
+        quotaAttemptOrdinal: number,
+        _attemptIndex: number,
+        persistence: DurableBroadcastRefinementTranscriptAttemptPersistence,
+      ) =>
+        settleWithPersistence(
+          requested,
+          quotaAttemptOrdinal,
+          persistence,
+        ),
     );
 
     const result = await runDurableBroadcastRefinementTranscriptPipeline({
@@ -298,6 +300,48 @@ describe("runDurableBroadcastRefinementTranscriptPipeline", () => {
     expect(runAttempt.mock.calls[0]?.[0].map(({ chunkId }) => chunkId)).toEqual([
       "refine-b",
     ]);
+  });
+
+  it("continues after one bounded three-wave batch under a new durable generation", async () => {
+    const holder = storeFor(session());
+    const ordinals: number[] = [];
+    let callCount = 0;
+    const runAttempt = vi.fn(
+      (
+        requested: readonly BroadcastContextTranscriptionChunk[],
+        quotaAttemptOrdinal: number,
+        _attemptIndex: number,
+        persistence: DurableBroadcastRefinementTranscriptAttemptPersistence,
+      ) => {
+        ordinals.push(quotaAttemptOrdinal);
+        callCount += 1;
+        return settleWithPersistence(
+          requested,
+          quotaAttemptOrdinal,
+          persistence,
+          settled(requested, callCount < 5 ? "retryable" : "success"),
+        );
+      },
+    );
+    const wait = vi.fn(() => Promise.resolve());
+
+    const result = await runDurableBroadcastRefinementTranscriptPipeline({
+      store: holder.store,
+      initialSession: holder.current,
+      runId: "run-1",
+      refinementTranscriptInputSignature: "refinement-transcript-v1",
+      chunks,
+      editorRetryGeneration: 0,
+      allowOutcomeUnknownRetry: false,
+      runAttempt,
+      wait,
+    });
+
+    expect(result.status).toBe("completed");
+    expect(result.providerAttemptCount).toBe(5);
+    expect(ordinals).toEqual([0, 1, 2, 4, 5]);
+    expect(new Set(ordinals).size).toBe(ordinals.length);
+    expect(wait).toHaveBeenCalledTimes(4);
   });
 
   it("starts a fresh checkpoint when the exact input signature changes", async () => {
@@ -328,7 +372,12 @@ describe("runDurableBroadcastRefinementTranscriptPipeline", () => {
       }),
     );
     const runAttempt = vi.fn(
-      (requested: readonly BroadcastContextTranscriptionChunk[]) => {
+      async (
+        requested: readonly BroadcastContextTranscriptionChunk[],
+        quotaAttemptOrdinal: number,
+        _attemptIndex: number,
+        persistence: DurableBroadcastRefinementTranscriptAttemptPersistence,
+      ) => {
         const currentCheckpoint = JSON.parse(
           holder.current.refinementTranscriptCheckpointJson!,
         ) as {
@@ -346,14 +395,12 @@ describe("runDurableBroadcastRefinementTranscriptPipeline", () => {
           currentSignature,
         );
         expect(currentCheckpoint.successfulFragments).toEqual([]);
-        expect(currentCheckpoint.gaps).toEqual(
-          chunks.map(({ chunkId }) => ({
-            chunkId,
-            reason: "in-flight",
-            attemptCount: 1,
-          })),
+        expect(currentCheckpoint.gaps).toEqual([]);
+        return settleWithPersistence(
+          requested,
+          quotaAttemptOrdinal,
+          persistence,
         );
-        return Promise.resolve(settled(requested));
       },
     );
 
@@ -391,10 +438,13 @@ describe("runDurableBroadcastRefinementTranscriptPipeline", () => {
     const holder = storeFor(session());
     const firstResult = transcript(completedChunk);
     const firstAttempt = vi.fn(
-      (
+      async (
         requested: readonly BroadcastContextTranscriptionChunk[],
-      ): Promise<BroadcastTranscriptWorkerRunResult> =>
-        Promise.resolve({
+        quotaAttemptOrdinal: number,
+        _attemptIndex: number,
+        persistence: DurableBroadcastRefinementTranscriptAttemptPersistence,
+      ): Promise<BroadcastTranscriptWorkerRunResult> => {
+        const result: BroadcastTranscriptWorkerRunResult = {
           fragments: [
             {
               chunkId: completedChunk.chunkId,
@@ -413,7 +463,14 @@ describe("runDurableBroadcastRefinementTranscriptPipeline", () => {
           gapChunkIds: [routeChangedChunk.chunkId],
           requestedCount: requested.length,
           concurrencyOutcome: "test",
-        }),
+        };
+        return settleWithPersistence(
+          requested,
+          quotaAttemptOrdinal,
+          persistence,
+          result,
+        );
+      },
     );
 
     const interrupted =
@@ -441,8 +498,17 @@ describe("runDurableBroadcastRefinementTranscriptPipeline", () => {
     ]);
 
     const nextAttempt = vi.fn(
-      (requested: readonly BroadcastContextTranscriptionChunk[]) =>
-        Promise.resolve(settled(requested)),
+      (
+        requested: readonly BroadcastContextTranscriptionChunk[],
+        quotaAttemptOrdinal: number,
+        _attemptIndex: number,
+        persistence: DurableBroadcastRefinementTranscriptAttemptPersistence,
+      ) =>
+        settleWithPersistence(
+          requested,
+          quotaAttemptOrdinal,
+          persistence,
+        ),
     );
     const recovered =
       await runDurableBroadcastRefinementTranscriptPipeline({
@@ -486,8 +552,17 @@ describe("runDurableBroadcastRefinementTranscriptPipeline", () => {
       }),
     );
     const runAttempt = vi.fn(
-      (requested: readonly BroadcastContextTranscriptionChunk[]) =>
-        Promise.resolve(settled(requested)),
+      (
+        requested: readonly BroadcastContextTranscriptionChunk[],
+        quotaAttemptOrdinal: number,
+        _attemptIndex: number,
+        persistence: DurableBroadcastRefinementTranscriptAttemptPersistence,
+      ) =>
+        settleWithPersistence(
+          requested,
+          quotaAttemptOrdinal,
+          persistence,
+        ),
     );
 
     const blocked = await runDurableBroadcastRefinementTranscriptPipeline({
@@ -527,8 +602,18 @@ describe("runDurableBroadcastRefinementTranscriptPipeline", () => {
       chunks: [chunks[0] as BroadcastContextTranscriptionChunk],
       editorRetryGeneration: 0,
       allowOutcomeUnknownRetry: false,
-      runAttempt: (requested) =>
-        Promise.resolve(settled(requested, "no-speech")),
+      runAttempt: (
+        requested,
+        quotaAttemptOrdinal,
+        _attemptIndex,
+        persistence,
+      ) =>
+        settleWithPersistence(
+          requested,
+          quotaAttemptOrdinal,
+          persistence,
+          settled(requested, "no-speech"),
+        ),
     });
 
     expect(result.complete).toBe(true);
@@ -540,6 +625,102 @@ describe("runDurableBroadcastRefinementTranscriptPipeline", () => {
       }),
     ]);
   });
+
+  it("marks exactly the 190 ACKed cells ambiguous after a 200-cell worker crash", async () => {
+    const manyChunks = Array.from({ length: 200 }, (_, index) => ({
+      chunkId: `refine-${String(index + 1).padStart(3, "0")}`,
+      sourceStartMs: index * 500,
+      sourceEndMs: (index + 1) * 500,
+      kind: "event" as const,
+    }));
+    const holder = storeFor(session());
+
+    await expect(
+      runDurableBroadcastRefinementTranscriptPipeline({
+        store: holder.store,
+        initialSession: holder.current,
+        runId: "run-1",
+        refinementTranscriptInputSignature: "refinement-transcript-200",
+        chunks: manyChunks,
+        editorRetryGeneration: 0,
+        allowOutcomeUnknownRetry: false,
+        runAttempt: async (
+          requested,
+          quotaAttemptOrdinal,
+          _attemptIndex,
+          persistence,
+        ) => {
+          for (const chunk of requested.slice(0, 190)) {
+            await persistence.onDispatchIntent({
+              operationId:
+                `transcript-refinement-g${quotaAttemptOrdinal}-${chunk.chunkId}`,
+              chunkId: chunk.chunkId,
+              sourceStartMs: chunk.sourceStartMs,
+              sourceEndMs: chunk.sourceEndMs,
+              attemptOrdinal: quotaAttemptOrdinal,
+              operationNamespace: "refinement",
+              operationScope: null,
+              routeManifestFingerprint: `sha256:${"1".repeat(64)}`,
+            });
+          }
+          throw new Error("worker crashed at cell 190");
+        },
+      }),
+    ).rejects.toThrow("worker crashed at cell 190");
+
+    const crashedCheckpoint = JSON.parse(
+      holder.current.refinementTranscriptCheckpointJson!,
+    ) as {
+      readonly gaps: readonly {
+        readonly chunkId: string;
+        readonly reason: string;
+      }[];
+    };
+    expect(crashedCheckpoint.gaps).toHaveLength(190);
+    expect(
+      crashedCheckpoint.gaps.every(({ reason }) => reason === "in-flight"),
+    ).toBe(true);
+    expect(
+      crashedCheckpoint.gaps.some(({ chunkId }) => chunkId === "refine-191"),
+    ).toBe(false);
+
+    const resumedAttempt = vi.fn(
+      (
+        requested: readonly BroadcastContextTranscriptionChunk[],
+        quotaAttemptOrdinal: number,
+        _attemptIndex: number,
+        persistence: DurableBroadcastRefinementTranscriptAttemptPersistence,
+      ) =>
+        settleWithPersistence(
+          requested,
+          quotaAttemptOrdinal,
+          persistence,
+        ),
+    );
+    const resumed = await runDurableBroadcastRefinementTranscriptPipeline({
+      store: holder.store,
+      initialSession: holder.current,
+      runId: "run-1",
+      refinementTranscriptInputSignature: "refinement-transcript-200",
+      chunks: manyChunks,
+      editorRetryGeneration: 0,
+      allowOutcomeUnknownRetry: false,
+      runAttempt: resumedAttempt,
+    });
+
+    expect(resumedAttempt).toHaveBeenCalledTimes(1);
+    expect(
+      resumedAttempt.mock.calls[0]?.[0].map(({ chunkId }) => chunkId),
+    ).toEqual(manyChunks.slice(190).map(({ chunkId }) => chunkId));
+    expect(resumed.status).toBe("blocked-outcome-unknown");
+    expect(resumed.blockingGaps).toHaveLength(190);
+    expect(
+      resumed.blockingGaps.every(
+        ({ reason }) => reason === "outcome-unknown",
+      ),
+    ).toBe(true);
+    expect(resumed.fragments).toHaveLength(10);
+  }, 60_000);
 
   it("rejects a stored checkpoint whose frozen source ranges changed", async () => {
     const checkpoint = createBroadcastRefinementTranscriptCheckpoint({

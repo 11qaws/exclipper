@@ -3,32 +3,39 @@ import {
   buildBroadcastContextEligibilityById,
   calculateCoverage,
   createBroadcastContextRequest,
+  isFinalBroadcastContextResult,
 } from "./broadcastContextProtocol";
 import type { BroadcastContextInputError } from "./broadcastContextProtocol";
 import { createBroadcastParticipantGrounding } from "./broadcastParticipantGrounding";
-import { DEFAULT_CANDIDATE_PASS_B_CAST_ROSTER_ID } from "./participantRoster";
+import {
+  candidatePassBCastReferences,
+  DEFAULT_CANDIDATE_PASS_B_CAST_ROSTER_ID,
+} from "./participantRoster";
 
 function validInput() {
+  const sourceDurationMs = 60 * 60_000;
+  const chapters = [
+    {
+      chapterId: "chapter-1",
+      startMs: 0,
+      endMs: 30 * 60_000,
+      evidenceMode: "complete-transcript" as const,
+      evidenceCoverageRatio: 1,
+      summaryKo: "방송 전반부에서 음식 취향을 이야기한다.",
+    },
+    {
+      chapterId: "chapter-2",
+      startMs: 30 * 60_000,
+      endMs: 60 * 60_000,
+      evidenceMode: "sampled-audio-video" as const,
+      evidenceCoverageRatio: 0.4,
+      summaryKo: "후반부에서 실제 음식과 관련된 경험담이 이어진다.",
+    },
+  ] as const;
   return {
-    sourceDurationMs: 60 * 60_000,
-    chapters: [
-      {
-        chapterId: "chapter-1",
-        startMs: 0,
-        endMs: 30 * 60_000,
-        evidenceMode: "complete-transcript",
-        evidenceCoverageRatio: 1,
-        summaryKo: "방송 전반부에서 음식 취향을 이야기한다.",
-      },
-      {
-        chapterId: "chapter-2",
-        startMs: 30 * 60_000,
-        endMs: 60 * 60_000,
-        evidenceMode: "sampled-audio-video",
-        evidenceCoverageRatio: 0.4,
-        summaryKo: "후반부에서 실제 음식과 관련된 경험담이 이어진다.",
-      },
-    ],
+    sourceDurationMs,
+    castRosterId: null,
+    chapters,
     candidates: [
       {
         candidateId: "candidate-1",
@@ -37,13 +44,42 @@ function validInput() {
         transcriptKo: "칼국수를 먹었던 이야기를 꺼낸다.",
         eventSummaryKo: "칼국수 경험담이 시작된다.",
         reactionSummaryKo: "스트리머가 기억을 떠올리며 웃는다.",
+        participantContextKo:
+          "등장인물 어댑터는 이 구간에서 식별 가능한 인물을 찾지 못했다.",
         chatReactionSummaryKo: null,
       },
     ],
+    participantGrounding: createBroadcastParticipantGrounding({
+      sourceDurationMs,
+      castRosterId: null,
+      chapters,
+    }),
+    outputLanguage: "ko",
   } as const;
 }
 
 describe("broadcastContextProtocol", () => {
+  it("distinguishes the final whole-broadcast result from partial phase payloads", () => {
+    const result = {
+      semanticChaptersSupported: true,
+      discoveredLeadsSupported: true,
+    } as Parameters<typeof isFinalBroadcastContextResult>[0];
+
+    expect(isFinalBroadcastContextResult(result)).toBe(true);
+    expect(
+      isFinalBroadcastContextResult({
+        ...result,
+        semanticChaptersSupported: false,
+      }),
+    ).toBe(false);
+    expect(
+      isFinalBroadcastContextResult({
+        ...result,
+        discoveredLeadsSupported: false,
+      }),
+    ).toBe(false);
+  });
+
   it("snapshots bounded chapter and candidate evidence without decision fields", () => {
     const input = validInput();
     const request = createBroadcastContextRequest(input);
@@ -56,6 +92,9 @@ describe("broadcastContextProtocol", () => {
     });
     expect(request.chapters).not.toBe(input.chapters);
     expect(request.candidates).not.toBe(input.candidates);
+    expect(request.candidates[0]?.participantContextKo).toBe(
+      input.candidates[0].participantContextKo,
+    );
     expect(Object.keys(request.candidates[0] ?? {})).toEqual([
       "candidateId",
       "startMs",
@@ -73,17 +112,46 @@ describe("broadcastContextProtocol", () => {
 
   it("accepts only the fixed server-known cast roster", () => {
     const input = validInput();
+    const participantGrounding = createBroadcastParticipantGrounding({
+      sourceDurationMs: input.sourceDurationMs,
+      castRosterId: DEFAULT_CANDIDATE_PASS_B_CAST_ROSTER_ID,
+      chapters: input.chapters,
+    });
     expect(
       createBroadcastContextRequest({
         ...input,
         castRosterId: DEFAULT_CANDIDATE_PASS_B_CAST_ROSTER_ID,
+        participantGrounding,
       }).castRosterId,
     ).toBe(DEFAULT_CANDIDATE_PASS_B_CAST_ROSTER_ID);
     expect(() =>
       createBroadcastContextRequest({
         ...input,
         castRosterId: "user-authored-roster" as never,
+        participantGrounding,
       }),
+    ).toThrowError(
+      expect.objectContaining<Partial<BroadcastContextInputError>>({
+        code: "INVALID_CAST_ROSTER",
+      }),
+    );
+  });
+
+  it("requires explicit language and explicit roster absence", () => {
+    const withoutLanguage = { ...validInput() } as Record<string, unknown>;
+    const withoutRoster = { ...validInput() } as Record<string, unknown>;
+    delete withoutLanguage.outputLanguage;
+    delete withoutRoster.castRosterId;
+
+    expect(() =>
+      createBroadcastContextRequest(withoutLanguage as never),
+    ).toThrowError(
+      expect.objectContaining<Partial<BroadcastContextInputError>>({
+        code: "INVALID_TEXT",
+      }),
+    );
+    expect(() =>
+      createBroadcastContextRequest(withoutRoster as never),
     ).toThrowError(
       expect.objectContaining<Partial<BroadcastContextInputError>>({
         code: "INVALID_CAST_ROSTER",
@@ -93,9 +161,15 @@ describe("broadcastContextProtocol", () => {
 
   it("accepts only the deterministic sealed participant packet for the exact map", () => {
     const input = validInput();
+    const participantGrounding = createBroadcastParticipantGrounding({
+      sourceDurationMs: input.sourceDurationMs,
+      castRosterId: DEFAULT_CANDIDATE_PASS_B_CAST_ROSTER_ID,
+      chapters: input.chapters,
+    });
     const canonical = createBroadcastContextRequest({
       ...input,
       castRosterId: DEFAULT_CANDIDATE_PASS_B_CAST_ROSTER_ID,
+      participantGrounding,
     });
     expect(
       createBroadcastContextRequest({
@@ -111,6 +185,119 @@ describe("broadcastContextProtocol", () => {
         participantGrounding: {
           ...canonical.participantGrounding,
           resolutionStatus: "no-source-roster",
+        },
+      }),
+    ).toThrowError(
+      expect.objectContaining<Partial<BroadcastContextInputError>>({
+        code: "INVALID_PARTICIPANT_GROUNDING",
+      }),
+    );
+  });
+
+  it("rejects requests that omit the sealed participant packet", () => {
+    const input = validInput();
+    const withoutGrounding = Object.fromEntries(
+      Object.entries(input).filter(([key]) => key !== "participantGrounding"),
+    );
+
+    expect(() =>
+      createBroadcastContextRequest(withoutGrounding as never),
+    ).toThrowError(
+      expect.objectContaining<Partial<BroadcastContextInputError>>({
+        code: "INVALID_PARTICIPANT_GROUNDING",
+      }),
+    );
+  });
+
+  it("rejects candidates that omit their checkpointed participant context", () => {
+    const input = validInput();
+    const candidate = Object.fromEntries(
+      Object.entries(input.candidates[0]).filter(
+        ([key]) => key !== "participantContextKo",
+      ),
+    );
+
+    expect(() =>
+      createBroadcastContextRequest({
+        ...input,
+        candidates: [candidate as never],
+      }),
+    ).toThrowError(
+      expect.objectContaining<Partial<BroadcastContextInputError>>({
+        code: "INVALID_TEXT",
+        itemId: "candidate-1",
+      }),
+    );
+  });
+
+  it("keeps transcript-name matching on an explicit dialogue subset of the full context map", () => {
+    const referencedParticipant = candidatePassBCastReferences(
+      DEFAULT_CANDIDATE_PASS_B_CAST_ROSTER_ID,
+    )[0]!;
+    const fullContextChapters = [
+      {
+        chapterId: "dialogue-chapter",
+        startMs: 0,
+        endMs: 30_000,
+        evidenceMode: "complete-transcript" as const,
+        evidenceCoverageRatio: 1,
+        summaryKo: "The streamer discusses the next activity.",
+      },
+      {
+        chapterId: "visual-only-chapter",
+        startMs: 30_000,
+        endMs: 60_000,
+        evidenceMode: "sampled-audio-video" as const,
+        evidenceCoverageRatio: 1,
+        summaryKo: `${referencedParticipant.displayName} appears in a visual-only summary.`,
+      },
+    ];
+    const participantGrounding = createBroadcastParticipantGrounding({
+      sourceDurationMs: 60_000,
+      castRosterId: DEFAULT_CANDIDATE_PASS_B_CAST_ROSTER_ID,
+      chapters: [fullContextChapters[0]!],
+    });
+
+    const request = createBroadcastContextRequest({
+      sourceDurationMs: 60_000,
+      chapters: fullContextChapters,
+      candidates: [],
+      castRosterId: DEFAULT_CANDIDATE_PASS_B_CAST_ROSTER_ID,
+      participantGrounding,
+      outputLanguage: "ko",
+    });
+
+    expect(request.participantGrounding).toEqual(participantGrounding);
+    expect(
+      request.participantGrounding.transcriptSourceChapterIds,
+    ).toEqual(["dialogue-chapter"]);
+    expect(
+      request.participantGrounding.evidence.some(
+        (evidence) =>
+          evidence.kind === "transcript-name-mention" &&
+          evidence.chapterId === "visual-only-chapter",
+      ),
+    ).toBe(false);
+  });
+
+  it("rejects a participant packet whose dialogue subset is absent from its parent context map", () => {
+    const input = validInput();
+    const grounding = createBroadcastParticipantGrounding({
+      sourceDurationMs: input.sourceDurationMs,
+      castRosterId: DEFAULT_CANDIDATE_PASS_B_CAST_ROSTER_ID,
+      chapters: input.chapters,
+    });
+
+    expect(() =>
+      createBroadcastContextRequest({
+        ...input,
+        castRosterId: DEFAULT_CANDIDATE_PASS_B_CAST_ROSTER_ID,
+        participantGrounding: {
+          ...grounding,
+          transcriptSourceChapterIds: [
+            "chapter-1",
+            "missing-dialogue-chapter",
+          ],
         },
       }),
     ).toThrowError(

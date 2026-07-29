@@ -10,7 +10,10 @@ import type {
   CandidatePassBInsight,
   CandidatePassBVerificationReceipt,
 } from "../analysis/candidatePassBWorkerProtocol";
-import { CANDIDATE_PASS_B_ROUTING_MODEL_REVISION } from "../analysis/candidatePassBWorkerProtocol";
+import {
+  currentCandidatePassBDispatch,
+  currentCandidatePassBSettlement,
+} from "../testSupport/candidatePassBCurrentFixture";
 import { selectBroadcastContextCandidateCohort } from "./broadcastContextCandidateCohort";
 import { selectCandidateVerificationCohort } from "./candidateVerificationCohort";
 
@@ -53,8 +56,37 @@ function contextFor(candidateId: string): CandidatePassBContextPacket {
   return context;
 }
 
+function receiptFor(
+  candidate: (typeof candidates)[number],
+  context: CandidatePassBContextPacket,
+): CandidatePassBVerificationReceipt {
+  const dispatch = {
+    ...currentCandidatePassBDispatch(context, candidate.id),
+    sourceStartMs: candidate.startMs,
+    sourceEndMs: candidate.endMs,
+  };
+  const settlement = currentCandidatePassBSettlement(dispatch);
+  const receipt = createCandidatePassBVerificationReceipt(
+    context,
+    dispatch.mediaReceipt.frames[0].timestampMs,
+    {
+      candidateId: candidate.id,
+      sourceStartMs: candidate.startMs,
+      sourceEndMs: candidate.endMs,
+      routingModelRevision: dispatch.routingModelRevision,
+      refinementEvidenceProjectionFingerprint: null,
+      outputLanguage: "ko",
+      castRosterId: null,
+    },
+    dispatch,
+    settlement,
+  );
+  if (receipt === null) throw new Error("test receipt must be valid");
+  return receipt;
+}
+
 describe("candidate pipeline completion regression", () => {
-  it("finishes a 17-candidate broadcast when 12 paid-detail candidates are complete", () => {
+  it("keeps five overflow candidates as explicit gaps when only twelve have detail evidence", () => {
     const contextScheduled = selectBroadcastContextCandidateCohort(candidates);
     const contextScheduledIds = new Set(contextScheduled.map(({ id }) => id));
     const detailScheduled = candidates.slice(0, 12);
@@ -69,26 +101,7 @@ describe("candidate pipeline completion regression", () => {
       detailScheduled.map((candidate) => {
         const { id } = candidate;
         const context = contextByCandidateId[id]!;
-        const frames = [1, 2, 3, 4].map((ordinal) => ({
-          timestampMs: ordinal * 1_000,
-        }));
-        return [
-          id,
-          createCandidatePassBVerificationReceipt(
-            context,
-            frames,
-            frames[0]!.timestampMs,
-            {
-              candidateId: id,
-              sourceStartMs: candidate.startMs,
-              sourceEndMs: candidate.endMs,
-              routingModelRevision: CANDIDATE_PASS_B_ROUTING_MODEL_REVISION,
-              refinementEvidenceProjectionFingerprint: null,
-              outputLanguage: "ko",
-              castRosterId: null,
-            },
-          )!,
-        ];
+        return [id, receiptFor(candidate, context)];
       }),
     ) as Record<string, CandidatePassBVerificationReceipt>;
 
@@ -111,8 +124,52 @@ describe("candidate pipeline completion regression", () => {
     });
 
     expect(contextScheduled).toHaveLength(17);
-    expect(verificationCohort).toHaveLength(12);
+    expect(verificationCohort).toHaveLength(17);
     expect(verified.candidates).toHaveLength(12);
+    expect(Object.keys(verified.gapByCandidateId)).toEqual(
+      candidates.slice(12).map(({ id }) => id),
+    );
+  });
+
+  it("finishes a 17-candidate broadcast only after all context-qualified candidates have detail evidence", () => {
+    const contextScheduled = selectBroadcastContextCandidateCohort(candidates);
+    const contextScheduledIds = new Set(contextScheduled.map(({ id }) => id));
+    const detailScheduledIds = new Set(candidates.map(({ id }) => id));
+    const contextByCandidateId = Object.fromEntries(
+      contextScheduled.map(({ id }) => [id, contextFor(id)]),
+    ) as Record<string, CandidatePassBContextPacket>;
+    const insightByCandidateId = Object.fromEntries(
+      candidates.map(({ id }) => [id, insight]),
+    );
+    const receiptByCandidateId = Object.fromEntries(
+      candidates.map((candidate) => {
+        return [
+          candidate.id,
+          receiptFor(candidate, contextByCandidateId[candidate.id]!),
+        ];
+      }),
+    ) as Record<string, CandidatePassBVerificationReceipt>;
+
+    const verificationCohort = selectCandidateVerificationCohort({
+      candidates,
+      contextScheduledCandidateIds: contextScheduledIds,
+      contextExcludedCandidateIds: new Set(),
+      detailScheduledCandidateIds: detailScheduledIds,
+      contextByCandidateId,
+    });
+    const verified = finalizeFullyVerifiedCandidates({
+      candidates: verificationCohort,
+      contextByCandidateId,
+      insightByCandidateId,
+      receiptByCandidateId,
+      completeEvidenceCandidateIds: detailScheduledIds,
+      refinementEvidenceProjectionFingerprint: null,
+      outputLanguage: "ko",
+      castRosterId: null,
+    });
+
+    expect(verificationCohort).toHaveLength(17);
+    expect(verified.candidates).toHaveLength(17);
     expect(verified.gapByCandidateId).toEqual({});
   });
 });

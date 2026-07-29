@@ -10,8 +10,12 @@ import {
   type BroadcastContextPhaseLedger,
   type BroadcastContextPhaseLedgerFence,
   type BroadcastContextPhaseLedgerUnit,
+  type BroadcastContextPhaseLedgerUnitIdentity,
 } from "../analysis/broadcastContextPhaseLedger";
-import { createBroadcastParticipantGrounding } from "../analysis/broadcastParticipantGrounding";
+import {
+  createBroadcastParticipantGrounding,
+  rebaseBroadcastParticipantGrounding,
+} from "../analysis/broadcastParticipantGrounding";
 import {
   BROADCAST_CONTEXT_SCHEMA_VERSION,
   calculateCoverage,
@@ -122,6 +126,7 @@ function requestFor(
     sourceDurationMs: 120_000,
     chapters: [chapter],
     candidates: [],
+    castRosterId: null,
     participantGrounding: createBroadcastParticipantGrounding({
       sourceDurationMs: 120_000,
       castRosterId: null,
@@ -193,6 +198,7 @@ function pipelineOptions(
     evidenceManifestSignature: "transcript-evidence-v1",
     routingManifestSignature: "routing-policy-v1",
     operationGeneration: 4,
+    retryMode: "editor-approved-paid",
     signal: new AbortController().signal,
     persistAndReadBack,
   } as const;
@@ -270,7 +276,7 @@ describe("runDurableBroadcastRefinementPipeline", () => {
     ]);
   });
 
-  it("blocks a legacy succeeded unit without an exact receipt before another provider call", async () => {
+  it("blocks a malformed current succeeded unit without an exact receipt", async () => {
     const parent = completedParentLedger();
     const firstPersistence = persistence(parent);
     const firstRequest = vi.fn((input: BroadcastContextRequestInput) =>
@@ -284,24 +290,26 @@ describe("runDurableBroadcastRefinementPipeline", () => {
       ),
       request: firstRequest,
     });
-    const legacy = JSON.parse(
+    const malformed = JSON.parse(
       JSON.stringify(first.ledger),
     ) as BroadcastContextPhaseLedger;
-    const legacyUnit = (
-      legacy.units as unknown as Array<Record<string, unknown>>
+    const malformedUnit = (
+      malformed.units as unknown as Array<Record<string, unknown>>
     ).find(({ phase }) => phase === "refinement");
-    if (legacyUnit === undefined) throw new Error("missing refinement fixture");
-    legacyUnit.inputDigest = "legacy-refinement-input-v1";
-    delete legacyUnit.modelReceipt;
+    if (malformedUnit === undefined) {
+      throw new Error("missing refinement fixture");
+    }
+    malformedUnit.inputDigest = "malformed-refinement-input-v1";
+    delete malformedUnit.modelReceipt;
 
-    const resumedPersistence = persistence(legacy);
+    const resumedPersistence = persistence(malformed);
     const resumedRequest = vi.fn((input: BroadcastContextRequestInput) =>
       Promise.resolve(resultFor(input)),
     );
     await expect(
       runDurableBroadcastRefinementPipeline({
         ...pipelineOptions(
-          legacy,
+          malformed,
           [lead("lead-a", 0)],
           resumedPersistence.persistAndReadBack,
         ),
@@ -399,9 +407,8 @@ describe("runDurableBroadcastRefinementPipeline", () => {
 
     expect(operationIds).toHaveLength(2);
     expect(new Set(operationIds).size).toBe(2);
-    expect(completed.ledger.usedOperationIds).toEqual(
-      expect.arrayContaining(operationIds),
-    );
+    expect(completed.ledger.usedOperationIds).toContain(operationIds.at(-1));
+    expect(completed.ledger.usedOperationIds).not.toContain(operationIds[0]);
     expect(completed.refinements[0]).toEqual(
       expect.objectContaining({
         leadId: "lead-a",
@@ -411,11 +418,22 @@ describe("runDurableBroadcastRefinementPipeline", () => {
     );
   });
 
-  it("seals an ambiguous result and never automatically spends again on resume", async () => {
+  it("replays only the exact ambiguous refinement operation on resume", async () => {
     const parent = completedParentLedger();
     const saved = persistence(parent);
-    const ambiguousRequest = vi.fn(() =>
-      Promise.reject(new Error("connection disappeared after dispatch")),
+    let ambiguousOperationId = "";
+    const ambiguousRequest = vi.fn(
+      (
+        _input: BroadcastContextRequestInput,
+        options?: NonNullable<
+          Parameters<typeof requestBroadcastContextDeepseek>[1]
+        >,
+      ) => {
+        ambiguousOperationId = options?.quota?.operationId ?? "";
+        return Promise.reject(
+          new Error("connection disappeared after dispatch"),
+        );
+      },
     );
 
     await expect(
@@ -442,28 +460,257 @@ describe("runDurableBroadcastRefinementPipeline", () => {
     );
 
     const resumedPersistence = persistence(saved.current);
-    const resumedRequest = vi.fn((input: BroadcastContextRequestInput) =>
-      Promise.resolve(resultFor(input)),
+    const resumedOperationIds: string[] = [];
+    const resumedRequest = vi.fn(
+      (
+        input: BroadcastContextRequestInput,
+        options?: NonNullable<
+          Parameters<typeof requestBroadcastContextDeepseek>[1]
+        >,
+      ) => {
+        resumedOperationIds.push(options?.quota?.operationId ?? "");
+        return Promise.resolve(resultFor(input));
+      },
+    );
+    const resumed = await runDurableBroadcastRefinementPipeline({
+      ...pipelineOptions(
+        saved.current,
+        [lead("lead-a", 0)],
+        resumedPersistence.persistAndReadBack,
+      ),
+      request: resumedRequest,
+    });
+    expect(resumedOperationIds).toEqual([ambiguousOperationId]);
+    expect(resumed.ledger.units).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          phase: "refinement",
+          unitId: "lead:lead-a",
+          operationId: ambiguousOperationId,
+          status: "succeeded",
+        }),
+      ]),
+    );
+  });
+
+  it("preserves completed refinement siblings while exposing unresolved exact-operation recovery", async () => {
+    const parent = completedParentLedger();
+    const saved = persistence(parent);
+    const ambiguousRequest = vi.fn(
+      (
+        input: BroadcastContextRequestInput,
+        options?: NonNullable<
+          Parameters<typeof requestBroadcastContextDeepseek>[1]
+        >,
+      ) =>
+        options?.quota?.operationId.includes("context-refinement-1-")
+          ? Promise.reject(new Error("second lead response was lost"))
+          : Promise.resolve(resultFor(input)),
     );
     await expect(
       runDurableBroadcastRefinementPipeline({
         ...pipelineOptions(
+          parent,
+          [lead("lead-a", 0), lead("lead-b", 30_000)],
+          saved.persistAndReadBack,
+        ),
+        request: ambiguousRequest,
+        maximumConcurrency: 1,
+      }),
+    ).rejects.toMatchObject({ code: "PIPELINE_BLOCKED" });
+
+    const completedSibling = saved.current.units.find(
+      ({ unitId }) => unitId === "lead:lead-a",
+    );
+    const unresolved = saved.current.units.find(
+      ({ unitId }) => unitId === "lead:lead-b",
+    );
+    expect(completedSibling).toMatchObject({ status: "succeeded" });
+    expect(unresolved).toMatchObject({ status: "outcome-unknown" });
+
+    const resumedPersistence = persistence(saved.current);
+    const request = vi.fn();
+    await expect(
+      runDurableBroadcastRefinementPipeline({
+        ...pipelineOptions(
           saved.current,
-          [lead("lead-a", 0)],
+          [lead("lead-a", 0), lead("lead-b", 30_000)],
           resumedPersistence.persistAndReadBack,
         ),
-        request: resumedRequest,
+        request,
+        reconcileOperation: (identity) =>
+          Promise.resolve({
+            disposition: "unresolved",
+            operationId: identity.operationId,
+            inputDigest: identity.inputDigest,
+            reasonCode: "coordinator_terminal_result_unavailable",
+          }),
+        maximumConcurrency: 1,
       }),
     ).rejects.toMatchObject({
       code: "PIPELINE_BLOCKED",
+      recoveryActions: [
+        expect.objectContaining({
+          kind: "reconcile-current-operation",
+          unitId: "lead:lead-b",
+          operationId: unresolved?.operationId,
+        }),
+      ],
     });
-    expect(resumedRequest).not.toHaveBeenCalled();
+    expect(request).not.toHaveBeenCalled();
+    expect(
+      resumedPersistence.current.units.find(
+        ({ unitId }) => unitId === "lead:lead-a",
+      ),
+    ).toEqual(completedSibling);
+  });
+
+  it("reconciles then replaces an unresolved free-tier refinement with a fresh generation", async () => {
+    const parent = completedParentLedger();
+    const saved = persistence(parent);
+    const operationIds: string[] = [];
+    const request = vi.fn(
+      (
+        input: BroadcastContextRequestInput,
+        options?: NonNullable<
+          Parameters<typeof requestBroadcastContextDeepseek>[1]
+        >,
+      ) => {
+        const operationId = options?.quota?.operationId ?? "";
+        operationIds.push(operationId);
+        return operationId.includes("-free-")
+          ? Promise.resolve(resultFor(input))
+          : Promise.reject(
+              new BroadcastContextDeepseekClientError(
+                "OUTCOME_UNKNOWN",
+                "connection disappeared after dispatch",
+                { proxyErrorCode: "UPSTREAM_OUTCOME_UNKNOWN" },
+              ),
+            );
+      },
+    );
+    const reconcileOperation = vi.fn(
+      (identity: BroadcastContextPhaseLedgerUnitIdentity) =>
+        Promise.resolve({
+          disposition: "unresolved" as const,
+          operationId: identity.operationId,
+          inputDigest: identity.inputDigest,
+          reasonCode: "coordinator_terminal_result_unavailable",
+        }),
+    );
+    const waitForAutomaticRetry = vi.fn(() => Promise.resolve());
+
+    const completed = await runDurableBroadcastRefinementPipeline({
+      ...pipelineOptions(
+        parent,
+        [lead("lead-a", 0)],
+        saved.persistAndReadBack,
+      ),
+      retryMode: "automatic-free-tier",
+      request,
+      reconcileOperation,
+      waitForAutomaticRetry,
+    });
+
+    expect(operationIds).toHaveLength(2);
+    expect(operationIds[0]).toContain("context-refinement-0-g4-");
+    expect(operationIds[1]).toContain(
+      "context-refinement-lead:lead-a-free-g6-a1-",
+    );
+    expect(reconcileOperation).toHaveBeenCalledTimes(1);
+    expect(waitForAutomaticRetry).toHaveBeenCalledTimes(2);
+    expect(completed.ledger.units.find(
+      ({ phase, unitId }) =>
+        phase === "refinement" && unitId === "lead:lead-a",
+    )).toMatchObject({
+      status: "succeeded",
+      operationId: operationIds[1],
+      attemptOrdinal: 1,
+    });
+
+    const checkpoints = saved.persistAndReadBack.mock.calls.map(
+      ([checkpoint]) => checkpoint.ledger.units.find(
+        ({ phase, unitId }) =>
+          phase === "refinement" && unitId === "lead:lead-a",
+      ),
+    );
+    const oldTerminalIndex = checkpoints.findIndex(
+      (unit) =>
+        unit !== undefined &&
+        unit.operationId === operationIds[0] &&
+        unit.status === "outcome-unknown",
+    );
+    const replacementPlannedIndex = checkpoints.findIndex(
+      (unit) =>
+        unit !== undefined &&
+        unit.operationId === operationIds[1] &&
+        unit.status === "pending",
+    );
+    expect(oldTerminalIndex).toBeGreaterThanOrEqual(0);
+    expect(replacementPlannedIndex).toBeGreaterThan(oldTerminalIndex);
+  });
+
+  it("does not retry a deterministic refinement contract failure", async () => {
+    const parent = completedParentLedger();
+    const saved = persistence(parent);
+    const request = vi.fn(() =>
+      Promise.reject(
+        new BroadcastContextDeepseekClientError(
+          "INVALID_INPUT",
+          "current request contract is invalid",
+        ),
+      ),
+    );
+    const waitForAutomaticRetry = vi.fn(() => Promise.resolve());
+
+    await expect(
+      runDurableBroadcastRefinementPipeline({
+        ...pipelineOptions(
+          parent,
+          [lead("lead-a", 0)],
+          saved.persistAndReadBack,
+        ),
+        retryMode: "automatic-free-tier",
+        request,
+        waitForAutomaticRetry,
+      }),
+    ).rejects.toMatchObject({ code: "PIPELINE_BLOCKED" });
+
+    expect(request).toHaveBeenCalledTimes(1);
+    expect(waitForAutomaticRetry).not.toHaveBeenCalled();
+    expect(saved.current.units.find(
+      ({ phase, unitId }) =>
+        phase === "refinement" && unitId === "lead:lead-a",
+    )).toMatchObject({
+      status: "failed",
+      reasonCode: "provider_configuration_or_request_rejected",
+    });
   });
 
   it("persists a local success abstention for an empty chapter set without calling the provider", async () => {
     const parent = completedParentLedger();
     const saved = persistence(parent);
     const request = vi.fn();
+    const sourceChapter = chapterFor("silent-lead", 0);
+    const sourceParticipantGrounding = createBroadcastParticipantGrounding({
+      sourceDurationMs: 120_000,
+      castRosterId: null,
+      chapters: [sourceChapter],
+    });
+    const participantGrounding = rebaseBroadcastParticipantGrounding(
+      sourceParticipantGrounding,
+      {
+        sourceDurationMs: 120_000,
+        castRosterId: null,
+        chapters: [sourceChapter],
+      },
+      {
+        sourceDurationMs: 120_000,
+        castRosterId: null,
+        chapters: [],
+      },
+    );
+    expect(participantGrounding).not.toBeNull();
     const completed = await runDurableBroadcastRefinementPipeline({
       ...pipelineOptions(
         parent,
@@ -475,6 +722,8 @@ describe("runDurableBroadcastRefinementPipeline", () => {
               sourceDurationMs: 120_000,
               chapters: [],
               candidates: [],
+              castRosterId: null,
+              participantGrounding: participantGrounding!,
               outputLanguage: "ko",
             },
           },
@@ -579,8 +828,14 @@ describe("runDurableBroadcastRefinementPipeline", () => {
       routingManifestSignature: "routing-policy-v1",
       analysisMode: "refinement-fast",
     });
-    expect(replaced.ledger.usedOperationIds.length).toBeGreaterThan(
+    expect(replaced.ledger.usedOperationIds).toHaveLength(
       first.ledger.usedOperationIds.length,
+    );
+    expect(replaced.ledger.usedOperationIds).not.toContain(
+      first.ledger.units.find(
+        ({ phase, unitId }) =>
+          phase === "refinement" && unitId === "lead:lead-a",
+      )?.operationId,
     );
   });
 

@@ -13,10 +13,12 @@ import {
   createBroadcastTranscriptMediaResolveRequest,
 } from "../analysis/broadcastTranscriptMediaProtocol";
 import {
+  BROADCAST_TRANSCRIPT_VISUAL_MEDIA_RESOLVE_CONTENT_TYPE,
   CANDIDATE_INSIGHT_MEDIA_BUNDLE_CONTENT_TYPE,
   CANDIDATE_INSIGHT_MEDIA_ENDPOINT_PATH,
   CANDIDATE_INSIGHT_MEDIA_RESOLVE_CONTENT_TYPE,
   createCandidateInsightMediaResolveRequest,
+  createBroadcastTranscriptVisualMediaResolveRequest,
 } from "../analysis/candidateInsightMediaProtocol";
 import {
   buildCandidatePassBProxyRequestBody,
@@ -38,6 +40,7 @@ import {
   BROADCAST_TRANSCRIPT_ROUTE_FINGERPRINT_HEADER,
   createBroadcastTranscriptRouteSelection,
 } from "../analysis/broadcastTranscriptRouteManifest";
+import { currentCandidatePassBContext } from "../testSupport/candidatePassBCurrentFixture";
 import worker, {
   handleCandidateInsightRequest,
   handleBroadcastTranscriptRequest,
@@ -1155,6 +1158,125 @@ describe("free R2 transcript Worker integration", () => {
 });
 
 describe("free R2 candidate media Worker integration", () => {
+  it("allows image-only media only through the transcript visual resolve contract", async () => {
+    const bucket = new MemoryR2Bucket();
+    const durationMs = 2_000;
+    const jpeg = new Uint8Array([0xff, 0xd8, 0xff, 1, 2, 0xff, 0xd9]);
+    const bundle = new Uint8Array(4 * jpeg.byteLength);
+    for (let index = 0; index < 4; index += 1) {
+      bundle.set(jpeg, index * jpeg.byteLength);
+    }
+    const lease: AiQuotaLeaseHeaders = {
+      participantId: "participant_00000000000001",
+      runId: "run-visual-r2-1",
+      operationId: "visual-r2-1",
+      pool: "candidate",
+      payloadDigest: await payloadDigest(bundle),
+      leaseToken: PUBLIC_LEASE_TOKEN,
+    };
+    const fixture = createEnvironment({ bucket, mode: "free-r2" });
+    const stageUrl = new URL(
+      CANDIDATE_INSIGHT_MEDIA_ENDPOINT_PATH,
+      "https://rettohighlight-gemini.example",
+    );
+    stageUrl.searchParams.set(
+      "candidateHash",
+      "0123456789abcdef01234567",
+    );
+    stageUrl.searchParams.set("durationMs", String(durationMs));
+    stageUrl.searchParams.set("audioBytes", "0");
+    [200, 600, 1_200, 1_800].forEach((timestampMs, index) => {
+      stageUrl.searchParams.set(`f${index}t`, String(timestampMs));
+      stageUrl.searchParams.set(`f${index}b`, String(jpeg.byteLength));
+    });
+    const stageResponse = await worker.fetch(
+      new Request(stageUrl, {
+        method: "POST",
+        headers: {
+          Origin: PRODUCTION_ORIGIN,
+          "Content-Type": CANDIDATE_INSIGHT_MEDIA_BUNDLE_CONTENT_TYPE,
+          "CF-Connecting-IP": "203.0.113.42",
+          ...leaseHeaders(lease),
+        },
+        body: bundle,
+      }),
+      fixture.environment,
+    );
+    expect(stageResponse.status).toBe(202);
+    const staged = (await stageResponse.json()) as {
+      readonly mediaTicket: string;
+    };
+    const analysis = {
+      segments: [],
+      eventSummaryKo: "화면에서 조용한 성공 장면이 확인됩니다.",
+      reactionSummaryKo: "표정과 화면 변화로 결과를 알아차립니다.",
+      whyGoodClipKo: "소리 없이도 사건과 결과가 완결됩니다.",
+      uncertaintiesKo: [],
+      participantPresence: "none-present",
+      participantSummaryKo: "등장인물이 보이지 않습니다.",
+      identifiedParticipants: [],
+      clipDecision: "recommend",
+      contextConsistency: "consistent",
+      programMaterial: "streamer-event",
+    };
+    let providerBody = "";
+    const providerFetch = vi.fn(
+      (_input: RequestInfo | URL, init?: RequestInit) => {
+        if (typeof init?.body !== "string") {
+          throw new TypeError("Expected a serialized provider request.");
+        }
+        providerBody = init.body;
+        return Promise.resolve(qwenSseSuccess(JSON.stringify(analysis)));
+      },
+    );
+
+    const resolveResponse = await handleCandidateInsightRequest(
+      new Request(
+        "https://rettohighlight-gemini.example/v1/candidate-insights",
+        {
+          method: "POST",
+          headers: {
+            Origin: PRODUCTION_ORIGIN,
+            "Content-Type":
+              BROADCAST_TRANSCRIPT_VISUAL_MEDIA_RESOLVE_CONTENT_TYPE,
+            "CF-Connecting-IP": "203.0.113.42",
+            ...leaseHeaders(lease),
+          },
+          body: JSON.stringify(
+            createBroadcastTranscriptVisualMediaResolveRequest(
+              staged.mediaTicket,
+              durationMs,
+              "no-audio",
+              null,
+              "ko",
+              null,
+            ),
+          ),
+        },
+      ),
+      fixture.environment,
+      { fetchImplementation: providerFetch },
+    );
+
+    expect(resolveResponse.status).toBe(200);
+    const upstream = JSON.parse(providerBody) as {
+      readonly messages: readonly [{
+        readonly content: readonly { readonly type?: string }[];
+      }];
+    };
+    expect(
+      upstream.messages[0].content.some(
+        ({ type }) => type === "input_audio",
+      ),
+    ).toBe(false);
+    expect(
+      upstream.messages[0].content.filter(
+        ({ type }) => type === "image_url",
+      ),
+    ).toHaveLength(4);
+    expect(bucket.objects).toHaveLength(0);
+  });
+
   it("preserves a fixed byte length before a transformed body reaches R2", async () => {
     const fixedLengthStream = installFixedLengthStreamFixture();
     try {
@@ -1292,7 +1414,7 @@ describe("free R2 candidate media Worker integration", () => {
     }
   });
 
-  it("keeps bounded legacy candidate JSON working during a one-release rollout", async () => {
+  it("keeps the exact current candidate JSON contract working in paid-direct mode", async () => {
     const durationMs = 2_000;
     const wav = silentWav(durationMs);
     const jpegBase64 = btoa(
@@ -1307,12 +1429,15 @@ describe("free R2 candidate media Worker integration", () => {
           mimeType: "image/jpeg" as const,
           dataBase64: jpegBase64,
         })),
+        null,
+        "ko",
+        maximumMultibyteCandidateContext(),
       ),
     );
     const lease: AiQuotaLeaseHeaders = {
       participantId: "participant_00000000000001",
-      runId: "run-candidate-legacy-rollout",
-      operationId: "candidate-legacy-rollout",
+      runId: "run-candidate-current-direct",
+      operationId: "candidate-current-direct",
       pool: "candidate",
       payloadDigest: await payloadDigest(
         new TextEncoder().encode(serialized),
@@ -1368,6 +1493,50 @@ describe("free R2 candidate media Worker integration", () => {
     expect(response.status).toBe(200);
     expect(providerFetch).toHaveBeenCalledOnce();
     expect(bucket.objects).toHaveLength(0);
+  });
+
+  it("rejects legacy audio-only candidate JSON before any provider call", async () => {
+    const durationMs = 2_000;
+    const serialized = JSON.stringify({
+      audioBase64: encodeCandidatePassBBase64(silentWav(durationMs)),
+      candidateDurationMs: durationMs,
+    });
+    const lease: AiQuotaLeaseHeaders = {
+      participantId: "participant_00000000000001",
+      runId: "run-candidate-audio-only-rejected",
+      operationId: "candidate-audio-only-rejected",
+      pool: "candidate",
+      payloadDigest: await payloadDigest(
+        new TextEncoder().encode(serialized),
+      ),
+      leaseToken: PUBLIC_LEASE_TOKEN,
+    };
+    const { environment } = createEnvironment({
+      bucket: new MemoryR2Bucket(),
+      mode: "free-r2",
+    });
+    const providerFetch = vi.fn();
+
+    const response = await handleCandidateInsightRequest(
+      new Request(
+        "https://rettohighlight-gemini.example/v1/candidate-insights",
+        {
+          method: "POST",
+          headers: {
+            Origin: PRODUCTION_ORIGIN,
+            "Content-Type": "application/json",
+            "CF-Connecting-IP": "203.0.113.42",
+            ...leaseHeaders(lease),
+          },
+          body: serialized,
+        },
+      ),
+      environment,
+      { fetchImplementation: providerFetch },
+    );
+
+    expect(response.status).toBe(400);
+    expect(providerFetch).not.toHaveBeenCalled();
   });
 
   it("streams one bundle, sends only capability URLs upstream, and deletes it after success", async () => {
@@ -1471,7 +1640,7 @@ describe("free R2 candidate media Worker integration", () => {
               durationMs,
               null,
               "ko",
-              null,
+              currentCandidatePassBContext(),
             ),
           ),
         },
@@ -1507,7 +1676,7 @@ describe("free R2 candidate media Worker integration", () => {
     ).toEqual(["inspect", "inspect", "consume", "complete"]);
   });
 
-  it("repairs an invalid candidate schema with a fresh internal quota attempt", async () => {
+  it("does not repay or retry an invalid candidate schema inside one durable operation", async () => {
     const fixture = await stageCandidateMediaFixture();
     const validAnalysis = {
       segments: [
@@ -1552,18 +1721,25 @@ describe("free R2 candidate media Worker integration", () => {
               fixture.durationMs,
               null,
               "ko",
-              null,
+              currentCandidatePassBContext(),
             ),
           ),
         },
       ),
       fixture.environment,
-      { fetchImplementation: providerFetch },
+      {
+        fetchImplementation: providerFetch,
+        upstreamRetryDelaysMs: [0, 0],
+      },
     );
 
-    expect(response.status).toBe(200);
-    expect(providerFetch).toHaveBeenCalledTimes(2);
-    expect(fixture.bucket.objects).toHaveLength(0);
+    expect(response.status).toBe(502);
+    await expect(response.json()).resolves.toMatchObject({
+      error: { code: "UPSTREAM_INVALID_RESPONSE" },
+    });
+    expect(providerFetch).toHaveBeenCalledOnce();
+    expect(fixture.bucket.objects).toHaveLength(1);
+    expect(fixture.bucket.deletedKeys).toHaveLength(0);
     expect(
       fixture.coordinator.requests.map(({ action }) => action),
     ).toEqual([
@@ -1571,13 +1747,10 @@ describe("free R2 candidate media Worker integration", () => {
       "inspect",
       "consume",
       "complete",
-      "lease",
-      "consume",
-      "complete",
     ]);
   });
 
-  it("retains staged media after bounded schema recovery is exhausted", async () => {
+  it("retains staged media after the first invalid candidate response", async () => {
     const fixture = await stageCandidateMediaFixture();
     const malformedSchema = JSON.stringify({
       "bad\nkey": true,
@@ -1605,13 +1778,16 @@ describe("free R2 candidate media Worker integration", () => {
               fixture.durationMs,
               null,
               "ko",
-              null,
+              currentCandidatePassBContext(),
             ),
           ),
         },
       ),
       fixture.environment,
-      { fetchImplementation: providerFetch },
+      {
+        fetchImplementation: providerFetch,
+        upstreamRetryDelaysMs: [0, 0],
+      },
     );
 
     expect(response.status).toBe(502);
@@ -1622,9 +1798,12 @@ describe("free R2 candidate media Worker integration", () => {
       "invalid??presence",
     );
     expect(response.headers.get("X-Qwen-Keys")).toContain("bad?key");
-    expect(providerFetch).toHaveBeenCalledTimes(3);
+    expect(providerFetch).toHaveBeenCalledOnce();
     expect(fixture.bucket.objects).toHaveLength(1);
     expect(fixture.bucket.deletedKeys).toHaveLength(0);
+    expect(
+      fixture.coordinator.requests.map(({ action }) => action),
+    ).toEqual(["inspect", "inspect", "consume", "complete"]);
   });
 
   it("stops a length-less candidate upload at the signed byte fence", async () => {
@@ -1706,7 +1885,7 @@ describe("free R2 candidate media Worker integration", () => {
               fixture.durationMs,
               null,
               "ko",
-              null,
+              currentCandidatePassBContext(),
             ),
           ),
         },
@@ -1793,51 +1972,84 @@ describe("free R2 candidate media Worker integration", () => {
     expect(fixture.bucket.deletedKeys).toHaveLength(1);
   });
 
-  it("retains the same staged ticket when the provider asks for a retry", async () => {
-    const fixture = await stageCandidateMediaFixture();
-    const response = await handleCandidateInsightRequest(
-      new Request(
-        "https://rettohighlight-gemini.example/v1/candidate-insights",
-        {
-          method: "POST",
-          headers: {
-            Origin: PRODUCTION_ORIGIN,
-            "Content-Type": CANDIDATE_INSIGHT_MEDIA_RESOLVE_CONTENT_TYPE,
-            "CF-Connecting-IP": "203.0.113.42",
-            ...leaseHeaders(fixture.lease),
-          },
-          body: JSON.stringify(
-            createCandidateInsightMediaResolveRequest(
-              fixture.mediaTicket,
-              fixture.durationMs,
-              null,
-              "ko",
-              null,
+  it.each([
+    {
+      label: "rate limit",
+      providerStatus: 429,
+      expectedStatus: 429,
+      expectedCode: "UPSTREAM_RATE_LIMITED",
+      retainsMedia: true,
+    },
+    {
+      label: "service failure",
+      providerStatus: 503,
+      expectedStatus: 502,
+      expectedCode: "UPSTREAM_UNAVAILABLE",
+      retainsMedia: false,
+    },
+  ])(
+    "settles a $label with one provider call and no replacement lease",
+    async ({
+      providerStatus,
+      expectedStatus,
+      expectedCode,
+      retainsMedia,
+    }) => {
+      const fixture = await stageCandidateMediaFixture();
+      const providerFetch = vi
+        .fn()
+        .mockResolvedValue(new Response(null, { status: providerStatus }));
+      const response = await handleCandidateInsightRequest(
+        new Request(
+          "https://rettohighlight-gemini.example/v1/candidate-insights",
+          {
+            method: "POST",
+            headers: {
+              Origin: PRODUCTION_ORIGIN,
+              "Content-Type": CANDIDATE_INSIGHT_MEDIA_RESOLVE_CONTENT_TYPE,
+              "CF-Connecting-IP": "203.0.113.42",
+              ...leaseHeaders(fixture.lease),
+            },
+            body: JSON.stringify(
+              createCandidateInsightMediaResolveRequest(
+                fixture.mediaTicket,
+                fixture.durationMs,
+                null,
+                "ko",
+                currentCandidatePassBContext(),
+              ),
             ),
-          ),
+          },
+        ),
+        fixture.environment,
+        {
+          fetchImplementation: providerFetch,
+          upstreamRetryDelaysMs: [0, 0],
         },
-      ),
-      fixture.environment,
-      {
-        fetchImplementation: vi
-          .fn()
-          .mockResolvedValue(new Response(null, { status: 429 })),
-        upstreamRetryDelaysMs: [],
-      },
-    );
+      );
 
-    expect(response.status).toBe(429);
-    expect(fixture.bucket.objects).toHaveLength(1);
-    expect(fixture.bucket.deletedKeys).toHaveLength(0);
-    const resolved = await worker.fetch(
-      new Request(
-        `https://rettohighlight-gemini.example${CANDIDATE_INSIGHT_MEDIA_ENDPOINT_PATH}` +
-          `?mediaTicket=${encodeURIComponent(fixture.mediaTicket)}&part=audio`,
-      ),
-      fixture.environment,
-    );
-    expect(resolved.status).toBe(200);
-  });
+      expect(response.status).toBe(expectedStatus);
+      await expect(response.json()).resolves.toMatchObject({
+        error: { code: expectedCode },
+      });
+      expect(providerFetch).toHaveBeenCalledOnce();
+      expect(fixture.bucket.objects).toHaveLength(retainsMedia ? 1 : 0);
+      expect(fixture.bucket.deletedKeys).toHaveLength(retainsMedia ? 0 : 1);
+      expect(
+        fixture.coordinator.requests.map(({ action }) => action),
+      ).toEqual(["inspect", "inspect", "consume", "complete"]);
+      if (retainsMedia) {
+        const resolved = await worker.fetch(
+          new Request(
+            `https://rettohighlight-gemini.example${CANDIDATE_INSIGHT_MEDIA_ENDPOINT_PATH}` +
+              `?mediaTicket=${encodeURIComponent(fixture.mediaTicket)}&part=audio`,
+          ),
+          fixture.environment,
+        );
+        expect(resolved.status).toBe(200);
+      }
+    },
+  );
 
   it("retains shared media when a duplicate resolve cannot check its rate limit", async () => {
     const fixture = await stageCandidateMediaFixture();
@@ -1863,7 +2075,7 @@ describe("free R2 candidate media Worker integration", () => {
               fixture.durationMs,
               null,
               "ko",
-              null,
+              currentCandidatePassBContext(),
             ),
           ),
         },

@@ -2,12 +2,14 @@ import { describe, expect, it } from "vitest";
 
 import {
   completeBroadcastParticipantPreContext,
+  normalizeBroadcastParticipantPreContextResult,
   orchestrateBroadcastParticipantPreContext,
   prepareBroadcastParticipantPreContext,
   type PrepareBroadcastParticipantPreContextInput,
 } from "./broadcastParticipantPreContextOrchestration";
 import {
   BroadcastParticipantGroundingPlanContractError,
+  createBroadcastParticipantGroundingNoneObservedReceipt,
   createBroadcastParticipantGroundingTerminalReceipt,
   projectBroadcastParticipantVoiceRecognition,
 } from "./broadcastParticipantGroundingPlan";
@@ -23,6 +25,7 @@ import {
 } from "./participantVoiceEnrollmentManifest";
 
 const SOURCE_DURATION_MS = 120_000;
+const SOURCE_FINGERPRINT = `sha256:${"a".repeat(64)}`;
 const VISUAL_REFERENCE_MANIFEST_HASH = `sha256:${"b".repeat(64)}`;
 const roster = candidatePassBCastReferences(
   DEFAULT_CANDIDATE_PASS_B_CAST_ROSTER_ID,
@@ -33,8 +36,7 @@ function baseInput(
 ): PrepareBroadcastParticipantPreContextInput {
   const mentionedParticipant = roster[1]!;
   return {
-    sourceContentFingerprint:
-      "local-file:v2|2026-07-17 음식 토크.mp4|476MB|arbitrary-format",
+    sourceFingerprint: SOURCE_FINGERPRINT,
     sourceDurationMs: SOURCE_DURATION_MS,
     transcriptSeal: "transcript:event-boost:pre-context:sealed",
     castRosterId: DEFAULT_CANDIDATE_PASS_B_CAST_ROSTER_ID,
@@ -130,12 +132,38 @@ function enabledAdapter(
   return adapter;
 }
 
+function noneObservedReceipt(
+  prepared: Awaited<ReturnType<typeof prepareBroadcastParticipantPreContext>>,
+  adapter: "visual-identity" | "voice-identity",
+) {
+  return createBroadcastParticipantGroundingNoneObservedReceipt({
+    plan: prepared.plan,
+    adapter,
+    operationId: `pre-context.${adapter}.none-observed`,
+    attemptOrdinal: 0,
+  });
+}
+
 describe("broadcast participant pre-context orchestration", () => {
-  it("hashes an arbitrary source identity, auto-seals transcript names, and explicitly marks missing media unavailable", async () => {
+  it("allows an unknown source to report no participants without inheriting the six-person catalog", async () => {
+    const prepared = await prepareBroadcastParticipantPreContext(
+      baseInput({
+        castRosterId: null,
+        dialogueChapters: [],
+      }),
+    );
+
+    expect(prepared.plan.expectedParticipantIds).toEqual([]);
+    const completed = completeBroadcastParticipantPreContext(prepared);
+    expect(completed.grounding.resolutionStatus).toBe("no-source-roster");
+    expect(completed.grounding.participants).toEqual([]);
+    expect(completed.sealedPlan.noneObservedReceipts).toEqual([]);
+  });
+
+  it("reuses the canonical transcript source fence, auto-seals transcript names, and explicitly marks missing media unavailable", async () => {
     const prepared = await prepareBroadcastParticipantPreContext(baseInput());
 
-    expect(prepared.sourceFingerprint).toMatch(/^sha256:[a-f0-9]{64}$/u);
-    expect(prepared.sourceFingerprint).not.toContain("음식");
+    expect(prepared.sourceFingerprint).toBe(SOURCE_FINGERPRINT);
     expect(prepared.expectedSourceFence).not.toBe(prepared.plan.sourceFence);
     expect(prepared.expectedSourceFence).toEqual(prepared.plan.sourceFence);
     expect(prepared.transcriptTerminalReceipts).toEqual([
@@ -155,7 +183,7 @@ describe("broadcast participant pre-context orchestration", () => {
     expect(prepared.plan.adapters[1]).toMatchObject({
       adapter: "visual-identity",
       availability: "unavailable",
-      unavailableReason: "no-verified-reference-manifest",
+      unavailableReason: "unsupported-runtime",
       cells: [],
     });
     expect(prepared.plan.adapters[2]).toMatchObject({
@@ -165,7 +193,16 @@ describe("broadcast participant pre-context orchestration", () => {
       cells: [],
     });
 
-    const completed = completeBroadcastParticipantPreContext(prepared);
+    expect(() => completeBroadcastParticipantPreContext(prepared)).toThrow(
+      /none-observed/u,
+    );
+    const completed = completeBroadcastParticipantPreContext(prepared, {
+      visualNoneObservedReceipt: noneObservedReceipt(
+        prepared,
+        "visual-identity",
+      ),
+      voiceNoneObservedReceipt: noneObservedReceipt(prepared, "voice-identity"),
+    });
     expect(completed.planFingerprint).toBe(prepared.plan.planFingerprint);
     expect(completed.sealedPlan.status).toBe("sealed");
     expect(completed.grounding.evidence).toContainEqual(
@@ -206,15 +243,23 @@ describe("broadcast participant pre-context orchestration", () => {
       }),
     ]);
 
-    const completed = completeBroadcastParticipantPreContext(prepared);
+    const completed = completeBroadcastParticipantPreContext(prepared, {
+      visualNoneObservedReceipt: noneObservedReceipt(
+        prepared,
+        "visual-identity",
+      ),
+      voiceNoneObservedReceipt: noneObservedReceipt(prepared, "voice-identity"),
+    });
     expect(
       completed.grounding.evidence.filter(
         ({ kind }) => kind === "transcript-name-mention",
       ),
     ).toEqual([]);
-    expect(completed.grounding.participants.every(
-      ({ mentionedChapterCount }) => mentionedChapterCount === 0,
-    )).toBe(true);
+    expect(
+      completed.grounding.participants.every(
+        ({ mentionedChapterCount }) => mentionedChapterCount === 0,
+      ),
+    ).toBe(true);
     expect(completed.sealedPlan.terminalCells).toHaveLength(1);
   });
 
@@ -257,6 +302,7 @@ describe("broadcast participant pre-context orchestration", () => {
     });
     const completed = completeBroadcastParticipantPreContext(prepared, {
       visualTerminalReceipts: [visualReceipt],
+      voiceNoneObservedReceipt: noneObservedReceipt(prepared, "voice-identity"),
     });
     expect(completed.grounding.evidence).toContainEqual(
       expect.objectContaining({
@@ -286,7 +332,21 @@ describe("broadcast participant pre-context orchestration", () => {
     expect(prepared.plan.adapters[2].referenceManifestHash).toMatch(
       /^sha256:[a-f0-9]{64}$/u,
     );
-    expect(() => completeBroadcastParticipantPreContext(prepared)).not.toThrow();
+    expect(() => completeBroadcastParticipantPreContext(prepared)).toThrow(
+      /none-observed/u,
+    );
+    expect(() =>
+      completeBroadcastParticipantPreContext(prepared, {
+        visualNoneObservedReceipt: noneObservedReceipt(
+          prepared,
+          "visual-identity",
+        ),
+        voiceNoneObservedReceipt: noneObservedReceipt(
+          prepared,
+          "voice-identity",
+        ),
+      }),
+    ).not.toThrow();
   });
 
   it("requires a terminal policy-projected voice receipt and can replay it through the one-call helper", async () => {
@@ -300,12 +360,10 @@ describe("broadcast participant pre-context orchestration", () => {
         segmentationModelRevision: "speech-segmentation-test-v1",
         recognitionPolicy: {
           policyRevision: "voice-open-set-test-v1",
-          absoluteMatchThresholds: voiceParticipantIds.map(
-            (participantId) => ({
-              participantId,
-              minimumNormalizedSimilarity: 0.8,
-            }),
-          ),
+          absoluteMatchThresholds: voiceParticipantIds.map((participantId) => ({
+            participantId,
+            minimumNormalizedSimilarity: 0.8,
+          })),
           minimumTop1Top2Margin: 0.08,
         },
         cells: [
@@ -356,6 +414,10 @@ describe("broadcast participant pre-context orchestration", () => {
     const completed = await orchestrateBroadcastParticipantPreContext({
       ...input,
       voiceTerminalReceipts: [voiceReceipt],
+      visualNoneObservedReceipt: noneObservedReceipt(
+        prepared,
+        "visual-identity",
+      ),
     });
 
     expect(completed.planFingerprint).toBe(prepared.planFingerprint);
@@ -383,5 +445,97 @@ describe("broadcast participant pre-context orchestration", () => {
         }),
       ),
     ).rejects.toThrow("at most 144");
+  });
+
+  it("rejects a descriptive or independently re-hashed source identity instead of opening a compatibility path", async () => {
+    await expect(
+      prepareBroadcastParticipantPreContext(
+        baseInput({
+          sourceFingerprint:
+            "local-file-sampled-sha256-v1:not-the-transcript-source-fence",
+        }),
+      ),
+    ).rejects.toThrow("exact canonical SHA-256 source fingerprint");
+  });
+
+  it("replays one complete current packet and rejects plan, receipt, grounding, or source-fence drift", async () => {
+    const input = baseInput();
+    const prepared = await prepareBroadcastParticipantPreContext(input);
+    const completed = completeBroadcastParticipantPreContext(prepared, {
+      visualNoneObservedReceipt: noneObservedReceipt(
+        prepared,
+        "visual-identity",
+      ),
+      voiceNoneObservedReceipt: noneObservedReceipt(prepared, "voice-identity"),
+    });
+    const fence = {
+      sourceDurationMs: input.sourceDurationMs,
+      transcriptSeal: input.transcriptSeal,
+      castRosterId: input.castRosterId,
+      dialogueChapters: input.dialogueChapters,
+      planFingerprint: completed.planFingerprint,
+    } as const;
+
+    await expect(
+      normalizeBroadcastParticipantPreContextResult(completed, fence),
+    ).resolves.toEqual(completed);
+
+    const groundingOnly = structuredClone(completed.grounding);
+    await expect(
+      normalizeBroadcastParticipantPreContextResult(groundingOnly, fence),
+    ).resolves.toBeNull();
+
+    const tamperedPlan = structuredClone(completed);
+    (
+      tamperedPlan.plan.adapters[0] as unknown as {
+        adapterFenceKey: string;
+      }
+    ).adapterFenceKey = `sha256:${"f".repeat(64)}`;
+    await expect(
+      normalizeBroadcastParticipantPreContextResult(tamperedPlan, fence),
+    ).resolves.toBeNull();
+
+    const tamperedTerminalReceipt = structuredClone(completed);
+    (
+      tamperedTerminalReceipt.sealedPlan.terminalCells[0] as unknown as {
+        adapterFenceKey: string;
+      }
+    ).adapterFenceKey = `sha256:${"e".repeat(64)}`;
+    await expect(
+      normalizeBroadcastParticipantPreContextResult(
+        tamperedTerminalReceipt,
+        fence,
+      ),
+    ).resolves.toBeNull();
+
+    const tamperedUnavailableReceipt = structuredClone(completed);
+    (
+      tamperedUnavailableReceipt.sealedPlan.noneObservedReceipts[0] as unknown as {
+        unavailableReason: "no-verified-reference-manifest";
+      }
+    ).unavailableReason = "no-verified-reference-manifest";
+    await expect(
+      normalizeBroadcastParticipantPreContextResult(
+        tamperedUnavailableReceipt,
+        fence,
+      ),
+    ).resolves.toBeNull();
+
+    const tamperedGrounding = structuredClone(completed);
+    (
+      tamperedGrounding.grounding as unknown as {
+        sourceDurationMs: number;
+      }
+    ).sourceDurationMs -= 1;
+    await expect(
+      normalizeBroadcastParticipantPreContextResult(tamperedGrounding, fence),
+    ).resolves.toBeNull();
+
+    await expect(
+      normalizeBroadcastParticipantPreContextResult(completed, {
+        ...fence,
+        transcriptSeal: "transcript:different:sealed",
+      }),
+    ).resolves.toBeNull();
   });
 });

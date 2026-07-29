@@ -5,8 +5,6 @@ import type {
 export const CANDIDATE_PASS_B_CAST_ROSTER_VERSION = "1.3.0" as const;
 export const DEFAULT_CANDIDATE_PASS_B_CAST_ROSTER_ID =
   "chzzk-video-13996057-v2" as const;
-export const LEGACY_CANDIDATE_PASS_B_CAST_ROSTER_ID =
-  "chzzk-video-13996057-v1" as const;
 export const AMORETTO_CHANNEL_CAST_ROSTER_ID =
   "chzzk-channel-33bc7a29b771728cf9378604973b620b-v1" as const;
 export const EUREKA_CHANNEL_CAST_ROSTER_ID =
@@ -23,7 +21,6 @@ export const EXCHANGE_STUDENT_MAIN_CHANNEL_ID =
 
 export type CandidatePassBCastRosterId =
   | typeof DEFAULT_CANDIDATE_PASS_B_CAST_ROSTER_ID
-  | typeof LEGACY_CANDIDATE_PASS_B_CAST_ROSTER_ID
   | typeof AMORETTO_CHANNEL_CAST_ROSTER_ID
   | typeof EUREKA_CHANNEL_CAST_ROSTER_ID
   | typeof SENA_ARBEL_CHANNEL_CAST_ROSTER_ID
@@ -144,7 +141,6 @@ const PERSONAL_CHANNEL_ROSTERS = Object.freeze([
 
 const CAST_ROSTER_IDS = new Set<CandidatePassBCastRosterId>([
   DEFAULT_CANDIDATE_PASS_B_CAST_ROSTER_ID,
-  LEGACY_CANDIDATE_PASS_B_CAST_ROSTER_ID,
   ...PERSONAL_CHANNEL_ROSTERS.map(({ rosterId }) => rosterId),
 ]);
 
@@ -164,10 +160,7 @@ export function candidatePassBCastReferences(
   rosterId: CandidatePassBCastRosterId | null,
 ): readonly CandidatePassBCastReference[] {
   if (rosterId === null || !isCandidatePassBCastRosterId(rosterId)) return [];
-  if (
-    rosterId === DEFAULT_CANDIDATE_PASS_B_CAST_ROSTER_ID ||
-    rosterId === LEGACY_CANDIDATE_PASS_B_CAST_ROSTER_ID
-  ) {
+  if (rosterId === DEFAULT_CANDIDATE_PASS_B_CAST_ROSTER_ID) {
     return EXCHANGE_STUDENT_CAST;
   }
   const ownerName = PERSONAL_CHANNEL_ROSTERS.find(

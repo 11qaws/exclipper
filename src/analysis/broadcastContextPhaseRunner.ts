@@ -17,15 +17,16 @@ import type {
   BroadcastContextPhaseLedgerUnitIdentity,
 } from "./broadcastContextPhaseLedger";
 
-export const DEFAULT_BROADCAST_CONTEXT_PHASE_RUNNER_ATTEMPTS = 3;
-export const MAX_BROADCAST_CONTEXT_PHASE_RUNNER_ATTEMPTS = 8;
 export const DEFAULT_BROADCAST_CONTEXT_PHASE_RUNNER_EXECUTIONS_PER_INVOCATION =
   3;
+export const MAX_BROADCAST_CONTEXT_PHASE_RUNNER_EXECUTIONS_PER_INVOCATION = 8;
 export const DEFAULT_BROADCAST_CONTEXT_PHASE_RUNNER_CONCURRENCY = 1;
 export const MAX_BROADCAST_CONTEXT_PHASE_RUNNER_CONCURRENCY = 8;
 
-export const BROADCAST_CONTEXT_RECOVERED_IN_FLIGHT_REASON =
-  "runner_recovered_persisted_in_flight";
+export const BROADCAST_CONTEXT_RECONCILIATION_UNRESOLVED_REASON =
+  "runner_reconciliation_outcome_unresolved";
+export const BROADCAST_CONTEXT_INVALID_RECONCILIATION_RESULT_REASON =
+  "runner_invalid_reconciliation_result";
 export const BROADCAST_CONTEXT_INVALID_EXECUTION_RESULT_REASON =
   "runner_invalid_execution_result";
 export const BROADCAST_CONTEXT_FAILURE_CLASSIFICATION_REASON =
@@ -35,6 +36,29 @@ export interface BroadcastContextPhaseExecutionResult {
   readonly result?: BroadcastContextPhaseLedgerJsonValue;
   readonly modelReceipt?: BroadcastContextPhaseLedgerModelReceipt;
 }
+
+export type BroadcastContextPhaseReconciliationResult =
+  | {
+      readonly disposition: "succeeded";
+      readonly operationId: string;
+      readonly inputDigest: string;
+      readonly result: BroadcastContextPhaseLedgerJsonValue;
+      readonly modelReceipt?: BroadcastContextPhaseLedgerModelReceipt;
+    }
+  | {
+      readonly disposition: "not-dispatched";
+      readonly operationId: string;
+      readonly inputDigest: string;
+      readonly reasonCode: string;
+      readonly modelReceipt?: BroadcastContextPhaseLedgerModelReceipt;
+    }
+  | {
+      readonly disposition: "unresolved";
+      readonly operationId: string;
+      readonly inputDigest: string;
+      readonly reasonCode: string;
+      readonly modelReceipt?: BroadcastContextPhaseLedgerModelReceipt;
+    };
 
 export type BroadcastContextPhaseFailureClassification =
   | {
@@ -46,6 +70,11 @@ export type BroadcastContextPhaseFailureClassification =
       readonly disposition: "outcome-unknown";
       readonly reasonCode: string;
       readonly modelReceipt?: BroadcastContextPhaseLedgerModelReceipt;
+    }
+  | {
+      readonly disposition: "failed";
+      readonly reasonCode: string;
+      readonly modelReceipt?: BroadcastContextPhaseLedgerModelReceipt;
     };
 
 export interface BroadcastContextPhaseRetryOperationRequest {
@@ -55,7 +84,10 @@ export interface BroadcastContextPhaseRetryOperationRequest {
 }
 
 export type BroadcastContextPhasePersistCause =
-  | "recovery-seal"
+  | "reconciliation-started"
+  | "reconciliation-succeeded"
+  | "reconciliation-not-dispatched"
+  | "reconciliation-unresolved"
   | "retry-planned"
   | "execution-started"
   | "execution-succeeded"
@@ -77,14 +109,20 @@ export interface BroadcastContextPhasePersistedTransition {
 export interface RunBroadcastContextPhaseLedgerOptions {
   readonly ledger: BroadcastContextPhaseLedger;
   /**
-   * Absolute lifetime ceiling encoded by the durable attempt ordinal.
-   * Keep this higher than the per-invocation budget so an editor-confirmed
-   * retry can still run after an automatic retry wave is exhausted.
+   * Fresh provider executions allowed for one logical unit in this invocation.
+   * There is intentionally no lifetime attempt ceiling: a caller may start a
+   * later invocation after a durable checkpoint and capped backoff.
    */
-  readonly maximumAttemptCount?: number;
-  /** Fresh provider executions allowed for one logical unit in this call. */
   readonly maximumExecutionsPerInvocation?: number;
   readonly maximumConcurrency?: number;
+  /**
+   * Reconciles only the exact already-persisted operation. Implementations may
+   * query a coordinator cache or replay the same operation/lease transport,
+   * but must never allocate a new operation ID.
+   */
+  readonly reconcile: (
+    identity: BroadcastContextPhaseLedgerUnitIdentity,
+  ) => Promise<BroadcastContextPhaseReconciliationResult>;
   readonly execute: (
     identity: BroadcastContextPhaseLedgerUnitIdentity,
   ) => Promise<BroadcastContextPhaseExecutionResult | void>;
@@ -140,8 +178,22 @@ export interface BroadcastContextPhaseRunnerBlockingUnit {
   readonly reasonCode: string | null;
 }
 
+export interface BroadcastContextPhaseRecoveryAction {
+  readonly kind: "reconcile-current-operation";
+  readonly phase: BroadcastContextPhaseLedgerUnit["phase"];
+  readonly unitId: string;
+  readonly inputDigest: string;
+  readonly operationId: string;
+  readonly attemptOrdinal: number;
+  readonly maximumReconciliationsPerInvocation: 1;
+}
+
 export interface BroadcastContextPhaseRunnerStatistics {
   readonly providerExecutionCount: number;
+  readonly reconciliationExecutionCount: number;
+  readonly reconciliationSucceededCount: number;
+  readonly reconciliationNotDispatchedCount: number;
+  readonly reconciliationUnresolvedCount: number;
   readonly resumedSucceededCount: number;
   readonly recoveredInFlightCount: number;
   readonly plannedRetryCount: number;
@@ -151,13 +203,16 @@ export interface BroadcastContextPhaseRunnerStatistics {
 export type BroadcastContextPhaseRunnerBlockedStatus =
   | "blocked-retryable-gap"
   | "blocked-outcome-unknown"
-  | "blocked-attempt-limit"
+  | "blocked-reconciling"
+  | "blocked-invocation-budget"
+  | "blocked-failed"
   | "blocked-mixed";
 
 interface BroadcastContextPhaseRunnerResultBase {
   readonly ledger: BroadcastContextPhaseLedger;
   readonly summary: BroadcastContextPhaseLedgerSummary;
   readonly statistics: BroadcastContextPhaseRunnerStatistics;
+  readonly recoveryActions: readonly BroadcastContextPhaseRecoveryAction[];
 }
 
 export type BroadcastContextPhaseRunnerResult =
@@ -174,6 +229,10 @@ export type BroadcastContextPhaseRunnerResult =
 
 interface MutableRunnerStatistics {
   providerExecutionCount: number;
+  reconciliationExecutionCount: number;
+  reconciliationSucceededCount: number;
+  reconciliationNotDispatchedCount: number;
+  reconciliationUnresolvedCount: number;
   resumedSucceededCount: number;
   recoveredInFlightCount: number;
   plannedRetryCount: number;
@@ -376,7 +435,8 @@ function classifiedFailureEvent(
   if (
     !isPlainRecord(classification) ||
     (classification.disposition !== "retryable-gap" &&
-      classification.disposition !== "outcome-unknown") ||
+      classification.disposition !== "outcome-unknown" &&
+      classification.disposition !== "failed") ||
     typeof classification.reasonCode !== "string" ||
     Object.keys(classification).some(
       (key) =>
@@ -391,12 +451,91 @@ function classifiedFailureEvent(
     type:
       classification.disposition === "retryable-gap"
         ? "UNIT_RETRYABLE_GAP"
-        : "UNIT_OUTCOME_UNKNOWN",
+        : classification.disposition === "failed"
+          ? "UNIT_FAILED"
+          : "UNIT_OUTCOME_UNKNOWN",
     ...identity,
     reasonCode: classification.reasonCode,
     ...(Object.hasOwn(classification, "modelReceipt")
       ? { modelReceipt: classification.modelReceipt }
       : {}),
+  };
+}
+
+function reconciliationSettlementEvent(
+  value: unknown,
+  identity: BroadcastContextPhaseLedgerUnitIdentity,
+): BroadcastContextPhaseLedgerEvent {
+  const unresolved = (
+    reasonCode: string,
+  ): BroadcastContextPhaseLedgerEvent => ({
+    type: "UNIT_RECONCILIATION_UNRESOLVED",
+    ...identity,
+    reasonCode,
+  });
+  if (
+    !isPlainRecord(value) ||
+    value.operationId !== identity.operationId ||
+    value.inputDigest !== identity.inputDigest ||
+    (value.disposition !== "succeeded" &&
+      value.disposition !== "not-dispatched" &&
+      value.disposition !== "unresolved")
+  ) {
+    return unresolved(
+      BROADCAST_CONTEXT_INVALID_RECONCILIATION_RESULT_REASON,
+    );
+  }
+  const optionalReceipt =
+    Object.hasOwn(value, "modelReceipt")
+      ? { modelReceipt: value.modelReceipt }
+      : {};
+  if (value.disposition === "succeeded") {
+    if (
+      !Object.hasOwn(value, "result") ||
+      Object.keys(value).some(
+        (key) =>
+          key !== "disposition" &&
+          key !== "operationId" &&
+          key !== "inputDigest" &&
+          key !== "result" &&
+          key !== "modelReceipt",
+      )
+    ) {
+      return unresolved(
+        BROADCAST_CONTEXT_INVALID_RECONCILIATION_RESULT_REASON,
+      );
+    }
+    return {
+      type: "UNIT_RECONCILIATION_SUCCEEDED",
+      ...identity,
+      result: value.result,
+      ...optionalReceipt,
+    };
+  }
+  if (
+    typeof value.reasonCode !== "string" ||
+    value.reasonCode.length === 0 ||
+    Object.keys(value).some(
+      (key) =>
+        key !== "disposition" &&
+        key !== "operationId" &&
+        key !== "inputDigest" &&
+        key !== "reasonCode" &&
+        key !== "modelReceipt",
+    )
+  ) {
+    return unresolved(
+      BROADCAST_CONTEXT_INVALID_RECONCILIATION_RESULT_REASON,
+    );
+  }
+  return {
+    type:
+      value.disposition === "not-dispatched"
+        ? "UNIT_RECONCILIATION_NOT_DISPATCHED"
+        : "UNIT_RECONCILIATION_UNRESOLVED",
+    ...identity,
+    reasonCode: value.reasonCode,
+    ...optionalReceipt,
   };
 }
 
@@ -413,7 +552,9 @@ function blockingUnit(
     operationId: unit.operationId,
     attemptOrdinal: unit.attemptOrdinal,
     reasonCode:
-      unit.status === "retryable-gap" || unit.status === "outcome-unknown"
+      unit.status === "retryable-gap" ||
+        unit.status === "outcome-unknown" ||
+        unit.status === "failed"
         ? unit.reasonCode
         : null,
   });
@@ -429,8 +570,14 @@ function blockedStatus(
   if (statuses.size === 1 && statuses.has("outcome-unknown")) {
     return "blocked-outcome-unknown";
   }
+  if (statuses.size === 1 && statuses.has("reconciling")) {
+    return "blocked-reconciling";
+  }
+  if (statuses.size === 1 && statuses.has("failed")) {
+    return "blocked-failed";
+  }
   if (statuses.size === 1 && statuses.has("pending")) {
-    return "blocked-attempt-limit";
+    return "blocked-invocation-budget";
   }
   return "blocked-mixed";
 }
@@ -446,6 +593,25 @@ function buildResult(
   statistics: MutableRunnerStatistics,
 ): BroadcastContextPhaseRunnerResult {
   const summary = summarizeBroadcastContextPhaseLedger(ledger);
+  const recoveryActions = Object.freeze(
+    ledger.units
+      .filter(
+        ({ status }) =>
+          status === "outcome-unknown" || status === "reconciling",
+      )
+      .map(
+        (unit): BroadcastContextPhaseRecoveryAction =>
+          Object.freeze({
+            kind: "reconcile-current-operation",
+            phase: unit.phase,
+            unitId: unit.unitId,
+            inputDigest: unit.inputDigest,
+            operationId: unit.operationId,
+            attemptOrdinal: unit.attemptOrdinal,
+            maximumReconciliationsPerInvocation: 1,
+          }),
+      ),
+  );
   if (broadcastContextPhaseLedgerCanComplete(ledger)) {
     return Object.freeze({
       status: "completed",
@@ -453,6 +619,7 @@ function buildResult(
       ledger,
       summary,
       statistics: frozenStatistics(statistics),
+      recoveryActions,
       blockingUnits: Object.freeze([] as const),
     });
   }
@@ -474,33 +641,9 @@ function buildResult(
     ledger,
     summary,
     statistics: frozenStatistics(statistics),
+    recoveryActions,
     blockingUnits,
   });
-}
-
-async function markRecoveredInFlightUnits(
-  ledger: BroadcastContextPhaseLedger,
-  options: RunBroadcastContextPhaseLedgerOptions,
-  statistics: MutableRunnerStatistics,
-): Promise<BroadcastContextPhaseLedger> {
-  let current = ledger;
-  const interruptedUnitKeys = ledger.units
-    .filter(({ status }) => status === "in-flight")
-    .map(({ phase, unitId }) => ({ phase, unitId }));
-  for (const { phase, unitId } of interruptedUnitKeys) {
-    const unit = findUnit(current, phase, unitId);
-    if (unit.status !== "in-flight") continue;
-    current = await sealOutcomeUnknown(
-      current,
-      unitIdentity(current, unit),
-      BROADCAST_CONTEXT_RECOVERED_IN_FLIGHT_REASON,
-      "recovery-seal",
-      options,
-      statistics,
-    );
-    statistics.recoveredInFlightCount += 1;
-  }
-  return current;
 }
 
 async function runWithMaximumConcurrency(
@@ -539,14 +682,128 @@ async function runWithMaximumConcurrency(
   if (hasError) throw firstError;
 }
 
+async function reconcileRecoveredUnits(
+  ledger: BroadcastContextPhaseLedger,
+  options: RunBroadcastContextPhaseLedgerOptions,
+  statistics: MutableRunnerStatistics,
+  transitionMutex: BroadcastContextPhaseTransitionMutex,
+  maximumConcurrency: number,
+): Promise<BroadcastContextPhaseLedger> {
+  let current = ledger;
+  const unitKeys = ledger.units
+    .filter(
+      ({ status }) =>
+        status === "in-flight" ||
+        status === "outcome-unknown" ||
+        status === "reconciling",
+    )
+    .map(({ phase, unitId }) => ({ phase, unitId }));
+
+  await runWithMaximumConcurrency(
+    unitKeys,
+    maximumConcurrency,
+    async ({ phase, unitId }, stopRequested) => {
+      if (stopRequested()) return;
+      const identity =
+        await transitionMutex.runExclusive<BroadcastContextPhaseLedgerUnitIdentity | null>(
+          async () => {
+            if (stopRequested()) return null;
+            const unit = findUnit(current, phase, unitId);
+            if (
+              unit.status !== "in-flight" &&
+              unit.status !== "outcome-unknown" &&
+              unit.status !== "reconciling"
+            ) {
+              return null;
+            }
+            if (unit.status === "in-flight") {
+              statistics.recoveredInFlightCount += 1;
+            }
+            if (unit.status !== "reconciling") {
+              const interruptedIdentity = unitIdentity(current, unit);
+              current = await applyAndPersistTransition(
+                current,
+                {
+                  type: "UNIT_RECONCILIATION_STARTED",
+                  ...interruptedIdentity,
+                },
+                "reconciliation-started",
+                options.persist,
+                statistics,
+              );
+            }
+            const reconcilingUnit = findUnit(current, phase, unitId);
+            return unitIdentity(current, reconcilingUnit);
+          },
+        );
+      if (identity === null || stopRequested()) return;
+
+      statistics.reconciliationExecutionCount += 1;
+      let settlementEvent: BroadcastContextPhaseLedgerEvent;
+      try {
+        settlementEvent = reconciliationSettlementEvent(
+          await options.reconcile(identity),
+          identity,
+        );
+      } catch {
+        settlementEvent = {
+          type: "UNIT_RECONCILIATION_UNRESOLVED",
+          ...identity,
+          reasonCode: BROADCAST_CONTEXT_RECONCILIATION_UNRESOLVED_REASON,
+        };
+      }
+
+      await transitionMutex.runExclusive(async () => {
+        const candidate = reduceBroadcastContextPhaseLedger(
+          current,
+          settlementEvent,
+        );
+        if (!candidate.accepted) {
+          settlementEvent = {
+            type: "UNIT_RECONCILIATION_UNRESOLVED",
+            ...identity,
+            reasonCode:
+              BROADCAST_CONTEXT_INVALID_RECONCILIATION_RESULT_REASON,
+          };
+        }
+        const cause: BroadcastContextPhasePersistCause =
+          settlementEvent.type === "UNIT_RECONCILIATION_SUCCEEDED"
+            ? "reconciliation-succeeded"
+            : settlementEvent.type ===
+                "UNIT_RECONCILIATION_NOT_DISPATCHED"
+              ? "reconciliation-not-dispatched"
+              : "reconciliation-unresolved";
+        current = await applyAndPersistTransition(
+          current,
+          settlementEvent,
+          cause,
+          options.persist,
+          statistics,
+        );
+        if (settlementEvent.type === "UNIT_RECONCILIATION_SUCCEEDED") {
+          statistics.reconciliationSucceededCount += 1;
+        } else if (
+          settlementEvent.type === "UNIT_RECONCILIATION_NOT_DISPATCHED"
+        ) {
+          statistics.reconciliationNotDispatchedCount += 1;
+        } else {
+          statistics.reconciliationUnresolvedCount += 1;
+        }
+      });
+    },
+  );
+  return current;
+}
+
 /**
  * Runs every planned context unit as a crash-safe sequence.
  *
  * `in-flight` means a paid request may already have left the browser. A
- * recovered in-flight unit is therefore sealed as `outcome-unknown` before any
- * new provider call. Only an explicit `retryable-gap` receives a fresh billing
- * identity, and every accepted state transition is durably persisted before
- * the runner performs the next side effect.
+ * recovered in-flight/outcome-unknown unit first enters durable
+ * `reconciling`, then queries or replays only its exact existing operation.
+ * A matching terminal result is consumed, proven non-dispatch becomes a
+ * retryable gap, and unresolved ambiguity keeps the same operation identity.
+ * Only an explicit `retryable-gap` receives a fresh billing identity.
  */
 export async function runBroadcastContextPhaseLedger(
   options: RunBroadcastContextPhaseLedgerOptions,
@@ -557,23 +814,6 @@ export async function runBroadcastContextPhaseLedger(
       "INVALID_LEDGER",
       "The context phase ledger is not valid.",
       null,
-      null,
-      null,
-      null,
-    );
-  }
-  const maximumAttemptCount =
-    options.maximumAttemptCount ??
-    DEFAULT_BROADCAST_CONTEXT_PHASE_RUNNER_ATTEMPTS;
-  if (
-    !Number.isSafeInteger(maximumAttemptCount) ||
-    maximumAttemptCount < 1 ||
-    maximumAttemptCount > MAX_BROADCAST_CONTEXT_PHASE_RUNNER_ATTEMPTS
-  ) {
-    throw new BroadcastContextPhaseRunnerError(
-      "INVALID_ATTEMPT_LIMIT",
-      "The context phase attempt limit is outside the supported bounds.",
-      normalized,
       null,
       null,
       null,
@@ -598,15 +838,12 @@ export async function runBroadcastContextPhaseLedger(
   }
   const maximumExecutionsPerInvocation =
     options.maximumExecutionsPerInvocation ??
-    Math.min(
-      maximumAttemptCount,
-      DEFAULT_BROADCAST_CONTEXT_PHASE_RUNNER_EXECUTIONS_PER_INVOCATION,
-    );
+    DEFAULT_BROADCAST_CONTEXT_PHASE_RUNNER_EXECUTIONS_PER_INVOCATION;
   if (
     !Number.isSafeInteger(maximumExecutionsPerInvocation) ||
     maximumExecutionsPerInvocation < 1 ||
     maximumExecutionsPerInvocation >
-      MAX_BROADCAST_CONTEXT_PHASE_RUNNER_ATTEMPTS
+      MAX_BROADCAST_CONTEXT_PHASE_RUNNER_EXECUTIONS_PER_INVOCATION
   ) {
     throw new BroadcastContextPhaseRunnerError(
       "INVALID_ATTEMPT_LIMIT",
@@ -620,6 +857,10 @@ export async function runBroadcastContextPhaseLedger(
 
   const statistics: MutableRunnerStatistics = {
     providerExecutionCount: 0,
+    reconciliationExecutionCount: 0,
+    reconciliationSucceededCount: 0,
+    reconciliationNotDispatchedCount: 0,
+    reconciliationUnresolvedCount: 0,
     resumedSucceededCount: normalized.units.filter(
       ({ status }) => status === "succeeded",
     ).length,
@@ -627,12 +868,14 @@ export async function runBroadcastContextPhaseLedger(
     plannedRetryCount: 0,
     persistedTransitionCount: 0,
   };
-  let ledger = await markRecoveredInFlightUnits(
+  const transitionMutex = new BroadcastContextPhaseTransitionMutex();
+  let ledger = await reconcileRecoveredUnits(
     normalized,
     options,
     statistics,
+    transitionMutex,
+    maximumConcurrency,
   );
-  const transitionMutex = new BroadcastContextPhaseTransitionMutex();
   const executionCountByUnit = new Map<string, number>();
   const executionCountFor = (
     phase: BroadcastContextPhaseLedgerUnit["phase"],
@@ -725,7 +968,9 @@ export async function runBroadcastContextPhaseLedger(
             const unit = findUnit(ledger, phase, unitId);
             if (
               unit.status === "succeeded" ||
-              unit.status === "outcome-unknown"
+              unit.status === "outcome-unknown" ||
+              unit.status === "reconciling" ||
+              unit.status === "failed"
             ) {
               return { kind: "stop" };
             }
@@ -747,9 +992,6 @@ export async function runBroadcastContextPhaseLedger(
                 return { kind: "stop" };
               }
               const nextAttemptOrdinal = unit.attemptOrdinal + 1;
-              if (nextAttemptOrdinal >= maximumAttemptCount) {
-                return { kind: "stop" };
-              }
               const currentIdentity = unitIdentity(ledger, unit);
               let nextOperationId: string;
               try {
@@ -786,9 +1028,8 @@ export async function runBroadcastContextPhaseLedger(
             }
 
             if (
-              unit.attemptOrdinal >= maximumAttemptCount ||
               executionCountFor(phase, unitId) >=
-                maximumExecutionsPerInvocation
+              maximumExecutionsPerInvocation
             ) {
               return { kind: "stop" };
             }

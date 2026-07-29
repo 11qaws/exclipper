@@ -144,7 +144,11 @@ function normalizePlanCells(
     );
   }
   const normalized = cells
-    .map((cell) => ({ ...cell }))
+    .map(({ chunkId, sourceStartMs, sourceEndMs }) => ({
+      chunkId,
+      sourceStartMs,
+      sourceEndMs,
+    }))
     .sort(comparePlanCells);
   const chunkIds = new Set<string>();
   let previousEndMs = -1;

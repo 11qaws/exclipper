@@ -1,75 +1,22 @@
 import { describe, expect, it } from "vitest";
 import { calculateCoverage } from "./broadcastContextProtocol";
 import {
-  broadcastResolvedAbstentionReasonForChapter,
-  createBroadcastNoAudioChapters,
-  createBroadcastNoSpeechChapters,
+  BROADCAST_TRANSCRIPT_QWEN_OMNI_MODEL_ID,
+  BROADCAST_TRANSCRIPT_QWEN_OMNI_MODEL_REVISION,
+} from "./broadcastTranscriptQwen";
+import {
   createBroadcastTranscriptChapters,
   mergeBroadcastTranscriptChapters,
 } from "./broadcastTranscriptChapters";
 
 describe("broadcastTranscriptChapters", () => {
-  it("persists confirmed no-audio ranges as resolved negative evidence", () => {
-    const [chapter] = createBroadcastNoAudioChapters(
-      [
-        {
-          chunkId: "silent-range",
-          sourceStartMs: 30_000,
-          sourceEndMs: 60_000,
-          kind: "uniform",
-        },
-      ],
-      120_000,
-    );
-    expect(chapter).toMatchObject({
-      startMs: 30_000,
-      endMs: 60_000,
-      evidenceMode: "sampled-audio-video",
-    });
-    expect(chapter?.summaryKo).toContain("발화나 소리");
-    expect(
-      broadcastResolvedAbstentionReasonForChapter(chapter!),
-    ).toBe("no-audio");
-  });
-
-  it("persists VAD-confirmed no-speech without claiming the video is empty", () => {
-    const [chapter] = createBroadcastNoSpeechChapters(
-      [
-        {
-          chunkId: "visual-only-range",
-          sourceStartMs: 60_000,
-          sourceEndMs: 90_000,
-          kind: "event",
-        },
-      ],
-      120_000,
-    );
-
-    expect(chapter).toMatchObject({
-      chapterId: "no-speech-001",
-      startMs: 60_000,
-      endMs: 90_000,
-      evidenceMode: "sampled-audio-video",
-    });
-    expect(chapter?.summaryKo).toContain("사람 발화");
-    expect(chapter?.summaryKo).toContain("화면 사건 분석 대상");
-    expect(chapter?.summaryKo).not.toContain("소리 없음");
-    expect(
-      broadcastResolvedAbstentionReasonForChapter(chapter!),
-    ).toBe("no-speech");
-    expect(
-      broadcastResolvedAbstentionReasonForChapter({
-        summaryKo: "스트리머가 조용히 게임 목표를 달성했다.",
-      }),
-    ).toBeNull();
-  });
-
   it("preserves ASR source fences and reports true full coverage", () => {
     const chapters = createBroadcastTranscriptChapters(
       [
         {
           schemaVersion: "1.0.0",
-          modelId: "qwen3-asr-flash",
+          modelId: BROADCAST_TRANSCRIPT_QWEN_OMNI_MODEL_ID,
+          modelRevision: BROADCAST_TRANSCRIPT_QWEN_OMNI_MODEL_REVISION,
           sourceStartMs: 0,
           sourceEndMs: 210_000,
           textKo: "첫 구간에서 음식 이야기를 시작한다.",
@@ -79,7 +26,8 @@ describe("broadcastTranscriptChapters", () => {
         },
         {
           schemaVersion: "1.0.0",
-          modelId: "qwen3-asr-flash",
+          modelId: BROADCAST_TRANSCRIPT_QWEN_OMNI_MODEL_ID,
+          modelRevision: BROADCAST_TRANSCRIPT_QWEN_OMNI_MODEL_REVISION,
           sourceStartMs: 210_000,
           sourceEndMs: 300_000,
           textKo: "두 번째 구간에서 조용히 성공한다.",
@@ -106,7 +54,8 @@ describe("broadcastTranscriptChapters", () => {
       [
         {
           schemaVersion: "1.0.0",
-          modelId: "qwen3-asr-flash",
+          modelId: BROADCAST_TRANSCRIPT_QWEN_OMNI_MODEL_ID,
+          modelRevision: BROADCAST_TRANSCRIPT_QWEN_OMNI_MODEL_REVISION,
           sourceStartMs: 100_000,
           sourceEndMs: 150_000,
           textKo: "표본 대사",
@@ -130,6 +79,7 @@ describe("broadcastTranscriptChapters", () => {
       [{
         schemaVersion: "1.0.0",
         modelId: "qwen3.5-omni-flash",
+        modelRevision: BROADCAST_TRANSCRIPT_QWEN_OMNI_MODEL_REVISION,
         sourceStartMs: 0,
         sourceEndMs: 210_000,
         textKo,

@@ -7,17 +7,13 @@ import {
   type AnalysisLanguage,
 } from "../domain/analysisLanguage";
 import {
-  createBroadcastParticipantGrounding,
   normalizeBroadcastParticipantGroundingForInput,
-  participantContextForBroadcastRange,
   type BroadcastParticipantGrounding,
 } from "./broadcastParticipantGrounding";
 
 export const BROADCAST_CONTEXT_SCHEMA_VERSION = "1.7.0" as const;
 export const MAX_BROADCAST_CONTEXT_SOURCE_DURATION_MS = 12 * 60 * 60_000;
 export const MAX_BROADCAST_CONTEXT_CHAPTERS = 144;
-/** Stale-client input ceiling before the Worker compacts to the 144-item model contract. */
-export const MAX_BROADCAST_CONTEXT_UNCOMPACTED_CHAPTERS = 760;
 export const MAX_BROADCAST_CONTEXT_CANDIDATES = 32;
 // A 210-second Korean ASR cell can legitimately exceed 1,200 characters.
 // Keeping 3,000 avoids deleting a short apology or payoff near the end while
@@ -48,8 +44,12 @@ export interface BroadcastContextCandidateInput {
   readonly transcriptKo: string;
   readonly eventSummaryKo: string;
   readonly reactionSummaryKo: string;
-  /** Grounded candidate-level participant state; legacy callers may omit it. */
-  readonly participantContextKo?: string;
+  /**
+   * Candidate-range projection derived from the sealed participant-grounding
+   * checkpoint. It is required so the context model never reconstructs a
+   * weaker identity story from chapter prose.
+   */
+  readonly participantContextKo: string;
   readonly chatReactionSummaryKo: string | null;
 }
 
@@ -57,14 +57,18 @@ export interface BroadcastContextRequestInput {
   readonly sourceDurationMs: number;
   readonly chapters: readonly BroadcastContextChapterInput[];
   readonly candidates: readonly BroadcastContextCandidateInput[];
-  /** Server-known closed roster only; arbitrary prompt text is never accepted. */
-  readonly castRosterId?: CandidatePassBCastRosterId;
   /**
-   * Deterministic pre-context participant snapshot. Older clients may omit it;
-   * the receiver rebuilds the exact same packet from chapters and roster.
+   * Server-known closed roster only. `null` explicitly proves that no roster
+   * was selected; omission is not a current request.
    */
-  readonly participantGrounding?: BroadcastParticipantGrounding;
-  readonly outputLanguage?: AnalysisLanguage;
+  readonly castRosterId: CandidatePassBCastRosterId | null;
+  /**
+   * Exact deterministic pre-context participant snapshot. Context analysis
+   * cannot start until this sealed checkpoint is supplied and validates
+   * against the exact source/chapter map.
+   */
+  readonly participantGrounding: BroadcastParticipantGrounding;
+  readonly outputLanguage: AnalysisLanguage;
 }
 
 export interface BroadcastContextRequest {
@@ -75,14 +79,6 @@ export interface BroadcastContextRequest {
   readonly castRosterId: CandidatePassBCastRosterId | null;
   readonly participantGrounding: BroadcastParticipantGrounding;
   readonly outputLanguage: AnalysisLanguage;
-}
-
-export interface CreateBroadcastContextRequestOptions {
-  /**
-   * Internal stale-client validation ceiling. Production callers should omit
-   * this and stay on the canonical 144-chapter contract.
-   */
-  readonly maximumChapterCount?: number;
 }
 
 export type BroadcastContextCandidateCategory =
@@ -199,14 +195,7 @@ export interface BroadcastContextHostStreamerProfile {
 }
 
 export interface BroadcastContextResult {
-  readonly schemaVersion:
-    | typeof BROADCAST_CONTEXT_SCHEMA_VERSION
-    | "1.6.0"
-    | "1.5.0"
-    | "1.4.0"
-    | "1.2.0"
-    | "1.1.0"
-    | "1.0.0";
+  readonly schemaVersion: typeof BROADCAST_CONTEXT_SCHEMA_VERSION;
   readonly broadcastSummaryKo: string;
   readonly hostStreamerProfile: BroadcastContextHostStreamerProfile | null;
   readonly recurringThemesKo: readonly string[];
@@ -216,6 +205,20 @@ export interface BroadcastContextResult {
   readonly discoveredLeadsSupported: boolean;
   readonly discoveredLeads: readonly BroadcastContextDiscoveredLead[];
   readonly coverage: BroadcastContextCoverage;
+}
+
+/**
+ * Only the whole-broadcast overview carries every dimension required by the
+ * editor-facing timeline and final pipeline certificate. Discovery,
+ * refinement, and jury payloads are intentionally partial results.
+ */
+export function isFinalBroadcastContextResult(
+  result: BroadcastContextResult,
+): boolean {
+  return (
+    result.semanticChaptersSupported === true &&
+    result.discoveredLeadsSupported === true
+  );
 }
 
 /**
@@ -307,11 +310,18 @@ function assertRange(
 }
 
 function assertText(
-  value: string,
+  value: unknown,
   maxLength: number,
   itemId: string,
   allowEmpty = false,
 ): void {
+  if (typeof value !== "string") {
+    throw new BroadcastContextInputError(
+      "INVALID_TEXT",
+      "Broadcast context text must be trimmed and stay inside its size limit.",
+      itemId,
+    );
+  }
   const length = Array.from(value).length;
   const controlCheckValue = value.replace(/[\n\r\t]/gu, "");
   if (
@@ -347,30 +357,15 @@ function assertUniqueIdentifiers(
 
 export function createBroadcastContextRequest(
   input: BroadcastContextRequestInput,
-  options: CreateBroadcastContextRequestOptions = {},
 ): BroadcastContextRequest {
-  const maximumChapterCount =
-    options.maximumChapterCount ?? MAX_BROADCAST_CONTEXT_CHAPTERS;
-  if (
-    !Number.isSafeInteger(maximumChapterCount) ||
-    maximumChapterCount < 1 ||
-    maximumChapterCount > MAX_BROADCAST_CONTEXT_UNCOMPACTED_CHAPTERS
-  ) {
-    throw new RangeError(
-      "Broadcast context validation chapter limit is invalid.",
-    );
-  }
-  if (
-    input.outputLanguage !== undefined &&
-    !isAnalysisLanguage(input.outputLanguage)
-  ) {
+  if (!isAnalysisLanguage(input.outputLanguage)) {
     throw new BroadcastContextInputError(
       "INVALID_TEXT",
       "Broadcast context output language must be ko or en.",
     );
   }
   if (
-    input.castRosterId !== undefined &&
+    input.castRosterId !== null &&
     !isCandidatePassBCastRosterId(input.castRosterId)
   ) {
     throw new BroadcastContextInputError(
@@ -390,11 +385,11 @@ export function createBroadcastContextRequest(
   }
   if (
     input.chapters.length < 1 ||
-    input.chapters.length > maximumChapterCount
+    input.chapters.length > MAX_BROADCAST_CONTEXT_CHAPTERS
   ) {
     throw new BroadcastContextInputError(
       "INVALID_CHAPTER_COUNT",
-      `Broadcast context requires between 1 and ${maximumChapterCount} bounded chapter summaries.`,
+      `Broadcast context requires between 1 and ${MAX_BROADCAST_CONTEXT_CHAPTERS} bounded chapter summaries.`,
     );
   }
   if (input.candidates.length > MAX_BROADCAST_CONTEXT_CANDIDATES) {
@@ -453,31 +448,24 @@ export function createBroadcastContextRequest(
       summaryKo: chapter.summaryKo,
     };
   });
-  const castRosterId = input.castRosterId ?? null;
+  const castRosterId = input.castRosterId;
   const participantGroundingInput = {
     sourceDurationMs: input.sourceDurationMs,
     castRosterId,
     chapters,
   };
-  const fallbackParticipantGrounding = createBroadcastParticipantGrounding(
-    participantGroundingInput,
-  );
   const suppliedParticipantGrounding =
-    input.participantGrounding === undefined
-      ? null
-      : normalizeBroadcastParticipantGroundingForInput(
+    normalizeBroadcastParticipantGroundingForInput(
       input.participantGrounding,
       participantGroundingInput,
     );
-  if (input.participantGrounding !== undefined &&
-      suppliedParticipantGrounding === null) {
+  if (suppliedParticipantGrounding === null) {
     throw new BroadcastContextInputError(
       "INVALID_PARTICIPANT_GROUNDING",
       "Broadcast participant grounding must be the sealed packet for this exact source map.",
     );
   }
-  const participantGrounding =
-    suppliedParticipantGrounding ?? fallbackParticipantGrounding;
+  const participantGrounding = suppliedParticipantGrounding;
 
   const candidates = input.candidates.map((candidate) => {
     assertRange(
@@ -502,13 +490,11 @@ export function createBroadcastContextRequest(
       MAX_BROADCAST_CONTEXT_SUMMARY_LENGTH,
       candidate.candidateId,
     );
-    if (candidate.participantContextKo !== undefined) {
-      assertText(
-        candidate.participantContextKo,
-        MAX_BROADCAST_CONTEXT_SUMMARY_LENGTH,
-        candidate.candidateId,
-      );
-    }
+    assertText(
+      candidate.participantContextKo,
+      MAX_BROADCAST_CONTEXT_SUMMARY_LENGTH,
+      candidate.candidateId,
+    );
     if (candidate.chatReactionSummaryKo !== null) {
       assertText(
         candidate.chatReactionSummaryKo,
@@ -524,13 +510,7 @@ export function createBroadcastContextRequest(
       transcriptKo: candidate.transcriptKo,
       eventSummaryKo: candidate.eventSummaryKo,
       reactionSummaryKo: candidate.reactionSummaryKo,
-      participantContextKo:
-        candidate.participantContextKo ??
-        participantContextForBroadcastRange(
-          participantGrounding,
-          candidate.startMs,
-          candidate.endMs,
-        ),
+      participantContextKo: candidate.participantContextKo,
       chatReactionSummaryKo: candidate.chatReactionSummaryKo,
     };
   });
@@ -542,7 +522,7 @@ export function createBroadcastContextRequest(
     candidates,
     castRosterId,
     participantGrounding,
-    outputLanguage: input.outputLanguage ?? "ko",
+    outputLanguage: input.outputLanguage,
   };
 }
 

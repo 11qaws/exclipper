@@ -111,7 +111,7 @@ describe("broadcastTranscriptResolvedEvidence", () => {
       "no-speech",
     );
     const mixedRevision =
-      "broadcast-transcript-mixed-v1:gemini-3.6-flash-audio-transcript-reviewed-2026-07-22|qwen3.5-omni-flash-audio-transcript-90s-reviewed-2026-07-22";
+      "broadcast-transcript-mixed-v2:gemini-flash+qwen-omni";
     const rebased =
       rebaseBroadcastTranscriptResolvedEvidenceModelRevision(
         current,

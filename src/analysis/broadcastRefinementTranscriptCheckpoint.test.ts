@@ -5,6 +5,7 @@ import {
   broadcastRefinementTranscriptCheckpointCanComplete,
   broadcastRefinementTranscriptCheckpointMatchesInput,
   createBroadcastRefinementTranscriptCheckpoint,
+  mergeBroadcastRefinementTranscriptCheckpoints,
   parseBroadcastRefinementTranscriptCheckpointJson,
   recordBroadcastRefinementTranscriptAbstention,
   recordBroadcastRefinementTranscriptGap,
@@ -149,6 +150,50 @@ describe("broadcastRefinementTranscriptCheckpoint", () => {
     expect(broadcastRefinementTranscriptCheckpointCanComplete(checkpoint)).toBe(
       true,
     );
+  });
+
+  it("monotonically merges concurrent cells without regressing terminal evidence", () => {
+    const empty = createBroadcastRefinementTranscriptCheckpoint({
+      refinementInputSignature: "refinement-input-v1",
+      plannedChunks,
+    });
+    const durable = recordBroadcastRefinementTranscriptSuccess(
+      recordBroadcastRefinementTranscriptGap(empty, {
+        chunkId: "refine-002",
+        reason: "rate-limited",
+        attemptCount: 9,
+      }),
+      "refine-001",
+      resultFor(plannedChunks[1] as BroadcastContextTranscriptionChunk),
+    );
+    const stalePending = recordBroadcastRefinementTranscriptGap(
+      recordBroadcastRefinementTranscriptGap(empty, {
+        chunkId: "refine-001",
+        reason: "in-flight",
+        attemptCount: 8,
+      }),
+      {
+        chunkId: "refine-002",
+        reason: "transcription-failed",
+        attemptCount: 4,
+      },
+    );
+
+    const merged = mergeBroadcastRefinementTranscriptCheckpoints(
+      durable,
+      stalePending,
+    );
+
+    expect(merged.successfulFragments).toEqual(
+      durable.successfulFragments,
+    );
+    expect(merged.gaps).toEqual([
+      {
+        chunkId: "refine-002",
+        reason: "rate-limited",
+        attemptCount: 9,
+      },
+    ]);
   });
 
   it("rejects a successful transcript whose range was moved or whose plan was tampered", () => {

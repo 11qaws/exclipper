@@ -139,7 +139,9 @@ describe("discoveredLeadRefinement", () => {
     const plan = createDiscoveredLeadRefinementPlan([target]);
     const transcripts = plan.segments.map((segment, index) => ({
       schemaVersion: "1.0.0" as const,
-      modelId: "qwen3-asr-flash" as const,
+      modelId: "qwen3.5-omni-flash" as const,
+      modelRevision:
+        "qwen3.5-omni-flash-audio-transcript-90s-reviewed-2026-07-22",
       sourceStartMs: segment.sourceStartMs,
       sourceEndMs: segment.sourceEndMs,
       textKo:

@@ -1,12 +1,14 @@
 import {
   CANDIDATE_PASS_B_DEVICE,
   CANDIDATE_PASS_B_DTYPE,
+  CANDIDATE_PASS_B_FRAME_EXTRACTION_REVISION,
   CANDIDATE_PASS_B_GEMINI_MODEL_ID,
   CANDIDATE_PASS_B_GEMINI_MODEL_REVISION,
   CANDIDATE_PASS_B_LANGUAGE,
   CANDIDATE_PASS_B_QWEN_MODEL_ID,
   CANDIDATE_PASS_B_QWEN_MODEL_REVISION,
   CANDIDATE_PASS_B_SAMPLE_RATE_HZ,
+  CANDIDATE_PASS_B_SETTLEMENT_SCHEMA_VERSION,
   CANDIDATE_PASS_B_TASK,
   MAX_CANDIDATE_PASS_B_SOURCE_DURATION_MS,
   MAX_CANDIDATE_PASS_B_TARGET_DURATION_MS,
@@ -14,14 +16,18 @@ import {
   MAX_CANDIDATE_PASS_B_VIDEO_FRAME_BASE64_LENGTH,
   MAX_CANDIDATE_PASS_B_VIDEO_FRAMES,
   candidatePassBWorkerFailureMessage,
+  createCandidatePassBOperationId,
   type CandidatePassBCandidateGap,
   type CandidatePassBCandidateGapReason,
   type CandidatePassBCandidateProgress,
   type CandidatePassBCompletionSummary,
+  type CandidatePassBDispatchIntent,
   type CandidatePassBDevice,
   type CandidatePassBModelProgress,
+  type CandidatePassBOutcomeUnknown,
   type CandidatePassBQuotaIdentity,
   type CandidatePassBTarget,
+  type CandidatePassBTerminalSettlement,
   type CandidatePassBTranscriptResult,
   type CandidatePassBWorkerFailureReason,
   type CandidatePassBWorkerIdentity,
@@ -40,7 +46,13 @@ import {
   MAX_CANDIDATE_PASS_B_UNCERTAINTY_LENGTH,
 } from "./candidatePassBGemini";
 import { isCandidatePassBCastRosterId } from "./participantRoster";
-import { isCandidatePassBContextPacket } from "./candidateFinalVerification";
+import {
+  candidatePassBContextFingerprint,
+  isCandidatePassBContextPacket,
+  isCandidatePassBDispatchIntent,
+  isCandidatePassBOutcomeUnknown,
+  isCandidatePassBCompletedSettlement,
+} from "./candidateFinalVerification";
 import { isAnalysisLanguage } from "../domain/analysisLanguage";
 
 export {
@@ -99,7 +111,8 @@ export type CandidatePassBWorkerFactory = () => CandidatePassBWorkerLike;
 
 export interface RunCandidatePassBWorkerOptions {
   readonly identity: CandidatePassBWorkerIdentity;
-  readonly quota?: CandidatePassBQuotaIdentity;
+  readonly quota: CandidatePassBQuotaIdentity;
+  readonly sourceFingerprint: string;
   readonly sourceDurationMs: number;
   readonly device: CandidatePassBDevice;
   readonly targets: readonly CandidatePassBTarget[];
@@ -108,8 +121,27 @@ export interface RunCandidatePassBWorkerOptions {
   readonly onCandidateProgress?: (
     progress: CandidatePassBCandidateProgress,
   ) => void;
-  readonly onPartialResult?: (result: CandidatePassBTranscriptResult) => void;
+  /**
+   * Must durably persist and exact-readback the completed settlement.
+   * The Worker receives a terminal ACK only after this resolves `true`.
+   */
+  readonly onPartialResult: (
+    result: CandidatePassBTranscriptResult,
+  ) => Promise<boolean>;
   readonly onCandidateGap?: (gap: CandidatePassBCandidateGap) => void;
+  /**
+   * Must durably persist and exact-readback the intent. The Worker receives an
+   * arm ACK only after this promise resolves `true`.
+   */
+  readonly onDispatchIntent: (
+    intent: CandidatePassBDispatchIntent,
+  ) => Promise<boolean>;
+  /**
+   * Must durably persist and exact-readback the outcome-unknown settlement.
+   */
+  readonly onOutcomeUnknown: (
+    outcome: CandidatePassBOutcomeUnknown,
+  ) => Promise<boolean>;
   /** Called only after a correctly fenced cancellation ACK is received. */
   readonly onCancellationAcknowledged?: () => void;
   readonly timeoutMs?: number;
@@ -120,6 +152,7 @@ export interface RunCandidatePassBWorkerOptions {
 export interface CandidatePassBRunResult {
   readonly results: readonly CandidatePassBTranscriptResult[];
   readonly gaps: readonly CandidatePassBCandidateGap[];
+  readonly outcomeUnknowns: readonly CandidatePassBOutcomeUnknown[];
   readonly summary: CandidatePassBCompletionSummary;
 }
 
@@ -143,6 +176,7 @@ export type CandidatePassBWorkerErrorCode =
   | "WORKER_TIMEOUT"
   | "PROGRESS_CALLBACK_FAILED"
   | "RESULT_CALLBACK_FAILED"
+  | "DISPATCH_ARM_CALLBACK_FAILED"
   | "CANCEL_ACK_CALLBACK_FAILED";
 
 export class CandidatePassBWorkerError extends Error {
@@ -167,7 +201,7 @@ export class CandidatePassBWorkerError extends Error {
 }
 
 export const DEFAULT_CANDIDATE_PASS_B_WORKER_TIMEOUT_MS = 2 * 60 * 60_000;
-export const DEFAULT_CANDIDATE_PASS_B_CANCEL_ACK_TIMEOUT_MS = 5_000;
+export const DEFAULT_CANDIDATE_PASS_B_CANCEL_ACK_TIMEOUT_MS = 30_000;
 
 interface NormalizedRunInput {
   readonly sourceDurationMs: number;
@@ -334,40 +368,29 @@ function isTranscriptSegment(value: unknown): boolean {
 }
 
 function isInsight(value: unknown): boolean {
-  const legacyKeys = [
+  const currentKeys = [
     "eventSummaryKo",
     "reactionSummaryKo",
     "whyGoodClipKo",
     "uncertaintiesKo",
-  ] as const;
-  const participantKeys = [
-    ...legacyKeys,
     "participantPresence",
     "participantSummaryKo",
     "identifiedParticipants",
-  ] as const;
-  const currentKeys = [
-    ...participantKeys,
     "clipDecision",
     "contextConsistency",
     "programMaterial",
   ] as const;
-  const legacyParticipantKeys = [...legacyKeys, "identifiedParticipants"] as const;
   if (
     !isRecord(value) ||
-    (!hasExactKeys(value, legacyKeys) &&
-      !hasExactKeys(value, legacyParticipantKeys) &&
-      !hasExactKeys(value, participantKeys) &&
-      !hasExactKeys(value, currentKeys)) ||
+    !hasExactKeys(value, currentKeys) ||
     !Array.isArray(value.uncertaintiesKo) ||
-    value.uncertaintiesKo.length > MAX_CANDIDATE_PASS_B_UNCERTAINTIES
+    value.uncertaintiesKo.length > MAX_CANDIDATE_PASS_B_UNCERTAINTIES ||
+    !Array.isArray(value.identifiedParticipants)
   ) {
     return false;
   }
   const uncertainties: readonly unknown[] = value.uncertaintiesKo;
-  const participants: readonly unknown[] = Array.isArray(value.identifiedParticipants)
-    ? value.identifiedParticipants
-    : [];
+  const participants: readonly unknown[] = value.identifiedParticipants;
   return (
     isBoundedKoreanText(
       value.eventSummaryKo,
@@ -388,52 +411,49 @@ function isInsight(value: unknown): boolean {
       ),
     ) &&
     new Set(uncertainties).size === uncertainties.length &&
-    (value.participantPresence === undefined ||
-      [
+    [
         "identified",
         "present-unidentified",
         "none-present",
         "insufficient-evidence",
-      ].includes(value.participantPresence as string)) &&
-    (value.participantSummaryKo === undefined ||
-      isBoundedKoreanText(
+      ].includes(value.participantPresence as string) &&
+    isBoundedKoreanText(
         value.participantSummaryKo,
         MAX_CANDIDATE_PASS_B_INSIGHT_TEXT_LENGTH,
-      )) &&
-    (value.clipDecision === undefined ||
-      ["recommend", "reject", "uncertain"].includes(value.clipDecision as string)) &&
-    (value.contextConsistency === undefined ||
-      ["consistent", "conflict", "insufficient"].includes(
+      ) &&
+    ["recommend", "reject", "uncertain"].includes(value.clipDecision as string) &&
+    ["consistent", "conflict", "insufficient"].includes(
         value.contextConsistency as string,
-      )) &&
-    (value.programMaterial === undefined ||
-      ["streamer-event", "music-or-intermission", "routine-or-unclear"].includes(
+      ) &&
+    ["streamer-event", "music-or-intermission", "routine-or-unclear"].includes(
         value.programMaterial as string,
-      )) &&
+      ) &&
     participants.length <= MAX_CANDIDATE_PASS_B_IDENTIFIED_PARTICIPANTS &&
-    participants.every(isParticipantAttribution)
+    participants.every(isParticipantAttribution) &&
+    ((value.participantPresence === "identified" && participants.length > 0) ||
+      (value.participantPresence !== "identified" && participants.length === 0))
   );
 }
 
 function isParticipantAttribution(value: unknown): boolean {
-  const legacyKeys = [
+  const currentKeys = [
     "displayName",
     "role",
     "evidenceBasis",
     "evidenceKo",
     "confidence",
     "relativeTimestampMs",
+    "observedFrameIndices",
   ] as const;
   return (
     isRecord(value) &&
-    (hasExactKeys(value, legacyKeys) ||
-      hasExactKeys(value, [...legacyKeys, "observedFrameIndices"])) &&
+    hasExactKeys(value, currentKeys) &&
     hasBoundedCodePointLength(
       value.displayName,
       MAX_CANDIDATE_PASS_B_PARTICIPANT_NAME_LENGTH,
     ) &&
     ["streamer", "guest", "unknown"].includes(value.role as string) &&
-    ["on-screen-name", "spoken-name", "provided-cast-reference"].includes(
+    ["on-screen-name", "spoken-name"].includes(
       value.evidenceBasis as string,
     ) &&
     isBoundedKoreanText(
@@ -445,8 +465,7 @@ function isParticipantAttribution(value: unknown): boolean {
     value.confidence <= 1 &&
     isNonNegativeSafeInteger(value.relativeTimestampMs) &&
     value.relativeTimestampMs <= MAX_CANDIDATE_PASS_B_TARGET_DURATION_MS &&
-    (value.observedFrameIndices === undefined ||
-      (Array.isArray(value.observedFrameIndices) &&
+    Array.isArray(value.observedFrameIndices) &&
         value.observedFrameIndices.length <= MAX_CANDIDATE_PASS_B_VIDEO_FRAMES &&
         new Set(value.observedFrameIndices).size ===
           value.observedFrameIndices.length &&
@@ -455,7 +474,9 @@ function isParticipantAttribution(value: unknown): boolean {
             Number.isSafeInteger(frameIndex) &&
             frameIndex >= 0 &&
             frameIndex < MAX_CANDIDATE_PASS_B_VIDEO_FRAMES,
-        )))
+        ) &&
+    (value.evidenceBasis !== "on-screen-name" ||
+      value.observedFrameIndices.length > 0)
   );
 }
 
@@ -476,6 +497,7 @@ function isTranscriptResult(
       "language",
       "task",
       "sampleRateHz",
+      "settlement",
     ]) ||
     !isRecord(value.model) ||
     !isInsight(value.insight) ||
@@ -503,7 +525,8 @@ function isTranscriptResult(
     value.model.device === CANDIDATE_PASS_B_DEVICE &&
     value.language === CANDIDATE_PASS_B_LANGUAGE &&
     value.task === CANDIDATE_PASS_B_TASK &&
-    value.sampleRateHz === CANDIDATE_PASS_B_SAMPLE_RATE_HZ
+    value.sampleRateHz === CANDIDATE_PASS_B_SAMPLE_RATE_HZ &&
+    isCandidatePassBCompletedSettlement(value.settlement)
   );
 }
 
@@ -512,9 +535,9 @@ function isGapReason(value: unknown): value is CandidatePassBCandidateGapReason 
     value === "NO_AUDIO_TRACK" ||
     value === "UNSUPPORTED_CONTAINER" ||
     value === "UNSUPPORTED_AUDIO_CODEC" ||
-    value === "EMPTY_AUDIO" ||
     value === "AUDIO_DECODE_FAILED" ||
-    value === "TRANSCRIPTION_FAILED"
+    value === "TRANSCRIPTION_FAILED" ||
+    value === "OUTCOME_UNKNOWN"
   );
 }
 
@@ -548,7 +571,7 @@ function safeCandidateGapMessage(
       return "이 영상 형식은 현재 브라우저에서 읽을 수 없어요.";
     case "UNSUPPORTED_AUDIO_CODEC":
       return "이 브라우저에서 이 영상의 오디오 코덱을 읽을 수 없어요.";
-    case "EMPTY_AUDIO":
+    case "OUTCOME_UNKNOWN":
       return "이 후보 구간에서 이어지는 말소리 단서를 찾지 못했어요.";
     case "AUDIO_DECODE_FAILED":
       return "이 후보 구간의 오디오를 읽는 중 문제가 생겼어요.";
@@ -583,6 +606,9 @@ function isWorkerFailureReason(
     value === "PROXY_UNAVAILABLE" ||
     value === "PROXY_INVALID_RESPONSE" ||
     value === "PROXY_REQUEST_REJECTED" ||
+    value === "DISPATCH_NOT_ARMED" ||
+    value === "TERMINAL_NOT_ACKNOWLEDGED" ||
+    value === "OUTCOME_UNKNOWN" ||
     value === "UNEXPECTED_WORKER_FAILURE"
   );
 }
@@ -602,6 +628,16 @@ function isWorkerResponse(value: unknown): value is CandidatePassBWorkerResponse
     case "candidate-pass-b-partial-result":
       return (
         hasResponseKeys(value, ["result"]) && isTranscriptResult(value.result)
+      );
+    case "candidate-pass-b-dispatch-intent":
+      return (
+        hasResponseKeys(value, ["intent"]) &&
+        isCandidatePassBDispatchIntent(value.intent)
+      );
+    case "candidate-pass-b-outcome-unknown":
+      return (
+        hasResponseKeys(value, ["outcome"]) &&
+        isCandidatePassBOutcomeUnknown(value.outcome)
       );
     case "candidate-pass-b-candidate-gap":
       return hasResponseKeys(value, ["gap"]) && isCandidateGap(value.gap);
@@ -711,6 +747,16 @@ function normalizeInput(
     file.size < 0 ||
     !validateIdentity(options.identity) ||
     options.device !== CANDIDATE_PASS_B_DEVICE ||
+    !isNonEmptyString(options.sourceFingerprint) ||
+    options.sourceFingerprint.length > 512 ||
+    !isNonEmptyString(options.quota.participantId) ||
+    !isNonEmptyString(options.quota.runId) ||
+    !isNonNegativeSafeInteger(options.quota.attemptOrdinal) ||
+    ((options.quota.attemptOrdinal === 0 &&
+      options.quota.retryGrantId !== null) ||
+      (options.quota.attemptOrdinal !== 0 &&
+        (!isNonEmptyString(options.quota.retryGrantId) ||
+          options.quota.retryGrantId.length > 240))) ||
     !Number.isFinite(options.sourceDurationMs)
   ) {
     return new CandidatePassBWorkerError(
@@ -758,25 +804,25 @@ function normalizeInput(
     const outputLanguage =
       "outputLanguage" in target ? target.outputLanguage : undefined;
     if (
-      context !== undefined &&
-      !isCandidatePassBContextPacket(context)
+      !isCandidatePassBContextPacket(context) ||
+      typeof target.contextFingerprint !== "string" ||
+      target.contextFingerprint !== candidatePassBContextFingerprint(context) ||
+      target.frameExtractionRevision !==
+        CANDIDATE_PASS_B_FRAME_EXTRACTION_REVISION
     ) {
       return new CandidatePassBWorkerError(
         "INVALID_INPUT",
         "후보의 방송 맥락 근거가 올바르지 않아요.",
       );
     }
-    if (
-      outputLanguage !== undefined &&
-      !isAnalysisLanguage(outputLanguage)
-    ) {
+    if (!isAnalysisLanguage(outputLanguage)) {
       return new CandidatePassBWorkerError(
         "INVALID_INPUT",
         "후보 결과 언어가 올바르지 않아요.",
       );
     }
     if (
-      castRosterId !== undefined &&
+      castRosterId !== null &&
       !isCandidatePassBCastRosterId(castRosterId)
     ) {
       return new CandidatePassBWorkerError(
@@ -786,7 +832,7 @@ function normalizeInput(
     }
     if (
       !Array.isArray(rawFrames) ||
-      rawFrames.length > MAX_CANDIDATE_PASS_B_VIDEO_FRAMES ||
+      rawFrames.length !== MAX_CANDIDATE_PASS_B_VIDEO_FRAMES ||
       !rawFrames.every(
         (frame) =>
           isRecord(frame) &&
@@ -809,18 +855,16 @@ function normalizeInput(
       candidateId: target.candidateId,
       startMs: Math.round(target.startMs),
       endMs: Math.round(target.endMs),
-      ...(rawFrames.length > 0
-        ? {
-            videoFrames: rawFrames.map((frame) => ({
-              timestampMs: (frame as Record<string, unknown>).timestampMs as number,
-              mimeType: "image/jpeg" as const,
-              dataBase64: (frame as Record<string, unknown>).dataBase64 as string,
-            })),
-          }
-        : {}),
-      ...(castRosterId === undefined ? {} : { castRosterId }),
-      ...(context === undefined ? {} : { context }),
-      ...(outputLanguage === undefined ? {} : { outputLanguage }),
+      videoFrames: rawFrames.map((frame) => ({
+        timestampMs: (frame as Record<string, unknown>).timestampMs as number,
+        mimeType: "image/jpeg" as const,
+        dataBase64: (frame as Record<string, unknown>).dataBase64 as string,
+      })),
+      frameExtractionRevision: CANDIDATE_PASS_B_FRAME_EXTRACTION_REVISION,
+      context,
+      contextFingerprint: target.contextFingerprint,
+      castRosterId,
+      outputLanguage,
     };
     if (
       normalizedTarget.startMs < 0 ||
@@ -828,6 +872,12 @@ function normalizeInput(
       normalizedTarget.endMs > sourceDurationMs ||
       normalizedTarget.endMs - normalizedTarget.startMs >
         MAX_CANDIDATE_PASS_B_TARGET_DURATION_MS ||
+      new Set(normalizedTarget.videoFrames.map(({ timestampMs }) => timestampMs))
+        .size !== MAX_CANDIDATE_PASS_B_VIDEO_FRAMES ||
+      normalizedTarget.videoFrames.some(
+        ({ timestampMs }) =>
+          timestampMs >= normalizedTarget.endMs - normalizedTarget.startMs,
+      ) ||
       candidateIds.has(normalizedTarget.candidateId)
     ) {
       return new CandidatePassBWorkerError(
@@ -944,7 +994,17 @@ export function runCandidatePassBWorker(
     const lastCandidateStageRanks = new Map<string, number>();
     const results: CandidatePassBTranscriptResult[] = [];
     const gaps: CandidatePassBCandidateGap[] = [];
+    const outcomeUnknowns: CandidatePassBOutcomeUnknown[] = [];
+    const armedDispatchByCandidateId = new Map<
+      string,
+      CandidatePassBDispatchIntent
+    >();
+    const pendingDispatchCandidateIds = new Set<string>();
+    const pendingTerminalCandidateIds = new Set<string>();
     const terminalCandidateIds = new Set<string>();
+    const pendingDurabilityHandshakes = new Set<Promise<void>>();
+    let workerUnavailable = false;
+    let workerLossRecovery: Promise<void> | null = null;
 
     const cleanup = (): boolean => {
       let succeeded = true;
@@ -1004,6 +1064,20 @@ export function runCandidatePassBWorker(
         "WORKER_MESSAGE_ERROR",
         "후보 정밀 분석 작업 공간이 이해할 수 없는 응답을 보냈어요.",
       );
+
+    const trackDurabilityHandshake = (handshake: Promise<void>): void => {
+      pendingDurabilityHandshakes.add(handshake);
+      void handshake.then(
+        () => pendingDurabilityHandshakes.delete(handshake),
+        () => pendingDurabilityHandshakes.delete(handshake),
+      );
+    };
+
+    const drainDurabilityHandshakes = async (): Promise<void> => {
+      while (pendingDurabilityHandshakes.size > 0) {
+        await Promise.allSettled([...pendingDurabilityHandshakes]);
+      }
+    };
 
     const requestCancellation = (error: CandidatePassBWorkerError): void => {
       if (settled || cancellationError !== null) {
@@ -1087,8 +1161,7 @@ export function runCandidatePassBWorker(
       if (
         targetEntry === undefined ||
         progress.candidateOrdinal !== targetEntry.candidateOrdinal ||
-        progress.targetCount !== normalized.targets.length ||
-        terminalCandidateIds.has(progress.candidateId)
+        progress.targetCount !== normalized.targets.length
       ) {
         rejectMalformedMessage();
         return;
@@ -1098,6 +1171,12 @@ export function runCandidatePassBWorker(
         lastCandidateStageRanks.get(progress.candidateId) ?? -1;
       const nextStageRank = stageRank(progress.stage);
       if (
+        (pendingTerminalCandidateIds.has(progress.candidateId) &&
+          nextStageRank === 2) ||
+        (progress.stage === "complete" &&
+          !terminalCandidateIds.has(progress.candidateId)) ||
+        (terminalCandidateIds.has(progress.candidateId) &&
+          nextStageRank !== 2) ||
         progress.ratio < previousRatio ||
         nextStageRank < previousStageRank ||
         (previousStageRank === 2 && nextStageRank === 2) ||
@@ -1112,11 +1191,59 @@ export function runCandidatePassBWorker(
       invokeProgressCallback(() => options.onCandidateProgress?.(progress));
     };
 
-    const handlePartialResult = (result: CandidatePassBTranscriptResult): void => {
+    const postTerminalResultAck = (
+      terminalEventId: string,
+      candidateId: string,
+      settlement: CandidatePassBTerminalSettlement,
+      accepted: boolean,
+    ): boolean => {
+      if (workerUnavailable) {
+        return true;
+      }
+      try {
+        worker.postMessage({
+          type: "candidate-pass-b-terminal-result-ack",
+          identity: options.identity,
+          terminalEventId,
+          candidateId,
+          settlement,
+          accepted,
+        });
+        return true;
+      } catch {
+        finish({
+          ok: false,
+          error: new CandidatePassBWorkerError(
+            "RESULT_CALLBACK_FAILED",
+            "The durable terminal acknowledgement could not be returned to the Worker.",
+          ),
+        });
+        return false;
+      }
+    };
+
+    const terminalPersistenceFailure = (): CandidatePassBWorkerError =>
+      new CandidatePassBWorkerError(
+        "RESULT_CALLBACK_FAILED",
+        "The candidate terminal result did not survive durable readback.",
+      );
+
+    const handlePartialResult = async (
+      terminalEventId: string,
+      result: CandidatePassBTranscriptResult,
+    ): Promise<void> => {
       const targetEntry = targetsById.get(result.candidateId);
+      const armedDispatch = armedDispatchByCandidateId.get(result.candidateId);
       if (
         targetEntry === undefined ||
+        armedDispatch === undefined ||
+        pendingTerminalCandidateIds.has(result.candidateId) ||
         !matchesTargetRange(targetEntry.target, result) ||
+        result.settlement.operationId !== armedDispatch.operationId ||
+        result.settlement.providerPayloadDigest !==
+          armedDispatch.mediaReceipt.providerPayloadDigest ||
+        result.settlement.outputLanguage !== armedDispatch.outputLanguage ||
+        result.settlement.castRosterId !== armedDispatch.castRosterId ||
         result.model.device !== options.device ||
         terminalCandidateIds.has(result.candidateId) ||
         !hasValidSegmentTimeline(result)
@@ -1124,9 +1251,188 @@ export function runCandidatePassBWorker(
         rejectMalformedMessage();
         return;
       }
+      pendingTerminalCandidateIds.add(result.candidateId);
+      let accepted: boolean;
+      try {
+        accepted = await options.onPartialResult(result);
+      } catch {
+        accepted = false;
+      } finally {
+        pendingTerminalCandidateIds.delete(result.candidateId);
+      }
+      if (settled) return;
+      if (!accepted) {
+        if (
+          !postTerminalResultAck(
+            terminalEventId,
+            result.candidateId,
+            result.settlement,
+            false,
+          )
+        ) {
+          return;
+        }
+        requestCancellation(terminalPersistenceFailure());
+        return;
+      }
       terminalCandidateIds.add(result.candidateId);
       results.push(result);
-      invokeResultCallback(() => options.onPartialResult?.(result));
+      postTerminalResultAck(
+        terminalEventId,
+        result.candidateId,
+        result.settlement,
+        true,
+      );
+    };
+
+    const handleDispatchIntent = async (
+      intent: CandidatePassBDispatchIntent,
+    ): Promise<void> => {
+      const targetEntry = targetsById.get(intent.candidateId);
+      const expectedAttempt = options.quota.attemptOrdinal;
+      const frameTimestamps = intent.mediaReceipt.frames.map(
+        ({ timestampMs }) => timestampMs,
+      );
+      if (
+        targetEntry === undefined ||
+        terminalCandidateIds.has(intent.candidateId) ||
+        pendingDispatchCandidateIds.has(intent.candidateId) ||
+        armedDispatchByCandidateId.has(intent.candidateId) ||
+        intent.analysisRunId !== options.identity.analysisRunId ||
+        intent.sourceFingerprint !== options.sourceFingerprint ||
+        intent.sourceStartMs !== targetEntry.target.startMs ||
+        intent.sourceEndMs !== targetEntry.target.endMs ||
+        intent.contextFingerprint !== targetEntry.target.contextFingerprint ||
+        intent.outputLanguage !== targetEntry.target.outputLanguage ||
+        intent.castRosterId !== targetEntry.target.castRosterId ||
+        intent.attemptOrdinal !== expectedAttempt ||
+        intent.retryGrantId !== options.quota.retryGrantId ||
+        intent.mediaReceipt.frameExtractionRevision !==
+          targetEntry.target.frameExtractionRevision ||
+        frameTimestamps.some(
+          (timestampMs, index) =>
+            timestampMs !==
+            targetEntry.target.videoFrames[index]?.timestampMs,
+        )
+      ) {
+        rejectMalformedMessage();
+        return;
+      }
+      pendingDispatchCandidateIds.add(intent.candidateId);
+      let expectedOperationId: string;
+      try {
+        expectedOperationId = await createCandidatePassBOperationId({
+          analysisRunId: intent.analysisRunId,
+          sourceFingerprint: intent.sourceFingerprint,
+          candidateId: intent.candidateId,
+          sourceStartMs: intent.sourceStartMs,
+          sourceEndMs: intent.sourceEndMs,
+          contextFingerprint: intent.contextFingerprint,
+          outputLanguage: intent.outputLanguage,
+          castRosterId: intent.castRosterId,
+          routingModelRevision: intent.routingModelRevision,
+          attemptOrdinal: intent.attemptOrdinal,
+          retryGrantId: intent.retryGrantId,
+          transportMode: intent.transportMode,
+          providerPayloadDigest:
+            intent.mediaReceipt.providerPayloadDigest,
+        });
+      } catch {
+        pendingDispatchCandidateIds.delete(intent.candidateId);
+        rejectMalformedMessage();
+        return;
+      }
+      if (intent.operationId !== expectedOperationId) {
+        pendingDispatchCandidateIds.delete(intent.candidateId);
+        rejectMalformedMessage();
+        return;
+      }
+      let accepted: boolean;
+      try {
+        accepted = await options.onDispatchIntent(intent);
+      } catch {
+        accepted = false;
+      } finally {
+        pendingDispatchCandidateIds.delete(intent.candidateId);
+      }
+      if (settled) return;
+      if (accepted) {
+        armedDispatchByCandidateId.set(intent.candidateId, intent);
+      }
+      if (workerUnavailable) {
+        return;
+      }
+      try {
+        worker.postMessage({
+          type: "candidate-pass-b-dispatch-arm-ack",
+          identity: options.identity,
+          operationId: intent.operationId,
+          accepted,
+        });
+      } catch {
+        finish({
+          ok: false,
+          error: new CandidatePassBWorkerError(
+            "DISPATCH_ARM_CALLBACK_FAILED",
+            "The durable dispatch acknowledgement could not be returned to the Worker.",
+          ),
+        });
+      }
+    };
+
+    const handleOutcomeUnknown = async (
+      terminalEventId: string,
+      outcome: CandidatePassBOutcomeUnknown,
+    ): Promise<void> => {
+      const targetEntry = targetsById.get(outcome.candidateId);
+      const armedDispatch = armedDispatchByCandidateId.get(outcome.candidateId);
+      if (
+        targetEntry === undefined ||
+        armedDispatch === undefined ||
+        pendingTerminalCandidateIds.has(outcome.candidateId) ||
+        terminalCandidateIds.has(outcome.candidateId) ||
+        !matchesTargetRange(targetEntry.target, outcome) ||
+        outcome.settlement.operationId !== armedDispatch.operationId ||
+        outcome.settlement.providerPayloadDigest !==
+          armedDispatch.mediaReceipt.providerPayloadDigest ||
+        outcome.settlement.outputLanguage !== armedDispatch.outputLanguage ||
+        outcome.settlement.castRosterId !== armedDispatch.castRosterId
+      ) {
+        rejectMalformedMessage();
+        return;
+      }
+      pendingTerminalCandidateIds.add(outcome.candidateId);
+      let accepted: boolean;
+      try {
+        accepted = await options.onOutcomeUnknown(outcome);
+      } catch {
+        accepted = false;
+      } finally {
+        pendingTerminalCandidateIds.delete(outcome.candidateId);
+      }
+      if (settled) return;
+      if (!accepted) {
+        if (
+          !postTerminalResultAck(
+            terminalEventId,
+            outcome.candidateId,
+            outcome.settlement,
+            false,
+          )
+        ) {
+          return;
+        }
+        requestCancellation(terminalPersistenceFailure());
+        return;
+      }
+      terminalCandidateIds.add(outcome.candidateId);
+      outcomeUnknowns.push(outcome);
+      postTerminalResultAck(
+        terminalEventId,
+        outcome.candidateId,
+        outcome.settlement,
+        true,
+      );
     };
 
     const handleCandidateGap = (gap: CandidatePassBCandidateGap): void => {
@@ -1148,7 +1454,74 @@ export function runCandidatePassBWorker(
       invokeResultCallback(() => options.onCandidateGap?.(safeGap));
     };
 
+    const failAfterWorkerLoss = (error: CandidatePassBWorkerError): void => {
+      if (settled || workerLossRecovery !== null) {
+        return;
+      }
+      workerUnavailable = true;
+      if (operationTimeout !== null) {
+        globalThis.clearTimeout(operationTimeout);
+        operationTimeout = null;
+      }
+      if (cancelTimeout !== null) {
+        globalThis.clearTimeout(cancelTimeout);
+        cancelTimeout = null;
+      }
+      workerLossRecovery = (async () => {
+        /*
+         * A Worker can disappear while a durable arm/result callback is still
+         * crossing the main-thread boundary. Drain those callbacks first. Any
+         * accepted arm that still lacks a terminal settlement is then persisted
+         * as outcome-unknown before the run promise is rejected.
+         */
+        await drainDurabilityHandshakes();
+        let terminalPersistenceFailed = false;
+        for (const [candidateId, intent] of armedDispatchByCandidateId) {
+          if (terminalCandidateIds.has(candidateId)) {
+            continue;
+          }
+          const outcome: CandidatePassBOutcomeUnknown = {
+            candidateId,
+            sourceStartMs: intent.sourceStartMs,
+            sourceEndMs: intent.sourceEndMs,
+            settlement: {
+              schemaVersion: CANDIDATE_PASS_B_SETTLEMENT_SCHEMA_VERSION,
+              status: "outcome-unknown",
+              operationId: intent.operationId,
+              providerPayloadDigest:
+                intent.mediaReceipt.providerPayloadDigest,
+              outputLanguage: intent.outputLanguage,
+              castRosterId: intent.castRosterId,
+              reason: "armed-dispatch-interrupted",
+            },
+          };
+          let accepted: boolean;
+          try {
+            accepted = await options.onOutcomeUnknown(outcome);
+          } catch {
+            accepted = false;
+          }
+          if (!accepted) {
+            terminalPersistenceFailed = true;
+            continue;
+          }
+          terminalCandidateIds.add(candidateId);
+          outcomeUnknowns.push(outcome);
+        }
+        finish({
+          ok: false,
+          error: terminalPersistenceFailed
+            ? terminalPersistenceFailure()
+            : error,
+        });
+      })();
+      void workerLossRecovery;
+    };
+
     const handleMessage = (event: MessageEvent<unknown> | ErrorEvent): void => {
+      if (workerUnavailable) {
+        return;
+      }
       try {
         if (!(event instanceof MessageEvent) || !isWorkerResponse(event.data)) {
           rejectMalformedMessage();
@@ -1169,6 +1542,29 @@ export function runCandidatePassBWorker(
         fence = fenced.state;
 
         if (cancellationError !== null) {
+          /*
+           * Cancellation stops new provider work, but a dispatch intent or a
+           * terminal result may already be crossing the Worker boundary. Keep
+           * processing those durability handshakes; the Worker sends its
+           * cancellation ACK only after every durably armed operation has a
+           * terminal settlement.
+          */
+          if (event.data.type === "candidate-pass-b-dispatch-intent") {
+            trackDurabilityHandshake(handleDispatchIntent(event.data.intent));
+            return;
+          }
+          if (event.data.type === "candidate-pass-b-partial-result") {
+            trackDurabilityHandshake(
+              handlePartialResult(event.data.eventId, event.data.result),
+            );
+            return;
+          }
+          if (event.data.type === "candidate-pass-b-outcome-unknown") {
+            trackDurabilityHandshake(
+              handleOutcomeUnknown(event.data.eventId, event.data.outcome),
+            );
+            return;
+          }
           if (event.data.type === "candidate-pass-b-cancel-acknowledged") {
             try {
               options.onCancellationAcknowledged?.();
@@ -1195,7 +1591,17 @@ export function runCandidatePassBWorker(
             handleCandidateProgress(event.data.progress);
             return;
           case "candidate-pass-b-partial-result":
-            handlePartialResult(event.data.result);
+            trackDurabilityHandshake(
+              handlePartialResult(event.data.eventId, event.data.result),
+            );
+            return;
+          case "candidate-pass-b-dispatch-intent":
+            trackDurabilityHandshake(handleDispatchIntent(event.data.intent));
+            return;
+          case "candidate-pass-b-outcome-unknown":
+            trackDurabilityHandshake(
+              handleOutcomeUnknown(event.data.eventId, event.data.outcome),
+            );
             return;
           case "candidate-pass-b-candidate-gap":
             handleCandidateGap(event.data.gap);
@@ -1216,10 +1622,11 @@ export function runCandidatePassBWorker(
           case "candidate-pass-b-completed": {
             const summary = event.data.summary;
             if (
+              pendingTerminalCandidateIds.size !== 0 ||
               terminalCandidateIds.size !== normalized.targets.length ||
               summary.requestedCount !== normalized.targets.length ||
               summary.completedCount !== results.length ||
-              summary.gapCount !== gaps.length
+              summary.gapCount !== gaps.length + outcomeUnknowns.length
             ) {
               rejectMalformedMessage();
               return;
@@ -1229,6 +1636,7 @@ export function runCandidatePassBWorker(
               result: {
                 results: [...results],
                 gaps: [...gaps],
+                outcomeUnknowns: [...outcomeUnknowns],
                 summary,
               },
             });
@@ -1241,27 +1649,23 @@ export function runCandidatePassBWorker(
     };
 
     const handleMessageError = (): void => {
-      finish({
-        ok: false,
-        error:
-          cancellationError ??
+      failAfterWorkerLoss(
+        cancellationError ??
           new CandidatePassBWorkerError(
             "WORKER_MESSAGE_ERROR",
             "브라우저가 후보 정밀 분석 응답을 읽지 못했어요.",
           ),
-      });
+      );
     };
 
     const handleWorkerError = (): void => {
-      finish({
-        ok: false,
-        error:
-          cancellationError ??
+      failAfterWorkerLoss(
+        cancellationError ??
           new CandidatePassBWorkerError(
             "WORKER_FAILED",
             "후보 정밀 분석 작업 공간이 예기치 않게 멈췄어요.",
           ),
-      });
+      );
     };
 
     const handleAbort = (): void => {
@@ -1279,20 +1683,20 @@ export function runCandidatePassBWorker(
       worker.addEventListener("error", handleWorkerError);
       options.signal?.addEventListener("abort", handleAbort, { once: true });
       operationTimeout = globalThis.setTimeout(() => {
-        finish({
-          ok: false,
-          error: new CandidatePassBWorkerError(
+        requestCancellation(
+          new CandidatePassBWorkerError(
             "WORKER_TIMEOUT",
             "후보 정밀 분석이 제한 시간 안에 끝나지 않았어요.",
           ),
-        });
+        );
       }, timeoutMs);
 
       worker.postMessage({
         type: "candidate-pass-b-analyze",
         identity: options.identity,
-        ...(options.quota === undefined ? {} : { quota: options.quota }),
+        quota: options.quota,
         file,
+        sourceFingerprint: options.sourceFingerprint,
         sourceDurationMs: normalized.sourceDurationMs,
         device: CANDIDATE_PASS_B_DEVICE,
         targets: normalized.targets,

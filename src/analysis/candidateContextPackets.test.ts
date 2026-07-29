@@ -37,7 +37,7 @@ const semanticCandidate: UnifiedHighlightCandidate = {
 };
 
 const broadcastContext: BroadcastContextResult = {
-  schemaVersion: "1.6.0",
+  schemaVersion: "1.7.0",
   broadcastSummaryKo:
     "방송 초반 잡담 뒤 설정 실수를 발견하고 정확히 사과한 다음 본편으로 돌아갔다.",
   hostStreamerProfile: null,

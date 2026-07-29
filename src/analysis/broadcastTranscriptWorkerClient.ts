@@ -16,11 +16,13 @@ import {
   type BroadcastTranscriptChunkAbstention,
   type BroadcastTranscriptChunkGap,
   type BroadcastTranscriptChunkGapReason,
+  type BroadcastTranscriptDispatchIntent,
   type BroadcastTranscriptQuotaIdentity,
   type BroadcastTranscriptWorkerProgress,
   type BroadcastTranscriptWorkerRequest,
   type BroadcastTranscriptWorkerResponse,
 } from "./broadcastTranscriptWorkerProtocol";
+import { transcriptFragmentQuotaOperationId } from "./broadcastTranscriptFragmentRecovery";
 import {
   broadcastSpeechActivityCanSkipAsr,
   normalizeBroadcastSpeechActivityRunReceipt,
@@ -43,17 +45,20 @@ export interface RunBroadcastTranscriptWorkerOptions {
   readonly signal?: AbortSignal;
   readonly workerFactory?: () => WorkerLike;
   readonly onProgress?: (progress: BroadcastTranscriptWorkerProgress) => void;
+  readonly onDispatchIntent?: (
+    intent: BroadcastTranscriptDispatchIntent,
+  ) => void | Promise<void>;
   readonly onPartialResult?: (
     chunkId: string,
     result: BroadcastTranscriptVerifiedResult,
-  ) => void;
+  ) => void | Promise<void>;
   readonly onChunkGap?: (
     chunkId: string,
     reason: BroadcastTranscriptChunkGapReason,
-  ) => void;
+  ) => void | Promise<void>;
   readonly onChunkAbstention?: (
     abstention: BroadcastTranscriptChunkAbstention,
-  ) => void;
+  ) => void | Promise<void>;
 }
 
 export interface BroadcastTranscriptWorkerFragment {
@@ -223,6 +228,7 @@ function isResponse(value: unknown): value is BroadcastTranscriptWorkerResponse 
     typeof value.identity.taskId === "string" &&
     [
       "broadcast-transcript-progress",
+      "broadcast-transcript-dispatch-intent",
       "broadcast-transcript-partial",
       "broadcast-transcript-abstention",
       "broadcast-transcript-gap",
@@ -292,6 +298,18 @@ export function runBroadcastTranscriptWorker(
       ),
     );
   }
+  if (
+    (options.quota !== undefined ||
+      options.route.manifest.transportMode === "paid-direct") &&
+    options.onDispatchIntent === undefined
+  ) {
+    return Promise.reject(
+      new BroadcastTranscriptWorkerClientError(
+        "INVALID_INPUT",
+        "Paid transcript dispatch requires a durable per-chunk ACK handler.",
+      ),
+    );
+  }
   if (options.signal?.aborted === true) {
     return Promise.reject(
       new BroadcastTranscriptWorkerClientError(
@@ -317,6 +335,7 @@ export function runBroadcastTranscriptWorker(
     const abstentionByChunkId =
       new Map<string, BroadcastTranscriptChunkAbstention>();
     const gapReasonByChunkId = new Map<string, BroadcastTranscriptChunkGapReason>();
+    const dispatchOperationByChunkId = new Map<string, string>();
 
     const cleanup = (): void => {
       worker.removeEventListener("message", onMessage);
@@ -362,7 +381,10 @@ export function runBroadcastTranscriptWorker(
         ),
       );
     };
-    const onMessage = (event: MessageEvent<unknown>): void => {
+    const handleMessage = async (
+      event: MessageEvent<unknown>,
+    ): Promise<void> => {
+      if (settled) return;
       if (!isResponse(event.data) || event.data.identity.taskId !== identity.taskId) {
         malformed();
         return;
@@ -386,6 +408,52 @@ export function runBroadcastTranscriptWorker(
           }
           return;
         }
+        case "broadcast-transcript-dispatch-intent": {
+          const chunk = chunkById.get(event.data.intent.chunkId);
+          const attemptOrdinal = options.quota?.attemptOrdinal ?? 0;
+          const operationNamespace =
+            options.quota?.operationNamespace ?? "uniform";
+          const operationScope = options.quota?.operationScope;
+          const expectedOperationId = transcriptFragmentQuotaOperationId(
+            operationNamespace,
+            attemptOrdinal,
+            event.data.intent.chunkId,
+            operationScope,
+          );
+          if (
+            chunk === undefined ||
+            dispatchOperationByChunkId.has(event.data.intent.chunkId) ||
+            event.data.intent.operationId !== expectedOperationId ||
+            event.data.intent.sourceStartMs !== chunk.sourceStartMs ||
+            event.data.intent.sourceEndMs !== chunk.sourceEndMs ||
+            event.data.intent.attemptOrdinal !== attemptOrdinal ||
+            event.data.intent.operationNamespace !== operationNamespace ||
+            event.data.intent.operationScope !== (operationScope ?? null) ||
+            event.data.intent.routeManifestFingerprint !==
+              options.route.fingerprint
+          ) {
+            malformed();
+            return;
+          }
+          try {
+            await options.onDispatchIntent?.(event.data.intent);
+          } catch {
+            onWorkerError();
+            return;
+          }
+          if (settled) return;
+          dispatchOperationByChunkId.set(
+            event.data.intent.chunkId,
+            event.data.intent.operationId,
+          );
+          worker.postMessage({
+            type: "broadcast-transcript-dispatch-ack",
+            identity,
+            chunkId: event.data.intent.chunkId,
+            operationId: event.data.intent.operationId,
+          });
+          return;
+        }
         case "broadcast-transcript-partial": {
           const chunk = chunkById.get(event.data.chunkId);
           if (
@@ -393,17 +461,25 @@ export function runBroadcastTranscriptWorker(
             resultsByChunkId.has(event.data.chunkId) ||
             abstentionByChunkId.has(event.data.chunkId) ||
             gapReasonByChunkId.has(event.data.chunkId) ||
+            !dispatchOperationByChunkId.has(event.data.chunkId) ||
             !validResult(event.data.result, chunk, options.route)
           ) {
             malformed();
             return;
           }
-          resultsByChunkId.set(event.data.chunkId, event.data.result);
           try {
-            options.onPartialResult?.(event.data.chunkId, event.data.result);
+            await options.onPartialResult?.(event.data.chunkId, event.data.result);
           } catch {
-            malformed();
+            onWorkerError();
+            return;
           }
+          if (settled) return;
+          resultsByChunkId.set(event.data.chunkId, event.data.result);
+          worker.postMessage({
+            type: "broadcast-transcript-terminal-ack",
+            identity,
+            chunkId: event.data.chunkId,
+          });
           return;
         }
         case "broadcast-transcript-abstention": {
@@ -426,15 +502,19 @@ export function runBroadcastTranscriptWorker(
             malformed();
             return;
           }
-          abstentionByChunkId.set(
-            event.data.chunkId,
-            abstention,
-          );
           try {
-            options.onChunkAbstention?.(abstention);
+            await options.onChunkAbstention?.(abstention);
           } catch {
-            malformed();
+            onWorkerError();
+            return;
           }
+          if (settled) return;
+          abstentionByChunkId.set(event.data.chunkId, abstention);
+          worker.postMessage({
+            type: "broadcast-transcript-terminal-ack",
+            identity,
+            chunkId: event.data.chunkId,
+          });
           return;
         }
         case "broadcast-transcript-gap":
@@ -443,9 +523,12 @@ export function runBroadcastTranscriptWorker(
             resultsByChunkId.has(event.data.chunkId) ||
             abstentionByChunkId.has(event.data.chunkId) ||
             gapReasonByChunkId.has(event.data.chunkId) ||
+            (["transcription-failed", "rate-limited", "outcome-unknown"].includes(
+              event.data.reason,
+            ) &&
+              !dispatchOperationByChunkId.has(event.data.chunkId)) ||
             ![
               "decode-failed",
-              "no-audio",
               "transcription-failed",
               "rate-limited",
               "route-changed",
@@ -455,12 +538,19 @@ export function runBroadcastTranscriptWorker(
             malformed();
             return;
           }
-          gapReasonByChunkId.set(event.data.chunkId, event.data.reason);
           try {
-            options.onChunkGap?.(event.data.chunkId, event.data.reason);
+            await options.onChunkGap?.(event.data.chunkId, event.data.reason);
           } catch {
-            malformed();
+            onWorkerError();
+            return;
           }
+          if (settled) return;
+          gapReasonByChunkId.set(event.data.chunkId, event.data.reason);
+          worker.postMessage({
+            type: "broadcast-transcript-terminal-ack",
+            identity,
+            chunkId: event.data.chunkId,
+          });
           return;
         case "broadcast-transcript-complete": {
           if (
@@ -514,6 +604,14 @@ export function runBroadcastTranscriptWorker(
         case "broadcast-transcript-failed":
           onWorkerError();
       }
+    };
+    let messageTail: Promise<void> = Promise.resolve();
+    const onMessage = (event: MessageEvent<unknown>): void => {
+      messageTail = messageTail
+        .then(() => handleMessage(event))
+        .catch(() => {
+          onWorkerError();
+        });
     };
 
     worker.addEventListener("message", onMessage);

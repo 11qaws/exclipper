@@ -3,11 +3,14 @@ import { describe, expect, it } from "vitest";
 import {
   BroadcastParticipantGroundingPlanContractError,
   createBroadcastParticipantGroundingGapReceipt,
+  createBroadcastParticipantGroundingNoneObservedReceipt,
   createBroadcastParticipantGroundingPlan,
   createBroadcastParticipantGroundingTerminalReceipt,
   createBroadcastParticipantMediaBundleReuseKeys,
   inspectBroadcastParticipantGroundingPlanCompletion,
+  normalizeBroadcastParticipantGroundingPlan,
   normalizeBroadcastParticipantGroundingCellReceipt,
+  normalizeBroadcastParticipantGroundingNoneObservedReceipt,
   projectBroadcastParticipantVoiceRecognition,
   sealBroadcastParticipantGroundingPlan,
   type BroadcastParticipantGroundingCellPlan,
@@ -96,10 +99,13 @@ function enrollmentManifest(
 function planInput(
   options: {
     readonly visualEnabled?: boolean;
+    readonly visualReferenceManifest?: boolean;
     readonly voiceManifest?: ParticipantVoiceEnrollmentManifest | null;
   } = {},
 ): CreateBroadcastParticipantGroundingPlanInput {
   const visualEnabled = options.visualEnabled ?? false;
+  const visualReferenceManifest =
+    options.visualReferenceManifest ?? visualEnabled;
   const voiceManifest = options.voiceManifest ?? null;
   const coveredVoiceParticipantIds =
     voiceManifest === null
@@ -132,10 +138,10 @@ function planInput(
     visual: {
       adapterRevision: "visual-grounding-v1",
       modelRevision: visualEnabled ? "visual-closed-set-v1" : null,
-      referenceManifestHash: visualEnabled
+      referenceManifestHash: visualReferenceManifest
         ? VISUAL_REFERENCE_MANIFEST_HASH
         : null,
-      referenceParticipantIds: visualEnabled
+      referenceParticipantIds: visualReferenceManifest
         ? candidatePassBCastReferences(
             DEFAULT_CANDIDATE_PASS_B_CAST_ROSTER_ID,
           ).map(({ participantId }) => participantId)
@@ -179,8 +185,11 @@ function planInput(
 
 function terminalReceipts(
   plan: BroadcastParticipantGroundingPlan,
-): ReturnType<typeof createBroadcastParticipantGroundingTerminalReceipt>[] {
-  return plan.adapters.flatMap((adapter) =>
+): (
+  | ReturnType<typeof createBroadcastParticipantGroundingTerminalReceipt>
+  | ReturnType<typeof createBroadcastParticipantGroundingNoneObservedReceipt>
+)[] {
+  const cellReceipts = plan.adapters.flatMap((adapter) =>
     adapter.cells.map((cell) => {
       const voiceRecognition =
         adapter.adapter === "voice-identity"
@@ -227,6 +236,20 @@ function terminalReceipts(
       });
     }),
   );
+  const unavailableReceipts = plan.adapters.flatMap((adapter) =>
+    adapter.adapter !== "transcript-names" &&
+    adapter.availability === "unavailable"
+      ? [
+          createBroadcastParticipantGroundingNoneObservedReceipt({
+            plan,
+            adapter: adapter.adapter,
+            operationId: `grounding:${adapter.adapter}:none-observed`,
+            attemptOrdinal: 0,
+          }),
+        ]
+      : [],
+  );
+  return [...cellReceipts, ...unavailableReceipts];
 }
 
 function cell(
@@ -244,7 +267,7 @@ function cell(
 }
 
 describe("broadcast participant grounding pre-context plan", () => {
-  it("allows unavailable visual/voice manifests to seal without inventing identities", async () => {
+  it("requires explicit bounded none-observed receipts before unavailable visual/voice adapters can seal", async () => {
     const plan = await createBroadcastParticipantGroundingPlan(
       planInput({
         voiceManifest: enrollmentManifest("pending"),
@@ -256,7 +279,7 @@ describe("broadcast participant grounding pre-context plan", () => {
     expect(visual).toMatchObject({
       adapter: "visual-identity",
       availability: "unavailable",
-      unavailableReason: "no-verified-reference-manifest",
+      unavailableReason: "unsupported-runtime",
       cells: [],
     });
     expect(voice).toMatchObject({
@@ -269,12 +292,40 @@ describe("broadcast participant grounding pre-context plan", () => {
     expect(voice.referenceManifestHash).toMatch(/^sha256:[a-f0-9]{64}$/u);
     expect(voice.missingParticipantIds).toEqual(plan.expectedParticipantIds);
 
+    const cellOnly = terminalReceipts(plan).filter(
+      (receipt) => receipt.outcome !== "none-observed",
+    );
+    expect(
+      inspectBroadcastParticipantGroundingPlanCompletion(plan, cellOnly),
+    ).toMatchObject({
+      requiredNoneObservedAdapterCount: 2,
+      terminalNoneObservedAdapterCount: 0,
+      missingNoneObservedAdapters: ["visual-identity", "voice-identity"],
+      readyToSeal: false,
+    });
+    expect(() => sealBroadcastParticipantGroundingPlan(plan, cellOnly)).toThrow(
+      /none-observed/u,
+    );
     const sealed = sealBroadcastParticipantGroundingPlan(
       plan,
       terminalReceipts(plan),
     );
     expect(sealed.status).toBe("sealed");
     expect(sealed.terminalCells).toHaveLength(2);
+    expect(sealed.noneObservedReceipts).toEqual([
+      expect.objectContaining({
+        adapter: "visual-identity",
+        outcome: "none-observed",
+        sourceStartMs: 0,
+        sourceEndMs: SOURCE_DURATION_MS,
+      }),
+      expect.objectContaining({
+        adapter: "voice-identity",
+        outcome: "none-observed",
+        sourceStartMs: 0,
+        sourceEndMs: SOURCE_DURATION_MS,
+      }),
+    ]);
     expect(sealed.adapterReceipts).toEqual([
       expect.objectContaining({
         adapter: "transcript-names",
@@ -293,6 +344,144 @@ describe("broadcast participant grounding pre-context plan", () => {
         inputCount: 0,
       }),
     ]);
+  });
+
+  it("runs four-frame visual inspection without pretending the text roster is an image manifest", async () => {
+    const plan = await createBroadcastParticipantGroundingPlan(
+      planInput({
+        visualEnabled: true,
+        visualReferenceManifest: false,
+      }),
+    );
+    const visual = plan.adapters[1];
+
+    expect(visual).toMatchObject({
+      adapter: "visual-identity",
+      availability: "enabled",
+      referenceManifestHash: null,
+      coveredParticipantIds: [],
+      missingParticipantIds: plan.expectedParticipantIds,
+    });
+    expect(visual.cells).toHaveLength(1);
+    expect(visual.cells[0]?.frameTimestampsMs).toEqual([
+      21_000,
+      23_000,
+      26_000,
+      29_000,
+    ]);
+    await expect(
+      normalizeBroadcastParticipantGroundingPlan(plan),
+    ).resolves.toEqual(plan);
+  });
+
+  it("rejects spoofed none-observed source, transcript, model, and whole-source range fences", async () => {
+    const plan = await createBroadcastParticipantGroundingPlan(planInput());
+    const receipt = createBroadcastParticipantGroundingNoneObservedReceipt({
+      plan,
+      adapter: "visual-identity",
+      operationId: "grounding:visual:none-observed:fence-test",
+      attemptOrdinal: 0,
+    });
+    const corruptions = [
+      {
+        ...receipt,
+        sourceFingerprint: `sha256:${"c".repeat(64)}`,
+      },
+      {
+        ...receipt,
+        sourceDurationMs: SOURCE_DURATION_MS - 1,
+      },
+      {
+        ...receipt,
+        transcriptSeal: "transcript:other:sealed",
+      },
+      {
+        ...receipt,
+        adapterRevision: "visual-grounding-spoofed-v1",
+      },
+      {
+        ...receipt,
+        modelRevision: "visual-model-spoofed-v1",
+      },
+      {
+        ...receipt,
+        sourceStartMs: 1,
+      },
+      {
+        ...receipt,
+        sourceEndMs: SOURCE_DURATION_MS - 1,
+      },
+    ];
+    for (const corrupted of corruptions) {
+      expect(
+        normalizeBroadcastParticipantGroundingNoneObservedReceipt(
+          corrupted,
+          plan,
+        ),
+      ).toBeNull();
+    }
+    expect(() =>
+      inspectBroadcastParticipantGroundingPlanCompletion(plan, [
+        ...terminalReceipts(plan).filter(
+          (candidate) =>
+            candidate.outcome !== "none-observed" ||
+            candidate.adapter !== "visual-identity",
+        ),
+        corruptions[0],
+      ]),
+    ).toThrow(/source\/model\/manifest\/range fence/u);
+  });
+
+  it("rejects enabled visual and voice terminals when their direct source or adapter fences drift", async () => {
+    const plan = await createBroadcastParticipantGroundingPlan(
+      planInput({
+        visualEnabled: true,
+        voiceManifest: enrollmentManifest("eligible"),
+      }),
+    );
+    const receipts = terminalReceipts(plan);
+    const visual = receipts.find(
+      (receipt) =>
+        receipt.outcome !== "none-observed" &&
+        receipt.adapter === "visual-identity",
+    );
+    const voice = receipts.find(
+      (receipt) =>
+        receipt.outcome !== "none-observed" &&
+        receipt.adapter === "voice-identity",
+    );
+    if (
+      visual === undefined ||
+      voice === undefined ||
+      visual.outcome === "none-observed" ||
+      voice.outcome === "none-observed"
+    ) {
+      throw new Error("Expected enabled visual and voice terminal fixtures.");
+    }
+    expect(
+      normalizeBroadcastParticipantGroundingCellReceipt(
+        { ...visual, sourceEndMs: visual.sourceEndMs - 1 },
+        plan,
+      ),
+    ).toBeNull();
+    expect(
+      normalizeBroadcastParticipantGroundingCellReceipt(
+        { ...visual, adapterRevision: "visual-extractor-spoofed-v1" },
+        plan,
+      ),
+    ).toBeNull();
+    expect(
+      normalizeBroadcastParticipantGroundingCellReceipt(
+        { ...voice, transcriptSeal: "transcript:other:sealed" },
+        plan,
+      ),
+    ).toBeNull();
+    expect(
+      normalizeBroadcastParticipantGroundingCellReceipt(
+        { ...voice, modelRevision: "voice-model-spoofed-v1" },
+        plan,
+      ),
+    ).toBeNull();
   });
 
   it("enables explicitly bounded partial voice coverage without claiming missing roster members", async () => {
@@ -460,10 +649,10 @@ describe("broadcast participant grounding pre-context plan", () => {
       abstentionReason: "below-absolute-threshold",
     });
     const ambiguousProjection = project([
-        { participantId: participantIds[0]!, normalizedSimilarity: 0.92 },
-        { participantId: participantIds[1]!, normalizedSimilarity: 0.88 },
-        { participantId: participantIds[2]!, normalizedSimilarity: 0.4 },
-      ]);
+      { participantId: participantIds[0]!, normalizedSimilarity: 0.92 },
+      { participantId: participantIds[1]!, normalizedSimilarity: 0.88 },
+      { participantId: participantIds[2]!, normalizedSimilarity: 0.4 },
+    ]);
     expect(ambiguousProjection).toMatchObject({
       outcome: "unidentified",
       participantId: "unknown",
@@ -646,9 +835,7 @@ describe("broadcast participant grounding pre-context plan", () => {
     expect(stricterPlan.adapters[2].adapterFenceKey).not.toBe(
       baselinePlan.adapters[2].adapterFenceKey,
     );
-    expect(stricterPlan.planFingerprint).not.toBe(
-      baselinePlan.planFingerprint,
-    );
+    expect(stricterPlan.planFingerprint).not.toBe(baselinePlan.planFingerprint);
   });
 
   it("shares exact source-fenced bundle keys with post-context candidate confirmation", async () => {
@@ -721,7 +908,10 @@ describe("broadcast participant grounding pre-context plan", () => {
       planFingerprint: plan.planFingerprint,
       plannedCellCount: 2,
       terminalCellCount: 0,
+      requiredNoneObservedAdapterCount: 2,
+      terminalNoneObservedAdapterCount: 0,
       missingCellIds: [],
+      missingNoneObservedAdapters: ["visual-identity", "voice-identity"],
       retryableCellIds: [first.cellId],
       outcomeUnknownCellIds: [second.cellId],
       readyToSeal: false,
@@ -785,7 +975,7 @@ describe("broadcast participant grounding pre-context plan", () => {
       inspectBroadcastParticipantGroundingPlanCompletion(plan, [
         { ...receipt, sourceFingerprint: `sha256:${"c".repeat(64)}` },
       ]),
-    ).toThrow(/source\/model\/manifest fence/u);
+    ).toThrow(/source\/model\/manifest\/range fence/u);
   });
 
   it("requires identified cells to carry only source-roster participants and confidence", async () => {
@@ -963,5 +1153,58 @@ describe("broadcast participant grounding pre-context plan", () => {
         reason: "runtime-unavailable",
       }),
     ).toThrow(/does not name an enabled cell/u);
+  });
+
+  it("replays only a byte-canonical current plan and rejects every stored hash or cell drift", async () => {
+    const plan = await createBroadcastParticipantGroundingPlan(
+      planInput({
+        visualEnabled: true,
+        voiceManifest: enrollmentManifest("eligible"),
+      }),
+    );
+
+    await expect(
+      normalizeBroadcastParticipantGroundingPlan(plan),
+    ).resolves.toEqual(plan);
+
+    const tamperedPlanFingerprint = structuredClone(plan);
+    (
+      tamperedPlanFingerprint as unknown as {
+        planFingerprint: string;
+      }
+    ).planFingerprint = `sha256:${"f".repeat(64)}`;
+    await expect(
+      normalizeBroadcastParticipantGroundingPlan(tamperedPlanFingerprint),
+    ).resolves.toBeNull();
+
+    const tamperedAdapterFence = structuredClone(plan);
+    (
+      tamperedAdapterFence.adapters[1] as unknown as {
+        adapterFenceKey: string;
+      }
+    ).adapterFenceKey = `sha256:${"e".repeat(64)}`;
+    await expect(
+      normalizeBroadcastParticipantGroundingPlan(tamperedAdapterFence),
+    ).resolves.toBeNull();
+
+    const tamperedFrame = structuredClone(plan);
+    (
+      tamperedFrame.adapters[1].cells[0] as unknown as {
+        frameTimestampsMs: number[];
+      }
+    ).frameTimestampsMs[1] = 24_000;
+    await expect(
+      normalizeBroadcastParticipantGroundingPlan(tamperedFrame),
+    ).resolves.toBeNull();
+
+    const tamperedSourceUnit = structuredClone(plan);
+    (
+      tamperedSourceUnit.adapters[0].cells[0] as unknown as {
+        sourceUnitId: string;
+      }
+    ).sourceUnitId = "chapter-spoofed";
+    await expect(
+      normalizeBroadcastParticipantGroundingPlan(tamperedSourceUnit),
+    ).resolves.toBeNull();
   });
 });

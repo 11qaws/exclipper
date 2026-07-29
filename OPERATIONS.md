@@ -1,6 +1,6 @@
 # ExClipper 개인용 운영·배포·복구 계획
 
-## 2026-07-29 `0.8.9` 현재 단일 전사 계약
+## 2026-07-29 `0.9.0` current-only 배포 계약
 
 - 정식 배포 전에는 rolling 호환 경로를 운영하지 않는다. 새 분석 유입을 멈춘 뒤 **Worker 배포 → plain `/healthz`의 service 6·transport 3과 OPTIONS 확인 → 같은 commit의 Pages 배포 → 새 분석 재개** 순서로 교체한다.
 - plain `/healthz` 하나만 현재 provider·model·transport·fallback manifest를 반환한다. 모든 전사 stage·resolve·direct 요청은 이 manifest의 route fingerprint header를 필수로 보내며, 누락·형식 오류·현재 경로 불일치는 quota·R2·provider 실행 전에 각각 400 또는 409로 거부한다.
@@ -14,7 +14,7 @@
 - 현재 production Worker에는 `GROQ_API_KEY` secret 이름이 등록되어 있다. 값은 조회·복사하지 않으며 `wrangler secret list`의 이름과 `secret_text` 유형만 운영 확인 근거로 사용한다. 현재 `wrangler.jsonc`의 선택값은 계속 `qwen`이므로 secret 등록만으로 Groq 요청은 발생하지 않는다.
 - 키는 Pages, 브라우저 저장소, Git, `wrangler.jsonc`의 평문 변수, 오류 본문에 넣지 않는다. 등록 명령은 `npx wrangler secret put GROQ_API_KEY`이며 값은 대화·운영 기록에 다시 복사하지 않는다. `/healthz.providers.groqRoutes.broadcastTranscriptConfigured`와 선택 provider의 `configured/active`만 공개한다.
 - Groq 경로는 공식 `POST https://api.groq.com/openai/v1/audio/transcriptions`, 모델 `whisper-large-v3-turbo`, `language=ko`, `response_format=verbose_json`, segment timestamp, temperature 0으로 고정한다. 브라우저가 모델·언어·endpoint·credential을 정하지 않는다.
-- `free-r2`에서는 Worker가 WAV를 다시 읽거나 Base64로 만들지 않는다. 짧은 private R2 capability URL만 multipart `url` 필드로 Groq에 넘긴다. `paid-direct` 호환 경로만 검증된 WAV를 multipart `file`로 전송한다. 현재 canonical 90초·16kHz·mono·PCM16 WAV 상한은 2,880,044 bytes로 Groq 무료 계정의 공식 25MB file 제한보다 작다.
+- `free-r2`에서는 Worker가 WAV를 다시 읽거나 Base64로 만들지 않는다. 짧은 private R2 capability URL만 multipart `url` 필드로 Groq에 넘긴다. 별도 `paid-direct` 전환 경로만 검증된 WAV를 multipart `file`로 전송한다. 현재 canonical 90초·16kHz·mono·PCM16 WAV 상한은 2,880,044 bytes로 Groq 무료 계정의 공식 25MB file 제한보다 작다.
 - 응답은 최대 128KiB, transcript 20,000자, segment 512개로 제한한다. 한국어 언어 표식, source chunk 길이 안의 유한·정방향 segment timestamp, 한국어 본문을 모두 검증하고 빈 segment 응답만 기존 `[대사 없음]`으로 정규화한다. provider의 request ID, 원문 오류 메시지, credential은 브라우저에 전달하지 않는다.
 - Qwen 기본 route의 bounded fallback은 계속 Gemini이며 Groq secret 때문에 달라지지 않는다. 명시적 Groq `paid-direct` route는 기존 정책상 안전하게 분류된 실패에만 Qwen으로 한 번 fallback할 수 있다. `free-r2` resolve는 staged media 계약을 보존하기 위해 provider 간 자동 fallback을 하지 않는다.
 - 무료 운영에서는 기존 전사 quota gate와 최대 동시 참여자 5명 정책을 공유한다. 공식 무료 계정의 실제 rate limit은 계정별 콘솔 값과 응답 header를 smoke에서 확인해야 하며, 코드가 임의로 더 높은 처리량을 가정하지 않는다. 활성화 전 2초·30초·90초 한국어 WAV, 무발화, 401/429/5xx, R2 object cleanup, 모델 ID/revision header를 검증한다.
@@ -22,11 +22,13 @@
 
 ## 다음 배포 후보 · 후보 파이프라인 전환·복구 계획
 
-- 전사 Worker가 일부 조각을 실패로 반환해도 성공 조각을 버리거나 전체 계획을 처음부터 다시 보내지 않는다. `decode-failed | transcription-failed | rate-limited` 조각만 1초·2초 backoff로 최대 3회 시도하고, 각 성공은 IndexedDB write/readback 뒤 다음 조각 상태에 반영한다. 다음 wave를 시작하기 전 실패 event 자체도 정확한 범위·reason·quota ordinal로 readback되어야 한다.
-- provider 요청 전에는 해당 wave의 모든 대상 범위를 `in-flight`로 먼저 durable commit한다. 탭 종료 뒤 `in-flight` 또는 `outcome-unknown`이 보이면 자동 요청은 0건이어야 하며 명시적 복구 동의만 다음 durable generation을 연다. operation namespace는 uniform/event-boost/refinement를 분리한다.
-- 자동 복구가 끝나기 전에는 진행 패널을 전체 맥락으로 넘기지 않는다. 마지막 시도 뒤에도 실패 조각이 남으면 성공 chapter와 정확한 source range·reason·attempt count를 보존하고 transcript phase를 실패로 닫는다. whole-context API, 의미 후보 탐색, 후보 상세 API는 시작하지 않는다.
-- `outcome-unknown`은 네트워크 단절 뒤 provider 과금 여부를 모르는 상태다. 클라이언트는 exact lease 요청을 한 번 transport replay하고, coordinator가 이미 consume된 operation이라고 답하면 새 operation을 자동 생성하지 않는다. UI의 명시적 재시도만 새 generation을 열며, 그전까지 R2 media와 확보된 chapter를 보존한다.
-- 운영 smoke는 조각 A·B·C 중 B만 첫 시도에 실패시키고 두 번째 Worker가 B만 받는지, A·C의 quota operation과 저장 chapter가 재생성되지 않는지, 최종 exact readback 전에는 context 호출이 0건인지 확인한다. uniform 실패 ID와 event-boost ID가 다르고, outcome-unknown 직후 탭 종료 fixture가 새로고침 뒤 자동 provider 호출 0건인지도 확인한다. 3회 실패 fixture는 transcript `failed`, seal 없음, context 호출 0건이어야 한다.
+- detail cohort가 0개인 정상 empty도 run·input·context·refinement와 빈 후보 순서를 고정한 plan-only checkpoint를 먼저 exact readback해야 한다. 새 계획 callback은 시작 시 잡은 immutable plan lease로만 저장하고, 늦은 이전 계획 CAS가 도착해도 최신 plan-only checkpoint로 명시적으로 rebase한다. 복구 시에는 현재 context를 끝까지 검증한 뒤에만 저장된 evidence·insight·thumbnail·receipt를 hydrate한다. 배포 smoke는 빈 계획, 늦은 구계획 쓰기, context 검증 전 artifact 비노출을 모두 포함한다.
+- 전사 Worker가 일부 조각을 실패로 반환해도 성공 조각을 버리거나 전체 계획을 처음부터 다시 보내지 않는다. `decode-failed | transcription-failed | rate-limited` 조각만 한 bounded wave 안에서 1초·2초 backoff로 최대 3회 시도하고, 각 성공은 IndexedDB write/readback 뒤 다음 조각 상태에 반영한다. 안전한 gap이 남으면 새 generation의 bounded wave를 자동으로 이어가며, 다음 wave를 시작하기 전 실패 event 자체도 정확한 범위·reason·quota ordinal로 readback되어야 한다.
+- provider 요청 전에는 해당 wave의 모든 대상 범위를 `in-flight`로 먼저 durable commit한다. 탭 종료 뒤 `in-flight` 또는 `outcome-unknown`이 보이면 먼저 동일 operation의 exact reconciliation만 수행한다. 미확정 operation을 terminal로 readback한 뒤 무료 route는 다음 durable generation을 자동으로 열고, 유료 route만 명시적 복구 동의를 기다린다. operation namespace는 uniform/event-boost/refinement를 분리한다.
+- 자동 복구가 끝나기 전에는 진행 패널을 전체 맥락으로 넘기지 않는다. bounded wave 뒤 안전한 실패 조각이 남으면 성공 chapter와 정확한 source range·reason·attempt count를 보존하고 다음 generation에서 이어 간다. 결과 불명처럼 자동 재청구할 수 없는 조각만 명시적 복구 대기 상태로 남기며, 그동안 whole-context API, 의미 후보 탐색, 후보 상세 API는 시작하지 않는다.
+- `outcome-unknown`은 네트워크 단절 뒤 provider 실행 여부를 모르는 상태다. 클라이언트는 exact lease 요청을 한 번 transport replay한다. 무료 route는 확인되지 않은 이전 operation을 durable terminal로 고정한 다음 새 generation을 자동으로 열고, 유료 route는 UI의 명시적 재시도만 새 generation을 연다. 어느 경우에도 R2 media와 확보된 chapter는 버리지 않는다.
+- whole-context/refinement 원장 `3.0.0`은 새로고침 시 해당 unit을 먼저 `reconciling`으로 exact readback하고 같은 `operationId + inputDigest`만 1회 조회/replay한다. terminal result가 없고 비전송도 증명되지 않으면 먼저 기존 unit을 `outcome-unknown` terminal로 exact readback한다. 무료 route는 그 뒤 자동 replacement generation을 열고, 유료 route는 `reconcile-current-operation`과 편집자 승인을 기다린다. 새 generation은 `in-flight | reconciling`에서 열 수 없다.
+- 운영 smoke는 조각 A·B·C 중 B만 첫 시도에 실패시키고 두 번째 Worker가 B만 받는지, A·C의 quota operation과 저장 chapter가 재생성되지 않는지, 최종 exact readback 전에는 context 호출이 0건인지 확인한다. uniform 실패 ID와 event-boost ID가 달라야 하고, 3회를 넘겨 회복하는 안전 gap, 결과 불명과 안전 pending이 섞인 190/200 복구, 역순 CAS에서도 성공 셀이 퇴행하지 않는 경우를 함께 검증한다.
 - 배포 전 regression은 최소 세 계약을 고정한다. 17개 ledger 입력은 context 17개를 모두 보존하고 detail 12개가 완성되면 pipeline gap 없이 끝나야 한다. detail 후보 하나가 실패해도 나머지는 저장·공개돼야 한다. 완전 검증 뒤 0개인 입력은 `completedEmpty`로 끝나야 한다.
 - Worker `/healthz`는 `candidateTransport.version`, `mode`, `configured`, required frame count 4와 staged schema를 보고한다. 일시적인 503은 Pages에 영구 cache하지 않고, 성공한 transport 판단도 60초 뒤 갱신한다.
 - 후보 media stage는 private `TRANSCRIPT_MEDIA` bucket의 `transcript/candidate/` prefix를 사용한다. public R2 access는 열지 않는다. 정상 실행 후 object 0개를 확인하고, 실패 smoke에서는 capability 만료 뒤 GET 404와 1일 lifecycle 범위를 확인한다.
@@ -36,7 +38,7 @@
 - candidate bundle smoke는 `Content-Length`가 있는 정상·초과·미달 입력뿐 아니라 헤더 없는 정상·초과 입력도 포함한다. 헤더 없는 초과 stream은 signed exact byte length 직후 413 `PAYLOAD_TOO_LARGE`로 끊기고 R2 object가 남지 않아야 한다.
 - conditional R2 put의 loser는 R2가 본문을 소비한다고 가정하지 않는다. `put() == null` 뒤 강한 일관성의 `head`로 winner metadata·checksum·signature를 재검증하고, 성공하면 `reused`, 실패하면 bounded 오류로 닫되 두 경우 모두 loser pump를 terminal abort한다. Qwen 200 응답이 candidate schema를 어기면 fresh internal quota operation으로 최대 두 번만 복구하고, 모두 실패하면 staged object를 ticket 만료까지 보존해 missing-only 재시도가 재업로드 없이 이어지게 한다.
 - 복구 버튼은 pipeline gap 종류에 따라 작동한다. context 누락은 whole-context checkpoint에서, detail/receipt/frame 누락은 해당 candidate ID만 다시 실행한다. 이미 저장된 insight·receipt·thumbnail이 현재 context fingerprint와 맞으면 failed/cancelled run envelope만으로 다시 결제하지 않는다.
-- candidate detail 완료 직전에는 `putCandidatePassBInsights` 뒤 같은 run ID의 `getCandidatePassBInsights`가 성공하고, 메타데이터와 evidence·insight·model·thumbnail·receipt map이 exact match해야 한다. 사건·반응·클립 가치 설명, 등장인물 상태·근거, 최종 판정, 맥락 일치 또는 프로그램성 판정이 빠진 구형 호환 레코드도 publication을 통과하지 않아야 한다. write/readback 실패를 주입했을 때 `deepPass`, `publication`, `completed/completedEmpty`가 커밋되면 배포하지 않는다. “검증 결과 저장 다시 시도”는 provider API가 아니라 현재 메모리 snapshot의 write/readback만 반복해야 한다.
+- candidate detail 완료 직전에는 `putCandidatePassBInsights` 뒤 같은 run ID의 `getCandidatePassBInsights`가 성공하고, 메타데이터와 evidence·insight·model·thumbnail·계획 때 고정한 canonical context packet·receipt map이 exact match해야 한다. 사건·반응·클립 가치 설명, 등장인물 상태·근거, 최종 판정, 맥락 일치 또는 프로그램성 판정이 빠진 레코드는 publication을 통과하지 않아야 한다. write/readback 실패를 주입했을 때 `deepPass`, `publication`, `completed/completedEmpty`가 커밋되면 배포하지 않는다. “검증 결과 저장 다시 시도”는 provider API가 아니라 현재 메모리 snapshot의 write/readback만 반복해야 한다.
 
 ## 2026-07-27 `0.8.6` Free R2 전사 운영 계획
 
@@ -162,7 +164,7 @@ ExClipper는 공유 서비스가 아니다. 한 사람이 선택한 몇 시간�
 - 두 탭 충돌 방지
 - 새로고침·브라우저 종료·Worker 중단 뒤 복구
 - 저장 확정 전 성공 표시 금지
-- 로컬 백업·가져오기·스키마 migration
+- 현재 스키마의 로컬 백업·가져오기와 exact readback
 - 재현 가능한 배포·검증·롤백
 - 개인정보가 제거된 로컬 진단
 - 저장 공간·모델 캐시·임시 파일 상한
@@ -362,13 +364,13 @@ release 후보는 다음 순서를 전부 통과해야 한다.
 4. lint와 formatting check
 5. 순수 도메인 unit test
 6. 상태 전이표·불변식·property test
-7. IndexedDB schema·migration·실패 주입·백업 왕복 test
+7. IndexedDB current schema·실패 주입·exact readback test
 8. Worker protocol, stale event, 중복·역순 event test
 9. AI golden vector와 작은 품질 회귀 fixture
 10. production build와 artifact hash 생성
 11. GitHub Pages 저장소 하위 경로에서 Playwright E2E
 12. 키보드·스크린리더·axe·forced colors·확대 접근성 검사
-13. service worker 구버전에서 새 버전으로 안전 업데이트 검사
+13. Pages artifact와 Worker route manifest가 같은 current release인지 검사
 14. 민감 문자열·source map·절대 로컬 경로·개발 endpoint 누출 검사
 
 CI는 정상 경로만 확인하지 않는다. 다음 failure injection이 release gate다.
@@ -387,8 +389,8 @@ CI는 정상 경로만 확인하지 않는다. 다음 failure injection이 relea
 ### 7.1 배포 전
 
 1. SemVer, `schemaVersion`, model manifest version을 결정한다.
-2. 변경으로 영향을 받는 저장 형식·Worker protocol·service worker cache를 확인한다.
-3. migration이 있으면 이전 production 백업 fixture로 왕복 테스트한다.
+2. 변경으로 영향을 받는 저장 형식과 Worker protocol을 확인한다.
+3. `0.9.0`에는 DB migration이 없다. 현재 schema 밖 기록은 복원하지 않고 새 분석 대상으로 남기는지 검사한다.
 4. Pages의 실제 `/<repo>/` base에서 preview artifact를 검사한다.
 5. Worker dry-run, unit test, Origin·schema·size·timeout·rate-limit 계약을 검사한다.
 6. `buildId`, commit SHA, artifact SHA-256, model manifest hash, Worker deployment ID, migration 범위를 release record에 남긴다.
@@ -396,11 +398,10 @@ CI는 정상 경로만 확인하지 않는다. 다음 failure injection이 relea
 ### 7.2 배포
 
 - `wrangler deploy --config wrangler.jsonc`로 검증된 정밀 분석 Worker를 먼저 배포한다.
-- `GEMINI_API_KEY`는 `wrangler secret put GEMINI_API_KEY --config wrangler.jsonc`로 설정하고 명령 출력·로그·파일에 값을 남기지 않는다.
+- 필수 secret `GEMINI_API_KEY`, `QWEN_API_KEY`, `TRANSCRIPT_MEDIA_SIGNING_KEY`는 `wrangler secret put <NAME> --config wrangler.jsonc`로 설정하고 명령 출력·로그·파일에 값을 남기지 않는다. 선택형 Groq 경로를 활성화할 때만 `GROQ_API_KEY`를 사용한다.
 - Worker `/healthz`와 production Origin preflight가 통과한 뒤 GitHub Actions가 검증된 Pages artifact를 배포한다.
-- 배포 중 DB migration은 없다. 브라우저별 migration은 사용자가 안전한 업데이트를 승인한 뒤 실행된다.
+- 배포 중 DB migration은 없다. 현재 schema 밖 브라우저 기록은 새 분석 대상으로 남는다.
 - 앱은 작업 중인 탭을 자동 새로고침하지 않는다.
-- service worker는 새 버전을 `waiting`에 두고 `작업 저장 후 업데이트`를 제안한다.
 - model manifest는 immutable version URL과 hash를 사용한다. 이미 시작한 run의 모델을 중간에 바꾸지 않는다.
 
 ### 7.3 배포 후 smoke test
@@ -410,11 +411,12 @@ CI는 정상 경로만 확인하지 않는다. 다음 failure injection이 relea
 - source 선택과 짧은 파일 preflight가 된다.
 - Worker가 시작되고 작은 signals-only 분석 fixture가 완료된다.
 - 정밀 분석 Worker `/healthz`가 200이고 production Origin의 OPTIONS가 204다.
-- 1초 canonical WAV smoke가 provider raw 오류 없이 구조화 응답 또는 안전한 예상 오류로 끝난다.
+- 2초·90초 canonical raw WAV 전사 smoke가 provider raw 오류 없이 구조화 응답으로 끝난다.
+- 후보 smoke는 bounded WAV와 서로 다른 JPEG 4장을 private R2에 stage한 뒤 resolve하고, terminal 뒤 object가 정리됐는지 확인한다.
 - IndexedDB 새 프로젝트 저장과 새로고침 복원이 된다.
 - 모델 manifest 실패 시 앱 전체가 멈추지 않고 명시적 폴백이 나온다.
 - 기본 export JSON을 생성하고 다시 가져올 수 있다.
-- 브라우저 개발자 도구에서 정밀 분석 요청이 고정 `{ audioBase64, candidateDurationMs, videoFrames?, castRosterId? }` 계약만 사용하고, roster 값이 닫힌 ID인지 확인한다.
+- 브라우저 개발자 도구에서 전사 raw WAV와 후보 media bundle stage → 작은 resolve 요청만 사용하고, 후보 bundle이 오디오·서로 다른 화면 4장·닫힌 roster ID·현재 route fingerprint를 정확히 포함하는지 확인한다.
 
 ## 8. 롤백과 호환성
 
@@ -426,16 +428,16 @@ CI는 정상 경로만 확인하지 않는다. 다음 failure injection이 relea
 
 ### 8.2 데이터 롤백
 
-코드 롤백이 DB downgrade를 의미하지는 않는다. 새 schema를 구버전 코드가 읽지 못하면 다음처럼 안전 실패한다.
+`0.9.0`은 정식 배포 전 current-only 계약이므로 DB downgrade·구버전 import·schema
+migration을 제공하지 않는다.
 
-- 구버전 앱이 더 높은 schema를 발견하면 쓰기를 금지하고 `이 프로젝트는 더 새 버전에서 만들어졌어요`라고 안내한다.
-- import 가능한 과거 schema 범위와 읽기 전용 범위를 release note에 명시한다.
-- migration은 먼저 백업을 만든 뒤 새 object store 또는 새 revision에 쓴다.
-- 검증이 끝난 뒤에만 active schema pointer를 원자적으로 바꾼다.
-- 실패하면 기존 pointer를 유지하고 새 store를 폐기 가능한 상태로 표시한다.
-- destructive migration은 별도 사용자 확인과 복구 파일 없이는 실행하지 않는다.
-
-초기 정책은 최근 두 minor schema의 가져오기와 migration을 지원하고, 그보다 오래된 형식은 읽기 전용 변환 도구 또는 중간 버전을 안내하는 것이다. 실제 지원 범위는 release마다 fixture로 입증한 값만 적는다.
+- 코드 롤백은 동일한 current schema를 읽는 검증된 commit 사이에서만 수행한다.
+- 과거 Retto/ExClipper 개발 DB는 현재 namespace에서 열지 않는다.
+- current schema와 정확히 일치하지 않는 record는 수정하거나 채워 넣지 않고 새 분석 대상으로 남긴다.
+- 현재 DB 자체가 손상된 경우에는 완료된 export를 보존한 뒤 해당 current namespace를
+  명시적으로 초기화하고 새 분석을 시작한다.
+- 정식 배포 이후 호환 정책이 필요해질 때 별도 release에서 설계하며, 이번 파이프라인에
+  미리 migration 분기를 넣지 않는다.
 
 ## 9. 저장 공간·대역폭·보존 상한
 

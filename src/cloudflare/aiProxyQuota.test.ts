@@ -32,6 +32,13 @@ import {
 } from "../analysis/candidatePassBGemini";
 import { CANDIDATE_PASS_B_SAMPLE_RATE_HZ } from "../analysis/candidatePassBWorkerProtocol";
 import {
+  createBroadcastParticipantGrounding,
+  participantContextForBroadcastRange,
+} from "../analysis/broadcastParticipantGrounding";
+import {
+  currentCandidatePassBContext,
+} from "../testSupport/candidatePassBCurrentFixture";
+import {
   handleBroadcastTranscriptRequest,
   handleBroadcastContextRequest,
   handleCandidateInsightRequest,
@@ -218,22 +225,7 @@ function hangingQuotaRequest(
   } as RequestInit & { duplex: "half" });
 }
 
-function candidateInsightBody(candidateDurationMs = 1_000): {
-  readonly audioBase64: string;
-  readonly candidateDurationMs: number;
-  readonly videoFrames: readonly [
-    {
-      readonly timestampMs: number;
-      readonly mimeType: "image/jpeg";
-      readonly dataBase64: string;
-    },
-    {
-      readonly timestampMs: number;
-      readonly mimeType: "image/jpeg";
-      readonly dataBase64: string;
-    },
-  ];
-} {
+function candidateInsightBody(candidateDurationMs = 1_000) {
   return {
     audioBase64: encodeCandidatePassBBase64(silentWav(candidateDurationMs)),
     candidateDurationMs,
@@ -244,11 +236,24 @@ function candidateInsightBody(candidateDurationMs = 1_000): {
         dataBase64: "aGVsbG8=",
       },
       {
-        timestampMs: candidateDurationMs - 100,
+        timestampMs: Math.max(101, Math.floor(candidateDurationMs * 0.3)),
         mimeType: "image/jpeg",
         dataBase64: "d29ybGQ=",
       },
-    ],
+      {
+        timestampMs: Math.max(102, Math.floor(candidateDurationMs * 0.6)),
+        mimeType: "image/jpeg",
+        dataBase64: "aGVsbG8=",
+      },
+      {
+        timestampMs: Math.max(103, candidateDurationMs - 1),
+        mimeType: "image/jpeg",
+        dataBase64: "d29ybGQ=",
+      },
+    ] as const,
+    castRosterId: null,
+    outputLanguage: "ko" as const,
+    context: currentCandidatePassBContext(),
   };
 }
 
@@ -264,6 +269,48 @@ function hangingRejectedResponse(): Response {
     status: 400,
     headers: { "Content-Type": "application/json" },
   });
+}
+
+function currentBroadcastContextBody(): unknown {
+  const sourceDurationMs = 60_000;
+  const chapters = [
+    {
+      chapterId: "chapter-1",
+      startMs: 0,
+      endMs: sourceDurationMs,
+      evidenceMode: "complete-transcript" as const,
+      evidenceCoverageRatio: 1,
+      summaryKo: "스트리머가 방송 중 있었던 일을 차분하게 설명합니다.",
+    },
+  ];
+  const participantGrounding = createBroadcastParticipantGrounding({
+    sourceDurationMs,
+    castRosterId: null,
+    chapters,
+  });
+  return {
+    sourceDurationMs,
+    chapters,
+    candidates: [
+      {
+        candidateId: "candidate-1",
+        startMs: 5_000,
+        endMs: 50_000,
+        transcriptKo: "방금 있었던 일을 다시 설명할게요.",
+        eventSummaryKo: "방송 중 발생한 사건을 설명합니다.",
+        reactionSummaryKo: "차분한 목소리로 상황을 정리합니다.",
+        participantContextKo: participantContextForBroadcastRange(
+          participantGrounding,
+          5_000,
+          50_000,
+        ),
+        chatReactionSummaryKo: null,
+      },
+    ],
+    castRosterId: null,
+    participantGrounding,
+    outputLanguage: "ko",
+  };
 }
 
 function jsonResponse(payload: unknown): Response {
@@ -946,30 +993,7 @@ describe("AI quota integration at the paid Worker boundary", () => {
   });
 
   it("does not pay for a context fallback when a 200 response body never finishes", async () => {
-    const serializedBody = JSON.stringify({
-      sourceDurationMs: 60_000,
-      chapters: [
-        {
-          chapterId: "chapter-1",
-          startMs: 0,
-          endMs: 60_000,
-          evidenceMode: "complete-transcript",
-          evidenceCoverageRatio: 1,
-          summaryKo: "스트리머가 방송 중 있었던 일을 차분하게 설명합니다.",
-        },
-      ],
-      candidates: [
-        {
-          candidateId: "candidate-1",
-          startMs: 5_000,
-          endMs: 50_000,
-          transcriptKo: "방금 있었던 일을 다시 설명할게요.",
-          eventSummaryKo: "방송 중 발생한 사건을 설명합니다.",
-          reactionSummaryKo: "차분한 목소리로 상황을 정리합니다.",
-          chatReactionSummaryKo: null,
-        },
-      ],
-    });
+    const serializedBody = JSON.stringify(currentBroadcastContextBody());
     const lease = quotaLease(
       await payloadDigest(new TextEncoder().encode(serializedBody)),
       "context",

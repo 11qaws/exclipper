@@ -244,6 +244,21 @@ describe("semantic refinement active evidence", () => {
     expect(
       leadInputs.map(({ requestInput }) => requestInput.chapters),
     ).toEqual([[]]);
+    expect(
+      leadInputs[0]?.requestInput.participantGrounding,
+    ).toMatchObject({
+      status: "sealed",
+      transcriptSourceChapterIds: [],
+    });
+    expect(
+      leadInputs[0]?.requestInput.participantGrounding.adapterReceipts.find(
+        ({ adapter }) => adapter === "transcript-names",
+      ),
+    ).toMatchObject({
+      status: "completed",
+      inputCount: 0,
+      processedCount: 0,
+    });
   });
 
   it("binds the semantic signature to the active route projection", async () => {

@@ -7,16 +7,31 @@ import {
   checkpointBroadcastContextSessionRefinementEvidenceLedger,
   checkpointBroadcastContextSessionRefinementTranscript,
   checkpointBroadcastContextSessionTranscript,
+  checkpointBroadcastContextSessionVisualInspection,
   cloneBroadcastContextSessionRecord,
   commitBroadcastContextSessionContext,
   createBroadcastParticipantGroundingInputSignature,
   invalidateBroadcastContextSessionContext,
+  partitionBroadcastContextSessionChapters,
+  parseBroadcastParticipantPreContextCheckpointJson,
   parseBroadcastContextSessionRefinementEvidenceLedger,
   reconcileBroadcastContextSessionRefinementEvidenceLifecycle,
+  restoreBroadcastParticipantPreContextCheckpoint,
+  serializeBroadcastParticipantPreContextCheckpoint,
   type BroadcastContextSessionRecord,
 } from "./broadcastContextSessionStore";
-import { createBroadcastParticipantGrounding } from "../analysis/broadcastParticipantGrounding";
+import {
+  completeBroadcastParticipantPreContext,
+  orchestrateBroadcastParticipantPreContext,
+  prepareBroadcastParticipantPreContext,
+} from "../analysis/broadcastParticipantPreContextOrchestration";
+import {
+  createBroadcastParticipantGrounding,
+  rebaseBroadcastParticipantGrounding,
+} from "../analysis/broadcastParticipantGrounding";
+import { createBroadcastParticipantGroundingNoneObservedReceipt } from "../analysis/broadcastParticipantGroundingPlan";
 import { compactBroadcastContextChapters } from "../analysis/broadcastContextChapterCompaction";
+import { createBroadcastContextRequest } from "../analysis/broadcastContextProtocol";
 import { DEFAULT_CANDIDATE_PASS_B_CAST_ROSTER_ID } from "../analysis/participantRoster";
 import {
   createBroadcastContextPhaseLedger,
@@ -34,10 +49,21 @@ import {
 import { createVerifiedNoSpeechRunReceiptForTest } from "../testSupport/broadcastSpeechActivityTestReceipt";
 import {
   createBroadcastTranscriptResolvedEvidenceCheckpoint,
+  parseBroadcastTranscriptResolvedEvidenceCheckpointJson,
   rebaseBroadcastTranscriptResolvedEvidenceModelRevision,
   recordBroadcastTranscriptResolvedEvidence,
   serializeBroadcastTranscriptResolvedEvidenceCheckpoint,
 } from "../analysis/broadcastTranscriptResolvedEvidence";
+import {
+  BROADCAST_TRANSCRIPT_VISUAL_AUDIO_EXTRACTION_REVISION,
+  createBroadcastTranscriptVisualInspectionPlan,
+  createBroadcastTranscriptVisualPreparedFrameReceipt,
+  createBroadcastTranscriptVisualProviderSettlement,
+  createBroadcastTranscriptVisualProviderSettlementLedger,
+  recordBroadcastTranscriptVisualProviderSettlement,
+} from "../analysis/broadcastTranscriptVisualInspectionQueue";
+import { createBroadcastTranscriptVisualInspectionRunnerCheckpoint } from "../analysis/broadcastTranscriptVisualInspectionRunner";
+import { serializeBroadcastTranscriptVisualInspectionRunnerCheckpoint } from "../analysis/broadcastTranscriptVisualContextProjection";
 import {
   broadcastTranscriptProviderReceiptCheckpointModelRevision,
   createBroadcastTranscriptProviderReceiptCheckpoint,
@@ -65,12 +91,17 @@ import {
 } from "../analysis/broadcastRefinementEvidenceLedger";
 import { DISCOVERED_LEAD_REFINEMENT_VERSION } from "../analysis/discoveredLeadRefinement";
 import { YOUTUBE_CAPTION_MODEL_REVISION } from "../analysis/youtubeCaptionTrack";
+import { inspectCurrentTranscriptCheckpoint } from "../app/analysisPipelineSuccess";
+import {
+  createCurrentProviderTranscriptSourceIdentityFence,
+  transcriptOperationKey,
+} from "../app/transcriptPhase";
 
 const record: BroadcastContextSessionRecord = {
   kind: "broadcastContextSession",
   runId: "run-1",
   schemaVersion: BROADCAST_CONTEXT_SESSION_SCHEMA_VERSION,
-  inputSignature: "source-signature",
+  inputSignature: `sha256:${"a".repeat(64)}`,
   sourceDurationMs: 300_000,
   completeAudioCoverage: true,
   chapters: [
@@ -87,9 +118,11 @@ const record: BroadcastContextSessionRecord = {
   fragmentGaps: [],
   transcriptEvidenceInputSignature: null,
   transcriptEvidenceCheckpointJson: null,
+  transcriptVisualInspectionCheckpointJson: null,
   transcriptProviderReceiptInputSignature: null,
   transcriptProviderReceiptCheckpointJson: null,
-  modelRevision: "qwen3-asr-flash-api-reviewed-2026-07-22",
+  modelRevision:
+    "qwen3.5-omni-flash-audio-transcript-90s-reviewed-2026-07-22",
   sourceCastRosterId: null,
   transcriptSealOperationKey: null,
   participantGroundingInputSignature: null,
@@ -107,24 +140,104 @@ const record: BroadcastContextSessionRecord = {
   recordedAt: "2026-07-22T04:00:00.000Z",
 };
 
-function completedContextRecord(): BroadcastContextSessionRecord {
-  const participantGrounding = createBroadcastParticipantGrounding({
+const completedTranscriptSeal =
+  "run-1:source:event-boost:attempt-0";
+const completedParticipantPreContext =
+  await orchestrateBroadcastParticipantPreContext({
+    sourceFingerprint: record.inputSignature,
     sourceDurationMs: record.sourceDurationMs,
+    transcriptSeal: completedTranscriptSeal,
     castRosterId: record.sourceCastRosterId,
-    chapters: record.chapters,
+    dialogueChapters: record.chapters,
+    transcriptModelRevision: record.modelRevision,
+  });
+const completedParticipantCheckpointJson =
+  await serializeBroadcastParticipantPreContextCheckpoint(
+    completedParticipantPreContext,
+    {
+      sourceDurationMs: record.sourceDurationMs,
+      sourceCastRosterId: record.sourceCastRosterId,
+      transcriptSealOperationKey: completedTranscriptSeal,
+      dialogueChapters: record.chapters,
+      participantGroundingPlanFingerprint:
+        completedParticipantPreContext.planFingerprint,
+    },
+  );
+
+async function participantCheckpointForSession(
+  value: Pick<
+    BroadcastContextSessionRecord,
+    | "inputSignature"
+    | "sourceDurationMs"
+    | "sourceCastRosterId"
+    | "transcriptSealOperationKey"
+    | "modelRevision"
+  >,
+  dialogueChapters: readonly BroadcastContextSessionRecord["chapters"][number][],
+) {
+  if (value.transcriptSealOperationKey === null) {
+    throw new TypeError("The test participant checkpoint requires a transcript seal.");
+  }
+  const prepared = await prepareBroadcastParticipantPreContext({
+    sourceFingerprint: value.inputSignature,
+    sourceDurationMs: value.sourceDurationMs,
+    transcriptSeal: value.transcriptSealOperationKey,
+    castRosterId: value.sourceCastRosterId,
+    dialogueChapters,
+    transcriptModelRevision: value.modelRevision,
+  });
+  const unavailableReceipts = prepared.plan.adapters.flatMap((adapter) =>
+    adapter.adapter === "transcript-names" ||
+    adapter.availability !== "unavailable" ||
+    prepared.plan.expectedParticipantIds.length === 0
+      ? []
+      : [
+          createBroadcastParticipantGroundingNoneObservedReceipt({
+            plan: prepared.plan,
+            adapter: adapter.adapter,
+            operationId: `test.${adapter.adapter}.none-observed`,
+            attemptOrdinal: 0,
+          }),
+        ],
+  );
+  const result = completeBroadcastParticipantPreContext(prepared, {
+    visualNoneObservedReceipt: unavailableReceipts.find(
+      ({ adapter }) => adapter === "visual-identity",
+    ),
+    voiceNoneObservedReceipt: unavailableReceipts.find(
+      ({ adapter }) => adapter === "voice-identity",
+    ),
   });
   return {
+    result,
+    checkpointJson:
+      await serializeBroadcastParticipantPreContextCheckpoint(result, {
+        sourceDurationMs: value.sourceDurationMs,
+        sourceCastRosterId: value.sourceCastRosterId,
+        transcriptSealOperationKey: value.transcriptSealOperationKey,
+        dialogueChapters,
+        participantGroundingPlanFingerprint: result.planFingerprint,
+      }),
+  };
+}
+
+function completedContextRecord(): BroadcastContextSessionRecord {
+  const participantGrounding = completedParticipantPreContext.grounding;
+  return {
     ...record,
-    transcriptSealOperationKey: "run-1:source:event-boost:attempt-0",
+    transcriptSealOperationKey: completedTranscriptSeal,
     participantGroundingInputSignature: "participant-signature",
-    participantGroundingPlanFingerprint: "participant-plan-fingerprint-v1",
-    participantGroundingCheckpointJson: JSON.stringify(participantGrounding),
+    participantGroundingPlanFingerprint:
+      completedParticipantPreContext.planFingerprint,
+    participantGroundingCheckpointJson:
+      completedParticipantCheckpointJson,
     contextInputSignature: "context-signature-v1",
     contextInputCheckpointJson: JSON.stringify({
       sourceDurationMs: record.sourceDurationMs,
       chapters: record.chapters,
       candidates: [],
       participantGrounding,
+      castRosterId: record.sourceCastRosterId,
       outputLanguage: "ko",
     }),
     contextResultJson: JSON.stringify({ schemaVersion: "1.7.0" }),
@@ -227,6 +340,83 @@ function transcriptEvidenceCheckpointJson(
           ),
         );
   return serializeBroadcastTranscriptResolvedEvidenceCheckpoint(checkpoint);
+}
+
+function visualInspectionSession(): BroadcastContextSessionRecord {
+  const transcriptInputSignature = "transcript-visual-plan-v1";
+  return cloneBroadcastContextSessionRecord({
+    ...record,
+    chapters: [],
+    transcriptEvidenceInputSignature: transcriptInputSignature,
+    transcriptEvidenceCheckpointJson: transcriptEvidenceCheckpointJson(
+      transcriptInputSignature,
+    ),
+    transcriptSealOperationKey: transcriptInputSignature,
+  });
+}
+
+function visualInspectionRunnerCheckpointJson(
+  terminal: boolean,
+  session = visualInspectionSession(),
+): string {
+  const evidence = parseBroadcastTranscriptResolvedEvidenceCheckpointJson(
+    session.transcriptEvidenceCheckpointJson!,
+  );
+  if (evidence === null) throw new TypeError("Test evidence must be current.");
+  const plan = createBroadcastTranscriptVisualInspectionPlan(evidence);
+  if (!terminal) {
+    return serializeBroadcastTranscriptVisualInspectionRunnerCheckpoint(
+      createBroadcastTranscriptVisualInspectionRunnerCheckpoint({ plan }),
+      plan,
+    );
+  }
+  const receipt = createBroadcastTranscriptVisualPreparedFrameReceipt({
+    plan,
+    cellId: "visual:asr-001",
+    frameContentFingerprints: [
+      `sha256:${"1".repeat(64)}`,
+      `sha256:${"2".repeat(64)}`,
+      `sha256:${"3".repeat(64)}`,
+      `sha256:${"4".repeat(64)}`,
+    ],
+    audioEvidence: {
+      sourceStartMs: 0,
+      sourceEndMs: session.sourceDurationMs,
+      codec: "audio/wav;codecs=pcm_s16le",
+      extractionRevision:
+        BROADCAST_TRANSCRIPT_VISUAL_AUDIO_EXTRACTION_REVISION,
+      contentFingerprint: `sha256:${"5".repeat(64)}`,
+    },
+  });
+  const providerLedger = recordBroadcastTranscriptVisualProviderSettlement(
+    createBroadcastTranscriptVisualProviderSettlementLedger(plan),
+    plan,
+    createBroadcastTranscriptVisualProviderSettlement({
+      plan,
+      cellId: "visual:asr-001",
+      preparedFrameReceipt: receipt,
+      providerModelRevision: "qwen-omni-visual-v1",
+      operationId: "visual-operation-1",
+      attemptOrdinal: 0,
+      outcome: "completed",
+      editorialFinding: "quiet-success",
+      summaryKo: "네 화면에서 조용한 성공 장면을 확인했다.",
+      providerResponseFingerprint: `sha256:${"a".repeat(64)}`,
+      participantOutcome: {
+        presence: "none-present",
+        summaryKo: "등장인물이 확인되지 않았습니다.",
+        participants: [],
+      },
+    }),
+  );
+  return serializeBroadcastTranscriptVisualInspectionRunnerCheckpoint(
+    createBroadcastTranscriptVisualInspectionRunnerCheckpoint({
+      plan,
+      preparedFrameReceipts: [receipt],
+      providerLedger,
+    }),
+    plan,
+  );
 }
 
 function contextPhaseLedgerJson(
@@ -613,7 +803,7 @@ describe("broadcastContextSessionStore", () => {
     };
 
     expect(aggregateRevision).toContain(
-      "broadcast-transcript-mixed-v1:",
+      "broadcast-transcript-mixed-v2:",
     );
     expect(cloneBroadcastContextSessionRecord(mixed)).toEqual(mixed);
   });
@@ -627,215 +817,37 @@ describe("broadcastContextSessionStore", () => {
     expect(cloned.fragmentGaps).not.toBe(record.fragmentGaps);
   });
 
-  it("migrates a legacy 1.2 checkpoint without discarding paid chapters", () => {
-    const legacy: Record<string, unknown> = {
-      ...record,
-      schemaVersion: "1.2.0",
-    };
-    Reflect.deleteProperty(legacy, "fragmentGaps");
-    Reflect.deleteProperty(legacy, "participantGroundingInputSignature");
-    Reflect.deleteProperty(legacy, "participantGroundingCheckpointJson");
-    Reflect.deleteProperty(legacy, "sourceCastRosterId");
-    Reflect.deleteProperty(legacy, "transcriptSealOperationKey");
-    Reflect.deleteProperty(legacy, "contextInputCheckpointJson");
-    Reflect.deleteProperty(legacy, "contextPhaseLedgerJson");
-    Reflect.deleteProperty(legacy, "refinementTranscriptInputSignature");
-    Reflect.deleteProperty(legacy, "refinementTranscriptCheckpointJson");
-    Reflect.deleteProperty(legacy, "transcriptEvidenceInputSignature");
-    Reflect.deleteProperty(legacy, "transcriptEvidenceCheckpointJson");
-    expect(cloneBroadcastContextSessionRecord(legacy)).toMatchObject({
-      schemaVersion: BROADCAST_CONTEXT_SESSION_SCHEMA_VERSION,
-      chapters: record.chapters,
-      gapChunkIds: [],
-      fragmentGaps: [],
-      participantGroundingInputSignature: null,
-      participantGroundingCheckpointJson: null,
-      sourceCastRosterId: null,
-      transcriptSealOperationKey: null,
-      contextInputCheckpointJson: null,
-      contextPhaseLedgerJson: null,
-      refinementTranscriptInputSignature: null,
-      refinementTranscriptCheckpointJson: null,
-    });
-  });
-
-  it("migrates a legacy 1.3 checkpoint without discarding paid context", () => {
-    const legacy: Record<string, unknown> = {
-      ...record,
-      schemaVersion: "1.3.0",
-      contextInputSignature: "context-signature",
-      contextResultJson: JSON.stringify({ schemaVersion: "1.6.0" }),
-    };
-    Reflect.deleteProperty(legacy, "participantGroundingInputSignature");
-    Reflect.deleteProperty(legacy, "participantGroundingCheckpointJson");
-    Reflect.deleteProperty(legacy, "sourceCastRosterId");
-    Reflect.deleteProperty(legacy, "transcriptSealOperationKey");
-    Reflect.deleteProperty(legacy, "contextInputCheckpointJson");
-    Reflect.deleteProperty(legacy, "contextPhaseLedgerJson");
-    Reflect.deleteProperty(legacy, "refinementTranscriptInputSignature");
-    Reflect.deleteProperty(legacy, "refinementTranscriptCheckpointJson");
-    Reflect.deleteProperty(legacy, "transcriptEvidenceInputSignature");
-    Reflect.deleteProperty(legacy, "transcriptEvidenceCheckpointJson");
-    expect(cloneBroadcastContextSessionRecord(legacy)).toMatchObject({
-      schemaVersion: BROADCAST_CONTEXT_SESSION_SCHEMA_VERSION,
-      participantGroundingInputSignature: null,
-      participantGroundingCheckpointJson: null,
-      sourceCastRosterId: null,
-      transcriptSealOperationKey: null,
-      contextInputCheckpointJson: null,
-      contextPhaseLedgerJson: null,
-      refinementTranscriptInputSignature: null,
-      refinementTranscriptCheckpointJson: null,
-      contextInputSignature: "context-signature",
-      contextResultJson: JSON.stringify({ schemaVersion: "1.6.0" }),
-    });
-  });
-
-  it("migrates an unpublished 1.4 checkpoint without treating old context as exactly bound", () => {
-    const legacy: Record<string, unknown> = {
-      ...record,
-      schemaVersion: "1.4.0",
-      contextInputSignature: "context-signature",
-      contextResultJson: JSON.stringify({ schemaVersion: "1.7.0" }),
-    };
-    Reflect.deleteProperty(legacy, "sourceCastRosterId");
-    Reflect.deleteProperty(legacy, "transcriptSealOperationKey");
-    Reflect.deleteProperty(legacy, "contextInputCheckpointJson");
-    Reflect.deleteProperty(legacy, "contextPhaseLedgerJson");
-    Reflect.deleteProperty(legacy, "refinementTranscriptInputSignature");
-    Reflect.deleteProperty(legacy, "refinementTranscriptCheckpointJson");
-    Reflect.deleteProperty(legacy, "transcriptEvidenceInputSignature");
-    Reflect.deleteProperty(legacy, "transcriptEvidenceCheckpointJson");
-
-    expect(cloneBroadcastContextSessionRecord(legacy)).toMatchObject({
-      schemaVersion: BROADCAST_CONTEXT_SESSION_SCHEMA_VERSION,
-      sourceCastRosterId: null,
-      transcriptSealOperationKey: null,
-      contextInputSignature: "context-signature",
-      contextInputCheckpointJson: null,
-      contextPhaseLedgerJson: null,
-      refinementTranscriptInputSignature: null,
-      refinementTranscriptCheckpointJson: null,
-      contextResultJson: JSON.stringify({ schemaVersion: "1.7.0" }),
-    });
-  });
-
-  it("migrates a 1.5 checkpoint with an explicitly empty phase ledger", () => {
-    const legacy: Record<string, unknown> = {
-      ...completedContextRecord(),
-      schemaVersion: "1.5.0",
-    };
-    Reflect.deleteProperty(legacy, "contextPhaseLedgerJson");
-    Reflect.deleteProperty(legacy, "refinementTranscriptInputSignature");
-    Reflect.deleteProperty(legacy, "refinementTranscriptCheckpointJson");
-    Reflect.deleteProperty(legacy, "transcriptEvidenceInputSignature");
-    Reflect.deleteProperty(legacy, "transcriptEvidenceCheckpointJson");
-
-    expect(cloneBroadcastContextSessionRecord(legacy)).toMatchObject({
-      schemaVersion: BROADCAST_CONTEXT_SESSION_SCHEMA_VERSION,
-      contextInputSignature: "context-signature-v1",
-      contextPhaseLedgerJson: null,
-      refinementTranscriptInputSignature: null,
-      refinementTranscriptCheckpointJson: null,
-      contextResultJson: JSON.stringify({ schemaVersion: "1.7.0" }),
-    });
-  });
-
-  it("migrates a 1.6 checkpoint with no refinement transcript checkpoint", () => {
-    const legacy: Record<string, unknown> = {
-      ...completedContextRecord(),
-      schemaVersion: "1.6.0",
-    };
-    Reflect.deleteProperty(legacy, "refinementTranscriptInputSignature");
-    Reflect.deleteProperty(legacy, "refinementTranscriptCheckpointJson");
-    Reflect.deleteProperty(legacy, "transcriptEvidenceInputSignature");
-    Reflect.deleteProperty(legacy, "transcriptEvidenceCheckpointJson");
-
-    expect(cloneBroadcastContextSessionRecord(legacy)).toMatchObject({
-      schemaVersion: BROADCAST_CONTEXT_SESSION_SCHEMA_VERSION,
-      contextInputSignature: "context-signature-v1",
-      contextResultJson: JSON.stringify({ schemaVersion: "1.7.0" }),
-      refinementTranscriptInputSignature: null,
-      refinementTranscriptCheckpointJson: null,
-    });
-  });
-
-  it("migrates a legacy 1.7 checkpoint without inventing resolved abstention evidence", () => {
-    const legacy: Record<string, unknown> = {
-      ...record,
-      schemaVersion: "1.7.0",
-    };
-    Reflect.deleteProperty(legacy, "transcriptEvidenceInputSignature");
-    Reflect.deleteProperty(legacy, "transcriptEvidenceCheckpointJson");
-
-    expect(cloneBroadcastContextSessionRecord(legacy)).toMatchObject({
-      schemaVersion: BROADCAST_CONTEXT_SESSION_SCHEMA_VERSION,
-      chapters: record.chapters,
-      transcriptEvidenceInputSignature: null,
-      transcriptEvidenceCheckpointJson: null,
-    });
-  });
-
-  it("migrates a legacy 1.8 checkpoint without inventing provider receipts", () => {
-    const legacy: Record<string, unknown> = {
-      ...record,
-      schemaVersion: "1.8.0",
-    };
-    Reflect.deleteProperty(
-      legacy,
-      "transcriptProviderReceiptInputSignature",
-    );
-    Reflect.deleteProperty(
-      legacy,
-      "transcriptProviderReceiptCheckpointJson",
-    );
-
-    expect(cloneBroadcastContextSessionRecord(legacy)).toMatchObject({
-      schemaVersion: BROADCAST_CONTEXT_SESSION_SCHEMA_VERSION,
-      chapters: record.chapters,
-      transcriptEvidenceInputSignature: null,
-      transcriptEvidenceCheckpointJson: null,
-      transcriptProviderReceiptInputSignature: null,
-      transcriptProviderReceiptCheckpointJson: null,
-    });
-  });
-
-  it("migrates a legacy 1.9 checkpoint without inventing a participant plan fence", () => {
-    const legacy: Record<string, unknown> = {
-      ...completedContextRecord(),
-      schemaVersion: "1.9.0",
-    };
-    Reflect.deleteProperty(legacy, "participantGroundingPlanFingerprint");
-
-    expect(cloneBroadcastContextSessionRecord(legacy)).toMatchObject({
-      schemaVersion: BROADCAST_CONTEXT_SESSION_SCHEMA_VERSION,
-      participantGroundingInputSignature: "participant-signature",
-      participantGroundingPlanFingerprint: null,
-      participantGroundingCheckpointJson:
-        completedContextRecord().participantGroundingCheckpointJson,
-      contextInputSignature: "context-signature-v1",
-      contextResultJson: JSON.stringify({ schemaVersion: "1.7.0" }),
-    });
-  });
-
-  it("does not derive a new paid context from a migrated session without its original plan fence", () => {
-    const legacy: Record<string, unknown> = {
-      ...completedContextRecord(),
-      schemaVersion: "1.9.0",
-    };
-    Reflect.deleteProperty(legacy, "participantGroundingPlanFingerprint");
-    const migrated = cloneBroadcastContextSessionRecord(legacy);
-
+  it("rejects transitional dual-field records instead of normalizing them", () => {
     expect(() =>
-      commitBroadcastContextSessionContext(migrated, {
-        contextInputSignature: "context-signature-v2",
-        contextInputCheckpointJson:
-          migrated.contextInputCheckpointJson as string,
-        contextResultJson: JSON.stringify({ schemaVersion: "1.7.0" }),
-        recordedAt: "2026-07-29T00:01:00.000Z",
+      cloneBroadcastContextSessionRecord({
+        ...record,
+        transcriptEvidenceByChunkId: {},
       }),
-    ).toThrow("grounding plan");
+    ).toThrow("invalid");
   });
+
+  it.each([
+    "1.2.0",
+    "1.3.0",
+    "1.4.0",
+    "1.5.0",
+    "1.6.0",
+    "1.7.0",
+    "1.8.0",
+    "1.9.0",
+    "1.10.0",
+    "1.11.0",
+  ])(
+    "rejects pre-release schema %s instead of silently migrating it",
+    (schemaVersion) => {
+      expect(() =>
+        cloneBroadcastContextSessionRecord({
+          ...record,
+          schemaVersion,
+        }),
+      ).toThrow("invalid");
+    },
+  );
 
   it("recomputes the exact participant fence after a save and reload", async () => {
     const completed = completedContextRecord();
@@ -896,19 +908,22 @@ describe("broadcastContextSessionStore", () => {
     expect(changedPlanSignature).not.toBe(reloadedSignature);
   });
 
-  it("round-trips only an exact source-bound participant grounding pair", () => {
-    const grounding = createBroadcastParticipantGrounding({
-      sourceDurationMs: record.sourceDurationMs,
-      castRosterId: DEFAULT_CANDIDATE_PASS_B_CAST_ROSTER_ID,
-      chapters: record.chapters,
-    });
-    const groundedRecord = {
+  it("round-trips only an exact source-bound participant grounding pair", async () => {
+    const source = {
       ...record,
       sourceCastRosterId: DEFAULT_CANDIDATE_PASS_B_CAST_ROSTER_ID,
-      transcriptSealOperationKey: "run-1:source:event-boost:attempt-0",
+      transcriptSealOperationKey: completedTranscriptSeal,
+    };
+    const participant = await participantCheckpointForSession(
+      source,
+      record.chapters,
+    );
+    const groundedRecord = {
+      ...source,
       participantGroundingInputSignature: "participant-signature",
-      participantGroundingPlanFingerprint: "participant-plan-fingerprint-v1",
-      participantGroundingCheckpointJson: JSON.stringify(grounding),
+      participantGroundingPlanFingerprint:
+        participant.result.planFingerprint,
+      participantGroundingCheckpointJson: participant.checkpointJson,
     };
     expect(cloneBroadcastContextSessionRecord(groundedRecord)).toEqual(
       groundedRecord,
@@ -923,8 +938,11 @@ describe("broadcastContextSessionStore", () => {
       assertBroadcastContextSessionRecord({
         ...groundedRecord,
         participantGroundingCheckpointJson: JSON.stringify({
-          ...grounding,
-          resolutionStatus: "no-source-roster",
+          ...participant.result,
+          grounding: {
+            ...participant.result.grounding,
+            resolutionStatus: "no-source-roster",
+          },
         }),
       }),
     ).toThrow(TypeError);
@@ -934,6 +952,122 @@ describe("broadcastContextSessionStore", () => {
         sourceCastRosterId: null,
       }),
     ).toThrow(TypeError);
+  });
+
+  it("parses and restores only the complete current participant pre-context packet", async () => {
+    const source = {
+      ...record,
+      sourceCastRosterId: DEFAULT_CANDIDATE_PASS_B_CAST_ROSTER_ID,
+      transcriptSealOperationKey: completedTranscriptSeal,
+    };
+    const participant = await participantCheckpointForSession(
+      source,
+      record.chapters,
+    );
+    const fence = {
+      sourceDurationMs: source.sourceDurationMs,
+      sourceCastRosterId: source.sourceCastRosterId,
+      transcriptSealOperationKey: completedTranscriptSeal,
+      dialogueChapters: record.chapters,
+      participantGroundingPlanFingerprint:
+        participant.result.planFingerprint,
+    } as const;
+
+    await expect(
+      parseBroadcastParticipantPreContextCheckpointJson(
+        participant.checkpointJson,
+        fence,
+      ),
+    ).resolves.toEqual(participant.result);
+    await expect(
+      parseBroadcastParticipantPreContextCheckpointJson(
+        JSON.stringify(participant.result.grounding),
+        fence,
+      ),
+    ).resolves.toBeNull();
+
+    const tamperedPlan = structuredClone(participant.result);
+    (
+      tamperedPlan.plan.adapters[0] as unknown as {
+        adapterFenceKey: string;
+      }
+    ).adapterFenceKey = `sha256:${"f".repeat(64)}`;
+    await expect(
+      parseBroadcastParticipantPreContextCheckpointJson(
+        JSON.stringify(tamperedPlan),
+        fence,
+      ),
+    ).resolves.toBeNull();
+
+    const tamperedReceipt = structuredClone(participant.result);
+    (
+      tamperedReceipt.sealedPlan.noneObservedReceipts[0] as unknown as {
+        unavailableReason: "source-has-no-modality";
+      }
+    ).unavailableReason = "source-has-no-modality";
+    await expect(
+      parseBroadcastParticipantPreContextCheckpointJson(
+        JSON.stringify(tamperedReceipt),
+        fence,
+      ),
+    ).resolves.toBeNull();
+
+    const tamperedGrounding = structuredClone(participant.result);
+    (
+      tamperedGrounding.grounding as unknown as {
+        sourceDurationMs: number;
+      }
+    ).sourceDurationMs -= 1;
+    await expect(
+      parseBroadcastParticipantPreContextCheckpointJson(
+        JSON.stringify(tamperedGrounding),
+        fence,
+      ),
+    ).resolves.toBeNull();
+
+    await expect(
+      parseBroadcastParticipantPreContextCheckpointJson(
+        participant.checkpointJson,
+        {
+          ...fence,
+          transcriptSealOperationKey: "transcript:different:sealed",
+        },
+      ),
+    ).resolves.toBeNull();
+    await expect(
+      parseBroadcastParticipantPreContextCheckpointJson(
+        participant.checkpointJson,
+        {
+          ...fence,
+          participantGroundingPlanFingerprint: "different-plan",
+        },
+      ),
+    ).resolves.toBeNull();
+
+    const participantGroundingInputSignature =
+      await createBroadcastParticipantGroundingInputSignature({
+        inputSignature: source.inputSignature,
+        transcriptSealOperationKey: completedTranscriptSeal,
+        participantGroundingPlanFingerprint:
+          participant.result.planFingerprint,
+        participantGroundingCheckpointJson: participant.checkpointJson,
+      });
+    const session = cloneBroadcastContextSessionRecord({
+      ...source,
+      participantGroundingInputSignature,
+      participantGroundingPlanFingerprint:
+        participant.result.planFingerprint,
+      participantGroundingCheckpointJson: participant.checkpointJson,
+    });
+    await expect(
+      restoreBroadcastParticipantPreContextCheckpoint(session),
+    ).resolves.toEqual(participant.result);
+    await expect(
+      restoreBroadcastParticipantPreContextCheckpoint({
+        ...session,
+        participantGroundingInputSignature: `sha256:${"0".repeat(64)}`,
+      }),
+    ).resolves.toBeNull();
   });
 
   it("pairs refined semantic candidates with the exact refinement input", () => {
@@ -988,24 +1122,18 @@ describe("broadcastContextSessionStore", () => {
   });
 
   it("binds a paid context result to its exact durable input checkpoint", () => {
-    const grounding = createBroadcastParticipantGrounding({
-      sourceDurationMs: record.sourceDurationMs,
-      castRosterId: null,
-      chapters: record.chapters,
-    });
+    const completed = completedContextRecord();
+    const grounding = completedParticipantPreContext.grounding;
     const contextInputCheckpointJson = JSON.stringify({
       sourceDurationMs: record.sourceDurationMs,
       chapters: record.chapters,
       candidates: [],
       participantGrounding: grounding,
+      castRosterId: record.sourceCastRosterId,
       outputLanguage: "ko",
     });
     const checkpointed = {
-      ...record,
-      transcriptSealOperationKey: "run-1:source:event-boost:attempt-0",
-      participantGroundingInputSignature: "participant-signature",
-      participantGroundingPlanFingerprint: "participant-plan-fingerprint-v1",
-      participantGroundingCheckpointJson: JSON.stringify(grounding),
+      ...completed,
       contextInputSignature: "context-signature",
       contextInputCheckpointJson,
       contextResultJson: JSON.stringify({ schemaVersion: "1.7.0" }),
@@ -1071,7 +1199,7 @@ describe("broadcastContextSessionStore", () => {
         completed.participantGroundingInputSignature as string,
     };
     const oversizedLedger: BroadcastContextPhaseLedger = {
-      schemaVersion: "1.0.0",
+      schemaVersion: "3.0.0",
       fence,
       units: [
         {
@@ -1498,7 +1626,7 @@ describe("broadcastContextSessionStore", () => {
     ).toThrow(TypeError);
   });
 
-  it("round-trips a grounded transcript map larger than the 144-chapter request projection", () => {
+  it("round-trips a grounded transcript map larger than the 144-chapter request projection", async () => {
     const longChapters = Array.from({ length: 145 }, (_, index) => ({
       chapterId: `chapter-${index + 1}`,
       startMs: index * 1_000,
@@ -1513,16 +1641,47 @@ describe("broadcastContextSessionStore", () => {
       chapters: longChapters,
       transcriptSealOperationKey: "run-1:source:event-boost:attempt-0",
     };
-    const grounding = createBroadcastParticipantGrounding({
+    const participant = await participantCheckpointForSession(
+      longRecordBase,
+      compactBroadcastContextChapters(longChapters),
+    );
+    const compactedChapters = compactBroadcastContextChapters(longChapters);
+    const contextParticipantGrounding =
+      rebaseBroadcastParticipantGrounding(
+        participant.result.grounding,
+        {
+          sourceDurationMs: longRecordBase.sourceDurationMs,
+          castRosterId: longRecordBase.sourceCastRosterId,
+          chapters: compactedChapters,
+        },
+        {
+          sourceDurationMs: longRecordBase.sourceDurationMs,
+          castRosterId: longRecordBase.sourceCastRosterId,
+          chapters: compactedChapters,
+        },
+      );
+    expect(contextParticipantGrounding).not.toBeNull();
+    const contextInput = {
       sourceDurationMs: longRecordBase.sourceDurationMs,
-      castRosterId: null,
-      chapters: compactBroadcastContextChapters(longChapters),
-    });
+      chapters: compactedChapters,
+      candidates: [],
+      participantGrounding: contextParticipantGrounding!,
+      castRosterId: longRecordBase.sourceCastRosterId,
+      outputLanguage: "ko" as const,
+    };
+    expect(() => createBroadcastContextRequest(contextInput)).not.toThrow();
     const longRecord = {
       ...longRecordBase,
       participantGroundingInputSignature: "participant-signature",
-      participantGroundingPlanFingerprint: "participant-plan-fingerprint-v1",
-      participantGroundingCheckpointJson: JSON.stringify(grounding),
+      participantGroundingPlanFingerprint:
+        participant.result.planFingerprint,
+      participantGroundingCheckpointJson: participant.checkpointJson,
+      contextInputSignature: "context-signature",
+      contextInputCheckpointJson: JSON.stringify(contextInput),
+      contextResultJson: JSON.stringify({
+        schemaVersion: "1.7.0",
+        broadcastSummaryKo: "긴 방송 맥락",
+      }),
     };
 
     expect(cloneBroadcastContextSessionRecord(longRecord)).toEqual(longRecord);
@@ -1545,7 +1704,7 @@ describe("broadcastContextSessionStore", () => {
     ).toThrow(TypeError);
   });
 
-  it("preserves an empty transcript map when every sampled chunk is an explicit gap", () => {
+  it("rejects an empty legacy transcript map even when every sampled chunk is an explicit gap", () => {
     expect(() =>
       assertBroadcastContextSessionRecord({
         ...record,
@@ -1569,7 +1728,7 @@ describe("broadcastContextSessionStore", () => {
           },
         ],
       }),
-    ).not.toThrow();
+    ).toThrow("requires current resolved evidence");
     expect(() =>
       assertBroadcastContextSessionRecord({
         ...record,
@@ -1807,19 +1966,7 @@ describe("broadcastContextSessionStore", () => {
     ).not.toThrow();
   });
 
-  it("migrates schema 1.10 sessions with an explicit empty refinement evidence ledger", () => {
-    const legacy = { ...record } as unknown as Record<string, unknown>;
-    legacy.schemaVersion = "1.10.0";
-    delete legacy.refinementEvidenceLedgerJson;
-
-    expect(cloneBroadcastContextSessionRecord(legacy)).toMatchObject({
-      schemaVersion: BROADCAST_CONTEXT_SESSION_SCHEMA_VERSION,
-      refinementEvidenceLedgerJson: null,
-      participantGroundingPlanFingerprint: null,
-    });
-  });
-
-  it("preserves paid chapters but reopens descendants of a legacy no-speech checkpoint without VAD receipts", () => {
+  it("rejects a current session carrying a legacy no-speech checkpoint without VAD receipts", () => {
     const currentCheckpoint = JSON.parse(
       transcriptEvidenceCheckpointJson(
         "legacy-transcript-operation",
@@ -1836,32 +1983,15 @@ describe("broadcastContextSessionStore", () => {
         delete legacyEntry.speechActivityReceipt;
         return legacyEntry;
       });
-    const migrated = cloneBroadcastContextSessionRecord({
-      ...completedContextRecord(),
-      transcriptEvidenceInputSignature: "legacy-transcript-operation",
-      transcriptEvidenceCheckpointJson:
-        JSON.stringify(currentCheckpoint),
-      transcriptSealOperationKey: "legacy-transcript-operation",
-    });
-
-    expect(migrated.chapters).toEqual(
-      completedContextRecord().chapters,
-    );
-    expect(migrated).toMatchObject({
-      transcriptEvidenceInputSignature: null,
-      transcriptEvidenceCheckpointJson: null,
-      transcriptSealOperationKey: null,
-      participantGroundingInputSignature: null,
-      participantGroundingPlanFingerprint: null,
-      participantGroundingCheckpointJson: null,
-      contextInputSignature: null,
-      contextInputCheckpointJson: null,
-      contextPhaseLedgerJson: null,
-      contextResultJson: null,
-      refinementEvidenceLedgerJson: null,
-      refinementInputSignature: null,
-      refinementCandidatesJson: null,
-    });
+    expect(() =>
+      cloneBroadcastContextSessionRecord({
+        ...completedContextRecord(),
+        transcriptEvidenceInputSignature: "legacy-transcript-operation",
+        transcriptEvidenceCheckpointJson:
+          JSON.stringify(currentCheckpoint),
+        transcriptSealOperationKey: "legacy-transcript-operation",
+      }),
+    ).toThrow("resolved evidence");
   });
 
   it("rejects oversized or non-canonical refinement evidence checkpoints", async () => {
@@ -2108,5 +2238,270 @@ describe("broadcastContextSessionStore", () => {
         chapters: [{ ...record.chapters[0], endMs: 400_000 }],
       }),
     ).toThrow();
+  });
+
+  it("durably preserves a partial visual checkpoint without publishing grounding descendants", () => {
+    const partial = checkpointBroadcastContextSessionVisualInspection(
+      visualInspectionSession(),
+      {
+        transcriptVisualInspectionCheckpointJson:
+          visualInspectionRunnerCheckpointJson(false),
+        recordedAt: "2026-07-29T07:00:00.000Z",
+      },
+    );
+    expect(partial.transcriptVisualInspectionCheckpointJson).not.toBeNull();
+    expect(partial.chapters).toEqual([]);
+    expect(cloneBroadcastContextSessionRecord(partial)).toEqual(partial);
+
+    const participantGrounding = createBroadcastParticipantGrounding({
+      sourceDurationMs: partial.sourceDurationMs,
+      castRosterId: partial.sourceCastRosterId,
+      chapters: partial.chapters,
+    });
+    expect(() =>
+      assertBroadcastContextSessionRecord({
+        ...partial,
+        participantGroundingInputSignature: "participant-signature",
+        participantGroundingPlanFingerprint: "participant-plan",
+        participantGroundingCheckpointJson: JSON.stringify(
+          participantGrounding,
+        ),
+      }),
+    ).toThrow(/publication-ready/u);
+  });
+
+  it("projects terminal visual evidence, permits grounding, and rejects a forged visual chapter", async () => {
+    const completed = checkpointBroadcastContextSessionVisualInspection(
+      visualInspectionSession(),
+      {
+        transcriptVisualInspectionCheckpointJson:
+          visualInspectionRunnerCheckpointJson(true),
+        recordedAt: "2026-07-29T07:01:00.000Z",
+      },
+    );
+    expect(completed.chapters).toEqual([
+      expect.objectContaining({
+        chapterId: "visual:asr-001",
+        evidenceMode: "sampled-audio-video",
+      }),
+    ]);
+    const participant = await participantCheckpointForSession(completed, []);
+    expect(() =>
+      assertBroadcastContextSessionRecord({
+        ...completed,
+        participantGroundingInputSignature: "participant-signature",
+        participantGroundingPlanFingerprint:
+          participant.result.planFingerprint,
+        participantGroundingCheckpointJson: participant.checkpointJson,
+      }),
+    ).not.toThrow();
+    expect(() =>
+      assertBroadcastContextSessionRecord({
+        ...completed,
+        chapters: [
+          {
+            ...completed.chapters[0]!,
+            summaryKo: "저장 checkpoint에 없는 조작된 화면 설명",
+          },
+        ],
+      }),
+    ).toThrow(/terminal visual settlements/u);
+  });
+
+  it("partitions transcript and visual chapters only through the exact source-fenced visual projection", () => {
+    expect(partitionBroadcastContextSessionChapters(record)).toEqual({
+      transcriptChapters: record.chapters,
+      visualInspectionChapters: [],
+    });
+
+    const completed = checkpointBroadcastContextSessionVisualInspection(
+      visualInspectionSession(),
+      {
+        transcriptVisualInspectionCheckpointJson:
+          visualInspectionRunnerCheckpointJson(true),
+        recordedAt: "2026-07-29T07:01:30.000Z",
+      },
+    );
+    expect(partitionBroadcastContextSessionChapters(completed)).toEqual({
+      transcriptChapters: [],
+      visualInspectionChapters: completed.chapters,
+    });
+
+    expect(() =>
+      partitionBroadcastContextSessionChapters({
+        ...completed,
+        chapters: [
+          {
+            ...completed.chapters[0]!,
+            evidenceMode: "complete-transcript",
+          },
+        ],
+      }),
+    ).toThrow(TypeError);
+    expect(() =>
+      partitionBroadcastContextSessionChapters({
+        ...record,
+        chapters: [
+          {
+            ...record.chapters[0]!,
+            chapterId: "visual:unplanned-cell",
+            evidenceMode: "sampled-audio-video",
+          },
+        ],
+      }),
+    ).toThrow(TypeError);
+  });
+
+  it("keeps a terminal visual chapter out of transcript settlement certification", async () => {
+    const sourceContentFingerprint =
+      `local-file-sampled-sha256-v1:${"c".repeat(64)}`;
+    const transcriptSealOperationKey = transcriptOperationKey(
+      record.runId,
+      sourceContentFingerprint,
+      "event-boost",
+      0,
+      await createCurrentProviderTranscriptSourceIdentityFence(null),
+    );
+    const plannedCells = [
+      {
+        chunkId: "asr-001",
+        sourceStartMs: 0,
+        sourceEndMs: record.sourceDurationMs,
+      },
+    ] as const;
+    let evidence = createBroadcastTranscriptResolvedEvidenceCheckpoint({
+      sourceFingerprint: record.inputSignature,
+      sourceDurationMs: record.sourceDurationMs,
+      transcriptInputSignature: transcriptSealOperationKey,
+      modelRevision: BROADCAST_TRANSCRIPT_QWEN_OMNI_MODEL_REVISION,
+      plannedCells,
+    });
+    evidence = recordBroadcastTranscriptResolvedEvidence(
+      evidence,
+      "asr-001",
+      "no-speech",
+      createVerifiedNoSpeechRunReceiptForTest(
+        record.sourceDurationMs,
+        0,
+        record.sourceDurationMs,
+      ),
+    );
+    const route = await createBroadcastTranscriptRouteSelection({
+      schemaVersion: "1.1.0",
+      serviceVersion: 6,
+      routingPolicyVersion: "1.11.0",
+      providerConfigurationVersion: "1.3.0",
+      transportVersion: 3,
+      transportMode: "free-r2",
+      maximumChunkDurationMs: 90_000,
+      primaryMediaType: "audio/wav",
+      provider: "qwen",
+      modelId: BROADCAST_TRANSCRIPT_QWEN_OMNI_MODEL_ID,
+      modelRevision: BROADCAST_TRANSCRIPT_QWEN_OMNI_MODEL_REVISION,
+      effectiveFallback: { mode: "disabled" },
+    });
+    const providerCheckpoint =
+      createBroadcastTranscriptProviderReceiptCheckpoint({
+        sourceFingerprint: record.inputSignature,
+        sourceDurationMs: record.sourceDurationMs,
+        route,
+        plannedCells,
+      });
+    const visualInput = cloneBroadcastContextSessionRecord({
+      ...record,
+      chapters: [],
+      modelRevision: BROADCAST_TRANSCRIPT_QWEN_OMNI_MODEL_REVISION,
+      transcriptEvidenceInputSignature: transcriptSealOperationKey,
+      transcriptEvidenceCheckpointJson:
+        serializeBroadcastTranscriptResolvedEvidenceCheckpoint(evidence),
+      transcriptProviderReceiptInputSignature: route.fingerprint,
+      transcriptProviderReceiptCheckpointJson:
+        serializeBroadcastTranscriptProviderReceiptCheckpoint(
+          providerCheckpoint,
+        ),
+      transcriptSealOperationKey,
+    });
+    const completed = checkpointBroadcastContextSessionVisualInspection(
+      visualInput,
+      {
+        transcriptVisualInspectionCheckpointJson:
+          visualInspectionRunnerCheckpointJson(true, visualInput),
+        recordedAt: "2026-07-29T07:01:45.000Z",
+      },
+    );
+
+    expect(completed.chapters).toHaveLength(1);
+    await expect(
+      inspectCurrentTranscriptCheckpoint({
+        session: completed,
+        sourceContentFingerprint,
+        expectedCaptionVideoId: null,
+      }),
+    ).resolves.toBe(true);
+  });
+
+  it("preserves visual descendants only for an exact checkpoint and clears them on visual or transcript change", async () => {
+    const completed = checkpointBroadcastContextSessionVisualInspection(
+      visualInspectionSession(),
+      {
+        transcriptVisualInspectionCheckpointJson:
+          visualInspectionRunnerCheckpointJson(true),
+        recordedAt: "2026-07-29T07:02:00.000Z",
+      },
+    );
+    const participant = await participantCheckpointForSession(completed, []);
+    const grounded = cloneBroadcastContextSessionRecord({
+      ...completed,
+      participantGroundingInputSignature: "participant-signature",
+      participantGroundingPlanFingerprint:
+        participant.result.planFingerprint,
+      participantGroundingCheckpointJson: participant.checkpointJson,
+    });
+    const exact = checkpointBroadcastContextSessionVisualInspection(
+      grounded,
+      {
+        transcriptVisualInspectionCheckpointJson:
+          grounded.transcriptVisualInspectionCheckpointJson!,
+        recordedAt: "2026-07-29T07:03:00.000Z",
+      },
+    );
+    expect(exact.participantGroundingInputSignature).toBe(
+      "participant-signature",
+    );
+
+    const regressed = checkpointBroadcastContextSessionVisualInspection(
+      grounded,
+      {
+        transcriptVisualInspectionCheckpointJson:
+          visualInspectionRunnerCheckpointJson(false),
+        recordedAt: "2026-07-29T07:04:00.000Z",
+      },
+    );
+    expect(regressed.participantGroundingInputSignature).toBeNull();
+    expect(regressed.chapters).toEqual([]);
+
+    const changedTranscript = checkpointBroadcastContextSessionTranscript(
+      grounded,
+      {
+        completeAudioCoverage: record.completeAudioCoverage,
+        chapters: record.chapters,
+        gapChunkIds: record.gapChunkIds,
+        fragmentGaps: record.fragmentGaps,
+        transcriptEvidenceInputSignature:
+          record.transcriptEvidenceInputSignature,
+        transcriptEvidenceCheckpointJson:
+          record.transcriptEvidenceCheckpointJson,
+        transcriptProviderReceiptInputSignature:
+          record.transcriptProviderReceiptInputSignature,
+        transcriptProviderReceiptCheckpointJson:
+          record.transcriptProviderReceiptCheckpointJson,
+        modelRevision: record.modelRevision,
+        transcriptSealOperationKey: record.transcriptSealOperationKey,
+        recordedAt: "2026-07-29T07:05:00.000Z",
+      },
+    );
+    expect(changedTranscript.transcriptVisualInspectionCheckpointJson).toBeNull();
+    expect(changedTranscript.participantGroundingInputSignature).toBeNull();
+    expect(changedTranscript.chapters).toEqual(record.chapters);
   });
 });
