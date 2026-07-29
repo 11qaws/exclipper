@@ -16,6 +16,8 @@ export const CANDIDATE_RESOLVE_CONTENT_TYPE =
 const QUOTA_SCHEMA_VERSION = "1.0.0";
 const MEDIA_SCHEMA_VERSION = "1.0.0";
 const MAX_RATE_LIMIT_RETRIES = 5;
+const MAX_CONTEXT_SMOKE_GENERATIONS = 3;
+const MAX_CANDIDATE_SMOKE_GENERATIONS = 3;
 const TRANSCRIPT_ROUTE_DOMAIN = "exclipper.broadcast-transcript-route.v2";
 const NO_STORE_FETCH_POLICY = Object.freeze({
   credentials: "omit",
@@ -146,6 +148,18 @@ async function isRetryableRateLimit(response) {
     return (
       payload?.error?.code === "RATE_LIMITED" ||
       payload?.error?.code === "UPSTREAM_RATE_LIMITED"
+    );
+  } catch {
+    return false;
+  }
+}
+
+async function isRetryableInvalidResponse(response) {
+  if (response.status !== 502) return false;
+  try {
+    return (
+      (await response.clone().json())?.error?.code ===
+      "UPSTREAM_INVALID_RESPONSE"
     );
   } catch {
     return false;
@@ -516,6 +530,7 @@ export function createCurrentContextRequest() {
         chatReactionSummaryKo: null,
       },
     ],
+    castRosterId: null,
     participantGrounding: {
       schemaVersion: "1.2.0",
       status: "sealed",
@@ -565,41 +580,70 @@ export async function runContextSmoke({
   sleep,
 }) {
   const body = JSON.stringify(request);
-  const response = await runWithQuota({
-    proxyOrigin,
-    pool: "context",
-    payload: body,
-    identity,
-    fetchImplementation,
-    sleep,
-    execute: (quotaLeaseHeaders) =>
-      fetchImplementation(new URL("/v1/broadcast-context", proxyOrigin), {
-        method: "POST",
-        ...NO_STORE_FETCH_POLICY,
-        headers: {
-          ...quotaLeaseHeaders,
-          "Content-Type": "application/json",
-          Origin: PRODUCTION_ORIGIN,
-        },
-        body,
-      }),
-  });
-  return { response, request };
+  const baseIdentity = identity ?? createSmokeIdentity("context-smoke");
+  for (
+    let generation = 0;
+    generation < MAX_CONTEXT_SMOKE_GENERATIONS;
+    generation += 1
+  ) {
+    const response = await runWithQuota({
+      proxyOrigin,
+      pool: "context",
+      payload: body,
+      identity: {
+        ...baseIdentity,
+        operationId: `${baseIdentity.operationId}.generation-${generation}`,
+      },
+      fetchImplementation,
+      sleep,
+      execute: (quotaLeaseHeaders) =>
+        fetchImplementation(new URL("/v1/broadcast-context", proxyOrigin), {
+          method: "POST",
+          ...NO_STORE_FETCH_POLICY,
+          headers: {
+            ...quotaLeaseHeaders,
+            "Content-Type": "application/json",
+            Origin: PRODUCTION_ORIGIN,
+          },
+          body,
+        }),
+    });
+    const retryableInvalidResponse =
+      await isRetryableInvalidResponse(response);
+    if (
+      !retryableInvalidResponse ||
+      generation + 1 === MAX_CONTEXT_SMOKE_GENERATIONS
+    ) {
+      return { response, request, generationCount: generation + 1 };
+    }
+    await response.body?.cancel().catch(() => undefined);
+    await (sleep ?? ((delayMs) =>
+      new Promise((resolve) => setTimeout(resolve, delayMs))))(
+      Math.min(1_000, 250 * 2 ** generation),
+    );
+  }
+  throw new Error("Context smoke exhausted its current generation loop.");
 }
 
 export function createCurrentCandidateContext() {
   return {
     schemaVersion: "1.0.0",
     transcriptSource: "broadcast-transcript",
-    transcriptKo: "긴 시도 끝에 목표를 달성했고 스트리머가 결과를 확인했다.",
-    beforeContextKo: "여러 차례 실패한 뒤 마지막 시도를 준비했다.",
-    afterContextKo: "성공 과정을 설명하고 다음 주제로 넘어갔다.",
-    broadcastSummaryKo: "반복 도전과 성공 확인이 이어지는 방송이다.",
-    topicContextKo: "마지막 도전과 성공 확인",
-    fastEvidenceKo: "대사와 화면 변화가 같은 사건을 가리킨다.",
-    contextDecision: "select",
-    contextCategory: "quiet-achievement",
-    contextVerdictKo: "앞선 준비와 결과가 연결되는 완결된 사건이다.",
+    transcriptKo:
+      "스모크 검사는 후보 대사를 미리 단정하지 않는다. 첨부 오디오에서 실제 발화를 직접 확인한다.",
+    beforeContextKo:
+      "이 독립 전송 검사에는 후보 직전의 방송 흐름이 제공되지 않았다.",
+    afterContextKo:
+      "이 독립 전송 검사에는 후보 직후의 방송 흐름이 제공되지 않았다.",
+    broadcastSummaryKo:
+      "이 요청은 멀티모달 전송 계약을 확인하는 스모크 검사이며 방송 전체 내용은 제공하지 않는다.",
+    topicContextKo: "전체 방송 주제를 확정하지 않은 독립 후보 검사",
+    fastEvidenceKo:
+      "첨부 오디오와 서로 다른 대표 화면 네 장만 실제 사건 근거로 사용할 수 있다.",
+    contextDecision: "review",
+    contextCategory: "context-dependent",
+    contextVerdictKo:
+      "전체 맥락이 없으므로 사건과 반응은 첨부 근거에서 확인하고 불확실성을 명시해야 한다.",
     chatReactionKo: null,
   };
 }
@@ -643,72 +687,106 @@ export async function runCandidateSmoke({
     stageUrl.searchParams.set(`f${index}b`, String(frameByteLengths[index]));
   });
   let mediaTicket = null;
-  const response = await runWithQuota({
-    proxyOrigin,
-    pool: "candidate",
-    payload: bundle,
-    identity,
-    fetchImplementation,
-    sleep,
-    execute: async (quotaLeaseHeaders) => {
-      if (mediaTicket === null) {
-        const staged = await fetchImplementation(stageUrl, {
-          method: "POST",
-          ...NO_STORE_FETCH_POLICY,
-          headers: {
-            ...quotaLeaseHeaders,
-            "Content-Type": CANDIDATE_BUNDLE_CONTENT_TYPE,
-            Origin: PRODUCTION_ORIGIN,
-          },
-          body: bundle,
-        });
-        if (staged.status !== 202) return staged;
-        const payload = await readJson(staged, "Candidate media stage");
-        if (
-          !exactKeys(payload, [
-            "schemaVersion",
-            "status",
-            "mediaTicket",
-            "expiresAtMs",
-            "candidateHash",
-            "candidateDurationMs",
-            "frameCount",
-          ]) ||
-          payload.schemaVersion !== MEDIA_SCHEMA_VERSION ||
-          payload.status !== "staged" ||
-          !validCandidateTicket(payload.mediaTicket) ||
-          !Number.isSafeInteger(payload.expiresAtMs) ||
-          payload.expiresAtMs <= Date.now() ||
-          payload.candidateHash !== candidateHash ||
-          payload.candidateDurationMs !== candidateDurationMs ||
-          payload.frameCount !== 4
-        ) {
-          throw new SmokeContractError(
-            "Candidate media stage returned an invalid current ticket.",
-          );
+  const baseIdentity = identity ?? createSmokeIdentity("candidate-smoke");
+  let finalResponse = null;
+  let generationCount = 0;
+  for (
+    let generation = 0;
+    generation < MAX_CANDIDATE_SMOKE_GENERATIONS;
+    generation += 1
+  ) {
+    const response = await runWithQuota({
+      proxyOrigin,
+      pool: "candidate",
+      payload: bundle,
+      identity: {
+        ...baseIdentity,
+        operationId: `${baseIdentity.operationId}.generation-${generation}`,
+      },
+      fetchImplementation,
+      sleep,
+      execute: async (quotaLeaseHeaders) => {
+        if (mediaTicket === null) {
+          const staged = await fetchImplementation(stageUrl, {
+            method: "POST",
+            ...NO_STORE_FETCH_POLICY,
+            headers: {
+              ...quotaLeaseHeaders,
+              "Content-Type": CANDIDATE_BUNDLE_CONTENT_TYPE,
+              Origin: PRODUCTION_ORIGIN,
+            },
+            body: bundle,
+          });
+          if (staged.status !== 202) return staged;
+          const payload = await readJson(staged, "Candidate media stage");
+          if (
+            !exactKeys(payload, [
+              "schemaVersion",
+              "status",
+              "mediaTicket",
+              "expiresAtMs",
+              "candidateHash",
+              "candidateDurationMs",
+              "frameCount",
+            ]) ||
+            payload.schemaVersion !== MEDIA_SCHEMA_VERSION ||
+            payload.status !== "staged" ||
+            !validCandidateTicket(payload.mediaTicket) ||
+            !Number.isSafeInteger(payload.expiresAtMs) ||
+            payload.expiresAtMs <= Date.now() ||
+            payload.candidateHash !== candidateHash ||
+            payload.candidateDurationMs !== candidateDurationMs ||
+            payload.frameCount !== 4
+          ) {
+            throw new SmokeContractError(
+              "Candidate media stage returned an invalid current ticket.",
+            );
+          }
+          mediaTicket = payload.mediaTicket;
         }
-        mediaTicket = payload.mediaTicket;
-      }
-      return fetchImplementation(new URL("/v1/candidate-insights", proxyOrigin), {
-        method: "POST",
-        ...NO_STORE_FETCH_POLICY,
-        headers: {
-          ...quotaLeaseHeaders,
-          "Content-Type": CANDIDATE_RESOLVE_CONTENT_TYPE,
-          Origin: PRODUCTION_ORIGIN,
-        },
-        body: JSON.stringify({
-          schemaVersion: MEDIA_SCHEMA_VERSION,
-          mediaTicket,
-          candidateDurationMs,
-          castRosterId: null,
-          outputLanguage: "ko",
-          context,
-        }),
-      });
-    },
-  });
-  if (response.ok && mediaTicket !== null) {
+        return fetchImplementation(
+          new URL("/v1/candidate-insights", proxyOrigin),
+          {
+            method: "POST",
+            ...NO_STORE_FETCH_POLICY,
+            headers: {
+              ...quotaLeaseHeaders,
+              "Content-Type": CANDIDATE_RESOLVE_CONTENT_TYPE,
+              Origin: PRODUCTION_ORIGIN,
+            },
+            body: JSON.stringify({
+              schemaVersion: MEDIA_SCHEMA_VERSION,
+              mediaTicket,
+              candidateDurationMs,
+              castRosterId: null,
+              outputLanguage: "ko",
+              context,
+            }),
+          },
+        );
+      },
+    });
+    generationCount = generation + 1;
+    finalResponse = response;
+    const retryableInvalidResponse =
+      await isRetryableInvalidResponse(response);
+    if (
+      !retryableInvalidResponse ||
+      generationCount === MAX_CANDIDATE_SMOKE_GENERATIONS
+    ) {
+      break;
+    }
+    await response.body?.cancel().catch(() => undefined);
+    await (sleep ?? ((delayMs) =>
+      new Promise((resolve) => setTimeout(resolve, delayMs))))(
+      Math.min(1_000, 250 * 2 ** generation),
+    );
+  }
+  if (finalResponse === null) {
+    bundle.fill(0);
+    throw new Error("Candidate smoke exhausted its current generation loop.");
+  }
+  if (finalResponse.ok && mediaTicket !== null) {
     const cleanupUrl = new URL("/v1/candidate-insight-media", proxyOrigin);
     cleanupUrl.searchParams.set("mediaTicket", mediaTicket);
     cleanupUrl.searchParams.set("part", "audio");
@@ -722,7 +800,12 @@ export async function runCandidateSmoke({
     );
   }
   bundle.fill(0);
-  return { response, candidateHash, mediaTicket };
+  return {
+    response: finalResponse,
+    candidateHash,
+    mediaTicket,
+    generationCount,
+  };
 }
 
 export function currentSmokePlan(kind) {

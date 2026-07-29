@@ -36,6 +36,26 @@ export const MAX_CANDIDATE_PASS_B_PARTICIPANT_NAME_LENGTH = 80;
 export const MAX_CANDIDATE_PASS_B_PARTICIPANT_EVIDENCE_LENGTH = 300;
 export const CANDIDATE_PASS_B_MAX_OUTPUT_TOKENS = 2_048;
 const MAX_BASE64_WAV_LENGTH = 8 * 1024 * 1024;
+const GENERIC_PARTICIPANT_LABELS = new Set([
+  "스트리머",
+  "진행자",
+  "게스트",
+  "출연자",
+  "참가자",
+  "화자",
+  "인물",
+  "아바타",
+  "버튜버",
+  "브이튜버",
+  "streamer",
+  "host",
+  "guest",
+  "participant",
+  "speaker",
+  "person",
+  "avatar",
+  "vtuber",
+]);
 
 export interface CandidatePassBGeminiRelativeSegment {
   readonly relativeStartMs: number;
@@ -364,6 +384,12 @@ export function encodeCandidatePassBBase64(bytes: Uint8Array): string {
   return btoa(binary);
 }
 
+function isGenericParticipantLabel(value: string): boolean {
+  return GENERIC_PARTICIPANT_LABELS.has(
+    value.toLocaleLowerCase("ko-KR").replace(/\s+/gu, " ").trim(),
+  );
+}
+
 export function buildCandidatePassBPrompt(
   candidateDurationMs: number,
   frameCount: number,
@@ -375,7 +401,7 @@ export function buildCandidatePassBPrompt(
     context === null ? null : canonicalizeCandidatePassBContextPacket(context);
   const castReferences = candidatePassBCastReferences(castRosterId);
   const participantRule =
-    "identifiedParticipants에는 화면에 이름이 실제로 적혀 있거나 발화에서 이름이 명확히 불린 출연자만 적으세요. 아바타 외형·목소리 느낌·채널 주인 prior·텍스트 명단만으로 이름을 추측하지 말고, 확인할 수 없으면 빈 배열을 출력하세요. evidenceKo에는 이름을 확인한 화면 글자 또는 실제 호명을 적으세요.";
+    "identifiedParticipants에는 화면에 고유 이름이 실제로 적혀 있거나 발화에서 고유 이름이 명확히 불린 출연자만 적으세요. 스트리머·진행자·게스트·아바타 같은 역할명은 displayName이 아니며, 자칭·대명사·발화 주체라는 사실도 spoken-name 근거가 아닙니다. 아바타 외형·목소리 느낌·채널 주인 prior·텍스트 명단만으로 이름을 추측하지 말고, 고유 이름을 확인할 수 없으면 빈 배열을 출력하세요. evidenceKo에는 이름을 확인한 화면 글자 또는 실제 호명을 적으세요.";
   const castRosterBlock = castReferences.length === 0
     ? ""
     : `\n이름 표기 사전(화면 이름 또는 실제 호명을 이미 확인한 뒤 표기만 교정할 수 있습니다. 이 목록 자체는 등장·외형·발화 증거가 아닙니다):\n${castReferences
@@ -792,6 +818,7 @@ export function parseCandidatePassBGeminiAnalysis(
     const normalizedNameKey = displayName?.toLocaleLowerCase("ko-KR") ?? "";
     if (
       displayName === null ||
+      isGenericParticipantLabel(displayName) ||
       evidenceKo === null ||
       seenParticipantNames.has(normalizedNameKey)
     ) {

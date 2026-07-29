@@ -213,7 +213,9 @@ function buildQwenOmniRequestBody(
     throw new RangeError("Invalid Qwen Omni candidate input.");
   }
   const qwenGroundingRules =
-    "\n대표 화면에서 실제로 확인되는 것만 서술하세요. 작아서 선명하게 읽히지 않는 글자는 인용하지 말고, 아바타 이미지의 프레임별 차이만으로 몸짓·행동·감정을 단정하지 마세요. 프레임 사이의 움직임과 인과관계는 보이지 않으므로 대사와 화면 양쪽에서 확인되지 않으면 uncertaintiesKo에 남기세요.";
+    "\n대표 화면에서 실제로 확인되는 것만 서술하세요. 작아서 선명하게 읽히지 않는 글자는 인용하지 말고, 아바타 이미지의 프레임별 차이만으로 몸짓·행동·감정을 단정하지 마세요. 프레임 사이의 움직임과 인과관계는 보이지 않으므로 대사와 화면 양쪽에서 확인되지 않으면 uncertaintiesKo에 남기세요." +
+    "\nidentifiedParticipants.evidenceBasis는 첨부 화면에서 고유 이름을 읽었을 때 정확히 on-screen-name, 실제 오디오에서 고유 이름을 들었을 때 정확히 spoken-name 둘 중 하나만 출력하세요. 다른 값은 금지합니다. 스트리머·진행자·게스트·아바타 같은 역할명이나 자칭은 고유 이름 또는 spoken-name 근거가 아닙니다. 읽을 수 있는 화면 이름과 실제 호명 중 어느 근거도 없으면 identifiedParticipants는 []로 비우고, 사람이나 아바타가 보이면 participantPresence는 present-unidentified로 출력하세요." +
+    "\n허용 enum: participantPresence=identified|present-unidentified|none-present|insufficient-evidence; role=streamer|guest|unknown; evidenceBasis=on-screen-name|spoken-name; clipDecision=recommend|reject|uncertain; contextConsistency=consistent|conflict|insufficient; programMaterial=streamer-event|music-or-intermission|routine-or-unclear.";
   const responseShape = `\n\n다음 JSON 형식만 출력하세요:\n{"segments":[{"relativeStartMs":0,"relativeEndMs":1000,"text":"실제 한국어 발화"}],"eventSummaryKo":"전체 흐름 속 화면 장면·사건·반응 200~300자","reactionSummaryKo":"관찰한 반응 과정","whyGoodClipKo":"클립 가치 또는 제외 이유","uncertaintiesKo":[],"participantPresence":"identified","participantSummaryKo":"확인된 인물 또는 등장인물 없음","identifiedParticipants":[{"displayName":"화면이나 호명으로 확인한 이름","role":"streamer","evidenceBasis":"on-screen-name","evidenceKo":"화면 자막에 이름이 표시됨","confidence":0.9,"relativeTimestampMs":5000,"observedFrameIndices":[0,1]}],"clipDecision":"recommend","contextConsistency":"consistent","programMaterial":"streamer-event"}`;
   return {
     model: CANDIDATE_PASS_B_QWEN_MODEL_ID,
@@ -230,7 +232,7 @@ function buildQwenOmniRequestBody(
         ...frames.flatMap((frame, index) => [
           {
             type: "text",
-            text: `[대표 화면 ${index + 1} · 후보 시작 후 ${(frame.timestampMs / 1_000).toFixed(1)}초]`,
+            text: `[대표 화면 index ${index} · 후보 시작 후 ${(frame.timestampMs / 1_000).toFixed(1)}초]`,
           },
           {
             type: "image_url",

@@ -416,6 +416,9 @@ describe("candidatePassBGemini", () => {
     expect(request.contents[0].parts[0].text).toContain(
       "목록 자체는 등장·외형·발화 증거가 아닙니다",
     );
+    expect(request.contents[0].parts[0].text).toContain(
+      "역할명은 displayName이 아니며",
+    );
     expect(
       buildCandidatePassBProxyRequestBody(
         "UklGRg==",
@@ -632,6 +635,22 @@ describe("candidatePassBGemini", () => {
     expect(parseCandidatePassBGeminiAnalysis(appearanceGuess, 45_000)).toEqual({
       ok: false,
     });
+
+    const genericRoleAsName = validAnalysis();
+    genericRoleAsName.identifiedParticipants = [
+      {
+        displayName: "스트리머",
+        role: "streamer",
+        evidenceBasis: "spoken-name",
+        evidenceKo: "발화 주체가 자신을 스트리머라고 표현했다.",
+        confidence: 0.9,
+        relativeTimestampMs: 500,
+        observedFrameIndices: [0],
+      },
+    ];
+    expect(
+      parseCandidatePassBGeminiAnalysis(genericRoleAsName, 45_000),
+    ).toEqual({ ok: false });
   });
 
   it("extracts exactly one stopped structured response and rejects malformed envelopes", () => {

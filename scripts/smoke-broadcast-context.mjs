@@ -21,23 +21,32 @@ if (typeof endpoint !== "string" || endpoint.length === 0) {
   );
 }
 
-const { response } = await runContextSmoke({
+const { response, generationCount } = await runContextSmoke({
   request: createCurrentContextRequest(),
   proxyOrigin: new URL(endpoint).origin,
 });
 const payload = await response.json().catch(() => null);
+const diagnosticHeaders = Object.fromEntries(
+  [...response.headers.entries()].filter(([name]) =>
+    name.toLowerCase().startsWith("x-upstream-") ||
+    name.toLowerCase().startsWith("x-exclipper-"),
+  ),
+);
 process.stdout.write(
   `${JSON.stringify(
     response.ok
       ? {
           status: response.status,
+          generationCount,
           schemaVersion: payload?.schemaVersion ?? null,
           broadcastSummaryKo: payload?.broadcastSummaryKo ?? null,
           clipDecision: payload?.annotations?.[0]?.clipDecision ?? null,
         }
-      : {
+        : {
           status: response.status,
+          generationCount,
           errorCode: payload?.error?.code ?? "UNKNOWN",
+          diagnosticHeaders,
         },
     null,
     2,

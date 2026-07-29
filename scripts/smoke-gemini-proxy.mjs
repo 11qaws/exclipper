@@ -138,26 +138,34 @@ const frames = FRAME_SECONDS.map((relativeSeconds) => {
 });
 
 try {
-  const { response, candidateHash } = await runCandidateSmoke({
+  const { response, candidateHash, generationCount } = await runCandidateSmoke({
     wav,
     frames,
     candidateDurationMs: DURATION_SECONDS * 1_000,
     proxyOrigin: new URL(endpoint).origin,
   });
   const payload = await response.json().catch(() => null);
+  const diagnosticHeaders = Object.fromEntries(
+    [...response.headers.entries()].filter(([name]) =>
+      name.toLowerCase().startsWith("x-qwen-"),
+    ),
+  );
   process.stdout.write(
     `${JSON.stringify(
       response.ok
         ? {
             status: response.status,
+            generationCount,
             candidateHash,
             cleanupVerified: true,
             payload,
           }
         : {
             status: response.status,
+            generationCount,
             candidateHash,
             errorCode: payload?.error?.code ?? "UNKNOWN_PROXY_ERROR",
+            diagnosticHeaders,
           },
       null,
       2,

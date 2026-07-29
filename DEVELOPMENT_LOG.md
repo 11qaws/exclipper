@@ -21,6 +21,10 @@
 - Candidate Pass B는 저장 ledger·dispatch·settlement가 정확히 일치하는 미실행 후보 또는
   무료 결과불명 후보만 선택한다. 재시도 직전 durable record를 다시 확인하고 grant를
   저장·readback한 뒤 새 attempt가 이를 소비한다. 이미 성공한 형제 후보는 그대로 보존한다.
+- Qwen 후보 입력의 화면 표기가 1~4인데 검증 스키마는 0~3이었던 불일치를 제거했다.
+  `evidenceBasis`는 실제 화면 고유 이름의 `on-screen-name` 또는 실제 호명의
+  `spoken-name`만 허용한다. `스트리머`·`진행자` 같은 역할명은 이름으로 인증하지 않고,
+  고유 이름 근거가 없으면 `present-unidentified`로 남긴다.
 - `candidate-plan-invalid`는 전사·출연자·전체 맥락을 지우지 않고 Candidate Pass B 계획과
   그 파생 상세 결과만 CAS로 재구성한다. 실제 source/run/context fence 불일치에만 상류
   재구축을 허용한다.
@@ -42,14 +46,19 @@
 
 - `npm run check`: TypeScript strict, ESLint warning 0, Vitest 161개 파일
   1,964개 테스트, 음성 등록 CLI 9개 테스트 전부 통과.
-- 현재 AI smoke 계약 4개 통과: 전사 raw WAV stage/resolve/cleanup, 명시적 429 재시도,
-  sealed grounding 전체 맥락, WAV+JPEG 4장 후보 해석.
-- production Vite build 통과. main bundle 1,220.69 KiB(334.67 KiB gzip),
-  Candidate Pass B worker 371.49 KiB.
-- Wrangler dry-run 통과. Worker 461.02 KiB(86.90 KiB gzip), Qwen·`free-r2`·
+- 현재 AI smoke 계약 5개 통과: 전사 raw WAV stage/resolve/cleanup, 명시적 429 재시도,
+  sealed grounding 전체 맥락, 전체 맥락 응답 형식 오류의 새 generation 복구,
+  WAV+JPEG 4장 후보의 R2 재사용 복구.
+- production Vite build 통과. main bundle 1,221.00 KiB(334.81 KiB gzip),
+  Candidate Pass B worker 371.79 KiB.
+- Wrangler dry-run 통과. Worker 463.40 KiB(87.38 KiB gzip), Qwen·`free-r2`·
   quota required·최대 동시 편집자 5명 계약을 확인했다.
-- 이 항목 작성 시점에는 실제 Worker와 Pages 배포 전이다. 같은 commit의 실제 health,
-  CORS, 세 가지 current smoke와 Pages 브라우저 검증을 통과한 뒤 배포 완료로 갱신한다.
+- 실제 음식 토크 19:45 구간에서 Qwen 한국어 전사, 전체 맥락, 오디오+서로 다른 화면
+  4장 후보 해석이 모두 HTTP 200으로 완료됐다. 후보 해석은 첫 업로드를 보존한 채
+  3번째 generation에서 `streamer-event / recommend / present-unidentified`로
+  끝났고 R2 cleanup까지 확인했다.
+- Worker `1438ff5e-3edf-466b-a807-da4098dc1ef5`를 배포했다. 이 변경을 포함한
+  GitHub Pages workflow와 production 브라우저 검증을 최종 배포 게이트로 사용한다.
 
 ## 2026-07-29 Context/refinement exact-operation reconciliation
 

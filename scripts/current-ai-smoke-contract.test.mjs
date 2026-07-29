@@ -288,6 +288,8 @@ test("context smoke sends the current sealed grounding through context quota", a
   const body = JSON.parse(calls[1].body);
   assert.equal(body.participantGrounding.status, "sealed");
   assert.equal(body.participantGrounding.schemaVersion, "1.2.0");
+  assert.equal(body.castRosterId, null);
+  assert.equal(body.outputLanguage, "ko");
   assert.equal(body.candidates[0].participantContextKo.length > 0, true);
   assert.equal(
     calls[1].headers.get("X-ExClipper-Quota-Payload-Digest"),
@@ -295,8 +297,50 @@ test("context smoke sends the current sealed grounding through context quota", a
   );
 });
 
+test("context smoke starts a fresh generation after a validated provider shape failure", async () => {
+  const operationIds = [];
+  let contextRequestCount = 0;
+  const fetchImplementation = async (input, init = {}) => {
+    const url = new URL(urlString(input));
+    if (url.pathname === "/v1/ai-quota") return grantedQuota();
+    if (url.pathname === "/v1/broadcast-context") {
+      operationIds.push(
+        new Headers(init.headers).get("X-ExClipper-Quota-Operation"),
+      );
+      contextRequestCount += 1;
+      return contextRequestCount === 1
+        ? jsonResponse(
+            { error: { code: "UPSTREAM_INVALID_RESPONSE" } },
+            502,
+          )
+        : jsonResponse({
+            schemaVersion: "1.7.0",
+            broadcastSummaryKo: "복구된 테스트 방송 요약",
+            annotations: [],
+          });
+    }
+    throw new Error(`Unexpected request: ${url}`);
+  };
+
+  const { response, generationCount } = await runContextSmoke({
+    proxyOrigin: TEST_ORIGIN,
+    identity: IDENTITY,
+    fetchImplementation,
+    sleep: async () => {},
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(generationCount, 2);
+  assert.equal(contextRequestCount, 2);
+  assert.equal(operationIds.length, 2);
+  assert.notEqual(operationIds[0], operationIds[1]);
+  assert.match(operationIds[0], /\.generation-0\..*\.attempt-0$/u);
+  assert.match(operationIds[1], /\.generation-1\..*\.attempt-0$/u);
+});
+
 test("candidate smoke stages one WAV plus four frames, resolves with context, and verifies cleanup", async () => {
   const calls = [];
+  let resolveCount = 0;
   const wav = Buffer.alloc(60, 5);
   const frames = [100, 300, 600, 900].map((timestampMs, index) => ({
     timestampMs,
@@ -330,7 +374,13 @@ test("candidate smoke stages one WAV plus four frames, resolves with context, an
       );
     }
     if (url.pathname === "/v1/candidate-insights") {
-      return jsonResponse({ clipDecision: "recommend" });
+      resolveCount += 1;
+      return resolveCount === 1
+        ? jsonResponse(
+            { error: { code: "UPSTREAM_INVALID_RESPONSE" } },
+            502,
+          )
+        : jsonResponse({ clipDecision: "recommend" });
     }
     if (url.pathname === "/v1/candidate-insight-media") {
       return new Response(null, { status: 404 });
@@ -338,7 +388,7 @@ test("candidate smoke stages one WAV plus four frames, resolves with context, an
     throw new Error(`Unexpected request: ${url}`);
   };
 
-  const { response, candidateHash } = await runCandidateSmoke({
+  const { response, candidateHash, generationCount } = await runCandidateSmoke({
     wav,
     frames,
     candidateDurationMs: 1_000,
@@ -349,12 +399,16 @@ test("candidate smoke stages one WAV plus four frames, resolves with context, an
   });
 
   assert.equal(response.status, 200);
+  assert.equal(generationCount, 2);
+  assert.equal(resolveCount, 2);
   assert.match(candidateHash, /^[a-f0-9]{24}$/u);
   assert.deepEqual(
     calls.map(({ url }) => url.pathname),
     [
       "/v1/ai-quota",
       "/v1/candidate-insight-media",
+      "/v1/candidate-insights",
+      "/v1/ai-quota",
       "/v1/candidate-insights",
       "/v1/candidate-insight-media",
     ],
@@ -372,6 +426,11 @@ test("candidate smoke stages one WAV plus four frames, resolves with context, an
   const resolveBody = JSON.parse(resolve.body);
   assert.equal(resolveBody.mediaTicket, CANDIDATE_TICKET);
   assert.equal(resolveBody.context.schemaVersion, "1.0.0");
-  assert.equal(resolveBody.context.contextDecision, "select");
-  assert.equal(calls[3].url.searchParams.get("part"), "audio");
+  assert.equal(resolveBody.context.contextDecision, "review");
+  assert.equal(resolveBody.context.contextCategory, "context-dependent");
+  assert.notEqual(
+    calls[2].headers.get("X-ExClipper-Quota-Operation"),
+    calls[4].headers.get("X-ExClipper-Quota-Operation"),
+  );
+  assert.equal(calls[5].url.searchParams.get("part"), "audio");
 });

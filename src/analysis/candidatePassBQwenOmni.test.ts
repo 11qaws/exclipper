@@ -67,8 +67,20 @@ describe("candidatePassBQwenOmni", () => {
     expect(body.messages[0].content).toHaveLength(10);
     const serializedContent = JSON.stringify(body.messages[0].content);
     expect(serializedContent).toContain("input_audio");
-    expect(serializedContent).toContain("5.0초");
-    expect(serializedContent).toContain("15.0초");
+    expect(serializedContent).toContain("대표 화면 index 0 · 후보 시작 후 5.0초");
+    expect(serializedContent).toContain("대표 화면 index 1 · 후보 시작 후 15.0초");
+    expect(serializedContent).toContain("대표 화면 index 2 · 후보 시작 후 22.0초");
+    expect(serializedContent).toContain("대표 화면 index 3 · 후보 시작 후 28.0초");
+    expect(serializedContent).not.toContain("[대표 화면 4 ·");
+    expect(serializedContent).toContain(
+      "evidenceBasis=on-screen-name|spoken-name",
+    );
+    expect(serializedContent).toContain(
+      "participantPresence는 present-unidentified",
+    );
+    expect(serializedContent).toContain(
+      "역할명이나 자칭은 고유 이름 또는 spoken-name 근거가 아닙니다",
+    );
     expect(
       body.messages[0].content.filter(
         (item) =>
@@ -450,4 +462,5 @@ describe("candidatePassBQwenOmni", () => {
       ).toBeNull();
     }
   });
+
 });
