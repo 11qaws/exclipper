@@ -100,15 +100,11 @@ jobs:
           if "${RUNNER_TEMP}/yt-dlp" --proxy socks5://127.0.0.1:40000 "${ARGS[@]}" \
                > /tmp/warp.json 2>/tmp/warp.err; then
             echo "warp: EXIT 0, $(wc -c < /tmp/warp.json) bytes"
-            python3 - <<'PY'
-import json
-with open("/tmp/warp.json", encoding="utf-8") as handle:
-    meta = json.load(handle)
-auto = sorted(k for k in (meta.get("automatic_captions") or {}) if k.startswith("ko"))
-manual = sorted(k for k in (meta.get("subtitles") or {}) if k.startswith("ko"))
-print("id:", meta.get("id"), "duration:", meta.get("duration"))
-print("korean manual:", manual, "korean auto:", auto)
-PY
+            jq -r '"id: \(.id)  duration: \(.duration)"' /tmp/warp.json
+            jq -c '[((.subtitles // {}) | keys[] | select(startswith("ko")))]' /tmp/warp.json \
+              | sed 's/^/korean manual: /'
+            jq -c '[((.automatic_captions // {}) | keys[] | select(startswith("ko")))]' /tmp/warp.json \
+              | sed 's/^/korean auto: /'
           else
             echo "warp: EXIT $?"
             head -c 600 /tmp/warp.err
