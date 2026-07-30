@@ -2456,13 +2456,20 @@ async function readBoundedResponseBytes(
     }
   } catch (error) {
     if (signal?.aborted) {
-      void reader
-        .cancel("response deadline exceeded")
-        .catch(() => undefined);
+      // Await the cancel before the lock is released. Cancelling settles the
+      // read request that lost the deadline race; releasing the lock first
+      // leaves that read's fate to the runtime's stream implementation, and a
+      // body that never settles keeps the process observably pending.
+      await reader.cancel("response deadline exceeded").catch(() => undefined);
     }
     throw error;
   } finally {
-    reader.releaseLock();
+    // A lock release must never replace the deadline error being propagated.
+    try {
+      reader.releaseLock();
+    } catch {
+      // The reader was already released along with the cancelled stream.
+    }
   }
 
   const bytes = new Uint8Array(totalBytes);
@@ -2527,6 +2534,10 @@ async function waitForAbortable(promise, signal) {
       reject(new Error("The response deadline was exceeded."));
     signal.addEventListener("abort", rejectForAbort, { once: true });
   });
+  // When the deadline wins the race the original promise is abandoned. Observe
+  // its eventual settlement so a late rejection cannot surface as an unhandled
+  // rejection after the caller has already been given the deadline error.
+  void promise.catch(() => undefined);
   try {
     return await Promise.race([promise, aborted]);
   } finally {
