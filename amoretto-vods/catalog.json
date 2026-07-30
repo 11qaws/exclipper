@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "channelId": "UCHycoTBFDhXz4XNz8jBP-_A",
   "channelHandle": "@AmorettoVODs",
-  "revision": 8,
-  "generatedAt": "2026-07-30T12:37:50.606Z",
+  "revision": 11,
+  "generatedAt": "2026-07-30T13:09:34.299Z",
   "videos": [
     {
       "channelId": "UCHycoTBFDhXz4XNz8jBP-_A",
@@ -29,15 +29,18 @@
     {
       "channelId": "UCHycoTBFDhXz4XNz8jBP-_A",
       "videoId": "Xns8EY3gae0",
-      "title": "2026 07 21 - 잔잔하게 노래 흥얼거리는 방송",
+      "title": "2026 07 21 - 잔잔하게 노래 흥얼거리는 방송",
       "normalizedTitle": "2026 07 21 잔잔하게 노래 흥얼거리는 방송",
-      "durationMs": null,
+      "durationMs": 6177000,
       "publishedAt": "2026-07-24T20:30:51.000Z",
       "updatedAt": "2026-07-24T20:47:12.000Z",
       "watchUrl": "https://www.youtube.com/watch?v=Xns8EY3gae0",
-      "state": "discovered",
-      "revision": 1,
-      "artifactIds": [],
+      "state": "transcript-ready",
+      "revision": 4,
+      "artifactIds": [
+        "youtube-caption-bundle:Xns8EY3gae0:v1",
+        "youtube-storyboard-visual-fingerprint:Xns8EY3gae0:v1"
+      ],
       "registeredLocalSampledFingerprints": [],
       "retry": null
     },
@@ -256,6 +259,26 @@
       "contentDigest": "sha256:9544dd215e6d9626f8ce7f1fe201ae649790bc00554f24e41c5588c363a0a2cd",
       "byteLength": 2199,
       "createdAt": "2026-07-19T06:46:05.000Z"
+    },
+    {
+      "artifactId": "youtube-caption-bundle:Xns8EY3gae0:v1",
+      "videoId": "Xns8EY3gae0",
+      "kind": "transcript",
+      "revision": 1,
+      "storageKey": "amoretto-vods/videos/Xns8EY3gae0.v1.json",
+      "contentDigest": "sha256:0f797fd63ec0fb555383b4dbdb994a8720802747f5c35837bc4c654f8d767a50",
+      "byteLength": 256442,
+      "createdAt": "2026-07-30T13:09:33.714Z"
+    },
+    {
+      "artifactId": "youtube-storyboard-visual-fingerprint:Xns8EY3gae0:v1",
+      "videoId": "Xns8EY3gae0",
+      "kind": "fingerprint",
+      "revision": 1,
+      "storageKey": "amoretto-vods/videos/Xns8EY3gae0.visual-fingerprint.v1.json",
+      "contentDigest": "sha256:3e052b01e5febbeece8c294d52d27b595b5b67aa498d0034ebd499d362e1eaf6",
+      "byteLength": 2193,
+      "createdAt": "2026-07-24T20:47:12.000Z"
     }
   ]
 }
