@@ -2553,8 +2553,12 @@ async function fetchWithTimeout(
   consume,
 ) {
   const controller = new AbortController();
+  // This timer stays referenced on purpose. Unlike the yt-dlp timeout, which is
+  // held open by a live child process, nothing else here guarantees a handle: a
+  // body that stalls in JS has none, so an unreferenced timer lets the loop
+  // drain and the deadline never fires at all. clearTimeout below already keeps
+  // a satisfied request from delaying exit.
   const timer = setTimeout(() => controller.abort(), timeoutMs);
-  timer.unref?.();
   try {
     const response = await fetchImplementation(url, {
       ...init,
