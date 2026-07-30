@@ -158,6 +158,28 @@ Cloudflare WARP 출구의 평판이며, 그것은 한도가 아니라 상관 장
   `amoretto-vods/videos/*.json`만 가진 orphan snapshot으로 만든다. branch가
   없으면 workflow는 쓰기 전에 명시적으로 실패한다.
 
+### 예약 context Worker의 무료 한도 (2026-07-30 확인)
+
+Cloudflare 공식 문서로 확인한 값이며 기억에 의존하지 않았다.
+
+- Durable Object는 Workers 무료 플랜에서 **SQLite 스토리지 백엔드만** 사용할 수
+  있다. `wrangler.preanalysis-context.jsonc`는 이미
+  `"storage": "sqlite"`로 선언돼 있어 요건을 만족한다. key-value 백엔드는 유료
+  전용이므로 이 설정을 바꾸면 무료 범위를 벗어난다.
+- 무료 한도: 요청 100,000/일, 실행 13,000 GB-s/일, SQLite 행 읽기 500만/일,
+  행 쓰기 100,000/일, 저장 5GB.
+- 예상 사용량은 cron 상한 기준 **하루 16 요청**(3시간마다 최대 2개 영상)이다.
+  100,000/일 대비 무시할 수준이며, backlog 소진 후에는 하루 1건 수준으로
+  떨어진다.
+- 한도를 넘기면 **과금이 아니라 해당 유형의 작업이 오류로 실패한다.** 즉
+  Cloudflare 쪽에서 예기치 않은 청구가 발생하는 경로는 없다. 일 한도는 UTC
+  00:00에 초기화된다.
+- **실제 비용은 Cloudflare가 아니라 provider(Qwen)에서 발생한다.** 이것이 이
+  단계를 여는 유일한 유료 결정이며, 전용 key와 예산은 작업자가 직접 준비해야
+  한다.
+- dry-run은 통과 상태다(154.81 KiB / gzip 33.88 KiB, Durable Object·rate
+  limiter·환경변수 바인딩 정상).
+
 ### 예약 context opt-in 차단점
 
 background 전용 context proxy의 source와 독립 Worker 설정은
