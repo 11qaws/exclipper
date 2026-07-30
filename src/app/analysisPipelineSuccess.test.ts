@@ -174,7 +174,7 @@ describe("analysis pipeline success certificate", () => {
     });
   });
 
-  it("certifies an intentionally empty detail cohort only from its exact durable plan", async () => {
+  it("certifies an editor-rejected empty detail cohort only from its exact durable plan", async () => {
     const fixture = await createAnalysisPipelineIntentionalEmptyFixture();
 
     await expect(certifyAnalysisPipelineSuccess(fixture)).resolves.toMatchObject({

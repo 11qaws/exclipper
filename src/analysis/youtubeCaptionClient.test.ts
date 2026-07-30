@@ -5,6 +5,7 @@ import {
   parseYouTubeCaptionProxyResult,
   requestYouTubeCaptionTrack,
 } from "./youtubeCaptionClient";
+import { YouTubeCaptionSandboxError } from "./youtubeCaptionSandbox";
 
 const payload = {
   videoId: "KzAW3yow80Q",
@@ -30,5 +31,67 @@ describe("youtubeCaptionClient", () => {
       `${YOUTUBE_CAPTION_PROXY_ENDPOINT}?v=KzAW3yow80Q`,
       expect.objectContaining({ method: "GET", credentials: "omit" }),
     );
+  });
+
+  it("uses the isolated browser caption route before the proxy", async () => {
+    const fetchImplementation = vi.fn(() =>
+      Promise.reject(new Error("proxy should not be called")),
+    );
+    const sandboxRequestImplementation = vi.fn(() =>
+      Promise.resolve(payload),
+    );
+
+    await expect(
+      requestYouTubeCaptionTrack("KzAW3yow80Q", {
+        fetchImplementation,
+        sandboxRequestImplementation,
+      }),
+    ).resolves.toEqual(payload);
+    expect(sandboxRequestImplementation).toHaveBeenCalledTimes(1);
+    expect(fetchImplementation).not.toHaveBeenCalled();
+  });
+
+  it("falls back to the proxy after a transient sandbox failure", async () => {
+    const fetchImplementation = vi.fn(() =>
+      Promise.resolve(new Response(JSON.stringify(payload), { status: 200 })),
+    );
+    const sandboxRequestImplementation = vi.fn(() =>
+      Promise.reject(
+        new YouTubeCaptionSandboxError(
+          "PLAYER_UNAVAILABLE",
+          "temporary failure",
+        ),
+      ),
+    );
+
+    await expect(
+      requestYouTubeCaptionTrack("KzAW3yow80Q", {
+        fetchImplementation,
+        sandboxRequestImplementation,
+      }),
+    ).resolves.toEqual(payload);
+    expect(fetchImplementation).toHaveBeenCalledTimes(1);
+  });
+
+  it("asks the proxy when one isolated player surface reports no captions", async () => {
+    const fetchImplementation = vi.fn(() =>
+      Promise.resolve(new Response(JSON.stringify(payload), { status: 200 })),
+    );
+    const sandboxRequestImplementation = vi.fn(() =>
+      Promise.reject(
+        new YouTubeCaptionSandboxError(
+          "CAPTIONS_NOT_FOUND",
+          "no Korean captions",
+        ),
+      ),
+    );
+
+    await expect(
+      requestYouTubeCaptionTrack("KzAW3yow80Q", {
+        fetchImplementation,
+        sandboxRequestImplementation,
+      }),
+    ).resolves.toEqual(payload);
+    expect(fetchImplementation).toHaveBeenCalledTimes(1);
   });
 });

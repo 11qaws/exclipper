@@ -17,14 +17,6 @@ import { buildHighlightNarrative } from "./highlightNarrative";
 import type { CandidatePassBContextPacket } from "./candidatePassBWorkerProtocol";
 
 const CONTEXT_WINDOW_MS = 2 * 60_000;
-const ALLOWED_CATEGORIES = new Set<CandidatePassBContextPacket["contextCategory"]>([
-  "reaction",
-  "quiet-achievement",
-  "setup-and-payoff",
-  "running-gag",
-  "context-dependent",
-  "apology-accountability",
-]);
 
 export interface CandidateContextPacketBuildInput {
   readonly candidates: readonly (UnifiedHighlightCandidate & {
@@ -140,12 +132,8 @@ function chatReaction(candidate: UnifiedHighlightCandidate): string | null {
 
 function allowedCategory(
   category: BroadcastContextCandidateCategory,
-): CandidatePassBContextPacket["contextCategory"] | null {
-  return ALLOWED_CATEGORIES.has(
-    category as CandidatePassBContextPacket["contextCategory"],
-  )
-    ? category as CandidatePassBContextPacket["contextCategory"]
-    : null;
+): CandidatePassBContextPacket["contextCategory"] {
+  return category;
 }
 
 export function buildCandidatePassBContextPackets(
@@ -176,7 +164,11 @@ export function buildCandidatePassBContextPackets(
             input,
             Math.round(candidate.startMs),
             Math.round(candidate.endMs),
-          )
+          ) ?? {
+            text:
+              "이 후보 구간에는 확정된 참고 대사가 없습니다. 첨부 오디오로 실제 발화 또는 무발화를 확인해야 합니다.",
+            source: "broadcast-transcript" as const,
+          }
         : {
             text: semantic.transcriptKo.trim(),
             source: "semantic-refinement" as const,
@@ -187,18 +179,8 @@ export function buildCandidatePassBContextPackets(
         : annotation === undefined
           ? editorApproved
             ? "context-dependent"
-            : null
-          : allowedCategory(annotation.category) ??
-            (editorApproved ? "context-dependent" : null);
-    if (
-      candidateTranscript === null ||
-      category === null ||
-      (annotation !== undefined &&
-        annotation.clipDecision === "reject" &&
-        !editorApproved)
-    ) {
-      continue;
-    }
+            : "uncertain"
+          : allowedCategory(annotation.category);
     const topicContextKo =
       matchingTopic(input.broadcastContext.semanticChapters, candidate) ||
       semantic?.eventSummaryKo ||
@@ -217,10 +199,11 @@ export function buildCandidatePassBContextPackets(
       topicContextKo,
       fastEvidenceKo: `${narrative.event} ${narrative.streamerReaction} ${narrative.whyRecommended}`,
       contextDecision:
-        !editorApproved &&
-        (semantic !== undefined || annotation?.clipDecision === "select")
-          ? "select"
-          : "review",
+        editorApproved
+          ? "review"
+          : semantic !== undefined
+            ? "select"
+            : annotation?.clipDecision ?? "review",
       contextCategory: category,
       contextVerdictKo,
       chatReactionKo: chatReaction(candidate),

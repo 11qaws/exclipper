@@ -74,7 +74,7 @@ function maximumContext(
   fill: string,
 ): CandidatePassBContextPacket {
   return {
-    schemaVersion: "1.0.0",
+    schemaVersion: "2.0.0",
     transcriptSource: "broadcast-transcript",
     transcriptKo: maximumContextField(`${label}-transcript`, fill),
     beforeContextKo: maximumContextField(`${label}-before`, fill),

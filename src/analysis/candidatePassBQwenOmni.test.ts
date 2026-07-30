@@ -26,7 +26,7 @@ function contextPacket(
   overrides: Partial<CandidatePassBContextPacket> = {},
 ): CandidatePassBContextPacket {
   return {
-    schemaVersion: "1.0.0",
+    schemaVersion: "2.0.0",
     transcriptSource: "broadcast-transcript",
     transcriptKo: "후보 대사",
     beforeContextKo: "직전에는 음식 이름을 맞히고 있었다.",

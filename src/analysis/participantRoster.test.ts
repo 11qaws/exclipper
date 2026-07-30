@@ -97,4 +97,17 @@ describe("participantRoster", () => {
     ).toBe(true);
     expect(references.some(({ displayName }) => displayName === "세라 교수님")).toBe(false);
   });
+
+  it("maps the pinned Amoretto YouTube archive channel to its personal roster", () => {
+    expect(
+      candidatePassBCastRosterIdForSourceName(
+        "https://www.youtube.com/@AmorettoVODs",
+      ),
+    ).toBe(AMORETTO_CHANNEL_CAST_ROSTER_ID);
+    expect(
+      candidatePassBCastRosterIdForSourceName(
+        "youtube-channel UCHycoTBFDhXz4XNz8jBP-_A KzAW3yow80Q",
+      ),
+    ).toBe(AMORETTO_CHANNEL_CAST_ROSTER_ID);
+  });
 });

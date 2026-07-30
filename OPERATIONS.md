@@ -1,5 +1,186 @@
 # ExClipper 개인용 운영·배포·복구 계획
 
+## 2026-07-30 아모레또 VOD 선분석 운영 경계
+
+- 고정 source는 `https://www.youtube.com/@AmorettoVODs`, channel ID
+  `UCHycoTBFDhXz4XNz8jBP-_A`, Atom feed
+  `https://www.youtube.com/feeds/videos.xml?channel_id=UCHycoTBFDhXz4XNz8jBP-_A`다.
+  2026-07-30 실측 feed는 14개 entry를 반환했으며 음식 토크
+  `KzAW3yow80Q`, 구독 실수 `EZfCGS5ms_Q`, 마크 릴레이 `vadCuMEo5PQ`를 포함했다.
+- Pages 브라우저에서 feed를 직접 polling하지 않는다. CORS가 없고 탭 종료 뒤
+  실행도 보장되지 않는다. 예약 GitHub Actions는 정각 혼잡을 피한 시각에
+  `schedule`과 수동 실행을 제공하고, 한 실행에서 bounded 수의 미완료 영상만
+  처리한다.
+- public repository의 표준 GitHub-hosted runner는 현재 무료지만 schedule은 지연
+  또는 누락될 수 있고 60일 repository activity가 없으면 비활성화될 수 있다.
+  따라서 실행 누락은 영상 terminal 실패가 아니며 다음 feed reconciliation에서
+  다시 발견한다.
+- `yt-dlp`는 workflow에서 고정 release와 SHA-256을 검증한 실행 파일만 사용한다.
+  공개 한국어 수동 자막(`ko`)을 우선하고 없으면 자동 자막(`ko-orig`)을 JSON3로
+  받아 기존 strict parser로 정규화한다. 둘 다 없거나 일시 차단되면 해당 영상만
+  `retryable`로 남긴다.
+  Atom body는 `Content-Length` 유무와 관계없이 512KiB에서 streaming 중단하고,
+  JSON3 임시 파일은 regular file·32MiB 상한을 통과한 뒤 bounded stream으로 읽는다.
+- workflow의 `prepare` job은 `contents: read`, 모든 checkout의
+  `persist-credentials: false`, `npm ci --ignore-scripts`로 실행한다. 검증된 catalog
+  snapshot만 1일 artifact로 넘기며, `publish` job만 `contents: write`를 받고
+  Node·npm·`yt-dlp`를 전혀 실행하지 않는다. write token은 마지막 고정 `git push`
+  step의 환경에만 존재한다.
+- `prepare`의 application source는 움직이는 branch 이름이 아니라 workflow
+  event의 immutable `github.sha`를 checkout한다. `schedule`과
+  `workflow_dispatch`가 runner를 기다리는 사이 `main`이 갱신되어도 실행 source가
+  바뀌지 않는다.
+- pinned `yt-dlp` child에는 PATH·HOME·temp·locale, credential 없는 proxy,
+  CA bundle처럼 실행에 필요한 값만 allowlist로 전달한다. 예약 context token,
+  provider key, GitHub token과 그 밖의 step secret은 전달하지 않는다. proxy URL에
+  credential이 들어 있거나 allowlist 값이 개행·크기 제한을 어기면 직접 연결로
+  조용히 우회하지 않고 spawn 전에 실패한다.
+- `publish`는 `prepare`가 읽은 `preanalysis-catalog` base SHA와 현재 branch HEAD가
+  같을 때만 snapshot을 반영한다. 중간에 다른 writer가 branch를 바꾸면 덮어쓰지
+  않고 실패하며 다음 run이 최신 base에서 다시 준비한다.
+- 매 예약 실행은 selection 전에 ready video의 모든 referenced artifact를 실제
+  regular file로 다시 열어 manifest byte length, 32MiB 상한, 전체 SHA-256을
+  확인한다. canonical transcript는 UTF-8/schema/transcript digest/video identity와
+  provenance까지 확인한다. 누락·손상·다른 영상 bundle이면 ready pointer와 관련
+  artifact를 제거하고 `retryable(transcript)`의 즉시 due checkpoint로 내려 같은
+  run에서 재생성을 시도한다.
+- 자막과 선택적 context가 확정된 뒤 시각 지문은 독립된 후행 lane에서 만든다.
+  YouTube storyboard의 host·sheet 수·총 bytes를 제한하고 방송 전반에 분산된
+  12개 화면을 `32×18` luma 기반 dHash/blockHash·밝기·edge artifact로 만든다.
+  지문 실패나 동일 길이 변조는 지문 파일/pointer만 격리하며 확정된 transcript와
+  context는 그대로 둔다. 지문 없는 기존 영상은 fresh 영상보다 낮은 우선순위로
+  backfill하므로 storyboard의 장기 장애가 채널 자막 준비를 막지 않는다.
+- catalog branch에는 공개 metadata, 정규화 자막/챕터, 파생 지문·맥락과 digest만
+  저장한다. AI key, quota lease, 로컬 파일명·원본 bytes, 채팅 원문, 사용자
+  IndexedDB 자료는 넣지 않는다.
+- 예약 분석은 대화형 최대 5인 quota의 여섯 번째 편집자로 경쟁하지 않는다.
+  기본 cron은 secret 없이 실행되어 `transcript-ready`에서 정직하게 멈춘다.
+  context 승격은 foreground와 분리된 전용 인증 proxy와 별도 provider budget이
+  준비된 경우에만 명시적으로 켠다.
+- 배포 전에는 live feed parser, food-talk JSON3 준비, manifest/bundle hash
+  readback, 시각 지문 artifact closure, raw catalog CORS, exact ID 매칭,
+  이름이 완전히 바뀐 duration cohort의 유일 화면 합의, ambiguous 합의의 비자동
+  연결, catalog 부재 시 기존 ASR fallback을 검증한다.
+- 로컬 업로드는 명시 ID/등록 파일 지문이 없으면 먼저 duration-compatible 후보를
+  최대 12개로 제한한다. 단일 probable 후보는 12-anchor와 ±30초 offset을 bounded
+  탐색하고, 이름 없는 cohort는 모든 후보가 요구하는 source 시각의 합집합을 한
+  decode pass로 준비한다. 최소 8개·67%·앞/중간/뒤 coverage·거리 상한을 통과한
+  후보가 정확히 하나일 때만 `visual-fingerprint-consensus` exact binding을
+  등록한다. 일부 원격 artifact fetch 실패나 둘 이상의 합격은 기존 로컬 분석으로
+  안전하게 내려간다.
+- 실제 음식 토크 로컬 원본과 YouTube storyboard 대조는 12/12 anchor, 세 구간
+  coverage, offset 0, median distance 4.5, p90 10으로 합격했다. 같은 길이로
+  강제한 다른 방송 `EZfCGS5ms_Q`는 0/12로 거부됐다. 이 실측은 현재 기준의
+  회귀 fixture이며 특정 음식 장면의 의미를 학습한 규칙은 아니다.
+- 공개 한국어 수동/자동 자막이 둘 다 없는 VOD를 예약 runner가 ASR로 선분석하는
+  경로는 아직 없다. 이런 영상은 `retryable(transcript)`로 남고, 편집자가 로컬
+  원본을 열면 현재 VAD/ASR 파이프라인이 정상 fallback한다. 예약 ASR은 별도 비용·
+  media ingress·quota 정책을 정한 뒤 추가한다.
+- `preanalysis-catalog` branch와 예약 workflow의 최초 활성화는 repository에
+  지속적인 외부 쓰기를 만든다. 코드 검증 보고와 명시적 배포 승인 뒤 branch를
+  seed하고 workflow를 활성화한다. branch는 자동 생성하지 않으며 최초 commit은
+  branch root의 `amoretto-vods/catalog.json`과 그 manifest가 참조하는
+  `amoretto-vods/videos/*.json`만 가진 orphan snapshot으로 만든다. branch가
+  없으면 workflow는 쓰기 전에 명시적으로 실패한다.
+
+### 예약 context opt-in 차단점
+
+background 전용 context proxy의 source와 독립 Worker 설정은
+`src/cloudflare/preanalysisContextProxy.worker.ts`와
+`wrangler.preanalysis-context.jsonc`에 준비되어 있지만 아직 배포·secret 설정은
+하지 않았다. 기존
+`https://rettohighlight-gemini.11qaws.workers.dev/v1/broadcast-context`는 대화형
+5인 quota lease를 요구하며 아래 Bearer·멱등 계약을 구현하지 않으므로 예약 작업에
+사용할 수 없다. runner도 이 host를 설정값으로 받으면 provider 호출 전에
+`INVALID_ARGUMENT`로 거부한다.
+
+전용 Worker는 operation마다 Durable Object를 하나 사용한다. 정확히 같은
+operation ID와 payload digest의 **검증된 200 성공만** terminal cache로 보존하며,
+설정·rate-limit·provider·schema·transport 실패는 마지막 transcript checkpoint를
+유지한 `retryable(context)`다. provider 응답이 사라진 극히 좁은 구간에는 외부
+provider와 Durable Object를 하나의 원자적 transaction으로 묶을 수 없으므로 다음
+예약 실행이 같은 operation을 다시 시도할 수 있다. 이 경우 응답 receipt에
+`possible-duplicate-provider-charge`를 남기며, 불완전한 결과를 성공으로 가장하는
+대신 최종 성공을 우선한다.
+
+전용 Worker를 배포할 때 다음 Worker secret을 대화형 Worker와 별도로 등록한다.
+
+- `PREANALYSIS_CONTEXT_TOKEN`: 예약 runner 전용 opaque Bearer token
+- `PREANALYSIS_QWEN_API_KEY`: 예약 맥락 분석 전용 provider key
+- 선택 `PREANALYSIS_QWEN_WORKSPACE_ID`: 전경 편집 요청과 upstream quota까지
+  분리하려면 별도 Qwen project/workspace를 지정한다.
+
+그 뒤 repository secret 두 개를 **함께** 설정해야 한다.
+
+- `CHANNEL_PREANALYSIS_CONTEXT_PROXY_URL`: HTTPS
+  `/v1/broadcast-context` 전용 endpoint
+- `CHANNEL_PREANALYSIS_CONTEXT_TOKEN`: 로그나 CLI argument에 넣지 않는 opaque
+  Bearer token
+
+하나만 있으면 workflow가 prepare 시작 전에 실패한다. 둘 다 없으면 오류가 아니라
+자막 전용 기본 모드다. 전용 proxy는 다음 계약을 구현한다.
+
+- `Authorization: Bearer ...`를 timing-safe 방식으로 검증하고 허용되지 않은
+  caller를 provider 실행 전에 거부한다.
+- `X-ExClipper-Preanalysis-Operation`과
+  `X-ExClipper-Preanalysis-Payload-Digest`를 함께 검증한다. 같은 operation과
+  digest의 terminal 성공은 저장·readback해 다음 cron에 같은 결과를 돌려주며,
+  operation 재사용과 다른 digest 조합은 거부한다.
+- 현행 `/v1/broadcast-context`의 bounded request와 normalized response schema를
+  그대로 지키되 대화형 participant 수·lease·분당 60회 lane과 독립된 예산 및
+  rate limit을 사용한다.
+- 요청 결과가 transport에서 불명확하면 runner는 같은 run에서 재호출하지 않는다.
+  v1 transcript pointer와 `retryable(context)`를 보존하고 다음 cron이 같은 stable
+  operation ID로 proxy의 terminal 결과를 조회한다.
+
+`context-ready`가 되더라도 이 예약 결과는 YouTube 자막만 본 선분석이다.
+`contextProvenance.evidenceScope`는
+`youtube-caption-transcript-only`, `localVisualVerificationRequired`는 `true`여야
+한다. 같은 provenance의 bounded `contextReceipt`는 성공 응답에서 exact 검증한
+proxy `contractVersion`, `routingRevision`, 실제 `modelId`, `modelRevision`을
+빠짐없이 보존하고 routing 불일치는 artifact closure에서 거부한다. 이 receipt도
+로컬 화면·오디오·등장인물·후보 상세 검증을 대신하지 않는다. 로컬 파일이
+trusted video identity와 호환 시간축을 모두 통과하면 이 결과는 전체 방송
+overview·주제·의미 lead의 seed로만 들어간다. 현재 로컬 후보와 현재 인물 grounding을
+사용한 selection jury는 반드시 다시 실행되고, 후보 화면 4장·오디오·대표 썸네일
+receipt는 이후 Candidate Pass B에서 별도로 완성한다.
+
+배포 전 명령은 다음 순서로 사용한다. 실제 secret 값은 shell history·문서·Git에
+남기지 않는다.
+
+```bash
+npx wrangler deploy --config wrangler.preanalysis-context.jsonc --dry-run
+npx wrangler secret put PREANALYSIS_CONTEXT_TOKEN \
+  --config wrangler.preanalysis-context.jsonc
+npx wrangler secret put PREANALYSIS_QWEN_API_KEY \
+  --config wrangler.preanalysis-context.jsonc
+npx wrangler deploy --config wrangler.preanalysis-context.jsonc
+```
+
+### 최초 branch seed 배포 차단점
+
+2026-07-30 현재 원격 `preanalysis-catalog` branch는 없다. 따라서 workflow 파일을
+main에 넣는 것만으로 예약 갱신이 켜진 것으로 간주하면 안 된다. 승인 뒤 **빈 임시
+clone 안에서만** 다음과 같이 현재 검증된 Pages fallback snapshot을 seed한다.
+
+```bash
+git clone --no-checkout https://github.com/11qaws/exclipper.git exclipper-catalog-seed
+cd exclipper-catalog-seed
+git switch --orphan preanalysis-catalog
+git rm -rf --ignore-unmatch .
+mkdir -p amoretto-vods
+cp -R ../exclipper/public/preanalysis/amoretto-vods/. amoretto-vods/
+git add -- amoretto-vods
+git commit -m "chore(catalog): seed Amoretto preanalysis"
+git push origin HEAD:refs/heads/preanalysis-catalog
+```
+
+`../exclipper`는 같은 commit을 검증한 source checkout이어야 한다. push 전
+`catalog.json`의 모든 artifact byte length·전체 SHA·bundle identity를 runner의
+closure test로 다시 확인한다. seed 뒤 workflow를 수동으로 한 번 실행해
+`prepare`와 `publish`가 모두 성공하고 raw branch의 CORS/내용이 정상인지 확인한
+뒤 schedule을 운영 상태로 본다.
+
 ## 2026-07-29 `0.9.0` current-only 배포 계약
 
 - 정식 배포 전에는 rolling 호환 경로를 운영하지 않는다. 새 분석 유입을 멈춘 뒤 **Worker 배포 → plain `/healthz`의 service 6·transport 3과 OPTIONS 확인 → 같은 commit의 Pages 배포 → 새 분석 재개** 순서로 교체한다.
@@ -84,7 +265,7 @@
 - 방송 전체 서술과 진행자 프로필은 하나의 맥락 카드로 통합하되 데이터 역할은 분리한다. 전자는 시간순 사건·주제 흐름, 후자는 방송에서 반복 관찰된 진행 방식만 표시하며 같은 내용을 두 번 요약하지 않는다.
 - `0.3.44`: candidate detail uses one shared frame producer and a two-consumer AI queue. A candidate enters paid multimodal analysis only after all four distinct source-fenced JPEGs are ready; an incomplete frame bundle retains its fast proposal but does not receive audio-only screen interpretation. The exact same AI bundle provides the impact thumbnail and a required participant state (`identified`, visible but unknown, none present, or insufficient visual evidence). Channel-scoped references keep 세라 교수님 exclusive to the 교환학생 main channel and never treat a channel owner prior as proof that the avatar is visible in a candidate.
 - The final editor view is one bordered workspace, not three vertically separated cards. At maximized width its left source-time map and right review rail share one grid row; the right rail keeps candidate navigation, paused video, decision summary, actions, and expandable evidence contiguous. Only the evidence body scrolls internally. At narrow widths the same workflow becomes timeline → video → decision with no duplicated detail card.
-- `0.3.43`: 저장 전사 map은 그대로 보존하면서 전체 맥락 transport만 144개 이하로 압축한다. 탐색 완료 셀은 즉시 클릭 가능한 근거로 공개하고, 넓은 화면은 타임라인 2/3·일시정지 검토 도크 1/3으로 나눈다. 음악·MV·오프닝·엔딩·휴식 context 판정은 미승인 후보와 자동 상세 큐에서 제외하며, 후보 대표 화면 준비와 원격 AI 해석은 모바일에서도 화면 폭과 무관한 2개 bounded pipeline으로 겹쳐 실행한다.
+- `0.3.43`: 저장 전사 map은 그대로 보존하면서 전체 맥락 transport만 144개 이하로 압축한다. 탐색 완료 셀은 즉시 클릭 가능한 근거로 공개하고, 넓은 화면은 타임라인 2/3·일시정지 검토 도크 1/3으로 나눈다. 현재 계약에서는 음악·MV·오프닝·엔딩·휴식 context 판정을 조기 삭제가 아닌 우선순위 가설로 보존하고, 편집자가 제외하지 않은 후보는 모두 네 화면·오디오 상세 검증을 거친다. 후보 대표 화면 준비와 원격 AI 해석은 모바일에서도 화면 폭과 무관한 2개 bounded pipeline으로 겹쳐 실행한다.
 - `0.3.42`: source-ready 첫 화면을 같은 높이의 1:1 준비 작업대로 바꾼다. 왼쪽은 확인된 원본과 길이·형식·크기, 오른쪽은 실제 원본 범위, 분석 경로, 사용 가능한 신호, 기본 분석 시작 동작을 담당한다. 별도 검사 영수증과 화면 아래에 떨어져 있던 CTA는 준비 완료 상태에서 제거한다.
 - 분석 전 source ruler는 30분 경계를 모두 유지하고 긴 방송에서는 라벨만 줄인다. 이 ruler는 원본 길이의 presentation projection이며 후보·주제·점수를 미리 확정하지 않는다. 기존 source check, persistence schema, Candidate Ledger, Worker 계약과 유료 AI 경로는 변경하지 않는다.
 - blocked source 결과는 더 이상 `AI 분석 준비 완료`라고 표시하지 않는다. 진행 중 취소 버튼은 사라지는 준비 CTA에서 실제 progress panel로 옮겨, 분석이 시작된 뒤에도 접근 가능하게 유지한다.
@@ -106,7 +287,7 @@
 - Gameplay abstention is post-model and deterministic. It requires repeated whole-broadcast gameplay evidence plus candidate-local routine gameplay or generic banter, so a closing next-stream game announcement does not contaminate a food broadcast. Exact accountability, rare achievement, serious bug, consequential responsibility dispute, and long payoff exceptions remain reviewable.
 - Live release smoke contracts: food must reject all three opening fast candidates and retain 칼국수·껍데기·두바이 초콜릿 through caption refinement; subscription must retain the mistake/apology/responsibility/compensation chain; Minecraft relay must return zero refinement IDs. The `0.3.39` food run completed 19/19 refinement calls with no transport failure: six jury-approved localizations used Qwen 3.6, thirteen topic-balanced reserves used Qwen 3.7, and 32 grounded refined moments were returned before canonical deduplication.
 - `0.3.35`: production transcript transport is limited to the live-proven 90-second Qwen Omni envelope. The 12-hour fragmented plan admits at most 240 requests while keeping the same `$0.42` duration budget. Each successful cell is checkpointed immediately; reload and transient failure recovery subtract already-covered source ranges and request only missing ranges, including compatible 210-second cells saved by `0.3.34`.
-- Candidate frame capture opens at most two browser decoders at once, while the existing two-request AI pool remains parallel. A missing frame still downgrades to the audio-only projection rather than inventing screen context.
+- Candidate frame capture opens at most two browser decoders at once, while the existing two-request AI pool remains parallel. A missing frame is a recoverable preparation gap; the current contract never starts the provider or promotes an audio-only projection without four complete source-fenced frames.
 - Candidate perception may send only the fixed `chzzk-video-13996057-v1` roster ID, and only for a filename carrying replay `13996057` or the reviewed `교환학생/합격생/장학생` title. The Worker expands six reviewed public VTuber-avatar descriptions server-side. `provided-cast-reference` requires two distinct same-frame traits and confidence `>= 0.88`; arbitrary roster text, unrelated sources, unknown names, low-confidence matches, and voice resemblance fail closed. Identity remains display-only evidence.
 - Routing policy is `1.8.0`; candidate route is `qwen3.5-omni-flash_then_gemini-3.6-flash_bounded-cast-v4`. Rollback readers retain the preceding Qwen/Gemini revisions and v2/v3 route manifests without relabeling paid results.
 - `0.3.34`: candidate audio+frame fallback and opt-in Gemini transcript routing use GA `gemini-3.6-flash`; production remains Qwen-primary. Routing policy is `1.7.0`, while the broadcast-context cache fence intentionally remains `1.6.0`.
@@ -115,7 +296,7 @@
 - Candidate fallback matrix: `timeout | unavailable | rate-limited | auth | model-unavailable | response-format | invalid-response` may switch provider once; `invalid-argument | rejected` must fail without a second paid request. Long-audio transcription remains single-provider because timeout billing is ambiguous at broadcast scale.
 - Compressed-context tier matrix: `timeout | unavailable | rate-limited | model-unavailable | response-format | invalid-response` may switch once between Qwen 3.7 and 3.6; `auth | invalid-argument | rejected` must stop because the credential or shared contract will fail on the alternate tier too.
 - A successful switch exposes `X-ExClipper-Fallback-Reason`. If both providers fail, expose only the bounded primary/fallback failure classes. Never expose upstream body text, keys, endpoint credentials, audio, frames, or transcript in diagnostics.
-- Context `reject` is an AI priority projection, not deletion. Release smoke must confirm the canonical candidate count and editor review/boundary state remain stable while the paid detail queue excludes unapproved `deprioritized` and explicit-music candidates.
+- Context `reject` is an AI priority hypothesis, not deletion or a detail-queue exclusion. Release smoke must confirm the canonical candidate count and editor review/boundary state remain stable, every non-editor-rejected candidate enters a missing-only detail batch, and only an exact multimodal receipt can confirm program material or no distinct event.
 
 - `0.3.33`: transcript/context routing precedes candidate multimodal perception. Qwen3.6 Flash discovers up to 24 topical leads; Qwen3.7 Plus performs the final comparative jury; only three selected leads plus three context reserves enter caption-native refinement.
 - Routing policy `1.6.0` invalidates older overview/discovery/jury caches. Caption-native refinement uses complete 30-second timestamp cells with zero ASR billing; the bounded one-minute audio refinement remains the only fallback when no matching caption track is available.
@@ -128,7 +309,7 @@
 - Successful candidate responses expose only public model ID, public revision, and whether fallback was used. CORS exposes those three headers; no credential, endpoint, workspace ID, provider body, transcript, or source metadata is included.
 - Candidate result persistence schema is `1.3.0`. Rollback readers must continue accepting 1.0–1.2 records without `modelByCandidateId`; forward readers reject mismatched model/revision pairs.
 - Routing policy `1.3.0` adds compact, grounded topic chapters to the Qwen whole-context response. A new run must not reuse an older context result that reports no topic support under the earlier policy.
-- Candidate frame sampling waits for decoded data on temporarily attached, invisible media elements and limits the capture pool to two decoders. If the request still contains zero frames, both client and Worker reduce the result to audio-only evidence and discard provider-authored screen, game, participant, and causal claims.
+- Candidate frame sampling waits for decoded data on temporarily attached, invisible media elements and limits the capture pool to two decoders. If four distinct frames cannot be prepared, the request is not sent; the candidate remains at a recoverable frame-preparation gap and no provider-authored screen, game, participant, or causal claim is accepted.
 - Historical `0.3.31` contract only: broadcast transcript preflight reported the exact violated invariant, and the 02:15:14.817 food-talk source used a 91-chunk plan under the then-current 90-second transport. This is not the `0.8.5` operating plan; new runs use the 30-second direct Base64 path and 271 chunks.
 - Timeline release smoke at a maximized width must verify 30-minute ticks, numbered/staggered candidates, topic bands, semantic-lead markers, the score landscape, and a wider independently scrolling evidence pane.
 
@@ -136,7 +317,7 @@
 - Phase contract: fast-pass completion may automatically start AI Pass B. A cancelled or failed Pass B must leave the fast candidates usable.
 - Candidate event kinds now include `dialogue-issue-signal`. It is a conservative speech-change lead and must be described as a lead, never as a confirmed event.
 - Cost display is advisory. Recalculate when candidate count or duration changes; do not use it as a billing guarantee.
-- 파일명 끝의 `[YouTubeID]`가 일치하면 Worker가 공개 Android 플레이어 응답의 한국어 자막 트랙을 우선 시도한다. YouTube가 403/429 또는 자막 없음으로 응답하면 오류를 사용자 작업으로 넘기지 않고 예산 제한 Qwen 전사로 폴백한다.
+- 파일명 끝의 `[YouTubeID]`가 일치하면 저장소와 credential에 접근할 수 없는 opaque sandbox iframe이 편집자 네트워크에서 공개 Android 플레이어와 한국어 timedtext를 우선 확인한다. 부모는 video ID·한국어 track·8MiB JSON3·event schema를 다시 검증한다. 격리 경로의 일시 실패는 Worker를 한 번 더 거치고, Cloudflare egress가 403/429로 막히거나 자막이 없으면 오류를 사용자 작업으로 넘기지 않고 예산 제한 Qwen 전사로 폴백한다.
 - Pass B evidence and AI insight snapshots are stored by analysis run in a dedicated IndexedDB object store. Recovery filters them to the recovered candidate IDs, and a new run epoch prevents late writes from an older source contaminating the current result.
 - Fixed non-vocal program-edge bursts (opening, ending, and break loops) are rejected by default. An edge segment can still survive when it has a distinctive vocal/dialogue anchor, while the central UI presents the automatic phase and candidate list without promotional copy.
 

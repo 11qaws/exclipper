@@ -20,7 +20,7 @@ const operationFence: CandidatePassBOperationIdInput = {
   outputLanguage: "ko",
   castRosterId: null,
   routingModelRevision:
-    "qwen3.5-omni-flash_then_gemini-3.6-flash_durable-multimodal-v9",
+    "qwen3.5-omni-flash_then_gemini-3.6-flash_durable-multimodal-v10",
   attemptOrdinal: 0,
   retryGrantId: null,
   transportMode: "free-r2",

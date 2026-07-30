@@ -181,6 +181,22 @@ export function candidatePassBInsightIsComplete(
   );
 }
 
+export interface CandidatePassBDurableThumbnailProjectionInput {
+  readonly thumbnailById: CandidatePassBInsightsRecord["thumbnailById"];
+  readonly evidenceById: CandidatePassBInsightsRecord["evidenceById"];
+  readonly insightById: CandidatePassBInsightsRecord["insightById"];
+  readonly modelByCandidateId:
+    CandidatePassBInsightsRecord["modelByCandidateId"];
+  readonly verificationReceiptById:
+    CandidatePassBInsightsRecord["verificationReceiptById"];
+  readonly dispatchIntentByCandidateId:
+    CandidatePassBInsightsRecord["dispatchIntentByCandidateId"];
+  readonly settlementByCandidateId:
+    CandidatePassBInsightsRecord["settlementByCandidateId"];
+  readonly attemptLedgerByCandidateId:
+    CandidatePassBInsightsRecord["attemptLedgerByCandidateId"];
+}
+
 function dispatchAndSettlementExactlyMatch(
   dispatch: CandidatePassBDispatchIntent,
   settlement: CandidatePassBTerminalSettlement,
@@ -189,6 +205,64 @@ function dispatchAndSettlementExactlyMatch(
     settlement.operationId === dispatch.operationId &&
     settlement.providerPayloadDigest ===
       dispatch.mediaReceipt.providerPayloadDigest
+  );
+}
+
+/**
+ * Projects view-layer frames into the durable Candidate Pass B snapshot.
+ *
+ * Frames are extracted before provider work and therefore exist for candidates
+ * that are merely staged or armed. A durable thumbnail, however, is one member
+ * of the completed artifact tuple: evidence, insight, model, exact dispatch,
+ * completed settlement, receipt and active attempt ledger must all agree. This
+ * central projection keeps arm, terminal and persistence-retry checkpoints
+ * from accidentally treating an early UI frame as a paid completed result.
+ */
+export function selectCandidatePassBDurableThumbnailById(
+  input: CandidatePassBDurableThumbnailProjectionInput,
+): CandidatePassBInsightsRecord["thumbnailById"] {
+  return Object.fromEntries(
+    Object.entries(input.thumbnailById).filter(([candidateId, thumbnail]) => {
+      const evidence = input.evidenceById[candidateId];
+      const insight = input.insightById[candidateId];
+      const model = input.modelByCandidateId[candidateId];
+      const receipt = input.verificationReceiptById[candidateId];
+      const dispatch = input.dispatchIntentByCandidateId[candidateId];
+      const settlement = input.settlementByCandidateId[candidateId];
+      const ledger = input.attemptLedgerByCandidateId[candidateId];
+      if (
+        evidence?.candidateId !== candidateId ||
+        !candidatePassBInsightIsComplete(insight) ||
+        model === undefined ||
+        !isCandidatePassBVerificationReceipt(receipt) ||
+        receipt.candidateId !== candidateId ||
+        !isCandidatePassBDispatchIntent(dispatch) ||
+        dispatch.candidateId !== candidateId ||
+        !isCandidatePassBCompletedSettlement(settlement) ||
+        ledger === undefined ||
+        !dispatchAndSettlementExactlyMatch(dispatch, settlement) ||
+        !exactJson(receipt.dispatchIntent, dispatch) ||
+        !exactJson(receipt.settlement, settlement) ||
+        receipt.thumbnailTimestampMs !== thumbnail.timestampMs ||
+        !dispatch.mediaReceipt.frames.some(
+          ({ timestampMs }) => timestampMs === thumbnail.timestampMs,
+        ) ||
+        model.id !== settlement.providerModelId ||
+        model.revision !== settlement.providerModelRevision
+      ) {
+        return false;
+      }
+      try {
+        const activeAttempt = candidatePassBActiveAttempt(ledger);
+        return (
+          activeAttempt !== null &&
+          exactJson(activeAttempt.dispatchIntent, dispatch) &&
+          exactJson(activeAttempt.settlement, settlement)
+        );
+      } catch {
+        return false;
+      }
+    }),
   );
 }
 

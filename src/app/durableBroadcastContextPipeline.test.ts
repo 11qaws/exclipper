@@ -4,6 +4,11 @@ import {
   BroadcastContextDeepseekClientError,
 } from "../analysis/broadcastContextDeepseekClient";
 import type { requestBroadcastContextDeepseek } from "../analysis/broadcastContextDeepseekClient";
+import { AI_BROADCAST_CONTEXT_ROUTING_REVISION } from "../analysis/aiModelRoutingPolicy";
+import {
+  createChannelPreanalysisContextSeed,
+  type ChannelPreanalysisContextSeed,
+} from "../analysis/channelPreanalysisContextSeed";
 import {
   parseBroadcastContextPhaseLedgerJson,
   reduceBroadcastContextPhaseLedger,
@@ -143,6 +148,83 @@ function resultFor(input: BroadcastContextRequestInput): BroadcastContextResult 
     discoveredLeadsSupported: true,
     discoveredLeads: [],
     coverage: calculateCoverage(input.chapters, input.sourceDurationMs),
+  };
+}
+
+function resultWithDiscoveredLead(): BroadcastContextResult {
+  return {
+    ...resultFor(contextInput),
+    broadcastSummaryKo:
+      "사전 분석에서 음식 토크의 전체 흐름과 조용한 반응 지점을 확인했다.",
+    recurringThemesKo: ["음식 토크", "조용한 반응"],
+    discoveredLeads: [
+      {
+        leadId: "seed-lead-001",
+        startChapterId: chapter.chapterId,
+        endChapterId: chapter.chapterId,
+        startMs: chapter.startMs,
+        endMs: chapter.endMs,
+        category: "reaction",
+        confidence: 0.88,
+        eventSummaryKo: "음식의 정체를 알아챈다.",
+        whyThisMomentKo: "정답을 확인한 뒤 반응이 이어진다.",
+        evidenceCueKo: "이게 그 음식이었구나.",
+        uncertaintiesKo: [],
+      },
+    ],
+  };
+}
+
+async function precomputedSeed(
+  result: BroadcastContextResult = resultWithDiscoveredLead(),
+): Promise<ChannelPreanalysisContextSeed> {
+  return createChannelPreanalysisContextSeed(
+    {
+      sourceDurationMs: contextInput.sourceDurationMs,
+      chapters: contextInput.chapters,
+      castRosterId: contextInput.castRosterId,
+      outputLanguage: contextInput.outputLanguage,
+      sourceIdentity: {
+        videoId: "KzAW3yow80Q",
+        transcriptDigest: `sha256:${"a".repeat(64)}`,
+        artifactDigest: `sha256:${"b".repeat(64)}`,
+      },
+      provenance: {
+        generatedAt: "2026-07-30T00:00:00.000Z",
+        modelRoutingRevision: AI_BROADCAST_CONTEXT_ROUTING_REVISION,
+        evidenceScope: "youtube-caption-transcript-only",
+        localVisualVerificationRequired: true,
+      },
+      result,
+    },
+    deterministicFingerprint(),
+  );
+}
+
+function selectionResultFor(
+  input: BroadcastContextRequestInput,
+  decision: "select" | "review" | "reject" = "select",
+): BroadcastContextResult {
+  return {
+    ...resultFor(input),
+    annotations: input.candidates.map((candidate) => ({
+      candidateId: candidate.candidateId,
+      category: "reaction",
+      clipDecision: decision,
+      confidence: decision === "reject" ? 0.91 : 0.89,
+      rejectionReasons:
+        decision === "reject"
+          ? ["no-distinct-event" as const]
+          : [],
+      contextSummaryKo: "현재 후보와 방송 전체 흐름을 함께 비교했다.",
+      whyThisMomentKo: "현재 화면·대사·등장인물 근거를 함께 확인했다.",
+      relatedCandidateIds: input.candidates
+        .filter(({ candidateId }) =>
+          candidateId !== candidate.candidateId,
+        )
+        .map(({ candidateId }) => candidateId),
+      uncertaintiesKo: [],
+    })),
   };
 }
 
@@ -288,6 +370,264 @@ describe("runDurableBroadcastContextPipeline", () => {
     expect(store.current.contextPhaseLedgerJson).not.toBeNull();
   });
 
+  it("imports only the global seed and runs one local jury over current candidates and precomputed leads", async () => {
+    const seed = initialSession();
+    const store = memoryStore(seed);
+    const currentCandidateInput: BroadcastContextRequestInput = {
+      ...contextInput,
+      candidates: [
+        {
+          candidateId: "current-candidate-001",
+          startMs: 10_000,
+          endMs: 40_000,
+          transcriptKo: "이게 그 음식이었구나.",
+          eventSummaryKo: "음식의 정체를 알아챈다.",
+          reactionSummaryKo: "알아챈 뒤 웃으며 반응한다.",
+          participantContextKo:
+            "현재 로컬 등장인물 근거에서 주 진행자의 반응으로 확인했다.",
+          chatReactionSummaryKo: null,
+        },
+      ],
+    };
+    const requestModes: string[] = [];
+    const capturedSelection = {
+      input: null as BroadcastContextRequestInput | null,
+    };
+    const request = vi.fn(
+      (
+        input: BroadcastContextRequestInput,
+        options?: NonNullable<
+          Parameters<typeof requestBroadcastContextDeepseek>[1]
+        >,
+      ) => {
+        requestModes.push(options?.analysisMode ?? "missing");
+        capturedSelection.input = input;
+        return Promise.resolve(selectionResultFor(input, "select"));
+      },
+    );
+    const preparedSeed = await precomputedSeed();
+
+    const completed = await runDurableBroadcastContextPipeline({
+      ...pipelineOptions(store, seed),
+      contextInput: currentCandidateInput,
+      contextInputCheckpointJson: JSON.stringify(currentCandidateInput),
+      precomputedGlobalContextSeed: preparedSeed,
+      trustedPrecomputedSourceIdentity: preparedSeed.sourceIdentity,
+      request,
+    });
+
+    expect(requestModes).toEqual(["selection"]);
+    expect(
+      capturedSelection.input?.candidates.map(
+        ({ candidateId }) => candidateId,
+      ),
+    )
+      .toEqual([
+        "current-candidate-001",
+        "topical-jury-01",
+      ]);
+    expect(
+      capturedSelection.input?.candidates[0]?.participantContextKo,
+    ).toContain("현재 로컬 등장인물 근거");
+    expect(completed.result.broadcastSummaryKo).toContain("사전 분석");
+    expect(completed.result.discoveredLeads.map(({ leadId }) => leadId))
+      .toEqual(["seed-lead-001"]);
+    expect(completed.result.annotations).toHaveLength(1);
+    expect(completed.result.annotations[0]).toMatchObject({
+      candidateId: "current-candidate-001",
+      clipDecision: "select",
+      relatedCandidateIds: [],
+    });
+    expect(completed.refinementLeadIds).toEqual(["seed-lead-001"]);
+    expect(completed.fastRefinementLeadIds).toEqual(["seed-lead-001"]);
+    const overview = completed.ledger.units.find(
+      ({ phase, unitId }) =>
+        phase === "discovery" && unitId === "overview",
+    );
+    const jury = completed.ledger.units.find(
+      ({ phase, unitId }) =>
+        phase === "jury" && unitId === "selection",
+    );
+    expect(overview).toMatchObject({
+      status: "succeeded",
+      modelReceipt: {
+        executionSource: "precomputed-global-seed",
+        sourceVideoId: "KzAW3yow80Q",
+        localJuryRequired: true,
+      },
+    });
+    expect(jury).toMatchObject({
+      status: "succeeded",
+      modelReceipt: {
+        executionSource:
+          "provider-local-selection-jury-after-import",
+        currentCandidateCount: 1,
+      },
+    });
+  });
+
+  it("never fast-tracks an imported lead that the local jury rejects", async () => {
+    const seed = initialSession();
+    const store = memoryStore(seed);
+    const request = vi.fn((input: BroadcastContextRequestInput) =>
+      Promise.resolve(selectionResultFor(input, "reject")),
+    );
+    const preparedSeed = await precomputedSeed();
+
+    const completed = await runDurableBroadcastContextPipeline({
+      ...pipelineOptions(store, seed),
+      precomputedGlobalContextSeed: preparedSeed,
+      trustedPrecomputedSourceIdentity: preparedSeed.sourceIdentity,
+      request,
+    });
+
+    expect(request).toHaveBeenCalledTimes(1);
+    expect(completed.refinementLeadIds).toEqual([]);
+    expect(completed.fastRefinementLeadIds).toEqual([]);
+    expect(completed.result.annotations).toEqual([]);
+  });
+
+  it("requires the independent App identity assertion before importing a valid seed", async () => {
+    const seed = initialSession();
+    const store = memoryStore(seed);
+    const preparedSeed = await precomputedSeed();
+    const requestModes: string[] = [];
+    const request = vi.fn(
+      (
+        input: BroadcastContextRequestInput,
+        options?: NonNullable<
+          Parameters<typeof requestBroadcastContextDeepseek>[1]
+        >,
+      ) => {
+        requestModes.push(options?.analysisMode ?? "missing");
+        return Promise.resolve(resultFor(input));
+      },
+    );
+
+    await runDurableBroadcastContextPipeline({
+      ...pipelineOptions(store, seed),
+      precomputedGlobalContextSeed: preparedSeed,
+      request,
+    });
+
+    expect(requestModes.sort()).toEqual(["discovery", "overview"]);
+  });
+
+  it("resumes an imported overview and its local jury without another provider call", async () => {
+    const seed = initialSession();
+    const store = memoryStore(seed);
+    const preparedSeed = await precomputedSeed();
+    const request = vi.fn((input: BroadcastContextRequestInput) =>
+      Promise.resolve(selectionResultFor(input, "select")),
+    );
+    const first = await runDurableBroadcastContextPipeline({
+      ...pipelineOptions(store, seed),
+      precomputedGlobalContextSeed: preparedSeed,
+      trustedPrecomputedSourceIdentity: preparedSeed.sourceIdentity,
+      request,
+    });
+    request.mockClear();
+
+    const resumed = await runDurableBroadcastContextPipeline({
+      ...pipelineOptions(store, first.session),
+      precomputedGlobalContextSeed: preparedSeed,
+      trustedPrecomputedSourceIdentity: preparedSeed.sourceIdentity,
+      request,
+    });
+
+    expect(request).not.toHaveBeenCalled();
+    expect(resumed.result).toEqual(first.result);
+    expect(resumed.ledger).toEqual(first.ledger);
+  });
+
+  it("falls back to ordinary local overview and slices when the supplied seed was tampered", async () => {
+    const seed = initialSession();
+    const store = memoryStore(seed);
+    const originalSeed = await precomputedSeed();
+    const tamperedSeed = {
+      ...originalSeed,
+      result: {
+        ...originalSeed.result,
+        broadcastSummaryKo: "지문 발급 뒤 바뀐 요약",
+      },
+    };
+    const requestModes: string[] = [];
+    const request = vi.fn(
+      (
+        input: BroadcastContextRequestInput,
+        options?: NonNullable<
+          Parameters<typeof requestBroadcastContextDeepseek>[1]
+        >,
+      ) => {
+        requestModes.push(options?.analysisMode ?? "missing");
+        return Promise.resolve(resultFor(input));
+      },
+    );
+
+    const completed = await runDurableBroadcastContextPipeline({
+      ...pipelineOptions(store, seed),
+      precomputedGlobalContextSeed: tamperedSeed,
+      trustedPrecomputedSourceIdentity: tamperedSeed.sourceIdentity,
+      request,
+    });
+
+    expect(requestModes.sort()).toEqual(["discovery", "overview"]);
+    expect(
+      completed.ledger.units.find(
+        ({ phase, unitId }) =>
+          phase === "discovery" && unitId === "overview",
+      ),
+    ).toMatchObject({
+      status: "succeeded",
+      modelReceipt: { executionSource: "provider-discovery" },
+    });
+  });
+
+  it("cannot complete an imported seed until its local jury succeeds", async () => {
+    const seed = initialSession();
+    const store = memoryStore(seed);
+    const request = vi.fn(() =>
+      Promise.reject(
+        new BroadcastContextDeepseekClientError(
+          "INVALID_INPUT",
+          "the local jury request is invalid",
+        ),
+      ),
+    );
+    const preparedSeed = await precomputedSeed();
+
+    await expect(
+      runDurableBroadcastContextPipeline({
+        ...pipelineOptions(store, seed),
+        precomputedGlobalContextSeed: preparedSeed,
+        trustedPrecomputedSourceIdentity: preparedSeed.sourceIdentity,
+        request,
+      }),
+    ).rejects.toMatchObject({ code: "PIPELINE_BLOCKED" });
+
+    const ledger = parseBroadcastContextPhaseLedgerJson(
+      store.current.contextPhaseLedgerJson!,
+    );
+    expect(
+      ledger?.units.find(
+        ({ phase, unitId }) =>
+          phase === "discovery" && unitId === "overview",
+      ),
+    ).toMatchObject({
+      status: "succeeded",
+      modelReceipt: {
+        executionSource: "precomputed-global-seed",
+        localJuryRequired: true,
+      },
+    });
+    expect(
+      ledger?.units.find(
+        ({ phase, unitId }) =>
+          phase === "jury" && unitId === "selection",
+      ),
+    ).toMatchObject({ status: "failed" });
+  });
+
   it("resumes every successful paid unit without calling the provider again", async () => {
     const seed = initialSession();
     const store = memoryStore(seed);
@@ -299,9 +639,12 @@ describe("runDurableBroadcastContextPipeline", () => {
       request,
     });
     request.mockClear();
+    const lateSeed = await precomputedSeed();
 
     const resumed = await runDurableBroadcastContextPipeline({
       ...pipelineOptions(store, first.session),
+      precomputedGlobalContextSeed: lateSeed,
+      trustedPrecomputedSourceIdentity: lateSeed.sourceIdentity,
       request,
     });
 

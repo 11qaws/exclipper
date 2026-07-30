@@ -203,6 +203,44 @@ describe("Candidate Pass B current final verification", () => {
     expect(result.gapByCandidateId).toEqual({});
   });
 
+  it("allows exact multimodal evidence to overturn a text-only context exclusion", () => {
+    const context = createCandidatePassBContextPacket({
+      transcriptSource: "broadcast-transcript",
+      transcriptKo: "확정된 참고 대사가 없어 후보 오디오를 직접 확인한다.",
+      beforeContextKo: "방송은 다음 장면을 준비하고 있었다.",
+      afterContextKo: "후보 뒤에 스트리머가 방금 사건을 설명했다.",
+      broadcastSummaryKo: "방송 전체 주제와 사건 흐름을 정리한 지도다.",
+      topicContextKo: "자막만으로 음악 구간일 가능성이 있던 장면",
+      fastEvidenceKo: "오디오 반응 신호가 있어 후보로 유지됐다.",
+      contextDecision: "reject",
+      contextCategory: "music-or-intermission",
+      contextVerdictKo:
+        "자막만으로는 음악 구간으로 보였으나 대표 화면은 아직 확인하지 않았다.",
+      chatReactionKo: null,
+    });
+    if (context === null) {
+      throw new Error("Expected a valid negative-hypothesis context packet.");
+    }
+    const result = finalizeFullyVerifiedCandidates({
+      candidates: [candidate],
+      contextExcludedCandidateIds: new Set([candidate.id]),
+      contextByCandidateId: { [candidate.id]: context },
+      insightByCandidateId: {
+        [candidate.id]: currentCandidatePassBInsight(),
+      },
+      receiptByCandidateId: {
+        [candidate.id]: currentCandidatePassBReceipt(context),
+      },
+      completeEvidenceCandidateIds: new Set([candidate.id]),
+      refinementEvidenceProjectionFingerprint: null,
+      outputLanguage: "ko",
+      castRosterId: null,
+    });
+
+    expect(result.candidates).toEqual([candidate]);
+    expect(result.gapByCandidateId).toEqual({});
+  });
+
   it.each([
     [
       "insufficient context",

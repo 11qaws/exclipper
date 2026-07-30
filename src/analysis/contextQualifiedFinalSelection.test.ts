@@ -115,7 +115,7 @@ describe("finalizeContextQualifiedCandidates", () => {
     expect(result.projectionById[mv.id]).toBe("deprioritized");
   });
 
-  it("spends detail budget by editor priority without deleting the ledger", () => {
+  it("checks every non-editor-rejected candidate before final publication", () => {
     const ledger = [
       { id: "approved-music", reviewState: "approved" as const },
       { id: "ai-recommended", reviewState: "unreviewed" as const },
@@ -133,7 +133,7 @@ describe("finalizeContextQualifiedCandidates", () => {
           "editor-rejected": "recommended",
         },
       ),
-    ).toEqual(["approved-music", "ai-recommended"]);
+    ).toEqual(["approved-music", "ai-recommended", "ai-low"]);
     expect(ledger).toHaveLength(4);
   });
 

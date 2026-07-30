@@ -20,8 +20,8 @@ export interface CandidateAiQueueItem {
 }
 
 /**
- * Returns candidates that the whole-broadcast judgement has deliberately
- * removed from automatic final verification.
+ * Returns candidates that the whole-broadcast judgement marked as a negative
+ * hypothesis.
  *
  * This is intentionally separate from a missing context packet. An approved
  * editor override stays in the verification queue, where it must still satisfy
@@ -40,17 +40,18 @@ export function selectContextExcludedCandidateIds(
     .map((candidate) => candidate.id);
 }
 
-/** Editor decisions outrank AI priority when choosing paid detail work. */
+/**
+ * Every non-editor-rejected candidate receives multimodal detail work.
+ * Whole-context priority remains visible, but cannot eliminate a candidate
+ * before its four frames and candidate audio have been checked.
+ */
 export function selectCandidateDetailCandidateIds(
   candidates: readonly CandidateAiQueueItem[],
   projectionById: CandidateAiProjectionById,
 ): readonly string[] {
+  void projectionById;
   return candidates
-    .filter((candidate) => {
-      if (candidate.reviewState === "rejected") return false;
-      if (candidate.reviewState === "approved") return true;
-      return projectionById[candidate.id] !== "deprioritized";
-    })
+    .filter((candidate) => candidate.reviewState !== "rejected")
     .map((candidate) => candidate.id);
 }
 

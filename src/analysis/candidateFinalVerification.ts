@@ -42,6 +42,10 @@ export interface CandidateFinalVerificationInput<
   TCandidate extends SelectableCandidate = SelectableCandidate,
 > {
   readonly candidates: readonly TCandidate[];
+  /**
+   * Whole-context negative hypotheses retained for diagnostics. They do not
+   * become terminal exclusions until the exact multimodal insight agrees.
+   */
   readonly contextExcludedCandidateIds?: ReadonlySet<string>;
   readonly contextByCandidateId: Readonly<Record<string, CandidatePassBContextPacket>>;
   readonly insightByCandidateId: Readonly<Record<string, CandidatePassBInsight>>;
@@ -140,7 +144,9 @@ export function isCandidatePassBContextPacket(
     !["youtube-caption", "broadcast-transcript", "semantic-refinement"].includes(
       value.transcriptSource as string,
     ) ||
-    !["select", "review"].includes(value.contextDecision as string) ||
+    !["select", "review", "reject"].includes(
+      value.contextDecision as string,
+    ) ||
     ![
       "reaction",
       "quiet-achievement",
@@ -148,6 +154,9 @@ export function isCandidatePassBContextPacket(
       "running-gag",
       "context-dependent",
       "apology-accountability",
+      "music-or-intermission",
+      "not-clip-worthy",
+      "uncertain",
     ].includes(value.contextCategory as string) ||
     !(
       value.chatReactionKo === null ||
@@ -717,10 +726,6 @@ export function finalizeFullyVerifiedCandidates<
   const candidates: TCandidate[] = [];
   const gapByCandidateId: Record<string, CandidateFinalVerificationGap> = {};
   for (const candidate of input.candidates) {
-    if (input.contextExcludedCandidateIds?.has(candidate.id) === true) {
-      gapByCandidateId[candidate.id] = "context-excluded";
-      continue;
-    }
     const context = input.contextByCandidateId[candidate.id];
     if (context === undefined) {
       gapByCandidateId[candidate.id] = "context-missing";
@@ -758,6 +763,13 @@ export function finalizeFullyVerifiedCandidates<
       gapByCandidateId[candidate.id] = verdictGap;
       continue;
     }
+    /*
+     * A whole-context rejection is a hypothesis carried inside `context`.
+     * Reaching this point proves that the candidate's exact audio and four
+     * frames were checked against it and produced a coherent,
+     * context-consistent streamer-event recommendation. Text-only context may
+     * prioritize work, but it cannot bypass or overrule that later receipt.
+     */
     candidates.push(candidate);
   }
   candidates.sort(

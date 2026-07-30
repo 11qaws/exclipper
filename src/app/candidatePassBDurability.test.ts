@@ -8,9 +8,13 @@ import {
   selectCandidatePassBAnalysisOutstandingIds,
   selectCandidatePassBAutomaticTargets,
   selectCandidatePassBDurableIds,
+  selectCandidatePassBDurableThumbnailById,
   selectCandidatePassBOutcomeUnknownIds,
   type CandidatePassBAutomaticTargetInput,
 } from "./candidatePassBDurability";
+import {
+  CANDIDATE_PASS_B_MAX_CANDIDATES,
+} from "../analysis/candidatePassB";
 import {
   CANDIDATE_PASS_B_SETTLEMENT_SCHEMA_VERSION,
   type CandidatePassBOutcomeUnknownSettlement,
@@ -18,6 +22,7 @@ import {
 import {
   currentCandidatePassBContext,
   currentCandidatePassBDispatch,
+  currentCandidatePassBFrames,
   currentCandidatePassBInsight,
   currentCandidatePassBRecord,
   currentCandidatePassBSettlement,
@@ -114,6 +119,75 @@ describe("Candidate Pass B current durability", () => {
     ).toEqual(new Set(["candidate-1"]));
   });
 
+  it("does not persist a staged UI thumbnail in an arm-only checkpoint", () => {
+    const context = currentCandidatePassBContext();
+    const dispatch = currentCandidatePassBDispatch(context);
+
+    expect(
+      selectCandidatePassBDurableThumbnailById({
+        thumbnailById: {
+          "candidate-1": currentCandidatePassBFrames()[2],
+        },
+        evidenceById: {},
+        insightById: {},
+        modelByCandidateId: {},
+        verificationReceiptById: {},
+        dispatchIntentByCandidateId: {
+          "candidate-1": dispatch,
+        },
+        settlementByCandidateId: {},
+        attemptLedgerByCandidateId: {
+          "candidate-1": createCandidatePassBInitialAttemptLedger(dispatch),
+        },
+      }),
+    ).toEqual({});
+  });
+
+  it("keeps the completed candidate and drops a staged sibling thumbnail", () => {
+    const completed = currentCandidatePassBRecord();
+    const stagedFrame = {
+      ...currentCandidatePassBFrames()[0],
+      timestampMs: 45_000,
+    };
+
+    expect(
+      selectCandidatePassBDurableThumbnailById({
+        thumbnailById: {
+          ...completed.thumbnailById,
+          "candidate-2": stagedFrame,
+        },
+        evidenceById: completed.evidenceById,
+        insightById: completed.insightById,
+        modelByCandidateId: completed.modelByCandidateId,
+        verificationReceiptById: completed.verificationReceiptById,
+        dispatchIntentByCandidateId:
+          completed.dispatchIntentByCandidateId,
+        settlementByCandidateId: completed.settlementByCandidateId,
+        attemptLedgerByCandidateId:
+          completed.attemptLedgerByCandidateId,
+      }),
+    ).toEqual(completed.thumbnailById);
+  });
+
+  it("retains the current candidate thumbnail once its verified tuple is complete", () => {
+    const completed = currentCandidatePassBRecord();
+
+    expect(
+      selectCandidatePassBDurableThumbnailById({
+        thumbnailById: completed.thumbnailById,
+        evidenceById: completed.evidenceById,
+        insightById: completed.insightById,
+        modelByCandidateId: completed.modelByCandidateId,
+        verificationReceiptById: completed.verificationReceiptById,
+        dispatchIntentByCandidateId:
+          completed.dispatchIntentByCandidateId,
+        settlementByCandidateId: completed.settlementByCandidateId,
+        attemptLedgerByCandidateId:
+          completed.attemptLedgerByCandidateId,
+      }),
+    ).toEqual(completed.thumbnailById);
+  });
+
   it("fails durability when a completed settlement no longer matches the dispatch", () => {
     const context = currentCandidatePassBContext();
     const record = currentCandidatePassBRecord({ context });
@@ -176,6 +250,58 @@ describe("Candidate Pass B current durability", () => {
         dispatchIntentByCandidateId: {},
       }),
     ).toEqual(["candidate-1"]);
+  });
+
+  it("continues a 17-candidate plan as a bounded 12 then 5 execution sequence", () => {
+    const context = currentCandidatePassBContext();
+    const candidateIds = Array.from(
+      { length: 17 },
+      (_, index) => `candidate-${index + 1}`,
+    );
+    const initialTargets = selectCandidatePassBAutomaticTargets({
+      candidateIds,
+      attemptLedgerByCandidateId: {},
+      dispatchIntentByCandidateId: {},
+      settlementByCandidateId: {},
+    });
+    const firstBatch = initialTargets.slice(
+      0,
+      CANDIDATE_PASS_B_MAX_CANDIDATES,
+    );
+    const completed = firstBatch.map(({ candidateId }) => {
+      const dispatch = currentCandidatePassBDispatch(context, candidateId);
+      const settlement = currentCandidatePassBSettlement(dispatch);
+      return {
+        candidateId,
+        dispatch,
+        settlement,
+        ledger: createCandidatePassBInitialAttemptLedger(
+          dispatch,
+          settlement,
+        ),
+      };
+    });
+    const remainingTargets = selectCandidatePassBAutomaticTargets({
+      candidateIds,
+      attemptLedgerByCandidateId: Object.fromEntries(
+        completed.map(({ candidateId, ledger }) => [candidateId, ledger]),
+      ),
+      dispatchIntentByCandidateId: Object.fromEntries(
+        completed.map(({ candidateId, dispatch }) => [candidateId, dispatch]),
+      ),
+      settlementByCandidateId: Object.fromEntries(
+        completed.map(({ candidateId, settlement }) => [
+          candidateId,
+          settlement,
+        ]),
+      ),
+    });
+
+    expect(firstBatch).toHaveLength(12);
+    expect(remainingTargets.map(({ candidateId }) => candidateId)).toEqual(
+      candidateIds.slice(12),
+    );
+    expect(remainingTargets).toHaveLength(5);
   });
 
   it("automatically selects only an exactly settled free-R2 outcome-unknown", () => {

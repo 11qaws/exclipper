@@ -13,9 +13,11 @@ import {
 import { InMemoryAnalysisResultStore } from "./analysisResultStore";
 import {
   assertCandidatePassBInsightsRecord,
+  CANDIDATE_PASS_B_PLAN_MAX_CANDIDATES,
   candidatePassBInsightSnapshotsExactlyMatch,
   cloneCandidatePassBInsightsRecord,
   createCandidatePassBPlanReceipt,
+  mergeCandidatePassBInsightsForResume,
   persistCandidatePassBInsightsWithReadback,
   recoverCandidatePassBArmedDispatchesAsOutcomeUnknown,
   type CandidatePassBInsightStorePort,
@@ -99,6 +101,64 @@ describe("Candidate Pass B 4.0 insight persistence", () => {
     expect(empty.planFingerprint).not.toBe(first.planFingerprint);
     expect(otherContext.planFingerprint).not.toBe(first.planFingerprint);
     expect(changedPacket.planFingerprint).not.toBe(first.planFingerprint);
+  });
+
+  it("keeps a 17-candidate cohort in one durable plan while execution batches separately", async () => {
+    const context = currentCandidatePassBContext();
+    const plannedCandidateIds = Array.from(
+      { length: 17 },
+      (_, index) => `candidate-${index + 1}`,
+    );
+    const contextByCandidateId = Object.fromEntries(
+      plannedCandidateIds.map((candidateId) => [candidateId, context]),
+    );
+    const planReceipt = await createCandidatePassBPlanReceipt({
+      runId: "analysis-run-17",
+      inputSignature: "input-signature-17",
+      contextInputSignature: "context-input-signature-17",
+      refinementEvidenceProjectionFingerprint: null,
+      plannedCandidateIds,
+      contextByCandidateId,
+    });
+    const record: CandidatePassBInsightsRecord = {
+      ...currentCandidatePassBRecord(),
+      runId: planReceipt.runId,
+      inputSignature: planReceipt.inputSignature,
+      planReceipt,
+      contextByCandidateId,
+      evidenceById: {},
+      insightById: {},
+      modelByCandidateId: {},
+      thumbnailById: {},
+      attemptLedgerByCandidateId: {},
+      dispatchIntentByCandidateId: {},
+      settlementByCandidateId: {},
+      verificationReceiptById: {},
+    };
+
+    expect(() => assertCandidatePassBInsightsRecord(record)).not.toThrow();
+    expect(planReceipt.plannedCandidateIds).toHaveLength(17);
+  });
+
+  it("rejects a durable plan larger than the bounded 96-candidate reservoir", async () => {
+    const context = currentCandidatePassBContext();
+    const plannedCandidateIds = Array.from(
+      { length: CANDIDATE_PASS_B_PLAN_MAX_CANDIDATES + 1 },
+      (_, index) => `candidate-${index + 1}`,
+    );
+
+    await expect(
+      createCandidatePassBPlanReceipt({
+        runId: "analysis-run-too-large",
+        inputSignature: "input-signature-too-large",
+        contextInputSignature: "context-input-signature-too-large",
+        refinementEvidenceProjectionFingerprint: null,
+        plannedCandidateIds,
+        contextByCandidateId: Object.fromEntries(
+          plannedCandidateIds.map((candidateId) => [candidateId, context]),
+        ),
+      }),
+    ).rejects.toThrow(/Invalid Candidate Pass B plan receipt input/u);
   });
 
   it("rejects artifacts outside the exact durable planned cohort", () => {
@@ -276,6 +336,92 @@ describe("persistCandidatePassBInsightsWithReadback", () => {
       }),
     ).rejects.toThrow(/could not be verified/u);
     expect(writeCount).toBe(1);
+  });
+
+  it("rebases stale sibling completions so neither paid result is erased", async () => {
+    const context = currentCandidatePassBContext();
+    const plannedCandidateIds = ["candidate-1", "candidate-2"] as const;
+    const contextByCandidateId = {
+      "candidate-1": context,
+      "candidate-2": context,
+    };
+    const planReceipt = await createCandidatePassBPlanReceipt({
+      runId: "analysis-run-1",
+      inputSignature: "input-signature-1",
+      contextInputSignature: "context-input-signature-1",
+      refinementEvidenceProjectionFingerprint: null,
+      plannedCandidateIds,
+      contextByCandidateId,
+    });
+    const firstCandidate = {
+      ...currentCandidatePassBRecord({
+        context,
+        dispatch: currentCandidatePassBDispatch(context, "candidate-1"),
+        planReceipt,
+      }),
+      contextByCandidateId,
+    };
+    const secondCandidate = {
+      ...currentCandidatePassBRecord({
+        context,
+        dispatch: currentCandidatePassBDispatch(context, "candidate-2"),
+        planReceipt,
+      }),
+      contextByCandidateId,
+    };
+    const planOnly: CandidatePassBInsightsRecord = {
+      ...firstCandidate,
+      evidenceById: {},
+      insightById: {},
+      modelByCandidateId: {},
+      thumbnailById: {},
+      attemptLedgerByCandidateId: {},
+      dispatchIntentByCandidateId: {},
+      settlementByCandidateId: {},
+      verificationReceiptById: {},
+    };
+    let stored = cloneCandidatePassBInsightsRecord(planOnly);
+    const store: CandidatePassBInsightStorePort = {
+      replaceCandidatePassBInsightsIfUnchanged(expected, replacement) {
+        if (!candidatePassBInsightSnapshotsExactlyMatch(expected, stored)) {
+          return Promise.resolve(false);
+        }
+        stored = cloneCandidatePassBInsightsRecord(replacement);
+        return Promise.resolve(true);
+      },
+      getCandidatePassBInsights() {
+        return Promise.resolve(cloneCandidatePassBInsightsRecord(stored));
+      },
+    };
+
+    const firstRestored = await persistCandidatePassBInsightsWithReadback(
+      store,
+      planOnly,
+      firstCandidate,
+    );
+    const cumulativeSecond = mergeCandidatePassBInsightsForResume(
+      firstRestored,
+      secondCandidate,
+    );
+    expect(cumulativeSecond).not.toBeNull();
+    const secondRestored = await persistCandidatePassBInsightsWithReadback(
+      store,
+      firstRestored,
+      cumulativeSecond!,
+    );
+
+    expect(Object.keys(secondRestored.insightById).sort()).toEqual([
+      "candidate-1",
+      "candidate-2",
+    ]);
+    expect(Object.keys(secondRestored.settlementByCandidateId).sort()).toEqual([
+      "candidate-1",
+      "candidate-2",
+    ]);
+    expect(Object.keys(secondRestored.verificationReceiptById).sort()).toEqual([
+      "candidate-1",
+      "candidate-2",
+    ]);
   });
 
   it("rejects a mismatched readback instead of accepting partial proof", async () => {

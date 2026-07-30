@@ -1,0 +1,44 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "exclipper-preanalysis-context",
+  "main": "src/cloudflare/preanalysisContextProxy.worker.ts",
+  "compatibility_date": "2026-07-20",
+  "workers_dev": true,
+  "placement": {
+    "region": "gcp:asia-southeast1"
+  },
+  "vars": {
+    "PREANALYSIS_CONTEXT_PROVIDER": "qwen",
+    "PREANALYSIS_QWEN_REGION": "singapore"
+  },
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "PREANALYSIS_CONTEXT_OPERATIONS",
+        "class_name": "PreanalysisContextOperation"
+      }
+    ]
+  },
+  "exports": {
+    "PreanalysisContextOperation": {
+      "type": "durable-object",
+      "storage": "sqlite"
+    }
+  },
+  "ratelimits": [
+    {
+      "name": "PREANALYSIS_CONTEXT_RATE_LIMITER",
+      "namespace_id": "20260730",
+      "simple": {
+        "limit": 4,
+        "period": 60
+      }
+    }
+  ],
+  "secrets": {
+    "required": [
+      "PREANALYSIS_CONTEXT_TOKEN",
+      "PREANALYSIS_QWEN_API_KEY"
+    ]
+  }
+}

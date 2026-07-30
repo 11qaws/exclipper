@@ -421,6 +421,7 @@ export function buildCandidatePassBPrompt(
 - 직전 흐름: ${canonicalContext.beforeContextKo}
 - 후보 구간 참고 대사: ${canonicalContext.transcriptKo}
 - 직후 흐름: ${canonicalContext.afterContextKo}
+- 전체 맥락 1차 분류: ${canonicalContext.contextDecision} / ${canonicalContext.contextCategory}
 - 전체 맥락 1차 판정: ${canonicalContext.contextVerdictKo}
 - 빠른 탐색 근거: ${canonicalContext.fastEvidenceKo}
 - 채팅 반응: ${canonicalContext.chatReactionKo ?? "제공된 채팅 근거 없음"}

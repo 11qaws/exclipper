@@ -5,6 +5,10 @@ import {
   type YouTubeCaptionEvent,
   type YouTubeCaptionTrackResult,
 } from "./youtubeCaptionTrack";
+import {
+  canRequestYouTubeCaptionsInSandbox,
+  requestYouTubeCaptionTrackInSandbox,
+} from "./youtubeCaptionSandbox";
 
 export const YOUTUBE_CAPTION_PROXY_ENDPOINT =
   "https://rettohighlight-gemini.11qaws.workers.dev/v1/youtube-captions" as const;
@@ -14,6 +18,11 @@ type FetchImplementation = (
   input: RequestInfo | URL,
   init?: RequestInit,
 ) => Promise<Response>;
+
+type SandboxRequestImplementation = (
+  videoId: string,
+  options: { readonly signal?: AbortSignal },
+) => Promise<YouTubeCaptionTrackResult>;
 
 /**
  * Transient proxy or upstream failures are worth another attempt; a missing
@@ -171,10 +180,29 @@ export async function requestYouTubeCaptionTrack(
     readonly signal?: AbortSignal;
     readonly fetchImplementation?: FetchImplementation;
     readonly retryDelaysMs?: readonly number[];
+    readonly sandboxRequestImplementation?: SandboxRequestImplementation;
   } = {},
 ): Promise<YouTubeCaptionTrackResult> {
   if (!YOUTUBE_VIDEO_ID_PATTERN.test(videoId)) {
     throw new RangeError("Invalid YouTube video ID.");
+  }
+  const sandboxRequest =
+    options.sandboxRequestImplementation ??
+    (canRequestYouTubeCaptionsInSandbox()
+      ? requestYouTubeCaptionTrackInSandbox
+      : null);
+  if (sandboxRequest !== null) {
+    try {
+      return await sandboxRequest(
+        videoId,
+        options.signal === undefined ? {} : { signal: options.signal },
+      );
+    } catch (error) {
+      if (options.signal?.aborted === true) throw error;
+      // A sandbox/CORS/network failure is not a statement about whether the
+      // captions exist. Even one Android surface reporting no Korean track is
+      // only an observation, so preserve the proxy and bounded ASR recovery.
+    }
   }
   const retryDelaysMs = options.retryDelaysMs ?? YOUTUBE_CAPTION_RETRY_DELAYS_MS;
   let lastError: unknown;

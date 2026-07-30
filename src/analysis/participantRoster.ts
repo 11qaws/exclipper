@@ -1,6 +1,10 @@
 import type {
   CandidatePassBParticipantRole,
 } from "./candidatePassBWorkerProtocol";
+import {
+  AMORETTO_YOUTUBE_CHANNEL_HANDLE,
+  AMORETTO_YOUTUBE_CHANNEL_ID,
+} from "./channelPreanalysisCatalog";
 
 export const CANDIDATE_PASS_B_CAST_ROSTER_VERSION = "1.3.0" as const;
 export const DEFAULT_CANDIDATE_PASS_B_CAST_ROSTER_ID =
@@ -241,6 +245,14 @@ export function candidatePassBCastRosterIdForSourceName(
 ): CandidatePassBCastRosterId | null {
   if (typeof sourceName !== "string") return null;
   const normalized = sourceName.normalize("NFC").toLocaleLowerCase("ko-KR");
+  const hasAmorettoYouTubeChannel =
+    normalized.includes(AMORETTO_YOUTUBE_CHANNEL_ID.toLocaleLowerCase("en-US")) ||
+    normalized.includes(
+      AMORETTO_YOUTUBE_CHANNEL_HANDLE.toLocaleLowerCase("en-US"),
+    );
+  if (hasAmorettoYouTubeChannel) {
+    return AMORETTO_CHANNEL_CAST_ROSTER_ID;
+  }
   const hasReplayNumber = /(?:^|\D)13996057(?:\D|$)/u.test(normalized);
   const hasExchangeStudentChannel = normalized.includes(
     EXCHANGE_STUDENT_MAIN_CHANNEL_ID,

@@ -63,7 +63,7 @@ describe("aiProviderConfiguration", () => {
     expect(manifest.candidateInsight).toEqual({
       selectedProvider: "qwen",
       modelId: "qwen3.5-omni-flash",
-      modelRevision: "qwen3.5-omni-flash-context-verified-frames-v7-2026-07-23",
+      modelRevision: "qwen3.5-omni-flash-context-verified-frames-v8-2026-07-30",
       implementationStatus: "active",
       configured: true,
       active: true,

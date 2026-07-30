@@ -1,0 +1,211 @@
+name: Refresh Amoretto preanalysis catalog
+
+on:
+  schedule:
+    - cron: "17 */3 * * *"
+  workflow_dispatch:
+    inputs:
+      video_id:
+        description: "Optional exact YouTube video ID to retry"
+        required: false
+        type: string
+      max_videos:
+        description: "Maximum due videos to process in this run"
+        required: true
+        default: "2"
+        type: choice
+        options:
+          - "1"
+          - "2"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: channel-preanalysis-catalog
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    outputs:
+      catalog_base_sha: ${{ steps.catalog-base.outputs.sha }}
+    steps:
+      - name: Checkout application source
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          # schedule and workflow_dispatch both expose the immutable commit that
+          # selected this workflow as github.sha. Never follow a moving main ref
+          # while this secret-bearing job is waiting for a runner.
+          ref: ${{ github.sha }}
+          path: source
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Require the preanalysis catalog branch
+        working-directory: source
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! git ls-remote --exit-code --heads origin refs/heads/preanalysis-catalog >/dev/null; then
+            echo "::error::The preanalysis-catalog branch does not exist. Seed it explicitly before enabling this workflow."
+            exit 1
+          fi
+
+      - name: Checkout persistent catalog branch
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          ref: preanalysis-catalog
+          path: catalog
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Record catalog base revision
+        id: catalog-base
+        working-directory: catalog
+        shell: bash
+        run: echo "sha=$(git rev-parse HEAD)" >> "${GITHUB_OUTPUT}"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: "22.12.0"
+          cache: npm
+          cache-dependency-path: source/package-lock.json
+
+      - name: Install locked dependencies
+        working-directory: source
+        run: npm ci --ignore-scripts
+
+      - name: Verify channel sync and visual fingerprint contracts
+        working-directory: source
+        run: >-
+          npx --no-install tsx --test
+          scripts/channel-preanalysis-visual-fingerprint.test.mjs
+          scripts/sync-amoretto-preanalysis-fingerprint.test.mjs
+          scripts/sync-amoretto-preanalysis.test.mjs
+
+      - name: Download and verify pinned yt-dlp
+        shell: bash
+        env:
+          YT_DLP_VERSION: "2026.07.04"
+          YT_DLP_SHA256: "495be29ff4d9d4e9be7eabdfef225221e5d5282e77f2f505abc6dca80349f3fd"
+        run: |
+          set -euo pipefail
+          YT_DLP_PATH="${RUNNER_TEMP}/yt-dlp"
+          curl \
+            --fail \
+            --location \
+            --proto '=https' \
+            --tlsv1.2 \
+            --retry 3 \
+            --retry-all-errors \
+            --output "${YT_DLP_PATH}" \
+            "https://github.com/yt-dlp/yt-dlp/releases/download/${YT_DLP_VERSION}/yt-dlp"
+          echo "${YT_DLP_SHA256}  ${YT_DLP_PATH}" | sha256sum --check --strict
+          chmod 0755 "${YT_DLP_PATH}"
+          test "$("${YT_DLP_PATH}" --version)" = "${YT_DLP_VERSION}"
+
+      - name: Reconcile feed and prepare due transcripts
+        working-directory: source
+        shell: bash
+        env:
+          CATALOG_DIRECTORY: ${{ github.workspace }}/catalog/amoretto-vods
+          YT_DLP_PATH: ${{ runner.temp }}/yt-dlp
+          VIDEO_ID: ${{ inputs.video_id || '' }}
+          MAX_VIDEOS: ${{ inputs.max_videos || '2' }}
+          CHANNEL_PREANALYSIS_CONTEXT_PROXY_URL: ${{ secrets.CHANNEL_PREANALYSIS_CONTEXT_PROXY_URL }}
+          CHANNEL_PREANALYSIS_CONTEXT_TOKEN: ${{ secrets.CHANNEL_PREANALYSIS_CONTEXT_TOKEN }}
+        run: |
+          set -euo pipefail
+          arguments=(
+            --catalog-dir "${CATALOG_DIRECTORY}"
+            --yt-dlp "${YT_DLP_PATH}"
+            --max-videos "${MAX_VIDEOS}"
+          )
+          if [[ -n "${VIDEO_ID}" ]]; then
+            arguments+=(--video-id "${VIDEO_ID}")
+          fi
+          if [[ -n "${CHANNEL_PREANALYSIS_CONTEXT_PROXY_URL}" || -n "${CHANNEL_PREANALYSIS_CONTEXT_TOKEN}" ]]; then
+            if [[ -z "${CHANNEL_PREANALYSIS_CONTEXT_PROXY_URL}" || -z "${CHANNEL_PREANALYSIS_CONTEXT_TOKEN}" ]]; then
+              echo "::error::Scheduled context analysis requires both dedicated proxy and token secrets."
+              exit 1
+            fi
+            arguments+=(--context-proxy "${CHANNEL_PREANALYSIS_CONTEXT_PROXY_URL}")
+          fi
+          npx --no-install tsx scripts/sync-amoretto-preanalysis.mjs "${arguments[@]}"
+
+      - name: Upload the verified catalog snapshot
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: amoretto-preanalysis-${{ github.run_id }}-${{ github.run_attempt }}
+          path: catalog/amoretto-vods
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 6
+
+  publish:
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout persistent catalog branch without stored credentials
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          ref: preanalysis-catalog
+          path: catalog
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Download the prepared catalog snapshot
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: amoretto-preanalysis-${{ github.run_id }}-${{ github.run_attempt }}
+          path: prepared/amoretto-vods
+
+      - name: Require the unchanged catalog base
+        working-directory: catalog
+        shell: bash
+        env:
+          EXPECTED_BASE_SHA: ${{ needs.prepare.outputs.catalog_base_sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${EXPECTED_BASE_SHA}"
+
+      - name: Replace only the catalog namespace
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f prepared/amoretto-vods/catalog.json
+          if find prepared/amoretto-vods -type l -print -quit | grep -q .; then
+            echo "::error::Prepared catalog must not contain symbolic links."
+            exit 1
+          fi
+          mkdir -p catalog/amoretto-vods
+          rsync --archive --delete \
+            prepared/amoretto-vods/ \
+            catalog/amoretto-vods/
+
+      - name: Commit and push catalog changes
+        working-directory: catalog
+        shell: bash
+        env:
+          RUN_ID: ${{ github.run_id }}
+          GITHUB_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          git add --all -- amoretto-vods
+          if git diff --cached --quiet; then
+            echo "Catalog is already current."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "chore(catalog): refresh Amoretto preanalysis (${RUN_ID})"
+          git push \
+            "https://x-access-token:${GITHUB_TOKEN}@github.com/${REPOSITORY}.git" \
+            HEAD:preanalysis-catalog

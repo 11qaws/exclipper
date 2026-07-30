@@ -1,5 +1,96 @@
 # ExClipper 상태·생애주기 명세
 
+## 채널 선분석과 로컬 매칭 상태
+
+채널 카탈로그는 사용자의 분석 작업이나 원본 영상 저장소가 아니다. 공개 채널에서
+파생한 재사용 가능 artifact를 보관하는 별도 계층이며, 로컬 `AnalysisJob`은 매칭
+완료 뒤에도 자신의 source fence와 run 생애주기를 새로 만든다.
+
+### 원격 영상
+
+주 artifact 상태:
+
+`discovered -> metadata-ready -> transcript-ready -> (선택적 context-ready) -> published`
+
+후행 시각 지문 lane:
+
+`missing -> ready | retryable(fingerprint)`
+
+- 각 전이는 현재 단계 artifact를 revision별 immutable key에 먼저 쓰고 hash·크기
+  readback을 확인한 뒤 manifest pointer를 바꾼다. `transcript-ready` v1과
+  `context-ready` v2는 다른 파일이므로 v2 write 뒤 manifest commit 전에 중단되어도
+  v1 closure는 깨지지 않는다. 다음 run은 유효한 v2 orphan을 먼저 검증·채택하고
+  provider를 다시 호출하지 않는다.
+- 예약 run 시작 때 ready pointer의 closure를 다시 검증한다. referenced artifact의
+  파일 존재·regular-file 여부·exact byte length·전체 SHA-256과 transcript bundle
+  identity가 모두 맞아야 ready를 유지한다. 하나라도 어긋나면 해당 영상의 파생
+  artifact pointer를 제거하고 `retryable`의 transcript checkpoint로 원자적으로
+  내린 뒤 즉시 due 상태로 재생성한다. 손상된 ready pointer를 selection에서
+  영구 skip하지 않는다.
+- `retryable`은 마지막 성공 단계, 누락 단계, attempt, 다음 시도 시각을 보존한다.
+  다음 예약 실행은 마지막 성공 artifact를 버리지 않고 누락 단계만 다시 수행한다.
+- 시각 지문은 transcript/context와 독립된 post lane이다. storyboard 생성·다운로드·
+  schema·digest 검증 실패는 `retryable(fingerprint)`로 기록하고
+  `lastSuccessfulState=transcript-ready | context-ready`를 유지한다. 지문 파일만
+  누락되거나 같은 길이로 변조된 경우에도 그 파일과 pointer만 격리하며 자막·맥락
+  artifact를 삭제하거나 provider를 다시 호출하지 않는다. 기존 ready 영상에 지문이
+  없으면 새 영상보다 낮은 우선순위로 backfill한다.
+- context opt-in은 전용 proxy URL과 Bearer token이 모두 있을 때만 활성화된다.
+  둘 다 없는 기본 cron은 `transcript-ready`를 terminal target으로 삼는다. 하나만
+  있거나 대화형 5인용 Worker host를 지정하면 분석을 시작하지 않는다.
+- `retryable(context)`는 exact v1 transcript artifact를 계속 가리킨다. transport
+  outcome이 불명확해도 같은 run에서 새 billable operation을 만들지 않으며, 다음
+  run이 transcript digest와 model routing revision으로 만든 같은 stable operation
+  ID를 사용한다.
+- 예약 `context-ready`에는 `contextProvenance`가 필수다. 근거 범위는
+  `youtube-caption-transcript-only`이고 `localVisualVerificationRequired=true`이므로
+  로컬 화면·오디오·등장인물 또는 후보별 상세 검증 완료를 뜻하지 않는다.
+  provenance의 exact-key `contextReceipt`에는 성공 응답에서 검증한
+  `contractVersion`·`routingRevision`·`modelId`·`modelRevision`을 모두 bounded
+  token으로 보존하며, receipt routing과 provenance routing이 다르면 bundle을
+  `context-ready`로 읽지 않는다.
+- 검증된 원격 context seed를 로컬 run에 가져올 때는 exact video ID,
+  transcript digest, artifact digest와 호환 duration·roster·언어·routing을 다시
+  확인한다. 주제·의미 lead는 현재 로컬 챕터 시간축에 재매핑하고, 범위가 coverage
+  gap을 건너거나 변조된 seed는 기존 로컬 overview/discovery로 되돌린다.
+- seed import가 성공해도 원장의 완료 조건은
+  `precomputed overview receipt + current local selection jury receipt`다. 현재 후보와
+  현재 participant grounding이 jury를 통과해야 하며, 후보별 화면 4장·오디오·대표
+  썸네일 receipt는 이후 현재 run의 상세 검증에서 별도로 필요하다. seed 자체는
+  최종 후보나 로컬 상세 검증을 완료시키지 않는다.
+- 제목/설명 변경은 같은 `(channelId, videoId)`의 source revision을 올린다. 자막,
+  지문, 맥락 입력 digest가 같으면 비싼 하위 단계를 다시 실행하지 않는다.
+- `published`는 원격 bundle의 내부 완결 상태일 뿐 로컬 편집 후보의 완료 상태가
+  아니다.
+
+### 로컬 파일 연결
+
+`unmatched -> shortlisted -> visually-verifying -> confirmed -> imported`
+
+- 명시적 video ID 또는 그 video에 이미 등록한 동일 바이트 sampled SHA는
+  `confirmed`로 갈 수 있다.
+- 제목+길이 일치는 `shortlisted`까지만 간다. 재인코딩된 파일의 sampled SHA가
+  다르다는 이유는 불일치 증거가 아니며, 반대로 제목+길이가 같다는 이유도
+  콘텐츠 일치 증거가 아니다.
+- 파일명 단서가 사라졌어도 duration-compatible 영상은 최대 12개 cohort로 좁힌다.
+  manifest가 고정한 원격 지문 artifact를 exact byte length·SHA-256·video identity로
+  모두 검증한 뒤, 필요한 source 시각의 합집합을 로컬 파일에서 한 번만 디코딩한다.
+  일부 fetch 실패, 12개 초과, 둘 이상의 합격 또는 합의 부족은 `unmatched`로
+  돌아가며 exact identity를 만들지 않는다.
+- 시각 합의는 12개 anchor 중 최소 8개이면서 67% 이상, 방송 앞·중간·뒤의 세 구간,
+  hash·밝기·edge의 median/p90 상한을 모두 통과한 유일한 후보만 `confirmed`로
+  만든다. 결과 이유는 `visual-fingerprint-consensus`이고, 같은 catalog snapshot에서
+  읽어 digest 검증한 bundle만 함께 binding한다. 단일 후보 lane만 ±30초 bounded
+  offset 복구를 허용한다.
+- confirmed 뒤 현재 로컬 sampled-file 지문도 해당 video에 등록하므로 같은 로컬
+  파일을 다시 열 때는 화면을 재디코딩하지 않고 exact binding을 재사용할 수 있다.
+- 오디오 landmark와 affine scale 보정은 아직 구현하지 않은 향후 보조 경로다.
+- `imported`는 원격 run을 복원했다는 뜻이 아니다. bundle을 검증한 뒤 현재 로컬
+  source fingerprint·duration·roster·model revision으로 transcript/context 근거를
+  재봉인했다는 뜻이다. 후보 화면·오디오 상세 검증은 이후 현재 run에서 계속한다.
+- `unmatched` 또는 모호한 `shortlisted`는 기존 로컬 파이프라인으로 이어지며 분석
+  실패로 기록하지 않는다.
+
 ## `0.9.0` current-only 내구 완료 계약
 
 - 새 분석은 현재 schema와 protocol만 사용한다. 이전 schema를 자동 변환하거나 현재 결과로 승격하는 경로는 제공하지 않는다.
@@ -34,15 +125,17 @@
 
 ## `0.9.0` 후보 cohort와 최종 종료 상태
 
-- `candidate ledger`는 fast/semantic discovery가 만든 canonical 원장이다. `context cohort`는 이 원장에서 최대 32개를 골라 whole-context AI에 보낸 집합이고, `detail cohort`는 context가 준비된 항목 중 최대 12개를 골라 화면·오디오 AI에 보내는 집합이다. 세 집합의 상한과 membership을 하나의 `candidateCount`로 추정하지 않는다.
+- `candidate ledger`는 fast/semantic discovery가 만든 canonical 원장이다. `context cohort`는 이 원장에서 최대 32개씩 whole-context AI에 보내는 집합이고, `detail batch`는 편집자가 제외하지 않았고 context가 준비된 항목 중 한 번에 최대 12개를 화면·오디오 AI에 보내는 실행 단위다. 남은 후보는 다음 missing-only batch로 이어지므로 batch 상한을 전체 detail membership이나 `candidateCount`로 추정하지 않는다.
 - detail cohort가 0개여도 순서가 고정된 빈 계획을 plan-only checkpoint로 저장하고 exact readback해야 정상 `completedEmpty`가 될 수 있다. plan callback은 실행 시작 때 잡은 immutable lease와 정확히 일치할 때만 artifact를 저장하며, 늦게 도착한 이전 계획 callback은 새 계획을 덮어쓰지 못한다.
 - 복구된 Candidate Pass B evidence·insight·thumbnail·receipt는 현재 transcript·participant grounding·context·refinement와 plan receipt를 모두 다시 검증하기 전에는 UI나 publication에 노출하지 않는다. 계획이 달라지면 이전 artifact를 부분 재사용하지 않고 빈 current plan checkpoint로 원자적으로 교체한 뒤 필요한 후보만 다시 채운다.
-- context 실행은 exact `contextCandidateIds`와 함께 commit한다. 복구 시 candidate ID·순서·source duration·input signature가 모두 맞아야 현재 context로 사용할 수 있다. detail cohort 밖의 context-qualified 후보는 reservoir에 남지만 `detail-result-missing`이 아니다.
+- context 실행은 exact `contextCandidateIds`와 함께 commit한다. 복구 시 candidate ID·순서·source duration·input signature가 모두 맞아야 현재 context로 사용할 수 있다. 아직 다음 detail batch를 기다리는 후보는 명시적 대기 상태이며, publication 시점까지 상세 검증이 없으면 `detail-result-missing`으로 남는다.
 - detail candidate의 중심 전이는 `pending -> frame-preparing -> four-frames-ready -> media-staged -> remote-review -> receipt-issued | gap`이다. 네 화면이 모두 준비되기 전에는 remote-review를 시작하지 않는다. 후보 하나의 `gap`은 형제 후보를 실패시키지 않으며 run은 모든 candidate가 terminal일 때만 `completed | completedWithGaps`가 된다.
 - `receipt-issued`는 현재 candidate ID·source start/end, context fingerprint, routing model revision, 오디오 검토, 서로 다른 화면 4장, 그중 하나인 thumbnail timestamp와 provider insight가 모두 같은 candidate operation에 연결됐다는 뜻이다. Qwen·Gemini·quota·receipt는 provider 호출 전에 생성된 동일 canonical packet과 source range를 사용하며, receipt와 실제 provider prompt가 다른 silent compaction은 금지한다.
 - candidate context는 전체 방송 원본을 바꾸지 않고 provider 호출 전에 48KiB canonical packet으로 만든다. aggregate 예산 때문에 줄어든 필드는 bilingual omission marker와 앞·뒤를 함께 보존하며, 이 canonical packet 자체를 fingerprint한다. 따라서 합법적인 최대 protocol 입력은 80KiB prompt 제한으로 후보 실패가 되지 않는다. 크기를 이유로 candidate를 gap으로 만드는 전이는 존재하지 않는다.
 - `receipt-issued` 뒤에도 `artifact-write-pending -> artifact-readback-verified | artifact-readback-failed`가 남는다. exact readback 전의 insight는 UI의 임시 검토 자료일 뿐 final projection의 입력이 아니다. 실패하면 stage cursor와 job terminal을 유지하고, 같은 메모리 snapshot의 저장만 다시 시도한다.
-- final projection의 판단 완료 제외는 `context-excluded | program-material-excluded | context-conflict | detail-not-recommended`다. pipeline 미완료는 `context-missing | detail-result-missing | verification-receipt-missing | evidence-incomplete`다. 사건·반응·클립 가치 설명, 등장인물 상태·근거, 최종 판정, 맥락 일치, 프로그램성 판정 중 하나가 비거나 모순인 insight도 `evidence-incomplete`이며, run envelope가 `completed`여도 해당 candidate ID는 AI outstanding/action 목록에 남는다. 전자는 정상 0개가 될 수 있고 후자는 publication과 job completion을 막는다.
+- 화면 추출 큐의 staged frame은 UI 재생·대표 화면 준비 상태일 뿐 durable artifact가 아니다. `thumbnailById`에는 evidence·완전한 insight·실제 model·dispatch·completed settlement·verification receipt·활성 attempt ledger가 같은 operation으로 일치하는 후보만 들어간다. 따라서 arm-only checkpoint, 형제 후보 terminal checkpoint, 저장 재시도는 미완료 후보의 미리 뽑힌 화면을 완료 산출물로 승격하지 않는다.
+- 현재의 같은-memory 저장 재시도는 일시적인 IndexedDB write/readback 실패 뒤 provider를 다시 호출하지 않고 terminal payload를 보존한다. 다만 provider 응답 수신과 exact durable readback 사이에 탭·브라우저 프로세스가 강제 종료되면 메모리 terminal payload는 복구할 수 없다. 서버가 operation ID별 terminal 결과 조회 journal을 제공하지 않는 현재 계약에서는 자동 재호출이 중복 과금 위험을 만들므로, durable paid-direct arm은 outcome-unknown으로 남기고 편집자 승인 전 재실행하지 않는다. 동기 localStorage 복제는 멀티모달 payload의 크기·quota·원자성 보장이 없어 복구 경로로 사용하지 않는다. 이 창을 없애려면 서버 측 terminal journal과 idempotent result lookup을 별도 계약으로 추가해야 한다.
+- final projection의 판단 완료 제외는 상세 멀티모달 검증 뒤의 `program-material-excluded | context-conflict | detail-not-recommended`다. `context-excluded`는 현재 계약에서 조기 완료 판정이 아니라 상세 검증이 필요한 진단 가설이다. pipeline 미완료는 `context-missing | detail-result-missing | verification-receipt-missing | evidence-incomplete`다. 사건·반응·클립 가치 설명, 등장인물 상태·근거, 최종 판정, 맥락 일치, 프로그램성 판정 중 하나가 비거나 모순인 insight도 `evidence-incomplete`이며, 해당 candidate ID는 AI outstanding/action 목록에 남아 publication과 job completion을 막는다.
 - `AnalysisJob`의 정상 terminal은 `completed | completedEmpty`다. `completed`는 완전 검증 후보가 하나 이상, `completedEmpty`는 pipeline gap 없이 0개다. `failed`, `paused`, `blocked`와 `completedEmpty`를 unfinished 목록이나 retention에서 같은 의미로 다루지 않는다.
 - UI가 실패·복구 panel을 열어도 resume cursor는 전진하지 않는다. `broadcastContext`는 whole-context artifact readback 뒤, `deepPass/publication`은 pipeline gap이 0이고 각 결과가 준비된 뒤에만 순서대로 commit한다.
 - Free candidate media는 `lease-issued -> r2-staged -> ticket-resolved -> execution-waiting -> in-flight -> receipt-issued | gap` 순서다. R2 stage는 헤더가 없어도 counted stream을 `FixedLengthStream`으로 봉인해 signed expected length를 보존하며, 초과·미달 본문은 `r2-staged`에 도달하지 않는다. 동일 object 재사용과 conditional PUT loser는 `reused`로 정산하고 미사용 upload pump를 abort한다. provider 결과가 명시적 429·outcome-unknown이거나 bounded schema 복구 뒤에도 invalid-response이면 object를 보존하고, 성공·확정 영구 실패 뒤 삭제한다. 비정상 종료 orphan은 기존 `transcript/` 1일 lifecycle이 정리한다.
@@ -105,7 +198,7 @@
 - 최종 주제 lifecycle은 `context running -> context result committed -> reveal projection`이다. 모델 응답 전에는 semantic title을 만들지 않는다. 최종 주제 reveal animation은 저장 결과의 presentation일 뿐 별도 AI 실행이나 streaming 상태가 아니다.
 - timeline inspection target은 `exploration | signal | chapter | lead` 중 하나다. 선택은 canonical 후보, 분석 run, 저장 evidence를 변경하지 않는 presentation event다.
 - 후보 검토 재생은 `unavailable | preparing | ready-paused | playing | error`로 분리한다. marker·카드 선택은 `preparing`으로 전이하고 player를 pause한 뒤 seek한다. 현재 후보 ID와 seek target이 일치하는 `seeked/canplay` 뒤에만 `ready-paused`가 된다. `playing`은 준비 완료 후의 명시적 사용자 재생 이벤트로만 진입한다.
-- 전체 맥락 판정이 음악/MV/오프닝/엔딩/휴식 exclusion을 반환하면 미승인 후보는 final publication과 자동 상세 queue에서 제외한다. 이미 승인된 후보의 membership·경계·다운로드 가능 상태는 AI가 변경하지 않는다.
+- 전체 맥락 판정이 음악/MV/오프닝/엔딩/휴식 exclusion을 반환해도 그것은 낮은 우선순위 가설이다. 편집자가 제외하지 않은 후보는 자동 상세 queue에 남고, 네 화면·오디오 결과도 실시간 스트리머 사건이 없는 프로그램성 장면이라고 확인해야 final publication에서 제외한다. AI는 사용자의 membership·경계·다운로드 가능 상태를 변경하지 않는다.
 - 후보 세부 분석은 후보별 `frame-preparing -> remote-review -> terminal` 파이프라인이다. 여러 후보가 bounded pool에서 겹쳐 실행될 수 있으므로 하나의 `activeCandidateId`는 presentation convenience일 뿐 전체 동시 실행 수를 나타내지 않는다. 완료 event는 후보 ID와 operation fence로 개별 정산하고 최종 run은 모든 target이 terminal일 때만 완료한다.
 
 ## `0.3.42` 분석 준비 작업대 projection
@@ -148,7 +241,7 @@
 - jury 선택이 0개면 refinement ID와 semantic proposal은 모두 빈 배열로 정상 완료한다. 선택이 1개뿐이면 해당 선택과 reserve를 합쳐 최대 6개까지만 허용한다. 이 상태는 `failed`가 아니며 후보 수를 채우기 위한 추가 호출을 만들지 않는다.
 - context cache identity는 input signature, routing revision `1.8.0`, topical discovery `1.2.0`, jury model revision을 함께 요구한다. 이전 저장 결과는 삭제하지 않지만 새 run의 자동 결과로 가장하지 않는다. 저장된 refinement ID는 현재 result의 lead ID에 실제로 존재하고 현재 최대치 안에 있을 때만 복구한다.
 - 최대 20개 caption refinement 요청은 3개 bounded pool에서 안정된 입력 순서로 정착한다. 호출 하나가 transport failure면 해당 parent lead만 기존 source-fenced cue matcher로 내려가고, 성공했지만 빈 결과인 호출은 모델의 의도적 abstention으로 유지한다.
-- context annotation은 canonical candidate를 삭제하지 않는다. `recommended | needs-review | deprioritized | insufficient-evidence` projection과 유료 상세 queue eligibility만 갱신하며, 사용자의 `approved | rejected`, boundary revision, 원본 candidate ID와 source range는 계속 우선한다.
+- context annotation은 canonical candidate를 삭제하지 않는다. `recommended | needs-review | deprioritized | insufficient-evidence` 우선순위 projection만 갱신하며, 유료 상세 queue eligibility는 편집자의 명시적 `rejected` 여부가 결정한다. 사용자의 `approved | rejected`, boundary revision, 원본 candidate ID와 source range는 계속 우선한다.
 
 ## `0.3.44` 후보 화면 생산 큐와 AI 소비 fence
 
@@ -190,7 +283,7 @@
 ## `0.3.33` context-first gate와 자막 refinement
 
 - 로컬 fast pass 완료는 Candidate Pass B 시작 조건이 아니다. transcript가 `completed | completedWithGaps`이면 whole-context가 `completed | failed`로 정착한 뒤에만 정밀 후보 해석을 시작한다. transcript 자체가 `failed`면 후보 단계는 기존 fast result를 보존한 채 진행할 수 있다.
-- 공개 YouTube caption track은 현재 source/run에 묶인 휘발 상태다. source 교체·새 분석·복구 전환 때 반드시 비우며, 저장된 chapter map을 다시 열 때는 같은 video ID의 track을 재요청할 수 있다.
+- 공개 YouTube caption track은 현재 source/run에 묶인 휘발 상태다. source 교체·새 분석·복구 전환 때 반드시 비우며, 저장된 chapter map을 다시 열 때는 같은 video ID의 track을 재요청할 수 있다. 요청 순서는 opaque browser sandbox → Worker proxy → bounded ASR이며, 앞 경로의 transport 실패는 자막 부재로 확정하지 않는다. 모든 경로는 같은 source video ID와 `YOUTUBE_CAPTION_MODEL_REVISION` fence를 사용한다.
 - whole-context annotation과 source-fenced explicit-music gate가 모두 후보 생존 조건이다. 둘 중 하나가 ineligible이면 해당 후보는 정밀 분석 budget을 소비하지 않는다.
 - caption refinement plan은 의미 lead 전체 범위를 30초 cell로 나누고 `estimatedAsrCostUsd = 0`을 유지한다. caption이 없을 때만 기존 ASR reserve plan을 사용하며, 두 plan의 결과는 동일한 source range 검증과 semantic candidate serialization을 거친다.
 - 타임라인의 후보 번호는 항상 현재 candidates를 source peak 시각으로 정렬한 index+1이다. 원·요약 카드·접근성 label이 같은 index를 사용하며, 주제/의미 단서 레이어는 candidate lifecycle을 변경하지 않는 projection이다.
@@ -205,7 +298,7 @@
 - 후보별 실제 모델 귀속은 Candidate Pass B insight schema `1.3.0`의 `modelByCandidateId`에 저장한다. 1.0~1.2 기록은 이 필드가 없는 legacy 결과로 계속 복구한다.
 - 장시간 방송 전사는 timeout 뒤 자동 provider 전환을 하지 않는다. 이미 과금됐을 가능성이 있는 동일 오디오를 다시 보내지 않고 해당 구간을 coverage gap으로 유지한다.
 - 전체 맥락 결과의 주제 구간은 실제 transcript chapter ID와 시간 범위를 모두 만족하는 파생 projection이다. 잘못되거나 겹치는 주제 구간 하나를 제외해도 독립적으로 유효한 후보 판정과 의미 단서는 보존한다.
-- 대표 화면 수가 0이면 Candidate Pass B 결과를 `audio-only` 안전 projection으로 낮춘다. 대사 시각은 유지하지만 화면 사건·게임 종류·출연자·인과 설명은 저장하거나 복원하지 않는다.
+- 서로 다른 대표 화면 네 장을 준비하지 못하면 Candidate Pass B provider 요청을 시작하지 않고 복구 가능한 `frame-preparing` gap을 유지한다. 현재 계약은 화면 없는 `audio-only` 결과를 저장·복원·publication 근거로 사용하지 않는다.
 - 타임라인의 후보 번호, 세로 lane, 30분 눈금, 주제 띠, 의미 단서 표시는 화면 projection일 뿐 candidate ID·원본 범위·점수·review state의 소유권이나 lifecycle을 바꾸지 않는다.
 
 ## 0. 이 문서가 해결하는 문제

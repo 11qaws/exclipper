@@ -56,7 +56,7 @@ describe("summarizeFinalVerificationGaps", () => {
     }
   });
 
-  it("reports five context rejections as judgements and eight unfinished details as the only pipeline gap", () => {
+  it("requires detail for context-negative hypotheses instead of treating them as completed judgements", () => {
     const context = createCandidatePassBContextPacket({
       transcriptSource: "broadcast-transcript",
       transcriptKo: "후보 구간에서 스트리머가 음식 이름을 말하며 반응합니다.",
@@ -83,7 +83,7 @@ describe("summarizeFinalVerificationGaps", () => {
       candidates.slice(0, 5).map(({ id }) => id),
     );
     const contextByCandidateId = Object.fromEntries(
-      candidates.slice(5).map(({ id }) => [id, context!]),
+      candidates.map(({ id }) => [id, context!]),
     );
 
     const verification = finalizeFullyVerifiedCandidates({
@@ -102,16 +102,15 @@ describe("summarizeFinalVerificationGaps", () => {
     );
 
     expect(summary.map(({ gap, count }) => [gap, count])).toEqual([
-      ["detail-result-missing", 8],
-      ["context-excluded", 5],
+      ["detail-result-missing", 13],
     ]);
     expect(
       summary
         .filter(({ gap }) => isPipelineGap(gap))
         .reduce((total, { count }) => total + count, 0),
-    ).toBe(8);
+    ).toBe(13);
     expect(verification.gapByCandidateId["candidate-1"]).toBe(
-      "context-excluded",
+      "detail-result-missing",
     );
   });
 });

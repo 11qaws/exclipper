@@ -1039,9 +1039,10 @@ export async function createAnalysisPipelineHappyPathFixture(
 }
 
 /**
- * Current-only fixture for the legitimate zero-detail path. The whole-context
- * model explicitly rejects the reservoir candidate, while Candidate Pass B
- * durably records the exact empty plan instead of omitting its record.
+ * Current-only fixture for the legitimate zero-detail path. The editor has
+ * explicitly rejected the reservoir candidate, while Candidate Pass B durably
+ * records the exact empty plan instead of omitting its record. A context-only
+ * rejection is not sufficient to skip multimodal verification.
  */
 export async function createAnalysisPipelineIntentionalEmptyFixture(): Promise<AnalysisPipelineSuccessInput> {
   const fixture = await createAnalysisPipelineHappyPathFixture({
@@ -1126,6 +1127,10 @@ export async function createAnalysisPipelineIntentionalEmptyFixture(): Promise<A
   };
   return {
     ...fixture,
+    candidates: fixture.candidates.map((candidate) => ({
+      ...candidate,
+      reviewState: "rejected" as const,
+    })),
     session: {
       ...fixture.session,
       contextPhaseLedgerJson:

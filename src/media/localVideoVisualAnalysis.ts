@@ -49,6 +49,7 @@ export interface LocalVideoVisualAnalysisProgress {
 
 export type LocalVideoVisualAnalysisErrorCode =
   | "INVALID_FILE"
+  | "INVALID_SAMPLE_PLAN"
   | "ABORTED"
   | "OBJECT_URL_CREATION_FAILED"
   | "VIDEO_CREATION_FAILED"
@@ -135,6 +136,25 @@ export interface AnalyzeLocalVideoVisualOptions {
   readonly maxCandidates?: number;
   readonly adapters?: Partial<LocalVideoVisualAnalysisAdapters>;
 }
+
+export interface LocalVideoLumaSample {
+  readonly timestampMs: number;
+  readonly luma: Uint8Array;
+}
+
+export interface LocalVideoLumaSamplingResult {
+  readonly sourceDurationMs: number;
+  readonly samples: readonly LocalVideoLumaSample[];
+}
+
+export interface SampleLocalVideoLumaFramesOptions {
+  readonly signal?: AbortSignal;
+  readonly metadataTimeoutMs?: number;
+  readonly seekTimeoutMs?: number;
+  readonly adapters?: Partial<LocalVideoVisualAnalysisAdapters>;
+}
+
+export const MAX_EXPLICIT_VISUAL_SAMPLE_COUNT = 512 as const;
 
 function createDefaultObjectURL(file: File): string {
   if (typeof URL === "undefined" || typeof URL.createObjectURL !== "function") {
@@ -440,6 +460,192 @@ export async function analyzeLocalVideoVisuals(
     ratio: 1,
   });
   return result;
+}
+
+/**
+ * Reads a caller-supplied, bounded set of tiny luma frames for a perceptual
+ * identity check. The source file never leaves the browser and the caller must
+ * erase the returned samples after computing its aggregate match receipt.
+ */
+export async function sampleLocalVideoLumaFrames(
+  file: File,
+  timestampsMs: readonly number[],
+  options: SampleLocalVideoLumaFramesOptions = {},
+): Promise<LocalVideoLumaSamplingResult> {
+  assertValidFile(file);
+  const samplePlan = normalizeExplicitSamplePlan(timestampsMs);
+  const adapters = resolveAdapters(options.adapters);
+  const metadataTimeoutMs = normalizeTimeout(
+    options.metadataTimeoutMs,
+    DEFAULT_VISUAL_METADATA_TIMEOUT_MS,
+    "metadataTimeoutMs",
+  );
+  const seekTimeoutMs = normalizeTimeout(
+    options.seekTimeoutMs,
+    DEFAULT_VISUAL_SEEK_TIMEOUT_MS,
+    "seekTimeoutMs",
+  );
+  const samples: LocalVideoLumaSample[] = [];
+  let objectUrl = "";
+  let objectUrlWasCreated = false;
+  let video: LocalVideoVisualProbe | null = null;
+  let canvas: LocalVideoVisualCanvas | null = null;
+  let sourceDurationMs: number | null = null;
+  let operationError: LocalVideoVisualAnalysisError | null = null;
+
+  try {
+    throwIfAborted(options.signal);
+    try {
+      objectUrl = adapters.createObjectURL(file);
+      objectUrlWasCreated = true;
+      if (objectUrl.length === 0) {
+        throw new Error("createObjectURL returned an empty string.");
+      }
+    } catch (cause) {
+      throw wrapFailure(
+        cause,
+        "OBJECT_URL_CREATION_FAILED",
+        "선택한 영상의 임시 로컬 주소를 만들지 못했어요.",
+      );
+    }
+    try {
+      video = adapters.createVideoProbe();
+    } catch (cause) {
+      throw wrapFailure(
+        cause,
+        "VIDEO_CREATION_FAILED",
+        "영상을 읽기 위한 브라우저 도구를 만들지 못했어요.",
+      );
+    }
+    try {
+      canvas = adapters.createCanvas(
+        VISUAL_FINGERPRINT_WIDTH,
+        VISUAL_FINGERPRINT_HEIGHT,
+      );
+    } catch (cause) {
+      throw wrapFailure(
+        cause,
+        "CANVAS_CREATION_FAILED",
+        "화면 특징을 비교하기 위한 작은 캔버스를 만들지 못했어요.",
+      );
+    }
+
+    sourceDurationMs = await loadVideoMetadata(
+      video,
+      objectUrl,
+      metadataTimeoutMs,
+      options.signal,
+      adapters,
+    );
+    if (samplePlan.some((timestampMs) => timestampMs >= sourceDurationMs!)) {
+      throw new LocalVideoVisualAnalysisError(
+        "INVALID_SAMPLE_PLAN",
+        "화면 지문 확인 시각이 영상 길이를 벗어났어요.",
+      );
+    }
+
+    for (const timestampMs of samplePlan) {
+      throwIfAborted(options.signal);
+      await seekVideo(
+        video,
+        timestampMs,
+        seekTimeoutMs,
+        options.signal,
+        adapters,
+      );
+      throwIfAborted(options.signal);
+      try {
+        samples.push({
+          timestampMs,
+          luma: copyFingerprint(
+            adapters.captureLumaFingerprint(
+              video,
+              canvas,
+              VISUAL_FINGERPRINT_WIDTH,
+              VISUAL_FINGERPRINT_HEIGHT,
+            ),
+          ),
+        });
+      } catch (cause) {
+        throw wrapFailure(
+          cause,
+          "FRAME_CAPTURE_FAILED",
+          "영상 화면 특징을 읽는 중 문제가 생겼어요.",
+          { timestampMs },
+        );
+      }
+      await adapters.yieldControl();
+    }
+  } catch (cause) {
+    operationError = normalizeOperationError(cause, options.signal);
+  }
+
+  const cleanupFailures = cleanupResources(
+    video,
+    canvas,
+    objectUrl,
+    objectUrlWasCreated,
+    adapters,
+  );
+  if (operationError !== null || cleanupFailures.length > 0) {
+    eraseLocalVideoLumaSamples(samples);
+  }
+  if (operationError !== null && cleanupFailures.length > 0) {
+    throw new LocalVideoVisualAnalysisError(
+      operationError.code,
+      operationError.message,
+      {
+        cause: operationError,
+        details: {
+          ...operationError.details,
+          failedCleanupSteps: cleanupFailures.join(","),
+        },
+      },
+    );
+  }
+  if (operationError !== null) throw operationError;
+  if (cleanupFailures.length > 0) {
+    throw new LocalVideoVisualAnalysisError(
+      "CLEANUP_FAILED",
+      "영상 분석용 임시 자원을 정리하지 못했어요.",
+      { details: { failedCleanupSteps: cleanupFailures.join(",") } },
+    );
+  }
+  if (sourceDurationMs === null || samples.length !== samplePlan.length) {
+    eraseLocalVideoLumaSamples(samples);
+    throw new LocalVideoVisualAnalysisError(
+      "UNEXPECTED_ERROR",
+      "화면 지문 표본이 완성되지 않았어요.",
+    );
+  }
+  return { sourceDurationMs, samples };
+}
+
+export function eraseLocalVideoLumaSamples(
+  samples: readonly LocalVideoLumaSample[],
+): void {
+  for (const sample of samples) sample.luma.fill(0);
+}
+
+function normalizeExplicitSamplePlan(
+  timestampsMs: readonly number[],
+): readonly number[] {
+  if (
+    timestampsMs.length === 0 ||
+    timestampsMs.length > MAX_EXPLICIT_VISUAL_SAMPLE_COUNT ||
+    timestampsMs.some(
+      (timestampMs, index) =>
+        !Number.isSafeInteger(timestampMs) ||
+        timestampMs < 0 ||
+        (index > 0 && timestampMs <= (timestampsMs[index - 1] ?? -1)),
+    )
+  ) {
+    throw new LocalVideoVisualAnalysisError(
+      "INVALID_SAMPLE_PLAN",
+      "화면 지문 확인 시각이 올바르지 않아요.",
+    );
+  }
+  return [...timestampsMs];
 }
 
 function resolveAdapters(

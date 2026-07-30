@@ -1,5 +1,196 @@
 # Development Log
 
+## 2026-07-30 아모레또 VOD 예약 자막 카탈로그와 원본 연결
+
+- 예약 workflow를 `prepare(contents: read)`와 `publish(contents: write)`로 분리했다.
+  모든 checkout은 credential을 저장하지 않고 dependency 설치는 lifecycle script를
+  실행하지 않는다. Node·npm·`yt-dlp`가 끝난 뒤 검증된 catalog snapshot만 job
+  artifact로 넘기며, publish는 준비 때 읽은 branch base SHA가 그대로일 때 마지막
+  고정 push step에서만 일회성 token을 사용한다.
+- ready state가 손상 bundle을 영구 skip하지 않도록 artifact closure reconciliation을
+  추가했다. referenced artifact 전부의 regular file·32MiB 상한·exact byte
+  length·full SHA-256을 확인하고 transcript는 UTF-8, strict bundle schema,
+  transcript digest, video identity, provenance까지 검증한다. 누락·동일 길이 byte
+  변조를 주입한 테스트에서는 관련 file/pointer를 제거하고 즉시 due인
+  `retryable(transcript)`로 내린 뒤 기존 selection이 복구 대상으로 고르는 것을
+  확인했다.
+- `Content-Length`가 없는 Atom 응답도 body stream을 512KiB에서 중단하며, 내려받은
+  JSON3는 임시 파일의 regular-file 여부와 32MiB 크기를 먼저 확인한 뒤 bounded
+  stream으로만 읽는다. chunked 과대 feed와 32MiB를 넘는 sparse 자막 파일을 주입해
+  각각 즉시 거부와 `retryable(transcript)` 복구를 확인했다.
+- `@AmorettoVODs`의 canonical channel ID를 고정하고 공식 Atom feed를 엄격하게
+  읽는 별도 카탈로그 계층을 추가했다. 예약 GitHub Actions는 세 시간마다 최대
+  두 영상만 처리하며, metadata와 수동 `ko` 우선·자동 `ko-orig` fallback JSON3
+  자막을 immutable bundle에 먼저 쓴 뒤 manifest를 갱신한다. 실패 영상은 마지막
+  성공 단계와 재시도 시각을 가진 `retryable` checkpoint로 남아 다음 실행에서
+  이어진다.
+- 브라우저는 raw `preanalysis-catalog` branch를 먼저 읽고 Pages에 포함된 bundle을
+  fallback으로 사용한다. manifest·bundle 크기, 채널/video identity, 연속 챕터,
+  transcript SHA-256을 모두 재검증한다. bundle 다운로드가 실패해도 exact 영상
+  identity는 잃지 않고 기존 자막·VAD·ASR 경로로 이어진다.
+- canonical bundle artifact는 revision이 붙은 ID를 사용한다. 현재 자막 snapshot은
+  v1 그대로지만 이후 `context-ready` 맥락을 포함한 v2+ bundle도 video state와
+  정확히 일치하면 같은 closure 검증을 통과한다. 과거 검사처럼 bundle을
+  `transcript-ready`로 강제해 미래 context state를 막는 모순은 회귀 테스트로 닫았다.
+- 로컬 원본 연결 우선순위는 명시적 YouTube ID, 해당 영상에 등록된 동일 파일
+  sampled SHA-256, 고유한 제목+길이(±2초)다. 앞의 두 경우만 자동 연결하며
+  제목+길이 후보는 편집자 확인 전까지 roster·caption ID 어느 쪽에도 사용하지
+  않는다. 새 파일 선택 때 이전 수동 VOD ref를 즉시 지워 다른 방송 자막이
+  섞이던 stale binding도 함께 제거했다.
+- 실제 음식 토크 `KzAW3yow80Q`로 runner를 실행해 2,619개 한국어 event와 전체
+  8,115초를 덮는 68개 연속 챕터를 만들고 digest readback을 통과했다. 이 bundle을
+  Pages 초기 fallback에 포함했다.
+- 예약 context 경로는 기본 비활성으로 두고 전용
+  `CHANNEL_PREANALYSIS_CONTEXT_PROXY_URL`과
+  `CHANNEL_PREANALYSIS_CONTEXT_TOKEN`이 모두 있을 때만 opt-in하도록 만들었다.
+  기존 대화형 5인 Worker host는 runner가 거부한다. 전용 proxy는 아직 별도
+  배포되지 않았으므로 현재 cron은 계속 `transcript-ready`까지만 만든다.
+- opt-in runner는 자막 챕터와 sealed transcript-name grounding을 현행 context
+  request로 만들고 Bearer token, stable operation ID, payload digest를 전용
+  endpoint에 보낸다. transport 결과가 불명확하면 같은 run에서 재호출하지 않고
+  exact transcript artifact를 가진 `retryable(context)`로 남긴다. 다음 run은 같은
+  operation ID를 사용하므로 전용 proxy가 terminal 결과를 readback해 중복 과금을
+  막을 수 있다.
+- transcript v1과 context v2가 같은 파일을 덮던 원자성 결함을 제거했다. 새
+  artifact는 `<videoId>.v1.json`, `<videoId>.v2.json` revision별 immutable key를
+  사용한다. v2 write 직후 manifest commit 전에 중단된 fixture에서 v1 closure가
+  그대로 유효하고, 다음 run이 v2를 검증해 AI 재호출 없이 pointer를 승격하는 것을
+  확인했다.
+- 예약 context bundle에는 `youtube-caption-transcript-only` evidence scope,
+  model routing revision, 생성 시각,
+  `localVisualVerificationRequired=true`를 기록한다. 로컬 source
+  fingerprint·화면·오디오·등장인물 grounding과 후보별 detail receipt는 기존
+  완주형 파이프라인에서 다시 검증한다.
+- background 전용 `exclipper-preanalysis-context` Worker와 operation별 Durable
+  Object를 추가했다. Bearer, stable operation ID, exact payload SHA-256을 검증하고
+  검증된 200 성공만 terminal cache에 저장한다. 실패는 bounded backoff checkpoint로
+  남기며 stale running은 같은 operation으로 복구한다. 전경 5인 Worker의 quota
+  lease와 rate limiter를 사용하지 않지만 upstream quota까지 격리하려면 별도 Qwen
+  workspace/key가 필요하다. source와 dry-run은 준비됐고 실제 Worker 배포·secret
+  설정은 아직 하지 않았다.
+- 검증된 `context-ready` bundle을 App의 내구 맥락 pipeline에 연결했다. exact
+  video/transcript/artifact identity와 호환 시간축·아모레또 roster·한국어·현재
+  routing을 모두 통과한 경우에만 원격 주제·의미 lead를 현재 로컬 챕터로
+  재매핑한다. 이후 현재 후보와 현재 participant grounding으로 selection jury를
+  반드시 실행한다. 변조·불일치·coverage gap은 기존 로컬 overview/discovery로
+  되돌아가며, 과거 로컬 ledger 중간에 seed를 끼워 넣지 않는다.
+- 파일명에 포함된 video ID와 제목·길이는 자동 신뢰 근거에서 제외하고 편집자 확인
+  단서로만 남겼다. 명시 URL, 이미 등록된 exact sampled-file 지문, 편집자 확인만
+  로컬 binding을 만들 수 있다. 실제로 읽어 검증한 bundle bytes와 manifest의
+  artifact ID·SHA-256을 하나의 원자적 binding으로 묶어, 병렬 lookup 중 stale
+  manifest와 새 bundle을 조합하는 경로도 닫았다.
+- 예약 context runner는 응답 본문이 멈춘 경우까지 포함한 end-to-end deadline,
+  protocol·routing·실제 model ID/revision receipt의 exact 검증, 4MiB manifest
+  producer 상한을 적용한다. 전용 secret이 없으면 context retry를 남기지 않고
+  보존된 transcript-ready pointer로 정착한다. 전용 Durable Object의 구형·손상
+  checkpoint는 격리한 뒤 같은 exact payload를 새 schema로 재개하되, 다른 payload가
+  같은 operation을 탈취하는 것은 계속 conflict로 거부한다.
+- exact 검증 뒤 `routingRevision`만 bundle에 남고 proxy `contractVersion`과 실제
+  `modelId`·`modelRevision`이 소실되던 provenance 누락을 닫았다.
+  `contextProvenance.contextReceipt`는 네 필드를 모두 exact-key·128자 안전 token
+  상한으로 보존하고, receipt routing과 provenance routing이 다르거나 필드가
+  추가·누락되면 context bundle parsing과 artifact closure를 fail-closed한다.
+- 원격 영상의 선형 상태에서 도달 불가능했던 `fingerprint-ready`를 제거하고 시각
+  지문을 transcript/context 이후의 독립 후행 lane으로 바꿨다. storyboard나 지문
+  생성이 실패하면 `retryable(fingerprint)`가 마지막 성공 주 상태를 보존하고,
+  지문 파일의 누락·동일 길이 변조도 transcript/context를 재생성하지 않고 지문만
+  복구한다. 기존 ready 영상의 누락 지문은 fresh 영상보다 낮은 우선순위로
+  backfill한다.
+- YouTube storyboard와 로컬 재인코딩 원본을 연결하는 12-anchor 시각 지문을
+  구현했다. 각 anchor는 32×18 luma의 dHash64·blockHash64·평균 밝기·edge
+  energy를 사용하고, 최소 8개·67%·앞/중간/뒤 coverage·median/p90 상한을 모두
+  통과한 유일한 후보만 exact로 승격한다. 단일 후보는 ±30초 bounded offset
+  복구를 허용한다.
+- 파일명이 완전히 바뀌어 video ID와 제목 단서가 없는 경우를 위해 최대 12개
+  duration cohort를 같은 catalog snapshot에서 읽는 경로를 추가했다. 모든 원격
+  fingerprint를 manifest byte length·SHA-256으로 검증한 뒤 필요한 source 시각
+  합집합을 로컬 영상에서 한 번만 추출한다. 일부 fetch 실패·복수 합격·합의 부족은
+  자동 연결하지 않으며, 유일한 합의만 `visual-fingerprint-consensus` 이유와 exact
+  bundle binding을 반환한다.
+- 실제 음식 토크 로컬 원본은 YouTube storyboard와 12/12 anchor, offset 0,
+  앞/중간/뒤 coverage, median 4.5, p90 10으로 합격했다. 다른 방송
+  `EZfCGS5ms_Q`를 같은 duration으로 강제한 negative control은 0/12로 거부되어
+  길이만 같은 영상의 오연결을 막는 것을 확인했다.
+- 예약 workflow의 source checkout은 움직이는 `main` 대신 event가 선택한 immutable
+  `github.sha`로 고정했다. `schedule`과 `workflow_dispatch` 모두 같은 계약을
+  사용하며, runner 대기 중 main이 바뀌어도 다른 source가 context secret을 받지
+  못하도록 회귀 테스트로 묶었다.
+- pinned `yt-dlp` child는 더 이상 `process.env` 전체를 상속하지 않는다. OS 실행,
+  temp, locale, credential 없는 proxy URL, CA bundle 경로만 명시적으로 전달하고
+  scheduled Bearer·provider key·GitHub token·임의 secret은 제외한다. credential이
+  포함된 proxy, 개행 또는 과대 환경값은 spawn 전에 fail-closed하며 실제 child
+  process에서 secret key가 보이지 않는 통합 회귀를 추가했다.
+- 전체 맥락의 `deprioritized`·음악 판정은 조기 상세 제외가 아니라 진단 가설로
+  바꿨다. 편집자가 명시적으로 제외하지 않은 모든 후보는 최대 12개씩 이어지는
+  missing-only batch에서 서로 다른 화면 네 장, 후보 오디오, 현재 방송 맥락을
+  검증한다. context-negative 가설도 exact 멀티모달 receipt가 프로그램성 장면 또는
+  사건 없음에 동의해야만 정상 최종 제외가 된다.
+- 최종 `npm run check`는 Vitest 172개 파일 2,097개와 voice-enrollment 도구
+  9개를 모두 통과했다. 별도 workflow 런타임 명령에서는 예약 runner·지문
+  generator 44개, 집중 브라우저 회귀에서는 11개 파일 122개를 통과했다.
+  production build는 254 modules와 초기 fallback catalog/bundle을 생성했고,
+  전경 Worker dry-run은 463.89KiB(87.57KiB gzip), 예약 Worker dry-run은
+  154.81KiB(33.88KiB gzip)로 통과했다. live Atom feed도 HTTP 200,
+  15,637 bytes, 14개 영상, pinned channel ID로 다시 읽었다.
+
+## 2026-07-30 실제 샘플 ingress 검증과 YouTube 자막 egress 복구
+
+### 어디에서 막혔는지
+
+- `D:\opencode\StreamSaver\downloads`의 음식 토크·실수로 구독을 열었다·마크 릴레이
+  MP4 세 종류를 전체 video/audio `ffmpeg -xerror` decode로 확인했다. 세 원본 모두
+  손상 없이 끝까지 decode됐고, 음식 토크의 중복 파일 두 개는 SHA-256까지 같은
+  동일 파일이었다. 음식 토크에서 뽑은 19장 JPEG도 모두 640×360으로 decode됐으며
+  파일·pixel hash가 서로 달랐다.
+- 실제 운영 전사는 음식 토크의 오프닝 0~90초를 `[대사 없음]`으로 정착했고,
+  칼국수·껍데기·두바이초콜릿 구간은 한국어 대사를 정상 반환했다. 실제 WAV와 서로
+  다른 JPEG 4장 후보 bundle도 stage/AI/cleanup을 완주했다. 따라서 local media
+  decoder, frame extraction, transcript ingress, R2 candidate ingress는 병목이 아니었다.
+- 반면 당시 production `/v1/youtube-captions?v=KzAW3yow80Q`는 실제로 존재하는
+  한국어 자동 자막을 `404 CAPTIONS_NOT_FOUND`로 오판했다. 같은 Android player
+  요청은 편집자 PC에서 한국어 track 1개와 최종 2,619개 event를 반환했지만,
+  Cloudflare remote runtime에서는 `android:http-403`,
+  `tv-embedded:error`, `watch-page:http-429`였다. 여러 player 종류를 추가해도
+  같은 Cloudflare egress를 공유하므로 해결되지 않았다.
+- 이 false 404 때문에 당시 배포판은 전체 2.25시간 방송을 271개 30초 audio cell로
+  ASR 복구하기 시작했다. 현재 `free-r2` 계획은 같은 범위를 91개 90초 cell로
+  묶지만, 자막이 정상 유입되면 91/91 cell이 모두 caption receipt로 정착해 ASR
+  요청은 0개가 된다. “예전에는 잘 됐는데 갑자기 느리고 끝까지 못 감”의 직접
+  원인은 원본 손상이나 파이프라인 checkpoint가 아니라 이 caption source
+  전환이었다.
+
+### 최소 복구 구조
+
+- GitHub Pages 부모와 별개인 `sandbox="allow-scripts"` iframe을 추가하고
+  `allow-same-origin`을 주지 않았다. 이 opaque frame은 source file, IndexedDB,
+  AI credential과 분석 상태에 접근하지 못하며, public Android bootstrap과
+  YouTube timedtext fixed host만 CSP로 허용한다.
+- iframe은 preflight가 없는 `text/plain` player 요청을 편집자 네트워크에서 보내고,
+  HTTPS `youtube.com/api/timedtext`, 동일 video ID, 한국어 track을 확인한다.
+  player 2MiB·caption 8MiB·20초 deadline을 적용한 뒤 JSON3 원문만 부모로 돌려준다.
+- 부모는 `event.source`, opaque `event.origin`, 128-bit nonce, request ID, exact message
+  schema, video ID, 한국어 language code, event 수·시간·문자를 다시 검증한다.
+  외부 사이트가 공개 frame을 자막 relay로 쓰지 못하도록 child도 parent origin을
+  자신의 asset origin과 대조한다.
+- 실행 순서는 `opaque sandbox → Worker proxy → bounded ASR`이다. sandbox transport
+  실패뿐 아니라 한 Android surface의 한국어 track 부재도 전역 자막 없음으로
+  확정하지 않고 Worker/ASR로 이어진다. caption model revision을 올려 과거
+  false-404 session이 현재 자막 근거로 가장되지 않게 했다.
+- 실제 Chrome에서 production client 모듈을 그대로 호출해 음식 토크가
+  `videoId=KzAW3yow80Q`, `languageCode=ko`, 2,619 events,
+  00:00:29.759~02:14:58.239로 복구되는 것을 확인했다. 이 경로에서는 Cloudflare
+  CPU·요청 횟수·egress 제한을 소비하지 않는다.
+
+### 함께 고친 운영 smoke
+
+- 5인 quota coordinator의 정상 대기 응답은 HTTP 429와
+  `status=capacity-full`을 함께 사용한다. smoke 도구가 HTTP status만 보고 실패하던
+  불일치를 제거해, 브라우저와 같이 `retryAfterMs`만큼 기다린 뒤 lease를 다시 받는다.
+- 최종 `npm run check`는 Vitest 162개 파일 1,974개와 voice-enrollment 9개를
+  모두 통과했다. production build와 Wrangler dry-run도 통과했으며 Worker는
+  463.40KiB(87.38KiB gzip)다. 실제 Chrome sandbox caption smoke와 91/91 exact
+  caption-cell projection도 별도로 통과했다.
+
 ## 2026-07-30 v0.9.0 current-only 완주형 파이프라인 릴리스 후보
 
 ### 실패 지점과 복구 방식

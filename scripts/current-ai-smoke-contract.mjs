@@ -188,11 +188,6 @@ async function acquireQuotaLease({
       }),
     });
     const payload = await readJson(response, "AI quota coordinator");
-    if (!response.ok) {
-      throw new Error(
-        `AI quota coordinator rejected the smoke (HTTP ${response.status}, ${payload?.error?.code ?? "UNKNOWN"}).`,
-      );
-    }
     if (
       payload.status === "granted" &&
       typeof payload.leaseToken === "string" &&
@@ -201,6 +196,11 @@ async function acquireQuotaLease({
       return payload.leaseToken;
     }
     if (payload.status !== "queued" && payload.status !== "capacity-full") {
+      if (!response.ok) {
+        throw new Error(
+          `AI quota coordinator rejected the smoke (HTTP ${response.status}, ${payload?.error?.code ?? payload.status ?? "UNKNOWN"}).`,
+        );
+      }
       throw new Error(`AI quota coordinator returned ${String(payload.status)}.`);
     }
     await sleep(

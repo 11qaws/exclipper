@@ -4,16 +4,16 @@ import type { AnalysisLanguage } from "../domain/analysisLanguage";
 /** Provider-specific IDs plus the currently deployed default. */
 export const CANDIDATE_PASS_B_GEMINI_MODEL_ID = "gemini-3.6-flash" as const;
 export const CANDIDATE_PASS_B_GEMINI_MODEL_REVISION =
-  "gemini-3.6-flash-context-verified-frames-v8-2026-07-23" as const;
+  "gemini-3.6-flash-context-verified-frames-v9-2026-07-30" as const;
 export const CANDIDATE_PASS_B_QWEN_MODEL_ID = "qwen3.5-omni-flash" as const;
 export const CANDIDATE_PASS_B_QWEN_MODEL_REVISION =
-  "qwen3.5-omni-flash-context-verified-frames-v7-2026-07-23" as const;
+  "qwen3.5-omni-flash-context-verified-frames-v8-2026-07-30" as const;
 export const CANDIDATE_PASS_B_MODEL_ID = CANDIDATE_PASS_B_QWEN_MODEL_ID;
 export const CANDIDATE_PASS_B_MODEL_REVISION = CANDIDATE_PASS_B_QWEN_MODEL_REVISION;
 export const CANDIDATE_PASS_B_ROUTING_MODEL_ID =
   "exclipper-candidate-perception-route" as const;
 export const CANDIDATE_PASS_B_ROUTING_MODEL_REVISION =
-  "qwen3.5-omni-flash_then_gemini-3.6-flash_durable-multimodal-v9" as const;
+  "qwen3.5-omni-flash_then_gemini-3.6-flash_durable-multimodal-v10" as const;
 
 export type CandidatePassBRoutingModelRevision =
   typeof CANDIDATE_PASS_B_ROUTING_MODEL_REVISION;
@@ -40,7 +40,7 @@ export const CANDIDATE_PASS_B_AUDIO_GATE_REVISION =
 export const CANDIDATE_PASS_B_MEDIA_RECEIPT_SCHEMA_VERSION = "1.0.0" as const;
 export const CANDIDATE_PASS_B_DISPATCH_INTENT_SCHEMA_VERSION = "2.0.0" as const;
 export const CANDIDATE_PASS_B_SETTLEMENT_SCHEMA_VERSION = "1.0.0" as const;
-export const CANDIDATE_PASS_B_CONTEXT_SCHEMA_VERSION = "1.0.0" as const;
+export const CANDIDATE_PASS_B_CONTEXT_SCHEMA_VERSION = "2.0.0" as const;
 export const MAX_CANDIDATE_PASS_B_CONTEXT_TEXT_LENGTH = 4_000;
 
 export interface CandidatePassBVideoFrame {
@@ -55,7 +55,7 @@ export type CandidatePassBReferenceTranscriptSource =
   | "broadcast-transcript"
   | "semantic-refinement";
 
-export type CandidatePassBContextDecision = "select" | "review";
+export type CandidatePassBContextDecision = "select" | "review" | "reject";
 
 export type CandidatePassBContextCategory =
   | "reaction"
@@ -63,7 +63,10 @@ export type CandidatePassBContextCategory =
   | "setup-and-payoff"
   | "running-gag"
   | "context-dependent"
-  | "apology-accountability";
+  | "apology-accountability"
+  | "music-or-intermission"
+  | "not-clip-worthy"
+  | "uncertain";
 
 /**
  * Bounded, source-fenced evidence handed from the whole-broadcast pass to the

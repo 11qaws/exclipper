@@ -106,17 +106,33 @@ describe("candidate context packets", () => {
     expect(packets["semantic-apology"]?.broadcastSummaryKo).toContain("정확히 사과");
   });
 
-  it("keeps an editor-approved context rejection in the evidence queue", () => {
+  it("keeps a context rejection in the multimodal queue as a negative hypothesis", () => {
+    const rejectedCandidate: UnifiedHighlightCandidate = {
+      ...semanticCandidate,
+      id: "fast-negative",
+      signalKinds: ["audio"],
+      evidence: {
+        normalization: "within-signal-rank-and-mad",
+        audio: {
+          rankPercentile: 0.85,
+          robustPercentile: 0.8,
+          normalizedScore: 0.82,
+          eventKind: "sustained-vocal-reaction",
+          rmsLiftRatio: 2.5,
+          sustainedWindowCount: 3,
+        },
+      },
+    };
     const rejectedContext: BroadcastContextResult = {
       ...broadcastContext,
       annotations: [{
-        candidateId: semanticCandidate.id,
+        candidateId: rejectedCandidate.id,
         category: "not-clip-worthy",
         clipDecision: "reject",
         confidence: 0.91,
         rejectionReasons: ["no-distinct-event"],
         contextSummaryKo: "전체 맥락 AI는 독립 사건이 아니라고 판단했다.",
-        whyThisMomentKo: "편집자 승인이 없으면 상세 검토를 생략한다.",
+        whyThisMomentKo: "대표 화면과 후보 오디오로 이 판정을 다시 확인한다.",
         relatedCandidateIds: [],
         uncertaintiesKo: [],
       }],
@@ -148,21 +164,28 @@ describe("candidate context packets", () => {
     expect(
       buildCandidatePassBContextPackets({
         ...baseInput,
-        candidates: [semanticCandidate],
-      })[semanticCandidate.id],
-    ).toBeUndefined();
+        candidates: [rejectedCandidate],
+      })[rejectedCandidate.id],
+    ).toMatchObject({
+      contextDecision: "reject",
+      contextCategory: "not-clip-worthy",
+      transcriptSource: "broadcast-transcript",
+    });
 
     const approvedPackets = buildCandidatePassBContextPackets({
       ...baseInput,
       candidates: [{
-        ...semanticCandidate,
+        ...rejectedCandidate,
         reviewState: "approved",
       }],
     });
-    expect(approvedPackets[semanticCandidate.id]).toMatchObject({
+    expect(approvedPackets[rejectedCandidate.id]).toMatchObject({
       contextDecision: "review",
-      contextCategory: "apology-accountability",
+      contextCategory: "not-clip-worthy",
     });
+    expect(approvedPackets[rejectedCandidate.id]?.transcriptKo).toContain(
+      "확정된 참고 대사",
+    );
   });
 
   it("returns canonical bounded packets without changing full broadcast data", () => {

@@ -185,6 +185,37 @@ import {
 } from "./analysis/youtubeCaptionTrack";
 import { requestYouTubeCaptionTrack } from "./analysis/youtubeCaptionClient";
 import {
+  requestChannelPreanalysisMatch,
+  type ChannelPreanalysisLookupResult,
+} from "./analysis/channelPreanalysisClient";
+import {
+  AMORETTO_YOUTUBE_CHANNEL_ID,
+  CHANNEL_PREANALYSIS_TITLE_DURATION_TOLERANCE_MS,
+} from "./analysis/channelPreanalysisCatalog";
+import type { ChannelPreanalysisBundle } from "./analysis/channelPreanalysisBundle";
+import {
+  channelPreanalysisVerifiedBundleBindingMatchesLookup,
+  createChannelPreanalysisVerifiedBundleBinding,
+  type ChannelPreanalysisVerifiedBundleBinding,
+} from "./analysis/channelPreanalysisBundleBinding";
+import {
+  createChannelPreanalysisContextSeed,
+  type ChannelPreanalysisContextSeed,
+} from "./analysis/channelPreanalysisContextSeed";
+import {
+  channelPreanalysisIdentityBasisAuthorizesPreparedData,
+  classifyChannelPreanalysisTimeline,
+  resolveChannelPreanalysisTrust,
+  selectChannelPreanalysisLookupLane,
+  type ChannelPreanalysisTimelineStatus,
+  type ChannelPreanalysisTrustedIdentityBasis,
+} from "./analysis/channelPreanalysisTrust";
+import {
+  getChannelPreanalysisLocalBinding,
+  registerChannelPreanalysisLocalBinding,
+} from "./analysis/channelPreanalysisLocalBinding";
+import { verifyChannelPreanalysisLocalVisualIdentity } from "./app/channelPreanalysisVisualIdentity";
+import {
   chzzkVideoNoFromSourceName,
   requestChzzkVideoChannel,
 } from "./analysis/chzzkVideoChannel";
@@ -198,8 +229,10 @@ import {
   type CandidateVideoFrameBundleResult,
 } from "./analysis/candidateVideoFrames";
 import {
+  AMORETTO_CHANNEL_CAST_ROSTER_ID,
   candidatePassBCastRosterIdForSourceName,
   canonicalCandidatePassBCastDisplayName,
+  type CandidatePassBCastRosterId,
 } from "./analysis/participantRoster";
 import {
   createBroadcastParticipantGrounding,
@@ -379,6 +412,7 @@ import {
   checkpointBroadcastContextSessionPhaseLedger,
   checkpointBroadcastContextSessionRefinementEvidenceLedger,
   createBroadcastParticipantGroundingInputSignature,
+  invalidateBroadcastContextSessionContext,
   partitionBroadcastContextSessionChapters,
   restoreBroadcastParticipantPreContextCheckpoint,
   serializeBroadcastParticipantPreContextCheckpoint,
@@ -413,7 +447,9 @@ import {
 } from "./storage/recoverableAnalysisResults";
 import {
   CANDIDATE_PASS_B_INSIGHT_SCHEMA_VERSION,
+  CANDIDATE_PASS_B_PLAN_MAX_CANDIDATES,
   createCandidatePassBPlanReceipt,
+  mergeCandidatePassBInsightsForResume,
   persistCandidatePassBInsightsWithReadback,
   recoverCandidatePassBArmedDispatchesAsOutcomeUnknown,
   type CandidatePassBInsightsRecord,
@@ -520,6 +556,7 @@ import {
   scheduleCandidatePassBAutomaticTargetReadback,
   selectCandidatePassBAutomaticTargets,
   selectCandidatePassBDurableIds,
+  selectCandidatePassBDurableThumbnailById,
   selectCandidatePassBDurabilityOutstandingIds,
   selectEffectiveCandidatePassBContextById,
 } from "./app/candidatePassBDurability";
@@ -608,6 +645,84 @@ type BroadcastVisualInspectionUiStatus =
   | "completed"
   | "blocked"
   | "failed";
+
+type ChannelPreanalysisConnectionState =
+  | {
+      readonly status: "idle" | "checking" | "unavailable" | "not-found";
+    }
+  | {
+      readonly status: "probable";
+      readonly lookup: ChannelPreanalysisLookupResult;
+      readonly reason:
+        | "metadata-probable"
+        | "filename-confirmation-required";
+      readonly timelineStatus: ChannelPreanalysisTimelineStatus;
+    }
+  | {
+      readonly status: "incompatible";
+      readonly lookup: ChannelPreanalysisLookupResult;
+      readonly timelineStatus: "incompatible";
+    }
+  | {
+      readonly status: "connected";
+      readonly lookup: ChannelPreanalysisLookupResult;
+      readonly basis:
+        | ChannelPreanalysisTrustedIdentityBasis
+        | "recovery-preserved";
+      /**
+       * A catalog identity may be remembered for a future fresh analysis
+       * without changing the immutable input of an opened recovery result.
+       */
+      readonly attachment: "current-run" | "future-run-only";
+      /**
+       * Timed captions and bundles are usable only when the catalog duration
+       * proves that their time axis matches this local source.
+       */
+      readonly timelineStatus: ChannelPreanalysisTimelineStatus;
+    };
+
+interface ChannelPreanalysisContextSeedSource {
+  readonly bundle: ChannelPreanalysisBundle;
+  readonly artifactDigest: string;
+}
+
+function channelPreanalysisContextSeedSource(
+  connection: ChannelPreanalysisConnectionState,
+  binding: ChannelPreanalysisVerifiedBundleBinding | null,
+  sourceContentFingerprint: string,
+  analysisCaptionVideoId: string | null,
+  sourceDurationMs: number,
+  sourceCastRosterId: CandidatePassBCastRosterId | null,
+  outputLanguage: AnalysisLanguage,
+): ChannelPreanalysisContextSeedSource | null {
+  if (
+    connection.status !== "connected" ||
+    !channelPreanalysisIdentityBasisAuthorizesPreparedData(connection.basis) ||
+    connection.attachment !== "current-run" ||
+    connection.timelineStatus !== "compatible" ||
+    binding === null ||
+    binding.sourceContentFingerprint !== sourceContentFingerprint ||
+    analysisCaptionVideoId === null ||
+    binding.bundle.videoId !== analysisCaptionVideoId ||
+    connection.lookup.match.match?.videoId !== analysisCaptionVideoId ||
+    !channelPreanalysisVerifiedBundleBindingMatchesLookup(
+      binding,
+      connection.lookup,
+    ) ||
+    Math.abs(binding.bundle.durationMs - sourceDurationMs) >
+      CHANNEL_PREANALYSIS_TITLE_DURATION_TOLERANCE_MS ||
+    sourceCastRosterId !== AMORETTO_CHANNEL_CAST_ROSTER_ID ||
+    outputLanguage !== "ko" ||
+    binding.bundle.broadcastContext === null ||
+    binding.bundle.contextProvenance === null
+  ) {
+    return null;
+  }
+  return {
+    bundle: binding.bundle,
+    artifactDigest: binding.artifactDigest,
+  };
+}
 
 type AnalysisPipelineCertificationState =
   | {
@@ -705,6 +820,19 @@ const PERSISTENCE_SCHEMA_VERSION = "0.3.0";
 const SIGNAL_ENGINE_VERSION = CURRENT_FAST_PASS_MODEL_MANIFEST_HASH;
 const MAX_CHAT_FILE_BYTES = 32 * 1024 * 1024;
 const SIGNAL_GAP_POLICY_ID = DURABLE_SIGNAL_GAP_POLICY_ID;
+async function requestChannelPreanalysisMatchForSource(
+  input: {
+    readonly videoId: string | null;
+    readonly title: string;
+    readonly durationMs: number;
+    readonly localSampledFingerprint: string;
+  },
+  parentSignal: AbortSignal,
+): Promise<ChannelPreanalysisLookupResult> {
+  return requestChannelPreanalysisMatch(input, {
+    signal: parentSignal,
+  });
+}
 
 class CandidatePassBInsightPersistenceError extends Error {
   public constructor(cause: unknown) {
@@ -770,6 +898,84 @@ function App() {
   const [pendingFileName, setPendingFileName] = useState<string | null>(null);
   const [sourceFile, setSourceFile] = useState<File | null>(null);
   const [sourceUrl, setSourceUrl] = useState("");
+  /**
+   * A pasted replay URL is an explicit editor decision and must outrank every
+   * inferred filename/catalog lane. The ref lets long-running effects read the
+   * latest decision without restarting on each keystroke.
+   */
+  const [manualVodInput, setManualVodInput] = useState("");
+  const manualVodInputRef = useRef("");
+  const [sourceContentFingerprint, setSourceContentFingerprint] =
+    useState<string | null>(null);
+  const [
+    channelPreanalysisLocalBindingRevision,
+    setChannelPreanalysisLocalBindingRevision,
+  ] = useState(0);
+  const [channelPreanalysisConnection, setChannelPreanalysisConnection] =
+    useState<ChannelPreanalysisConnectionState>({ status: "idle" });
+  const [
+    channelPreanalysisConfirmationPending,
+    setChannelPreanalysisConfirmationPending,
+  ] = useState(false);
+  const channelPreanalysisConnectionRef =
+    useRef<ChannelPreanalysisConnectionState>({ status: "idle" });
+  const channelPreanalysisManualLookupKeyRef = useRef<string | null>(null);
+  const channelPreanalysisBundleBindingRef =
+    useRef<ChannelPreanalysisVerifiedBundleBinding | null>(null);
+  const registeredChannelPreanalysisVideoId = useMemo(() => {
+    /*
+     * The binding lives in localStorage rather than React state. Reading this
+     * revision is the explicit invalidation fence after a verified write.
+     */
+    void channelPreanalysisLocalBindingRevision;
+    return sourceContentFingerprint === null
+        ? null
+        : getChannelPreanalysisLocalBinding(sourceContentFingerprint)?.videoId ??
+          null;
+  }, [channelPreanalysisLocalBindingRevision, sourceContentFingerprint]);
+  const currentChannelPreanalysisLookup =
+    channelPreanalysisConnection.status === "connected" ||
+    channelPreanalysisConnection.status === "probable" ||
+    channelPreanalysisConnection.status === "incompatible"
+      ? channelPreanalysisConnection.lookup
+      : null;
+  const currentChannelPreanalysisTimelineStatus =
+    channelPreanalysisConnection.status === "connected" ||
+    channelPreanalysisConnection.status === "probable" ||
+    channelPreanalysisConnection.status === "incompatible"
+      ? channelPreanalysisConnection.timelineStatus
+      : "unknown";
+  const catalogRegisteredFingerprintVideoId =
+    currentChannelPreanalysisLookup?.match.reason ===
+    "registered-local-sampled-fingerprint"
+      ? currentChannelPreanalysisLookup.match.match?.videoId ?? null
+      : null;
+  const currentChannelPreanalysisTrust = resolveChannelPreanalysisTrust({
+    manualVideoId: youtubeVideoIdFromUserInput(manualVodInput),
+    registeredBindingVideoId:
+      registeredChannelPreanalysisVideoId ??
+      catalogRegisteredFingerprintVideoId,
+    filenameVideoId: youtubeVideoIdFromSourceName(
+      sourceFile?.name ?? pendingFileName ?? "",
+    ),
+    editorConfirmedVideoId:
+      channelPreanalysisConnection.status === "connected" &&
+      channelPreanalysisConnection.basis === "editor-confirmed-catalog"
+        ? channelPreanalysisConnection.lookup.match.match?.videoId ?? null
+        : null,
+    catalogConfidence:
+      currentChannelPreanalysisLookup?.match.confidence ?? "none",
+    catalogVideoId:
+      currentChannelPreanalysisLookup?.match.match?.videoId ?? null,
+    timelineStatus: currentChannelPreanalysisTimelineStatus,
+  });
+  const resolvedChannelPreanalysisVideoId =
+    !(
+      channelPreanalysisConnection.status === "connected" &&
+      channelPreanalysisConnection.attachment === "future-run-only"
+    )
+      ? currentChannelPreanalysisTrust.rosterVideoId
+      : null;
   const sourceDescriptor = `${sourceFile?.name ?? pendingFileName ?? ""} ${sourceUrl}`;
   const sourceChzzkVideoNo = useMemo(
     () => chzzkVideoNoFromSourceName(sourceDescriptor),
@@ -794,16 +1000,42 @@ function App() {
     () => sourceFile === null && pendingFileName === null
       ? null
       : candidatePassBCastRosterIdForSourceName(
-        `${sourceDescriptor} ${resolvedSourceChannelId ?? ""}`,
+        `${sourceDescriptor} ${resolvedSourceChannelId ?? ""} ${
+          resolvedChannelPreanalysisVideoId === null
+            ? ""
+            : `${AMORETTO_YOUTUBE_CHANNEL_ID} ${resolvedChannelPreanalysisVideoId}`
+        }`,
       ),
-    [pendingFileName, resolvedSourceChannelId, sourceDescriptor, sourceFile],
+    [
+      pendingFileName,
+      resolvedChannelPreanalysisVideoId,
+      resolvedSourceChannelId,
+      sourceDescriptor,
+      sourceFile,
+    ],
   );
   const transcriptSourceIdentityFence =
     currentTranscriptSourceIdentityDescriptor(sourceCastRosterId);
+  const replaceChannelPreanalysisConnection = useCallback(
+    (next: ChannelPreanalysisConnectionState): void => {
+      channelPreanalysisConnectionRef.current = next;
+      setChannelPreanalysisConnection(next);
+    },
+    [],
+  );
   const [sourcePreviewUrl, setSourcePreviewUrl] = useState<string | null>(null);
   const [sourceCheck, setSourceCheck] = useState<SourceCheckState | null>(null);
   const [preflight, setPreflight] = useState<LocalMediaPreflightResult | null>(null);
-  const [sourceContentFingerprint, setSourceContentFingerprint] = useState<string | null>(null);
+  const preparedChannelTranscriptIsCompatible =
+    channelPreanalysisConnection.status === "connected" &&
+    channelPreanalysisConnection.attachment === "current-run" &&
+    channelPreanalysisConnection.timelineStatus === "compatible" &&
+    channelPreanalysisConnection.lookup.bundle !== null &&
+    preflight !== null &&
+    Math.abs(
+      channelPreanalysisConnection.lookup.bundle.durationMs -
+        preflight.metadata.durationMs,
+    ) <= CHANNEL_PREANALYSIS_TITLE_DURATION_TOLERANCE_MS;
   const [sourceError, setSourceError] = useState<string | null>(null);
   const [linkNotice, setLinkNotice] = useState<string | null>(null);
   const [chatImport, setChatImport] = useState<ChatImportResult | null>(null);
@@ -926,31 +1158,14 @@ function App() {
     broadcastVisualInspectionError,
     setBroadcastVisualInspectionError,
   ] = useState<string | null>(null);
+  const [analysisCaptionVideoId, setAnalysisCaptionVideoId] =
+    useState<string | null>(null);
   /**
    * 이미 받아 둔 자막을 다시 받지 않기 위한 거울.
    *
    * 상태를 이펙트 deps 에 넣으면 그 이펙트가 상태를 바꾸므로 다시 돈다. ref 는
    * 렌더를 유발하지 않아 그 고리를 만들지 않는다.
    */
-  /**
-   * 사용자가 직접 지정한 다시보기 주소.
-   *
-   * 파일명에서 ID 를 뽑는 경로는 yt-dlp 기본 이름을 그대로 둔 파일에서만 통한다.
-   * 이름을 바꿨거나 다른 방법으로 받았으면 단서가 없고, 그러면 자막이 있는
-   * 방송인데도 **방송 하나에 수십 분 걸리는 전사 경로**로 떨어진다.
-   *
-   * 그래서 사람이 붙여 넣을 수 있게 한다. 이 값은 파일명보다 우선한다 — 사람이
-   * 명시적으로 준 것을 추측보다 아래에 두면 고쳐 줄 방법이 없어진다.
-   */
-  const [manualVodInput, setManualVodInput] = useState("");
-  const [analysisCaptionVideoId, setAnalysisCaptionVideoId] =
-    useState<string | null>(null);
-  /*
-   * 이펙트가 읽는 쪽은 ref 다. 상태를 deps 에 넣으면 주소를 한 글자 칠 때마다
-   * 전사가 처음부터 다시 시작한다. 값은 분석을 시작할 때 한 번 읽히면 되고,
-   * 그것이 실제 사용 흐름이기도 하다 — 파일을 고르고, 주소를 붙이고, 시작한다.
-   */
-  const manualVodInputRef = useRef("");
   const youtubeCaptionTrackRef = useRef<YouTubeCaptionTrackResult | null>(null);
   const [youtubeCaptionTrack, setYouTubeCaptionTrack] =
     useState<YouTubeCaptionTrackResult | null>(null);
@@ -1010,6 +1225,9 @@ function App() {
   >({});
   const candidatePassBInsightWriteChainRef = useRef<Promise<void>>(Promise.resolve());
   const candidatePassBInsightWriteEpochRef = useRef(0);
+  const candidatePassBPendingInsightsRef =
+    useRef<CandidatePassBInsightsRecord | null>(null);
+  const candidatePassBInsightPersistenceFailureRef = useRef<unknown>(null);
   const candidatePassBPlanReceiptRef =
     useRef<CandidatePassBPlanReceipt | null>(null);
   const candidatePassBPlanPreparationRef = useRef<{
@@ -1120,6 +1338,8 @@ function App() {
   const sourceSelectionEpoch = useRef(0);
   const chatSelectionEpoch = useRef(0);
   const sourceAbortController = useRef<AbortController | null>(null);
+  const channelPreanalysisConfirmationAbortController =
+    useRef<AbortController | null>(null);
   const analysisAbortController = useRef<AbortController | null>(null);
   const candidatePassBAbortController = useRef<AbortController | null>(null);
   const broadcastTranscriptAbortController = useRef<AbortController | null>(null);
@@ -1288,6 +1508,8 @@ function App() {
         recoveryOperationEpoch.current += 1;
         sourceAbortController.current?.abort();
         sourceAbortController.current = null;
+        channelPreanalysisConfirmationAbortController.current?.abort();
+        channelPreanalysisConfirmationAbortController.current = null;
         analysisAbortController.current?.abort();
         analysisAbortController.current = null;
         candidatePassBOperationEpoch.current += 1;
@@ -1418,6 +1640,149 @@ function App() {
     sourceCheck.resultKind !== "blocked" &&
     preflight !== null &&
     sourceFile !== null;
+  useEffect(() => {
+    const requestedVideoId = youtubeVideoIdFromUserInput(manualVodInput);
+    if (
+      !sourceReady ||
+      requestedVideoId === null ||
+      sourceFile === null ||
+      preflight === null ||
+      sourceContentFingerprint === null ||
+      analysisStartOperation.current !== null
+    ) {
+      return;
+    }
+
+    const lookupKey = `${sourceContentFingerprint}:${requestedVideoId}`;
+    if (channelPreanalysisManualLookupKeyRef.current === lookupKey) {
+      return;
+    }
+    channelPreanalysisManualLookupKeyRef.current = lookupKey;
+    channelPreanalysisConfirmationAbortController.current?.abort();
+    const controller = new AbortController();
+    channelPreanalysisConfirmationAbortController.current = controller;
+    const selectionEpoch = sourceSelectionEpoch.current;
+    const analysisEpoch = analysisOperationEpoch.current;
+    const sourceName = sourceFile.name;
+    const sourceDurationMs = preflight.metadata.durationMs;
+    const sourceFingerprint = sourceContentFingerprint;
+    const recoveryCaptionVideoId =
+      openedRecoveredResult?.finalResult.result.input.source.captionVideoId ??
+      null;
+    let settled = false;
+    const operationIsCurrent = (): boolean =>
+      isMounted.current &&
+      !controller.signal.aborted &&
+      sourceSelectionEpoch.current === selectionEpoch &&
+      analysisOperationEpoch.current === analysisEpoch &&
+      analysisStartOperation.current === null &&
+      youtubeVideoIdFromUserInput(manualVodInputRef.current) ===
+        requestedVideoId;
+
+    setChannelPreanalysisConfirmationPending(true);
+    channelPreanalysisBundleBindingRef.current = null;
+    replaceChannelPreanalysisConnection({ status: "checking" });
+    void requestChannelPreanalysisMatchForSource(
+      {
+        videoId: requestedVideoId,
+        title: sourceName,
+        durationMs: sourceDurationMs,
+        localSampledFingerprint: sourceFingerprint,
+      },
+      controller.signal,
+    )
+      .then((lookup) => {
+        if (!operationIsCurrent()) return;
+        if (
+          lookup.match.confidence !== "exact" ||
+          lookup.match.match?.videoId !== requestedVideoId
+        ) {
+          replaceChannelPreanalysisConnection({ status: "not-found" });
+          return;
+        }
+        const timelineStatus = classifyChannelPreanalysisTimeline(
+          lookup.match.match.durationMs,
+          sourceDurationMs,
+        );
+        if (timelineStatus === "incompatible") {
+          replaceChannelPreanalysisConnection({
+            status: "incompatible",
+            lookup,
+            timelineStatus,
+          });
+          return;
+        }
+        const attachment =
+          openedRecoveredResult === null ||
+          recoveryCaptionVideoId === requestedVideoId
+            ? "current-run"
+            : "future-run-only";
+        if (timelineStatus === "compatible") {
+          if (
+            registerChannelPreanalysisLocalBinding({
+              localSampledFingerprint: sourceFingerprint,
+              videoId: requestedVideoId,
+            }) !== null
+          ) {
+            setChannelPreanalysisLocalBindingRevision((revision) => revision + 1);
+          }
+        }
+        channelPreanalysisBundleBindingRef.current =
+          attachment !== "current-run" || timelineStatus !== "compatible"
+            ? null
+            : createChannelPreanalysisVerifiedBundleBinding(
+                sourceFingerprint,
+                lookup,
+              );
+        const verifiedBinding = channelPreanalysisBundleBindingRef.current;
+        if (verifiedBinding !== null) {
+          youtubeCaptionTrackRef.current = verifiedBinding.bundle.captionTrack;
+          setYouTubeCaptionTrack(verifiedBinding.bundle.captionTrack);
+        }
+        replaceChannelPreanalysisConnection({
+          status: "connected",
+          lookup,
+          basis: "manual-pasted",
+          attachment,
+          timelineStatus,
+        });
+      })
+      .catch(() => {
+        if (operationIsCurrent()) {
+          replaceChannelPreanalysisConnection({ status: "unavailable" });
+        }
+      })
+      .finally(() => {
+        settled = true;
+        if (channelPreanalysisConfirmationAbortController.current === controller) {
+          channelPreanalysisConfirmationAbortController.current = null;
+        }
+        if (operationIsCurrent()) {
+          setChannelPreanalysisConfirmationPending(false);
+        }
+      });
+
+    return () => {
+      if (channelPreanalysisConfirmationAbortController.current === controller) {
+        controller.abort();
+        channelPreanalysisConfirmationAbortController.current = null;
+      }
+      if (
+        !settled &&
+        channelPreanalysisManualLookupKeyRef.current === lookupKey
+      ) {
+        channelPreanalysisManualLookupKeyRef.current = null;
+      }
+    };
+  }, [
+    manualVodInput,
+    openedRecoveredResult,
+    preflight,
+    replaceChannelPreanalysisConnection,
+    sourceContentFingerprint,
+    sourceFile,
+    sourceReady,
+  ]);
   const sourceReadyTimelineTicks = useMemo(
     () => buildSourceReadyTimelineTicks(preflight?.metadata.durationMs ?? 0),
     [preflight?.metadata.durationMs],
@@ -3656,6 +4021,8 @@ function App() {
     };
     candidatePassBOperationEpoch.current += 1;
     candidatePassBInsightWriteEpochRef.current += 1;
+    candidatePassBPendingInsightsRef.current = null;
+    candidatePassBInsightPersistenceFailureRef.current = null;
     candidatePassBPlanReceiptRef.current = null;
     candidatePassBPlanPreparationRef.current = {
       operationKey: null,
@@ -3852,17 +4219,31 @@ function App() {
               preflight,
               sourceCheck,
               sourceContentFingerprint,
+              channelPreanalysisConnection,
+              channelPreanalysisBundleBinding:
+                channelPreanalysisBundleBindingRef.current,
+              manualVodInput,
             }
           : null;
       const epoch = sourceSelectionEpoch.current + 1;
       sourceSelectionEpoch.current = epoch;
       sourceAbortController.current?.abort();
+      channelPreanalysisConfirmationAbortController.current?.abort();
+      channelPreanalysisConfirmationAbortController.current = null;
+      channelPreanalysisManualLookupKeyRef.current = null;
+      setChannelPreanalysisConfirmationPending(false);
       const controller = new AbortController();
       sourceAbortController.current = controller;
       const isCurrentSelection = (): boolean =>
         isMounted.current &&
         epoch === sourceSelectionEpoch.current &&
         !controller.signal.aborted;
+      if (recoveryTarget === null && replacingExistingSource) {
+        setManualVodInput("");
+        manualVodInputRef.current = "";
+      }
+      channelPreanalysisBundleBindingRef.current = null;
+      replaceChannelPreanalysisConnection({ status: "checking" });
       setPendingFileName(file.name);
       setSourceError(null);
       if (recoveryTarget === null) {
@@ -3918,14 +4299,300 @@ function App() {
           return;
         }
 
+        const locallyRegisteredVideoId =
+          getChannelPreanalysisLocalBinding(fingerprint.value)?.videoId ?? null;
+        const manualCaptionVideoId =
+          recoveryTarget === null
+            ? youtubeVideoIdFromUserInput(manualVodInputRef.current)
+            : null;
+        const filenameCaptionVideoId = youtubeVideoIdFromSourceName(file.name);
+        const trustedLookupVideoId =
+          recoveryTarget !== null
+            ? recoveryTarget.finalResult.result.input.source.captionVideoId
+            : manualCaptionVideoId ??
+              locallyRegisteredVideoId;
+        let catalogConnection: ChannelPreanalysisConnectionState;
+        let matchedCatalogBundle: ChannelPreanalysisBundle | null = null;
+        let matchedCatalogBinding: ChannelPreanalysisVerifiedBundleBinding | null =
+          null;
+        let visuallyVerifiedVideoId: string | null = null;
+        try {
+          const requestLookup = (
+            videoId: string | null,
+          ): Promise<ChannelPreanalysisLookupResult> =>
+            requestChannelPreanalysisMatchForSource(
+              {
+                videoId,
+                title: file.name,
+                durationMs: result.metadata.durationMs,
+                localSampledFingerprint: fingerprint.value,
+              },
+              controller.signal,
+            );
+          let lookup: ChannelPreanalysisLookupResult;
+          if (
+            trustedLookupVideoId !== null ||
+            recoveryTarget !== null ||
+            filenameCaptionVideoId === null
+          ) {
+            lookup = await requestLookup(trustedLookupVideoId);
+          } else {
+            /*
+             * A filename `[videoId]` is a hint, never the first identity lane.
+             * Query without it first so a catalog-registered exact file
+             * fingerprint cannot be hidden by a different but valid filename
+             * ID. Only a catalog-exact, duration-compatible filename is
+             * allowed to outrank a merely probable title+duration match.
+             */
+            let metadataLookup: ChannelPreanalysisLookupResult | null = null;
+            let metadataLookupError: unknown = null;
+            try {
+              metadataLookup = await requestLookup(null);
+            } catch (error) {
+              metadataLookupError = error;
+            }
+            if (!isCurrentSelection()) {
+              return;
+            }
+            if (metadataLookup?.match.confidence === "exact") {
+              lookup = metadataLookup;
+            } else {
+              let filenameLookup: ChannelPreanalysisLookupResult | null = null;
+              try {
+                filenameLookup = await requestLookup(filenameCaptionVideoId);
+              } catch (error) {
+                if (metadataLookup === null) throw error;
+              }
+              if (filenameLookup === null) {
+                if (metadataLookup === null) {
+                  throw metadataLookupError instanceof Error
+                    ? metadataLookupError
+                    : new Error("Channel preanalysis catalog lookup failed.");
+                }
+                lookup = metadataLookup;
+              } else if (metadataLookup === null) {
+                lookup = filenameLookup;
+              } else {
+                const selectedLane = selectChannelPreanalysisLookupLane(
+                  {
+                    confidence: metadataLookup.match.confidence,
+                    timelineStatus: classifyChannelPreanalysisTimeline(
+                      metadataLookup.match.match?.durationMs,
+                      result.metadata.durationMs,
+                    ),
+                  },
+                  {
+                    confidence: filenameLookup.match.confidence,
+                    timelineStatus: classifyChannelPreanalysisTimeline(
+                      filenameLookup.match.match?.durationMs,
+                      result.metadata.durationMs,
+                    ),
+                  },
+                );
+                lookup =
+                  selectedLane === "metadata"
+                    ? metadataLookup
+                    : filenameLookup;
+              }
+            }
+          }
+          const lookupMatchBeforeVisualVerification = lookup.match.match;
+          const shouldVerifyVisualIdentity =
+            recoveryTarget === null &&
+            manualCaptionVideoId === null &&
+            locallyRegisteredVideoId === null &&
+            (lookupMatchBeforeVisualVerification === null ||
+              lookup.match.confidence === "probable" ||
+              (lookup.match.reason === "explicit-video-id" &&
+                filenameCaptionVideoId ===
+                  lookupMatchBeforeVisualVerification.videoId));
+          if (shouldVerifyVisualIdentity) {
+            const visualIdentity =
+              await verifyChannelPreanalysisLocalVisualIdentity(
+                file,
+                result.metadata.durationMs,
+                lookup,
+                { signal: controller.signal },
+              );
+            if (!isCurrentSelection()) {
+              return;
+            }
+            if (
+              visualIdentity.status === "verified" &&
+              (lookupMatchBeforeVisualVerification === null ||
+                visualIdentity.videoId ===
+                  lookupMatchBeforeVisualVerification.videoId)
+            ) {
+              const exactLookup =
+                visualIdentity.verifiedLookup ??
+                (await requestLookup(visualIdentity.videoId));
+              if (!isCurrentSelection()) {
+                return;
+              }
+              if (
+                exactLookup.match.confidence === "exact" &&
+                exactLookup.match.match?.videoId === visualIdentity.videoId
+              ) {
+                lookup = exactLookup;
+                visuallyVerifiedVideoId = visualIdentity.videoId;
+              }
+            }
+          }
+          if (lookup.match.confidence === "exact" && lookup.match.match !== null) {
+            const timelineStatus = classifyChannelPreanalysisTimeline(
+              lookup.match.match.durationMs,
+              result.metadata.durationMs,
+            );
+            const catalogFingerprintVideoId =
+              lookup.match.reason === "registered-local-sampled-fingerprint"
+                ? lookup.match.match.videoId
+                : null;
+            const trust = resolveChannelPreanalysisTrust({
+              manualVideoId: manualCaptionVideoId,
+              registeredBindingVideoId:
+                locallyRegisteredVideoId ??
+                catalogFingerprintVideoId,
+              visualFingerprintVideoId: visuallyVerifiedVideoId,
+              filenameVideoId: filenameCaptionVideoId,
+              editorConfirmedVideoId: null,
+              catalogConfidence: lookup.match.confidence,
+              catalogVideoId: lookup.match.match.videoId,
+              timelineStatus,
+            });
+            const attachment =
+              recoveryTarget === null ||
+              recoveryTarget.finalResult.result.input.source.captionVideoId ===
+                lookup.match.match.videoId
+                ? "current-run"
+                : "future-run-only";
+            if (timelineStatus === "incompatible") {
+              catalogConnection = {
+                status: "incompatible",
+                lookup,
+                timelineStatus,
+              };
+            } else if (
+              recoveryTarget === null &&
+              trust.basis === null &&
+              (trust.filenameDisposition === "needs-confirmation" ||
+                trust.filenameDisposition === "verified")
+            ) {
+              catalogConnection = {
+                status: "probable",
+                lookup,
+                reason: "filename-confirmation-required",
+                timelineStatus,
+              };
+            } else {
+              const basis =
+                recoveryTarget !== null
+                  ? "recovery-preserved"
+                  : trust.basis;
+              if (basis === null) {
+                catalogConnection = { status: "not-found" };
+              } else {
+                catalogConnection = {
+                  status: "connected",
+                  lookup,
+                  basis,
+                  attachment,
+                  timelineStatus,
+                };
+                matchedCatalogBinding =
+                  attachment === "current-run" &&
+                  timelineStatus === "compatible"
+                    ? createChannelPreanalysisVerifiedBundleBinding(
+                        fingerprint.value,
+                        lookup,
+                      )
+                    : null;
+                matchedCatalogBundle = matchedCatalogBinding?.bundle ?? null;
+              }
+            }
+          } else if (
+            lookup.match.confidence === "probable" &&
+            lookup.match.match !== null
+          ) {
+            catalogConnection = {
+              status: "probable",
+              lookup,
+              reason: "metadata-probable",
+              timelineStatus: classifyChannelPreanalysisTimeline(
+                lookup.match.match.durationMs,
+                result.metadata.durationMs,
+              ),
+            };
+          } else {
+            catalogConnection = { status: "not-found" };
+          }
+        } catch {
+          catalogConnection = { status: "unavailable" };
+        }
+        if (!isCurrentSelection()) {
+          return;
+        }
+        const latestManualCaptionVideoId =
+          recoveryTarget === null
+            ? youtubeVideoIdFromUserInput(manualVodInputRef.current)
+            : null;
+        const manualDecisionChanged =
+          recoveryTarget === null &&
+          latestManualCaptionVideoId !== manualCaptionVideoId;
+        if (
+          manualCaptionVideoId !== null &&
+          !manualDecisionChanged
+        ) {
+          channelPreanalysisManualLookupKeyRef.current =
+            `${fingerprint.value}:${manualCaptionVideoId}`;
+        }
+        if (manualDecisionChanged) {
+          catalogConnection =
+            latestManualCaptionVideoId === null
+              ? { status: "not-found" }
+              : { status: "checking" };
+          matchedCatalogBundle = null;
+          matchedCatalogBinding = null;
+        }
+        replaceChannelPreanalysisConnection(catalogConnection);
+        const catalogLookup =
+          catalogConnection.status === "connected" ||
+          catalogConnection.status === "probable" ||
+          catalogConnection.status === "incompatible"
+            ? catalogConnection.lookup
+            : null;
+        const catalogTimelineStatus =
+          catalogConnection.status === "connected" ||
+          catalogConnection.status === "probable" ||
+          catalogConnection.status === "incompatible"
+            ? catalogConnection.timelineStatus
+            : "unknown";
+        const catalogFingerprintVideoId =
+          catalogLookup?.match.reason ===
+          "registered-local-sampled-fingerprint"
+            ? catalogLookup.match.match?.videoId ?? null
+            : null;
+        const sourceTrust = resolveChannelPreanalysisTrust({
+          manualVideoId:
+            latestManualCaptionVideoId,
+          registeredBindingVideoId:
+            locallyRegisteredVideoId ??
+            catalogFingerprintVideoId,
+          visualFingerprintVideoId: visuallyVerifiedVideoId,
+          filenameVideoId: filenameCaptionVideoId,
+          editorConfirmedVideoId: null,
+          catalogConfidence: catalogLookup?.match.confidence ?? "none",
+          catalogVideoId: catalogLookup?.match.match?.videoId ?? null,
+          timelineStatus: catalogTimelineStatus,
+        });
+        const durableCaptionVideoId =
+          recoveryTarget !== null
+            ? recoveryTarget.finalResult.result.input.source.captionVideoId
+            : sourceTrust.durableCaptionVideoId;
         const sourceDescriptor = createDurableSourceDescriptor(
           result,
           machine.sourceDefinitionId,
           fingerprint.value,
-          recoveryTarget !== null
-            ? recoveryTarget.finalResult.result.input.source.captionVideoId
-            : youtubeVideoIdFromUserInput(manualVodInputRef.current) ??
-              youtubeVideoIdFromSourceName(file.name),
+          durableCaptionVideoId,
         );
         if (
           recoveryTarget !== null &&
@@ -3943,6 +4610,24 @@ function App() {
         }
 
         const isUsableVideo = result.metadata.kind === "video" && result.metadata.durationMs > 0;
+        if (
+          isUsableVideo &&
+          catalogConnection.status === "connected" &&
+          catalogConnection.timelineStatus === "compatible" &&
+          channelPreanalysisIdentityBasisAuthorizesPreparedData(
+            catalogConnection.basis,
+          ) &&
+          catalogConnection.lookup.match.match !== null
+        ) {
+          if (
+            registerChannelPreanalysisLocalBinding({
+              localSampledFingerprint: fingerprint.value,
+              videoId: catalogConnection.lookup.match.match.videoId,
+            }) !== null
+          ) {
+            setChannelPreanalysisLocalBindingRevision((revision) => revision + 1);
+          }
+        }
         const resultKind: SourceCheckResultKind = !isUsableVideo
           ? "blocked"
           : result.capabilities.preferredRuntimeTier === "signals-only"
@@ -3993,6 +4678,17 @@ function App() {
         replaceSourceFile(isUsableVideo ? file : null, {
           preserveAnalysisArtifacts: recoveryTarget !== null,
         });
+        channelPreanalysisBundleBindingRef.current = matchedCatalogBinding;
+        if (
+          isUsableVideo &&
+          matchedCatalogBundle !== null &&
+          Math.abs(
+            matchedCatalogBundle.durationMs - result.metadata.durationMs,
+          ) <= CHANNEL_PREANALYSIS_TITLE_DURATION_TOLERANCE_MS
+        ) {
+          youtubeCaptionTrackRef.current = matchedCatalogBundle.captionTrack;
+          setYouTubeCaptionTrack(matchedCatalogBundle.captionTrack);
+        }
         setSourceCheck(machine);
         if (!isUsableVideo) {
           setSourceError("영상 길이를 읽을 수 있는 비디오 파일이 필요해요. 오디오 파일만으로는 아직 시작할 수 없어요.");
@@ -4017,8 +4713,16 @@ function App() {
           setPreflight(previousRecoveryBinding.preflight);
           setSourceContentFingerprint(previousRecoveryBinding.sourceContentFingerprint);
           setSourceCheck(previousRecoveryBinding.sourceCheck);
+          channelPreanalysisBundleBindingRef.current =
+            previousRecoveryBinding.channelPreanalysisBundleBinding;
+          replaceChannelPreanalysisConnection(
+            previousRecoveryBinding.channelPreanalysisConnection,
+          );
+          setManualVodInput(previousRecoveryBinding.manualVodInput);
+          manualVodInputRef.current = previousRecoveryBinding.manualVodInput;
         } else if (outcome.accepted) {
           setSourceCheck(outcome.state);
+          replaceChannelPreanalysisConnection({ status: "unavailable" });
         }
         const errorMessage =
           error instanceof SourceRebindMismatchError
@@ -4046,16 +4750,188 @@ function App() {
     },
     [
       getResultStore,
+      channelPreanalysisConnection,
+      manualVodInput,
       openedRecoveredResult,
       pendingFileName,
       preflight,
       replaceSourceFile,
+      replaceChannelPreanalysisConnection,
       resetDownstream,
       sourceCheck,
       sourceContentFingerprint,
       sourceFile,
     ],
   );
+
+  const confirmProbableChannelPreanalysisMatch = async (): Promise<void> => {
+    const current = channelPreanalysisConnectionRef.current;
+    if (current.status !== "probable") {
+      return;
+    }
+    const { lookup: probableLookup } = current;
+    const match = probableLookup.match.match;
+    if (
+      match === null ||
+      sourceFile === null ||
+      preflight === null ||
+      sourceContentFingerprint === null ||
+      channelPreanalysisConfirmationPending ||
+      analysisBusy ||
+      analysisStartOperation.current !== null ||
+      youtubeVideoIdFromUserInput(manualVodInputRef.current) !== null
+    ) {
+      return;
+    }
+    const timelineStatus = classifyChannelPreanalysisTimeline(
+      match.durationMs,
+      preflight.metadata.durationMs,
+    );
+    if (timelineStatus === "incompatible") {
+      replaceChannelPreanalysisConnection({
+        status: "incompatible",
+        lookup: probableLookup,
+        timelineStatus,
+      });
+      return;
+    }
+    const attachment =
+      openedRecoveredResult === null ||
+      openedRecoveredResult.finalResult.result.input.source.captionVideoId ===
+        match.videoId
+        ? "current-run"
+        : "future-run-only";
+    const selectionEpoch = sourceSelectionEpoch.current;
+    const analysisEpoch = analysisOperationEpoch.current;
+    channelPreanalysisBundleBindingRef.current =
+      attachment !== "current-run" || timelineStatus !== "compatible"
+        ? null
+        : createChannelPreanalysisVerifiedBundleBinding(
+            sourceContentFingerprint,
+            probableLookup,
+          );
+    const confirmedBinding = channelPreanalysisBundleBindingRef.current;
+    if (confirmedBinding !== null) {
+      youtubeCaptionTrackRef.current = confirmedBinding.bundle.captionTrack;
+      setYouTubeCaptionTrack(confirmedBinding.bundle.captionTrack);
+    }
+    replaceChannelPreanalysisConnection({
+      status: "connected",
+      lookup: probableLookup,
+      basis: "editor-confirmed-catalog",
+      attachment,
+      timelineStatus,
+    });
+    if (
+      registerChannelPreanalysisLocalBinding({
+        localSampledFingerprint: sourceContentFingerprint,
+        videoId: match.videoId,
+      }) !== null
+    ) {
+      setChannelPreanalysisLocalBindingRevision((revision) => revision + 1);
+    }
+    channelPreanalysisConfirmationAbortController.current?.abort();
+    const controller = new AbortController();
+    channelPreanalysisConfirmationAbortController.current = controller;
+    setChannelPreanalysisConfirmationPending(true);
+    try {
+      const lookup = await requestChannelPreanalysisMatchForSource(
+        {
+          videoId: match.videoId,
+          title: sourceFile.name,
+          durationMs: preflight.metadata.durationMs,
+          localSampledFingerprint: sourceContentFingerprint,
+        },
+        controller.signal,
+      );
+      if (
+        controller.signal.aborted ||
+        sourceSelectionEpoch.current !== selectionEpoch ||
+        analysisOperationEpoch.current !== analysisEpoch ||
+        analysisStartOperation.current !== null ||
+        lookup.match.confidence !== "exact" ||
+        lookup.match.match?.videoId !== match.videoId
+      ) {
+        return;
+      }
+      const exactTimelineStatus = classifyChannelPreanalysisTimeline(
+        lookup.match.match.durationMs,
+        preflight.metadata.durationMs,
+      );
+      if (exactTimelineStatus === "incompatible") {
+        channelPreanalysisBundleBindingRef.current = null;
+        replaceChannelPreanalysisConnection({
+          status: "incompatible",
+          lookup,
+          timelineStatus: exactTimelineStatus,
+        });
+        return;
+      }
+      channelPreanalysisBundleBindingRef.current =
+        attachment !== "current-run" ||
+        exactTimelineStatus !== "compatible"
+          ? null
+          : createChannelPreanalysisVerifiedBundleBinding(
+              sourceContentFingerprint,
+              lookup,
+            );
+      const refreshedBinding = channelPreanalysisBundleBindingRef.current;
+      if (refreshedBinding !== null) {
+        youtubeCaptionTrackRef.current = refreshedBinding.bundle.captionTrack;
+        setYouTubeCaptionTrack(refreshedBinding.bundle.captionTrack);
+      }
+      replaceChannelPreanalysisConnection({
+        status: "connected",
+        lookup,
+        basis: "editor-confirmed-catalog",
+        attachment,
+        timelineStatus: exactTimelineStatus,
+      });
+    } catch {
+      // The editor's confirmation remains authoritative. A missing catalog
+      // bundle only means the normal caption/ASR route will supply the data.
+    } finally {
+      if (channelPreanalysisConfirmationAbortController.current === controller) {
+        channelPreanalysisConfirmationAbortController.current = null;
+      }
+      if (
+        isMounted.current &&
+        sourceSelectionEpoch.current === selectionEpoch
+      ) {
+        setChannelPreanalysisConfirmationPending(false);
+      }
+    }
+  };
+
+  const updateManualVodInput = (value: string): void => {
+    setManualVodInput(value);
+    manualVodInputRef.current = value;
+    const requestedVideoId = youtubeVideoIdFromUserInput(value);
+    channelPreanalysisConfirmationAbortController.current?.abort();
+    channelPreanalysisConfirmationAbortController.current = null;
+    channelPreanalysisManualLookupKeyRef.current = null;
+    setChannelPreanalysisConfirmationPending(false);
+    channelPreanalysisBundleBindingRef.current = null;
+    if (requestedVideoId === null) {
+      if (
+        channelPreanalysisConnectionRef.current.status === "checking" ||
+        (channelPreanalysisConnectionRef.current.status === "connected" &&
+          channelPreanalysisConnectionRef.current.basis === "manual-pasted")
+      ) {
+        replaceChannelPreanalysisConnection({ status: "not-found" });
+      }
+      return;
+    }
+
+    /*
+     * A pasted URL is an explicit editor choice. Do not leave a different
+     * probable/catalog identity attached in parallel, because that would feed
+     * one video ID to captions while presenting another video's roster/bundle.
+     */
+    if (sourceReady && analysisStartOperation.current === null) {
+      replaceChannelPreanalysisConnection({ status: "checking" });
+    }
+  };
 
   const handleSourceInput = (event: ChangeEvent<HTMLInputElement>): void => {
     const file = event.currentTarget.files?.[0];
@@ -4160,6 +5036,7 @@ function App() {
       sourceContentFingerprint === null ||
       analysisComplete ||
       analysisStartOperation.current !== null ||
+      channelPreanalysisConfirmationPending ||
       chatImportStatus === "reading"
     ) {
       return;
@@ -4222,8 +5099,7 @@ function App() {
     const audioWorkerInstanceId = createOperationId("audio-worker");
     const audioTaskId = createOperationId("audio-task");
     const selectedCaptionVideoId =
-      youtubeVideoIdFromUserInput(manualVodInputRef.current) ??
-      youtubeVideoIdFromSourceName(sourceFile.name);
+      currentChannelPreanalysisTrust.durableCaptionVideoId;
     setAnalysisCaptionVideoId(selectedCaptionVideoId);
     let inputSignature = "pending";
     let machine: AnalysisRunState | null = null;
@@ -5221,7 +6097,7 @@ function App() {
       );
     }
     if (
-      plannedCandidateIds.length > 12 ||
+      plannedCandidateIds.length > CANDIDATE_PASS_B_PLAN_MAX_CANDIDATES ||
       new Set(plannedCandidateIds).size !== plannedCandidateIds.length ||
       plannedCandidateIds.some(
         (candidateId) => candidatePassBContextById[candidateId] === undefined,
@@ -5400,6 +6276,8 @@ function App() {
         candidatePassBPlanReceiptRef.current = restored.planReceipt;
         candidatePassBPlanReplacementRequiredRef.current = false;
         candidatePassBDurableInsightsRef.current = restored;
+        candidatePassBPendingInsightsRef.current = null;
+        candidatePassBInsightPersistenceFailureRef.current = null;
         if (isMounted.current) {
           setCandidatePassBDurableInsights(restored);
           setCandidatePassBInsightPersistenceStatus("verified");
@@ -5539,6 +6417,17 @@ function App() {
       ]),
     );
     const writeEpoch = candidatePassBInsightWriteEpochRef.current;
+    const durableThumbnailById =
+      selectCandidatePassBDurableThumbnailById({
+        thumbnailById,
+        evidenceById,
+        insightById,
+        modelByCandidateId,
+        verificationReceiptById,
+        dispatchIntentByCandidateId,
+        settlementByCandidateId,
+        attemptLedgerByCandidateId,
+      });
     const record: CandidatePassBInsightsRecord = {
       kind: "candidatePassBInsights",
       runId,
@@ -5550,13 +6439,41 @@ function App() {
       evidenceById,
       insightById,
       modelByCandidateId,
-      thumbnailById,
+      thumbnailById: durableThumbnailById,
       attemptLedgerByCandidateId,
       dispatchIntentByCandidateId,
       settlementByCandidateId,
       verificationReceiptById,
       recordedAt: new Date().toISOString(),
     };
+    const pendingBase =
+      candidatePassBPendingInsightsRef.current?.runId === runId
+        ? candidatePassBPendingInsightsRef.current
+        : candidatePassBDurableInsightsRef.current?.runId === runId &&
+            JSON.stringify(
+              candidatePassBDurableInsightsRef.current.planReceipt,
+            ) === JSON.stringify(planReceipt)
+          ? candidatePassBDurableInsightsRef.current
+          : null;
+    const cumulativeRecord =
+      pendingBase === null
+        ? record
+        : mergeCandidatePassBInsightsForResume(pendingBase, record);
+    if (cumulativeRecord === null) {
+      return Promise.reject(
+        new CandidatePassBInsightPersistenceError(
+          new Error(
+            "Concurrent candidate artifacts could not be reconciled without losing evidence.",
+          ),
+        ),
+      );
+    }
+    /*
+     * Keep the cumulative terminal payload before awaiting IndexedDB. A
+     * provider result must survive a transient write/readback failure without
+     * making the paid request run again.
+     */
+    candidatePassBPendingInsightsRef.current = cumulativeRecord;
     if (
       isMounted.current &&
       candidatePassBIdentity.current?.analysisRunId === runId
@@ -5569,28 +6486,73 @@ function App() {
         if (candidatePassBInsightWriteEpochRef.current !== writeEpoch) {
           return null;
         }
-        const expectedSnapshot =
-          candidatePassBDurableInsightsRef.current?.runId === runId
-            ? candidatePassBDurableInsightsRef.current
-            : null;
+        const pendingSnapshot =
+          candidatePassBPendingInsightsRef.current?.runId === runId
+            ? candidatePassBPendingInsightsRef.current
+            : cumulativeRecord;
+        const store = getResultStore();
+        const expectedSnapshot = await store.getCandidatePassBInsights(runId);
+        if (
+          expectedSnapshot !== null &&
+          expectedSnapshot.inputSignature !== inputSignature
+        ) {
+          throw new Error(
+            "A different source owns the durable candidate detail slot.",
+          );
+        }
+        const replacementSnapshot =
+          expectedSnapshot === null
+            ? pendingSnapshot
+            : mergeCandidatePassBInsightsForResume(
+                expectedSnapshot,
+                pendingSnapshot,
+              );
+        if (replacementSnapshot === null) {
+          throw new Error(
+            "The newest durable candidate snapshot conflicts with pending evidence.",
+          );
+        }
         const restored = await persistCandidatePassBInsightsWithReadback(
-          getResultStore(),
+          store,
           expectedSnapshot,
-          record,
+          replacementSnapshot,
         );
         if (candidatePassBInsightWriteEpochRef.current === writeEpoch) {
+          const newestPending = candidatePassBPendingInsightsRef.current;
+          if (newestPending === pendingSnapshot) {
+            candidatePassBPendingInsightsRef.current = null;
+          } else if (newestPending?.runId === runId) {
+            const rebasedPending = mergeCandidatePassBInsightsForResume(
+              restored,
+              newestPending,
+            );
+            if (rebasedPending === null) {
+              throw new Error(
+                "New candidate evidence arrived with a conflicting durable identity.",
+              );
+            }
+            candidatePassBPendingInsightsRef.current = rebasedPending;
+          }
+          candidatePassBInsightPersistenceFailureRef.current = null;
           candidatePassBDurableInsightsRef.current = restored;
           if (
             isMounted.current &&
             candidatePassBIdentity.current?.analysisRunId === runId
           ) {
             setCandidatePassBDurableInsights(restored);
-            setCandidatePassBInsightPersistenceStatus("verified");
+            setCandidatePassBInsightPersistenceStatus(
+              candidatePassBPendingInsightsRef.current === null
+                ? "verified"
+                : "pending",
+            );
           }
         }
         return restored;
       })
       .catch((error: unknown) => {
+        if (candidatePassBInsightWriteEpochRef.current === writeEpoch) {
+          candidatePassBInsightPersistenceFailureRef.current = error;
+        }
         if (isMounted.current && candidatePassBIdentity.current?.analysisRunId === runId) {
           setCandidatePassBInsightPersistenceStatus("failed");
           setCandidatePassBError(
@@ -5608,6 +6570,14 @@ function App() {
 
   const flushCandidatePassBInsightPersistence = async (): Promise<void> => {
     await candidatePassBInsightWriteChainRef.current;
+    if (
+      candidatePassBPendingInsightsRef.current !== null &&
+      candidatePassBInsightPersistenceFailureRef.current !== null
+    ) {
+      throw new CandidatePassBInsightPersistenceError(
+        candidatePassBInsightPersistenceFailureRef.current,
+      );
+    }
   };
 
   const retryCandidatePassBInsightPersistence = async (): Promise<boolean> => {
@@ -5619,7 +6589,7 @@ function App() {
             candidateDetailCandidateIds,
           )
         ).planReceipt;
-      await queueCandidatePassBInsightPersistence(
+      const restored = await queueCandidatePassBInsightPersistence(
         planReceipt,
         candidatePassBEvidenceRef.current,
         candidateGeminiInsightRef.current,
@@ -5627,7 +6597,40 @@ function App() {
         candidatePassBModelByIdRef.current,
         candidatePassBVerificationReceiptRef.current,
       );
+      if (restored === null) return false;
+      candidatePassBEvidenceRef.current = restored.evidenceById;
+      candidateGeminiInsightRef.current = restored.insightById;
+      candidatePassBModelByIdRef.current = restored.modelByCandidateId;
+      const restoredTimelineFrames = Object.fromEntries(
+        Object.entries(restored.thumbnailById).map(([candidateId, frame]) => [
+          candidateId,
+          [frame],
+        ]),
+      );
+      candidateTimelineFramesRef.current = {
+        ...candidateTimelineFramesRef.current,
+        ...restoredTimelineFrames,
+      };
+      candidatePassBVerificationReceiptRef.current =
+        restored.verificationReceiptById;
+      candidatePassBDispatchIntentRef.current =
+        restored.dispatchIntentByCandidateId;
+      candidatePassBAttemptLedgerRef.current =
+        restored.attemptLedgerByCandidateId;
+      candidatePassBSettlementRef.current = restored.settlementByCandidateId;
       if (isMounted.current) {
+        setCandidatePassBEvidenceById(restored.evidenceById);
+        setCandidateGeminiInsightById(restored.insightById);
+        setCandidateTimelineFramesById(candidateTimelineFramesRef.current);
+        setCandidatePassBVerificationReceiptById(
+          restored.verificationReceiptById,
+        );
+        setCandidatePassBDurableInsights(restored);
+        setCandidatePassBInsightPersistenceStatus(
+          candidatePassBPendingInsightsRef.current === null
+            ? "verified"
+            : "pending",
+        );
         setCandidatePassBError(null);
       }
       return true;
@@ -8175,6 +9178,13 @@ function App() {
     sourceSelectionEpoch.current += 1;
     sourceAbortController.current?.abort();
     sourceAbortController.current = null;
+    channelPreanalysisConfirmationAbortController.current?.abort();
+    channelPreanalysisConfirmationAbortController.current = null;
+    setChannelPreanalysisConfirmationPending(false);
+    channelPreanalysisBundleBindingRef.current = null;
+    replaceChannelPreanalysisConnection({ status: "idle" });
+    setManualVodInput("");
+    manualVodInputRef.current = "";
     analysisOperationEpoch.current += 1;
     analysisAbortController.current?.abort();
     analysisAbortController.current = null;
@@ -8866,6 +9876,13 @@ function App() {
     sourceSelectionEpoch.current += 1;
     sourceAbortController.current?.abort();
     sourceAbortController.current = null;
+    channelPreanalysisConfirmationAbortController.current?.abort();
+    channelPreanalysisConfirmationAbortController.current = null;
+    setChannelPreanalysisConfirmationPending(false);
+    channelPreanalysisBundleBindingRef.current = null;
+    replaceChannelPreanalysisConnection({ status: "idle" });
+    setManualVodInput("");
+    manualVodInputRef.current = "";
     replaceSourceFile(null);
     setPendingFileName(null);
     setPreflight(null);
@@ -9459,7 +10476,29 @@ function App() {
       outputLanguage: analysisLanguage,
       castRosterId: sourceCastRosterId,
     };
-    const contextInputSnapshotJson = JSON.stringify(contextInput);
+    const preanalysisContextSeedSource =
+      sourceContentFingerprint === null
+        ? null
+        : channelPreanalysisContextSeedSource(
+            channelPreanalysisConnection,
+            channelPreanalysisBundleBindingRef.current,
+            sourceContentFingerprint,
+            analysisCaptionVideoId,
+            boundarySourceDurationMs,
+            sourceCastRosterId,
+            analysisLanguage,
+          );
+    const preanalysisContextSeedOperationFence =
+      preanalysisContextSeedSource === null
+        ? "no-channel-preanalysis-context-seed"
+        : JSON.stringify([
+            preanalysisContextSeedSource.bundle.videoId,
+            preanalysisContextSeedSource.bundle.transcriptDigest,
+            preanalysisContextSeedSource.artifactDigest,
+            preanalysisContextSeedSource.bundle.contextProvenance,
+            preanalysisContextSeedSource.bundle.broadcastContext,
+          ]);
+    const contextInputBaseSnapshotJson = JSON.stringify(contextInput);
     const participantEvidenceOperationFence = JSON.stringify({
       planFingerprint: broadcastParticipantPreContext.planFingerprint,
       sealedPlan: broadcastParticipantPreContext.sealedPlan,
@@ -9467,7 +10506,8 @@ function App() {
     const operationKey =
       `${runId}:${inputSignature}:${requiredTranscriptSeal}` +
       `:context-attempt-${broadcastContextAttemptOrdinal}` +
-      `:${contextInputSnapshotJson}:${participantEvidenceOperationFence}`;
+      `:${contextInputBaseSnapshotJson}:${participantEvidenceOperationFence}` +
+      `:${preanalysisContextSeedOperationFence}`;
     if (autoBroadcastContextSourceRef.current === operationKey) {
       return;
     }
@@ -9582,25 +10622,70 @@ function App() {
         result.annotations,
       );
       setCandidateAiProjectionById(qualified.projectionById);
-      const survivingIds = new Set([
-        ...qualified.selectedCandidates.map((candidate) => candidate.id),
-        ...qualified.reviewCandidates.map((candidate) => candidate.id),
-      ]);
-      const survivingCandidates = pipelineCandidates.filter(
-        (candidate) =>
-          candidate.reviewState === "approved" ||
-          (candidate.reviewState !== "rejected" &&
-            survivingIds.has(candidate.id)),
-      );
       setSelectionResult((current) =>
         current === null
           ? current
-          : { ...current, candidateCount: survivingCandidates.length },
+          : { ...current, candidateCount: pipelineCandidates.length },
       );
       setBroadcastContextStatus("completed");
     };
 
     void (async () => {
+      const trustedPrecomputedSourceIdentity =
+        preanalysisContextSeedSource === null
+          ? null
+          : {
+              videoId: preanalysisContextSeedSource.bundle.videoId,
+              transcriptDigest:
+                preanalysisContextSeedSource.bundle.transcriptDigest,
+              artifactDigest:
+                preanalysisContextSeedSource.artifactDigest,
+            };
+      let precomputedGlobalContextSeed: ChannelPreanalysisContextSeed | null =
+        null;
+      if (preanalysisContextSeedSource !== null) {
+        const { bundle } = preanalysisContextSeedSource;
+        const { broadcastContext, contextProvenance } = bundle;
+        if (
+          broadcastContext !== null &&
+          contextProvenance !== null
+        ) {
+          try {
+            precomputedGlobalContextSeed =
+              await createChannelPreanalysisContextSeed({
+                sourceDurationMs: bundle.durationMs,
+                chapters: compactBroadcastContextChapters(bundle.chapters),
+                castRosterId: AMORETTO_CHANNEL_CAST_ROSTER_ID,
+                outputLanguage: "ko",
+                sourceIdentity:
+                  trustedPrecomputedSourceIdentity!,
+                provenance: contextProvenance,
+                result: broadcastContext,
+              });
+          } catch (error) {
+            console.warn(
+              "Verified channel preanalysis context could not be fingerprinted; using the local context route.",
+              error,
+            );
+          }
+        }
+      }
+      const contextInputSnapshotJson = JSON.stringify({
+        ...contextInput,
+        ...(precomputedGlobalContextSeed === null
+          ? {}
+          : {
+              channelPreanalysisContextSeed: {
+                schemaVersion:
+                  precomputedGlobalContextSeed.schemaVersion,
+                seedFingerprint:
+                  precomputedGlobalContextSeed.seedFingerprint,
+                sourceIdentity:
+                  precomputedGlobalContextSeed.sourceIdentity,
+                provenance: precomputedGlobalContextSeed.provenance,
+              },
+            }),
+      });
       const participantGroundingPlanFingerprint =
         broadcastParticipantPreContext.planFingerprint;
       const participantGroundingCheckpointJson =
@@ -9762,6 +10847,52 @@ function App() {
         }
       }
       if (
+        saved.contextInputSignature !== null &&
+        (saved.contextInputSignature !== contextInputSignature ||
+          saved.contextInputCheckpointJson !== contextInputSnapshotJson)
+      ) {
+        const staleContextSession = saved;
+        const invalidationOperationToken =
+          `${runId}:${contextInputSignature}:context-input-invalidation`;
+        const invalidatedAt = new Date().toISOString();
+        saved = await runSessionCheckpoint(
+          "context-input-invalidation",
+          invalidationOperationToken,
+          (isCurrent) =>
+            transformDurableBroadcastContextSession({
+              store,
+              identity: {
+                runId,
+                operationToken: invalidationOperationToken,
+                inputSignature,
+              },
+              expected: staleContextSession,
+              isCurrent,
+              signal: controller.signal,
+              transform: (current) =>
+                invalidateBroadcastContextSessionContext(
+                  current,
+                  invalidatedAt,
+                ),
+            }),
+        );
+        if (
+          saved.contextInputSignature !== null ||
+          saved.contextInputCheckpointJson !== null ||
+          saved.contextPhaseLedgerJson !== null ||
+          saved.contextResultJson !== null ||
+          saved.refinementTranscriptInputSignature !== null ||
+          saved.refinementTranscriptCheckpointJson !== null ||
+          saved.refinementEvidenceLedgerJson !== null ||
+          saved.refinementInputSignature !== null ||
+          saved.refinementCandidatesJson !== null
+        ) {
+          throw new Error(
+            "The stale whole-context checkpoint could not be invalidated before applying the current preanalysis seed.",
+          );
+        }
+      }
+      if (
         saved.inputSignature === inputSignature &&
         saved.contextInputSignature === contextInputSignature &&
         saved.contextInputCheckpointJson === contextInputSnapshotJson &&
@@ -9842,6 +10973,8 @@ function App() {
             operationGeneration: broadcastContextAttemptOrdinal,
             retryMode: "automatic-free-tier",
             signal: controller.signal,
+            precomputedGlobalContextSeed,
+            trustedPrecomputedSourceIdentity,
           });
         } finally {
           endContextSpan?.(Date.now());
@@ -10064,6 +11197,7 @@ function App() {
       });
   }, [
     aiQuotaParticipantId,
+    analysisCaptionVideoId,
     analysisComplete,
     boundarySourceDurationMs,
     boundedBroadcastContextChapters,
@@ -10076,6 +11210,7 @@ function App() {
     broadcastTranscriptStatus,
     broadcastVisualInspectionPlannedCellCount,
     broadcastVisualInspectionSettledCellCount,
+    channelPreanalysisConnection,
     currentAnalysisInputSignature,
     currentAnalysisRunId,
     getResultStore,
@@ -11541,25 +12676,52 @@ function App() {
        * Captions are a free source for exact planned cells, not an alternate
        * completion route. They seed real chapter receipts below; every cell
        * without caption text continues through the same VAD/ASR recovery plan.
-       */
+      */
       let captionTrackForTranscript: YouTubeCaptionTrackResult | null = null;
-      if (youtubeVideoId !== null) {
-        try {
-          const endCaptionSpan = stageTimerRef.current?.startSpan(
-            "youtube-caption-fetch",
-            Date.now(),
-          );
-          const captionTrack = await requestYouTubeCaptionTrack(youtubeVideoId, {
-            signal: controller.signal,
-          });
-          endCaptionSpan?.(Date.now());
-          if (controller.signal.aborted || !isMounted.current) return;
-          youtubeCaptionTrackRef.current = captionTrack;
-          setYouTubeCaptionTrack(captionTrack);
-          captionTrackForTranscript = captionTrack;
-        } catch {
-          // YouTube may throttle or withhold captions. The bounded ASR route
-          // below is the automatic fallback and needs no user action.
+      const currentChannelPreanalysisConnection =
+        channelPreanalysisConnectionRef.current;
+      const timedCaptionsRejectedByCatalog =
+        youtubeVideoId !== null &&
+        currentChannelPreanalysisConnection.status === "connected" &&
+        currentChannelPreanalysisConnection.lookup.match.match?.videoId ===
+          youtubeVideoId &&
+        currentChannelPreanalysisConnection.timelineStatus === "incompatible";
+      if (youtubeVideoId !== null && !timedCaptionsRejectedByCatalog) {
+        const currentCaptionTrack = youtubeCaptionTrackRef.current;
+        if (currentCaptionTrack?.videoId === youtubeVideoId) {
+          captionTrackForTranscript = currentCaptionTrack;
+        } else {
+          const catalogBinding = channelPreanalysisBundleBindingRef.current;
+          if (
+            catalogBinding !== null &&
+            catalogBinding.sourceContentFingerprint === sourceContentFingerprint &&
+            catalogBinding.bundle.videoId === youtubeVideoId &&
+            Math.abs(catalogBinding.bundle.durationMs - sourceDurationMs) <=
+              CHANNEL_PREANALYSIS_TITLE_DURATION_TOLERANCE_MS
+          ) {
+            captionTrackForTranscript = catalogBinding.bundle.captionTrack;
+            youtubeCaptionTrackRef.current = catalogBinding.bundle.captionTrack;
+            setYouTubeCaptionTrack(catalogBinding.bundle.captionTrack);
+          }
+        }
+        if (captionTrackForTranscript === null) {
+          try {
+            const endCaptionSpan = stageTimerRef.current?.startSpan(
+              "youtube-caption-fetch",
+              Date.now(),
+            );
+            const captionTrack = await requestYouTubeCaptionTrack(youtubeVideoId, {
+              signal: controller.signal,
+            });
+            endCaptionSpan?.(Date.now());
+            if (controller.signal.aborted || !isMounted.current) return;
+            youtubeCaptionTrackRef.current = captionTrack;
+            setYouTubeCaptionTrack(captionTrack);
+            captionTrackForTranscript = captionTrack;
+          } catch {
+            // YouTube may throttle or withhold captions. The bounded ASR route
+            // below is the automatic fallback and needs no user action.
+          }
         }
       }
 
@@ -12755,6 +13917,64 @@ function App() {
                 </dl>
               )}
 
+              <div className="rh-vod-hint">
+                <label htmlFor="vod-url">
+                  {ui("YouTube 다시보기 주소", "YouTube replay URL")}{" "}
+                  <span>
+                    {ui(
+                      "(선택 · 파일보다 먼저 붙여넣어도 돼요)",
+                      "(optional · you can paste it before choosing the file)",
+                    )}
+                  </span>
+                </label>
+                <input
+                  id="vod-url"
+                  type="text"
+                  inputMode="url"
+                  placeholder={ui(
+                    "https://youtu.be/… 붙여넣기",
+                    "Paste https://youtu.be/…",
+                  )}
+                  value={manualVodInput}
+                  disabled={analysisBusy}
+                  onChange={(event) =>
+                    updateManualVodInput(event.target.value)
+                  }
+                />
+                <p aria-live="polite">
+                  {manualVodInput.trim().length === 0
+                    ? ui(
+                        "같은 방송의 다시보기가 있으면 자막과 준비된 분석 자료를 먼저 찾습니다.",
+                        "If a replay exists, captions and prepared analysis data are checked first.",
+                      )
+                    : youtubeVideoIdFromUserInput(manualVodInput) === null
+                      ? ui(
+                          "주소에서 영상을 찾지 못했습니다. 유튜브 주소를 그대로 붙여넣어 주세요.",
+                          "No video ID was found. Paste the full YouTube URL.",
+                        )
+                      : !sourceReady
+                        ? ui(
+                            "주소를 기억했습니다. 영상 파일을 고르면 같은 원본인지 확인합니다.",
+                            "URL saved. Choose the video file to verify the source.",
+                          )
+                        : channelPreanalysisConfirmationPending
+                          ? ui(
+                              "주소 형식을 확인했습니다. 저장된 분석 자료를 찾고 있어요.",
+                              "The URL format is valid. Looking for prepared analysis data.",
+                            )
+                          : channelPreanalysisConnection.status ===
+                              "incompatible"
+                            ? ui(
+                                "주소의 영상과 원본 길이가 다릅니다. 이 시간 자막은 분석에 쓰지 않아요.",
+                                "The replay and source durations differ. These timed captions will not be used.",
+                              )
+                            : ui(
+                                "주소 형식을 확인했습니다. 저장 자료가 없더라도 이 영상의 일반 자막을 먼저 시도합니다.",
+                                "The URL format is valid. Even without prepared data, normal captions for this video are tried first.",
+                              )}
+                </p>
+              </div>
+
               {!sourceReady && (
               <details className="rh-link-details">
                 <summary>{ui("영상 파일 없이 YouTube·CHZZK 링크만 있나요?", "Only have a YouTube or CHZZK link?")}</summary>
@@ -12941,7 +14161,13 @@ function App() {
                 <button
                   className="btn btn-primary rh-primary-action"
                   type="button"
-                  disabled={!sourceReady || analysisBusy || analysisComplete || chatImportStatus === "reading"}
+                  disabled={
+                    !sourceReady ||
+                    analysisBusy ||
+                    analysisComplete ||
+                    channelPreanalysisConfirmationPending ||
+                    chatImportStatus === "reading"
+                  }
                   onClick={() => void runSignalAnalysis()}
                 >
                   {chatImportStatus === "reading"
@@ -12988,38 +14214,173 @@ function App() {
               </div>
             </div>
 
-            {/*
-              다시보기 주소는 **파일명에서 못 찾았을 때만** 묻는다. 찾았으면 물을
-              것이 없고, 물으면 사용자는 "뭘 더 해야 하나" 를 판단해야 한다.
-
-              위치가 채팅 아래인 이유: 둘 다 "있으면 좋은 것" 이고 없어도 분석은
-              된다. 원본 고르기 위쪽에 두면 필수 입력으로 읽힌다.
-            */}
             {sourceFile !== null &&
-              youtubeVideoIdFromSourceName(sourceFile.name) === null && (
-                <div className="rh-vod-hint">
-                  <label htmlFor="vod-url">
-                    다시보기 주소 <span>(선택 · 대사 분석이 훨씬 빨라집니다)</span>
-                  </label>
-                  <input
-                    id="vod-url"
-                    type="text"
-                    inputMode="url"
-                    placeholder="https://youtu.be/… 붙여넣기"
-                    value={manualVodInput}
-                    disabled={analysisBusy}
-                    onChange={(event) => {
-                      setManualVodInput(event.target.value);
-                      manualVodInputRef.current = event.target.value;
-                    }}
-                  />
-                  <p aria-live="polite">
-                    {manualVodInput.trim().length === 0
-                      ? "이 방송이 유튜브 다시보기에 있으면 자막을 받아 대사 분석을 건너뜁니다."
-                      : youtubeVideoIdFromUserInput(manualVodInput) === null
-                        ? "주소에서 영상을 찾지 못했습니다. 유튜브 주소를 그대로 붙여넣어 주세요."
-                        : "확인됐습니다. 분석할 때 이 영상의 자막을 씁니다."}
+              channelPreanalysisConnection.status === "checking" && (
+                <div className="rh-vod-hint rh-preanalysis-status" aria-live="polite">
+                  <strong>{ui("저장된 방송 분석을 찾는 중", "Looking for prepared broadcast data")}</strong>
+                  <p>{ui("채널 카탈로그와 이 원본의 ID·지문을 맞추고 있어요.", "Matching this source against the channel catalog by ID and fingerprint.")}</p>
+                </div>
+              )}
+
+            {sourceFile !== null &&
+              channelPreanalysisConnection.status === "connected" && (
+                <div
+                  className="rh-vod-hint rh-preanalysis-status"
+                  data-tone="ready"
+                  aria-live="polite"
+                >
+                  <strong>
+                    {channelPreanalysisConnection.attachment ===
+                    "future-run-only"
+                      ? ui(
+                          "다음 새 분석을 위한 다시보기 연결을 저장했어요",
+                          "Replay connection saved for the next new analysis",
+                        )
+                      : preparedChannelTranscriptIsCompatible
+                        ? ui(
+                            "저장된 한국어 대사를 연결했어요",
+                            "Prepared Korean captions connected",
+                          )
+                        : channelPreanalysisConnection.timelineStatus ===
+                            "unknown"
+                          ? ui(
+                              "다시보기 연결을 확인했어요",
+                              "Replay identity confirmed",
+                            )
+                          : ui(
+                              "아모레또 다시보기를 연결했어요",
+                              "Amoretto replay connected",
+                            )}
+                  </strong>
+                  <p>
+                    {channelPreanalysisConnection.lookup.match.match?.title}
+                    {" · "}
+                    {channelPreanalysisConnection.lookup.match.match?.durationMs === null ||
+                    channelPreanalysisConnection.lookup.match.match?.durationMs === undefined
+                      ? ui("길이 확인 전", "duration pending")
+                      : formatDuration(
+                          channelPreanalysisConnection.lookup.match.match.durationMs,
+                        )}
                   </p>
+                  <small>
+                    {channelPreanalysisConnection.attachment ===
+                    "future-run-only"
+                      ? ui(
+                          "열어 둔 복구 결과의 원본 입력은 바꾸지 않습니다. 이 연결은 다음 새 분석부터 사용합니다.",
+                          "The opened recovery input remains unchanged. This connection is available to the next new analysis.",
+                        )
+                      : preparedChannelTranscriptIsCompatible
+                        ? ui(
+                            "저장된 대사를 먼저 쓰고, 비어 있는 구간만 음성 인식으로 보완합니다.",
+                            "Prepared captions are used first; only uncovered ranges go through speech recognition.",
+                          )
+                        : channelPreanalysisConnection.timelineStatus ===
+                            "unknown"
+                          ? ui(
+                              "카탈로그 길이 정보는 아직 준비 전입니다. 확인된 영상 ID의 일반 자막을 먼저 시도하고 비어 있는 구간만 음성 인식합니다.",
+                              "Catalog duration is still pending. Normal captions for the confirmed video ID are tried first, then uncovered ranges use speech recognition.",
+                            )
+                          : ui(
+                              "저장 자료가 아직 없으면 기존 자막·음성 인식 경로가 자동으로 이어집니다.",
+                              "If prepared data is not ready, the normal caption and speech-recognition route continues automatically.",
+                            )}
+                  </small>
+                </div>
+              )}
+
+            {sourceFile !== null &&
+              channelPreanalysisConnection.status === "incompatible" && (
+                <div
+                  className="rh-vod-hint rh-preanalysis-status"
+                  data-tone="confirm"
+                  aria-live="polite"
+                >
+                  <strong>
+                    {ui(
+                      "다시보기 길이가 달라 시간 자막을 연결하지 않았어요",
+                      "Timed captions were not connected because the durations differ",
+                    )}
+                  </strong>
+                  <p>
+                    {channelPreanalysisConnection.lookup.match.match?.title}
+                    {" · "}
+                    {channelPreanalysisConnection.lookup.match.match
+                      ?.durationMs === null ||
+                    channelPreanalysisConnection.lookup.match.match
+                      ?.durationMs === undefined
+                      ? ui("길이 확인 전", "duration pending")
+                      : formatDuration(
+                          channelPreanalysisConnection.lookup.match.match
+                            .durationMs,
+                        )}
+                  </p>
+                  <small>
+                    {ui(
+                      "잘못된 시간축을 분석에 섞지 않았습니다. 올바른 다시보기 주소를 붙여넣거나 영상 자체의 음성을 분석할 수 있어요.",
+                      "The conflicting timeline was excluded. Paste the correct replay URL or continue with the source audio.",
+                    )}
+                  </small>
+                </div>
+              )}
+
+            {sourceFile !== null &&
+              channelPreanalysisConnection.status === "probable" && (
+                <div
+                  className="rh-vod-hint rh-preanalysis-status"
+                  data-tone="confirm"
+                  aria-live="polite"
+                >
+                  <strong>
+                    {channelPreanalysisConnection.reason ===
+                    "filename-confirmation-required"
+                      ? ui(
+                          "파일명 속 다시보기가 맞는지 확인해 주세요",
+                          "Confirm the replay found in the filename",
+                        )
+                      : ui(
+                          "같은 방송으로 보이는 다시보기가 있어요",
+                          "A likely matching replay was found",
+                        )}
+                  </strong>
+                  <p>
+                    {channelPreanalysisConnection.lookup.match.match?.title}
+                    {" · "}
+                    {channelPreanalysisConnection.lookup.match.match?.durationMs === null ||
+                    channelPreanalysisConnection.lookup.match.match?.durationMs === undefined
+                      ? ui("길이 확인 전", "duration pending")
+                      : formatDuration(
+                          channelPreanalysisConnection.lookup.match.match.durationMs,
+                        )}
+                  </p>
+                  <button
+                    className="btn btn-secondary"
+                    type="button"
+                    disabled={
+                      analysisBusy ||
+                      analysisStartPending ||
+                      channelPreanalysisConfirmationPending
+                    }
+                    onClick={() => void confirmProbableChannelPreanalysisMatch()}
+                  >
+                    {channelPreanalysisConfirmationPending
+                      ? ui("연결 자료 확인 중…", "Checking prepared data…")
+                      : channelPreanalysisConnection.reason ===
+                          "filename-confirmation-required"
+                        ? ui("이 영상이 맞아요", "This is the right video")
+                        : ui("이 다시보기 연결", "Connect this replay")}
+                  </button>
+                  <small>
+                    {channelPreanalysisConnection.reason ===
+                    "filename-confirmation-required"
+                      ? ui(
+                          "카탈로그에 길이 정보가 아직 없어 파일명만으로 시간 자막을 붙이지 않았어요.",
+                          "Catalog duration is still pending, so the filename alone did not attach timed captions.",
+                        )
+                      : ui(
+                          "제목과 길이만 일치해 자동으로 붙이지 않았어요.",
+                          "It was not connected automatically because only title and duration match.",
+                        )}
+                  </small>
                 </div>
               )}
 

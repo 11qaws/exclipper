@@ -242,9 +242,10 @@ const BROADCAST_TRANSCRIPT_RATE_LIMIT_KEY =
   QWEN_OMNI_SHARED_RATE_LIMIT_KEY;
 const YOUTUBE_CAPTIONS_RATE_LIMIT_KEY = "youtube-captions";
 const CHZZK_VIDEO_CHANNEL_RATE_LIMIT_KEY = "chzzk-video-channel";
-// YouTube embeds this public Android bootstrap key in its clients. It is not a
-// user credential; it only selects the public Innertube surface.
-const YOUTUBE_INNERTUBE_API_KEY = "AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8";
+// YouTube embeds this public Android bootstrap key in its client. It is not a
+// user credential; it only selects the matching public Innertube surface.
+const YOUTUBE_INNERTUBE_API_KEY =
+  "AIzaSyA8eiZmM1FaDVjRy-df2KTyQ_vz_yYM39w";
 const YOUTUBE_ANDROID_CLIENT_VERSION = "20.10.38";
 const JSON_CONTENT_TYPE = "application/json; charset=utf-8";
 const EXCLIPPER_USAGE_PROMPT_TOKENS_HEADER =

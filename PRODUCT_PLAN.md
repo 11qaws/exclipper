@@ -1,5 +1,24 @@
 # ExClipper 제품·UX·기술 계획서
 
+## 다음 배포 후보 · 채널 선분석 카탈로그와 로컬 원본 연결
+
+- 첫 고정 채널은 YouTube `@AmorettoVODs`, canonical channel ID `UCHycoTBFDhXz4XNz8jBP-_A`다. 공식 Atom feed는 새 영상 발견의 기준이며, feed의 root ID가 현재 `UC` 접두사를 생략하는 실측 예외는 허용하되 각 entry가 반복하는 완전한 channel ID만 영상 소유권의 근거로 사용한다.
+- GitHub Pages는 탭이 닫히면 주기 작업을 실행할 수 없고 YouTube Atom feed도 Pages origin에 CORS를 제공하지 않는다. 발견·자막 준비와 선택적인 자막 기반 맥락 준비는 별도의 예약 GitHub Actions 작업이 단계별 checkpoint를 남기며 수행한다. Cloudflare Free Worker의 10ms CPU 경계에는 XML/영상/대규모 자막 분석을 넣지 않는다.
+- 기본 예약 실행에는 AI credential이 없으며 `transcript-ready`에서 멈춘다. `CHANNEL_PREANALYSIS_CONTEXT_PROXY_URL`과 `CHANNEL_PREANALYSIS_CONTEXT_TOKEN`이 모두 설정된 경우에만 별도 인증·별도 예산의 background endpoint로 `context-ready` 승격을 시도한다. 현재 대화형 5인용 Worker는 이 endpoint로 사용할 수 없고 runner가 해당 host를 명시적으로 거부한다.
+- 전용 background context proxy의 source·Durable Object·rate limiter·독립 Wrangler 설정은 구현됐지만 아직 배포와 secret 설정은 하지 않았다. 따라서 기본 cron은 여전히 AI credential 없는 `transcript-ready` 모드다. 배포 뒤 proxy는 Bearer 인증, stable operation ID와 payload digest의 성공 결과 readback, 현행 `/v1/broadcast-context` 요청·응답 스키마, foreground와 분리된 Worker/DO budget을 사용한다. upstream quota까지 격리하려면 예약용 Qwen project/workspace와 key도 별도로 둔다.
+- 예약 작업은 `read-only prepare -> minimal write publish` 두 job으로 격리한다. dependency 설치·테스트·feed·`yt-dlp`는 repository write credential 없이 실행하고, publish는 검증 snapshot과 unchanged base SHA만 받아 catalog namespace에 반영한다. 매 prepare는 ready artifact의 파일 closure·exact bytes·전체 SHA·bundle identity를 다시 확인하며 손상 pointer를 즉시 재시도 가능한 transcript checkpoint로 되돌린다.
+- 채널 영상의 주 상태는 `discovered -> metadata-ready -> transcript-ready -> (선택적 context-ready) -> published`다. 시각 지문은 이 선형 상태를 막지 않는 후행 artifact lane이다. 지문 생성·검증이 실패하면 `retryable(fingerprint)`가 마지막 성공 `transcript-ready | context-ready`를 가리키며, 이미 확정된 자막·맥락 artifact는 보존하고 지문만 다시 만든다. `published` 전 자료는 편집자의 최종 후보를 대신하지 않는다.
+- 기존 `local-file-sampled-sha256-v1`은 동일 파일 바이트를 다시 연결하는 exact 지문으로 유지한다. YouTube 재인코딩·remux·다운로더 컨테이너 변경은 이 값을 바꾸므로, 원격 영상과 로컬 파일의 일반 일치 증명으로 재해석하지 않는다.
+- 자동 연결의 강한 근거는 명시적 YouTube video ID, 과거에 같은 catalog video에 등록된 exact 로컬 지문, 또는 현재 구현된 다중 시점 시각 지문 합의다. 제목·날짜·길이는 단일 영상 또는 최대 12개 duration cohort를 좁히는 단서일 뿐이며, 유일한 제목+길이 일치도 화면 합의 전에는 `probable`로만 표시한다.
+- 원격 지문은 YouTube storyboard에서 방송 전 구간에 흩어진 12개 anchor를 골라 각 화면의 `32×18` luma, dHash64, blockHash64, 평균 밝기와 edge energy를 manifest-bound SHA-256 artifact로 저장한다. 로컬 파일은 같은 source 시각을 한 번만 디코딩해 후보 전체와 대조한다. 최소 8개이면서 전체의 67% 이상, 방송의 앞·중간·뒤 세 구간을 모두 덮고 median·p90 거리 상한을 통과한 **유일한** 영상만 `visual-fingerprint-consensus` exact 연결로 승격한다. 단일 후보는 인코딩 시작점 차이를 위한 ±30초 bounded offset 복구를 허용하지만, 여러 영상이 통과하거나 자료 일부를 읽지 못하면 자동 연결하지 않는다.
+- 향후 오디오 landmark는 재생 시작점이 크게 잘린 원본이나 storyboard가 없는 영상의 보조 경로로만 검토한다. 현재 구현이 오디오 지문이나 affine scale 보정을 수행한다고 표시하지 않는다.
+- 선분석 bundle은 public 채널의 정규화 자막·챕터·전체 맥락·의미 후보·모델 revision과 bundle SHA를 담는 provider-neutral 자료다. 과거 원격 run/session을 로컬 완료 결과로 그대로 복원하지 않는다. 매칭 뒤 로컬 source fingerprint·시간축·현재 roster/model revision으로 새 input fence를 만들고, 로컬 화면 4장·오디오·thumbnail·후보별 AI receipt 검증을 다시 마쳐야 최종 후보가 된다.
+- canonical bundle artifact는 state 전환 때 revision을 올리고 `videos/<videoId>.v1.json`, `videos/<videoId>.v2.json`처럼 revision별 immutable key를 쓴다. manifest가 가리키는 exact revision의 전체 SHA·bundle state·video identity가 함께 맞아야 하며, `transcript-ready` v1 뒤 `context-ready` v2+를 추가해도 이전 bytes를 덮거나 새 맥락 결과로 가장하지 않는다. v2 write 뒤 manifest commit 전에 중단되면 v1 pointer는 계속 유효하고 다음 예약 실행이 검증된 v2 orphan을 AI 재호출 없이 채택한다.
+- 예약 `context-ready`의 근거 범위는 YouTube 한국어 자막과 그 연속 챕터뿐이다. bundle의 `contextProvenance`는 이 범위와 현재 model routing revision, 생성 시각, `localVisualVerificationRequired=true`뿐 아니라 proxy가 검증한 `contractVersion`·`routingRevision`·실제 `modelId`·`modelRevision`의 bounded `contextReceipt`도 함께 보존한다. 로컬 매칭 뒤 화면·오디오·등장인물·후보별 상세 검증을 생략하거나 최종 후보를 미리 확정하지 않는다.
+- 검증된 `context-ready` bundle은 현재 로컬 시간축으로 주제 구간과 의미 lead를 재매핑한 whole-broadcast seed로만 사용할 수 있다. 영상 ID·transcript digest·artifact digest·roster·언어·routing·시간 범위 중 하나라도 다르면 seed를 버리고 기존 로컬 overview 경로로 간다. seed를 사용해도 현재 후보와 현재 participant grounding을 넣은 selection jury는 필수이며, 화면 4장·오디오·thumbnail receipt를 갖춘 후보별 상세 검증이 끝나기 전에는 최종 후보가 아니다.
+- 전용 proxy는 검증된 200 성공만 terminal cache에 저장한다. provider/transport/schema/rate-limit 실패는 다음 예약 실행이 같은 operation에서 재개한다. provider 호출 뒤 응답 저장 전에 runtime이 사라지는 극히 좁은 구간은 외부 provider와 Durable Object 사이 원자적 commit이 불가능하므로 중복 호출 가능성을 receipt에 드러내고, 자료를 버리거나 미완료를 성공으로 바꾸지 않는다.
+- 매칭되지 않거나 모호한 파일은 오류가 아니다. 현재 로컬 전사·맥락·후보 파이프라인을 그대로 실행하며, 잘못된 원격 자료를 자동 부착하는 것보다 느린 정상 분석을 선택한다.
+
 ## 다음 배포 후보 · 방송 등장인물 근거화 계약
 
 - 제품이 알고 있는 6인 카탈로그, 원본 채널 prior, 실제 대사·화면·목소리 관측은 서로 다른 자료다. 채널 주인과 닫힌 명단은 등장·발화 증거가 아니며 이름 언급도 발화자 증거가 아니다.
@@ -19,7 +38,7 @@
 - `decode-failed | transcription-failed | rate-limited`만 새 quota attempt로 자동 재시도한다. 정상 디코딩 뒤 발화가 없는 `no-audio`는 음성 없음이라는 완성된 음성 근거로 저장한다. 공급자 요청 전에 해당 source range를 `in-flight`와 영속 attempt ordinal로 먼저 저장하며, 탭이 이 사이 종료되면 새로고침은 이를 결과 불명으로 취급한다. 응답 도달 여부를 알 수 없는 `outcome-unknown`은 동일 lease transport replay로 먼저 확인한다. 무료 route는 미확정 operation을 durable terminal로 닫은 뒤 새 operation ID로 자동 복구하고, 유료 route만 편집자의 명시적 승인 전까지 새 operation을 만들지 않는다.
 - quota operation은 `uniform | event-boost | refinement` namespace와 영속 generation, stable source-range chunk ID를 모두 포함한다. 따라서 uniform의 terminal tombstone, 다음 event-boost, 자동 실패 복구, 새로고침 뒤 명시적 복구가 같은 operation ID를 재사용하지 않는다.
 - 다음 whole-context phase는 현재 run의 최종 `event-boost` operation key, transcript `completed`, chapter 1개 이상, 저장소 exact readback이 모두 일치할 때만 시작한다. 복구 가능한 조각이나 결과 불명 조각이 하나라도 남으면 transcript seal을 발급하지 않으며, 부분 지도를 완성된 방송 맥락으로 사용하지 않는다.
-- candidate ledger, whole-context cohort, paid-detail cohort, final projection은 서로 다른 집합이다. ledger는 발견된 후보를 모두 보존하고, whole-context는 protocol 상한 32개까지 판단하며, paid detail은 맥락 판정 뒤 최대 12개만 검토한다. 실행 예산 때문에 detail에 들어가지 않은 후보를 API 실패로 표시하지 않는다.
+- candidate ledger, whole-context cohort, paid-detail 실행 batch, final projection은 서로 다른 집합이다. ledger는 발견된 후보를 모두 보존하고 whole-context는 protocol 상한 32개씩 판단한다. 편집자가 제외하지 않은 후보는 모두 paid detail 대상이며, 한 번의 실행 batch만 최대 12개로 제한하고 다음 missing-only batch가 이어받는다. 실행 batch 밖에서 아직 기다리는 후보는 실패가 아니라 명시적인 대기 상태다.
 - 최종 후보 하나의 최소 단위는 `전체 방송 흐름 + source-fenced 앞뒤 맥락 + 참고 대사 + 후보 WAV + 서로 다른 JPEG 4장 + 그중 하나인 thumbnail + AI insight + 현재 context fingerprint receipt`다. 어느 하나라도 없으면 최종 후보가 아니며, 기존 점수나 사람의 과거 승인으로 이 gate를 우회하지 않는다.
 - candidate detail run은 후보별 독립 pipeline이다. 화면 bundle이 준비된 후보부터 최대 두 개가 AI로 진행하고, 실패한 후보만 gap으로 남는다. 이미 저장한 다른 후보의 유료 결과는 run envelope 오류나 새로고침 때문에 폐기·재결제하지 않는다.
 - 후보 insight는 IndexedDB 쓰기만으로 완료하지 않는다. 같은 run ID로 즉시 다시 읽어 메타데이터·대사 근거·모델·AI 해석·대표 thumbnail·계획 때 고정한 정확한 맥락 packet과 receipt가 모두 정확히 일치해야 durable artifact로 인정한다. 사건·반응·클립 가치 설명, 등장인물 상태와 근거, 최종 판정, 맥락 일치, 프로그램성 자료 판정 중 하나라도 비거나 서로 모순되면 완료 자료가 아니다. 이때 불완전 insight 객체의 존재만 보고 분석 완료로 착각하지 않고 해당 후보를 AI 재실행 대상으로 남긴다. 확인 실패 시 메모리 결과는 검토용으로만 남고 `deepPass/publication/completed`는 전진하지 않으며, 완전한 AI 결과의 저장만 실패한 경우에는 API를 다시 부르지 않는 저장 재시도를 제공한다.
@@ -120,7 +139,7 @@
 - 넓은 화면의 방송 지도는 `타임라인 2fr + 검토 도크 1fr`로 구성한다. 후보 marker·요약 카드를 누르는 동작은 영상을 해당 구간에 **일시정지 상태로 준비**하기만 하며, 준비 완료 뒤 편집자가 재생 버튼을 눌러야 소리가 난다. 영상은 타임라인과 같은 세로 위치에 고정해 후보 확인을 위해 아래로 스크롤하지 않게 한다.
 - 잠재 신호는 오디오·채팅·화면·융합 fast-pass의 **방송 내부 상대 강도**이며 clip 확률이나 최종 판정이 아니다. 희미한 장식 대신 종류별 색을 가진 높이 막대, 0~100 상대값, 설명과 선택 inspector를 제공한다. 데이터가 없으면 빈 상태를 명시한다.
 - 진행 패널은 현재 단계와 네 단계 지도를 한 행에 둔다. 각 단계는 최소 60px 높이, 30px 번호, 단계명과 현재 상태를 가진 독립 카드로 표시하고 900px 아래에서만 두 행/단일 열로 접는다.
-- 음악·MV·고정 오프닝·엔딩·중간 휴식은 전체 맥락 annotation이 `music-or-intermission`, `music-or-song`, `opening-ending-or-break` 중 하나로 판정하면 자동 후보와 유료 상세 큐에서 제외한다. 가사가 있거나 녹음된 스트리머 목소리가 들려도 화면이 독립 MV이고 현재 방송의 실시간 발화·상호작용이 없으면 같은 제외 규칙을 적용한다. 사용자가 이미 승인한 후보는 삭제하지 않고 경고 projection만 남긴다.
+- 음악·MV·고정 오프닝·엔딩·중간 휴식이라는 전체 맥락 annotation은 조기 삭제가 아니라 낮은 우선순위 가설이다. 편집자가 제외하지 않은 후보는 네 화면과 후보 오디오를 함께 보는 유료 상세 검증을 반드시 거치며, 상세 결과도 실시간 스트리머 사건이 없는 프로그램성 장면이라고 일치할 때만 최종 제외한다. 가사가 있거나 녹음된 스트리머 목소리가 들려도 독립 MV이고 현재 방송의 실시간 상호작용이 없으면 같은 최종 제외 규칙을 적용한다.
 - 모바일을 화면 폭으로 저성능 판정하지 않는다. 대표 화면 추출을 모든 후보에 대해 선행하지 않고, 작은 고정 pool에서 `대표 화면 준비 → 해당 후보 AI 요청`을 즉시 이어 보내 다음 후보의 화면 준비와 앞 후보의 원격 해석이 겹치게 한다. 원격 요청 동시성은 기기 UI와 분리하고, 로컬 디코더 수만 bounded한다.
 
 ## `0.3.42` 원본 확인과 타임라인 분석을 잇는 준비 작업대
@@ -147,7 +166,7 @@
 ## `0.3.40` 후보 원장과 실행 예산 분리·실제 분석 순서 UI
 
 - canonical Candidate Ledger의 후보 개수와 개별 기능의 실행 예산은 서로 다른 계약이다. 현재 탐색기는 빠른 후보와 최대 12개의 의미 후보를 합쳐 12개를 넘길 수 있다. 후보 수가 어떤 개별 AI·순위 기능의 상한을 넘었다는 이유로 원장을 자르거나 결과 화면을 실패시키지 않는다.
-- 후보 화면·오디오 세부 분석은 비용과 브라우저 자원을 위해 한 번에 최대 12개, 기존 전체 순위 projection도 최대 12개를 유지한다. 13개 이상이면 모든 후보를 시간순으로 보여 주되 전체 순위 재정렬만 사용할 수 없다고 설명한다. 승인·제외·경계 조정·개별 재생·다운로드는 그대로 사용할 수 있어야 한다.
+- 후보 화면·오디오 세부 분석은 비용과 브라우저 자원을 위해 한 실행 batch에 최대 12개, 기존 전체 순위 projection도 최대 12개를 유지한다. 13개 이상이면 다음 missing-only batch가 남은 후보를 이어서 검증하고, 모든 후보를 시간순으로 보여 주되 전체 순위 재정렬만 사용할 수 없다고 설명한다. 승인·제외·경계 조정·개별 재생·다운로드는 그대로 사용할 수 있어야 한다.
 - 자동 분석과 편집의 사용자 순서는 `빠른 탐색 → 방송 전체 맥락 → 맥락 기반 세부 검토 → 편집자 최종 선택`이다. 후보 카드가 일찍 나타나더라도 UI가 화면·대사 검토를 전체 맥락보다 먼저 끝낸 것처럼 표현하지 않는다. 1~3은 자동 단계, 4는 사람의 결정이며 각 단계는 `pending | active | complete | error`를 독립적으로 표시한다.
 - 전체 맥락에서 새 후보가 추가되면 이미 세부 근거가 저장된 후보는 다시 결제하지 않고, 아직 처리되지 않은 후보만 다음 bounded batch로 보낸다. 첫 batch가 진행 중이면 이를 취소하거나 덮어쓰지 않고 terminal 뒤 후속 batch를 시작한다.
 - 예상하지 못한 React 렌더 오류는 저장 상태를 건드리지 않는 최상위 복구 화면으로 격리한다. 새로고침 뒤 기존 분석 세션을 다시 여는 경로를 유지하며, 빈 흰 화면을 정상 실패 표현으로 사용하지 않는다.
@@ -187,7 +206,7 @@
 - 운영 Qwen Omni 전사는 60초와 90초에서 성공하고 120초와 180초에서 edge가 빈 500으로 실패한 실측을 기준으로, 요청 상한을 90초로 고정한다. duration 과금 합계는 바뀌지 않으며 최대 12시간의 표본 계획도 ASR `$0.42`, 전체 분석 `$1.00` 상한을 유지한다.
 - 균등 표본과 사건 주변 표본이 잘게 나뉘는 최악 조건을 포함해 Worker는 최대 240개 청크를 허용한다. 성공 청크는 결과가 도착할 때마다 source fence와 함께 저장하고, 새로고침·일시 장애 뒤에는 저장된 chapter 범위를 sampling window에서 빼서 uncovered range만 다시 전사한다.
 - 이전 210초 chapter는 버리지 않는다. 새 90초 셀과 섞이면 session revision을 `mixed-210s-90s`로 기록해 과거 결과를 새 모델 결과로 가장하지 않는다. 긴 음성 timeout은 이미 과금됐을 수 있으므로 다른 provider에 자동 재전송하지 않는다.
-- 후보 대표 화면은 최대 2개의 브라우저 디코더만 동시에 열고, 후보 AI 해석은 기존처럼 최대 2개씩 병렬로 유지한다. 화면이 없으면 화면 사건·게임·인물·인과 문장을 제거하는 audio-only 안전 projection으로 내려간다.
+- 후보 대표 화면은 최대 2개의 브라우저 디코더만 동시에 열고, 후보 AI 해석은 기존처럼 최대 2개씩 병렬로 유지한다. 서로 다른 source-fenced 화면 네 장이 모두 준비되지 않으면 AI 해석을 시작하지 않고 복구 가능한 화면 준비 gap으로 유지한다. 화면 없는 audio-only 결과를 현재 최종 후보 근거로 승격하지 않는다.
 - CHZZK replay 13996057에서 화면 이름·소개 대사로 검토한 `토로리 코코`, `세나 아르벨`, `망징이`, `유레카`, `아모레또`, `교수님`을 하나의 고정 roster ID로 제공한다. 이 ID는 선택 파일명에서 replay 번호 `13996057` 또는 검토한 `교환학생/합격생/장학생` 제목을 확인한 경우에만 붙여 다른 방송에 명단이 새지 않게 한다. 브라우저는 임의 설명문을 보내지 못하며 Worker가 기준을 확장한다. 같은 대표 화면의 서로 다른 외형 특징 두 가지 이상, confidence 0.88 이상일 때만 `provided-cast-reference`를 허용한다. 목록 밖 이름·머리색 하나·목소리 유사성은 거부하며 식별 결과는 카드 표시만 보강한다.
 - 압축 전체 맥락의 Qwen 3.7/3.6 tier 전환도 실패 유형을 먼저 분류한다. timeout·network/5xx·429·model unavailable·response-format·invalid-response만 한 번의 tier 전환을 허용하며, auth·invalid shared argument·explicit rejection은 같은 credential/contract로 재과금하지 않는다.
 
@@ -197,11 +216,11 @@
 - 후보 route revision은 v3로 올리되, 이미 비용을 낸 Gemini 3.5 Flash 결과와 v2 route snapshot은 실제 모델 귀속을 유지한 채 복구한다. 후보 폴백만 바뀌었으므로 Qwen 전체 맥락 cache revision은 `1.6.0`으로 유지한다.
 - 배포 Secret이 런타임에서 실제로 준비되지 않았으면 Gemini 경로는 fail-closed다. Qwen 기본 분석과 저장 결과는 계속 사용할 수 있으며, 키 재주입과 실제 음식 토크 화면·오디오 smoke 전에는 Gemini를 기본 provider로 승격하지 않는다.
 - 후보 provider 전환은 실패 유형별로 제한한다. timeout·네트워크/5xx·429·인증·모델 없음·응답 형식·비정상 응답은 한 번의 대체 provider를 허용하지만, 공통 요청 인자 오류와 provider의 명시적 거절은 같은 요청을 다른 유료 모델에 반복하지 않는다.
-- 전체 맥락 AI는 후보를 삭제하지 않고 우선순위 projection만 소유한다. 낮은 우선순위와 명시적 음악 후보는 기본 유료 상세 분석 queue에서 빠지지만 canonical ledger와 사용자 승인·제외·경계 revision은 유지한다.
+- 전체 맥락 AI는 후보를 삭제하지 않고 우선순위 projection만 소유한다. 낮은 우선순위와 명시적 음악 후보도 편집자가 제외하지 않았다면 유료 상세 분석 queue에 남아 화면·오디오로 가설을 검증한다. canonical ledger와 사용자 승인·제외·경계 revision은 항상 유지한다.
 
 ## `0.3.33` context-first editorial routing
 
-- 빠른 신호 reservoir를 곧바로 정밀 영상 모델에 보내지 않는다. 먼저 공개 자막 또는 예산 제한 전사 지도를 완성하고, 전체 맥락 모델이 음악·오프닝·엔딩·휴식과 사건 없는 진행을 제거한 뒤 살아남은 후보만 최대 12개 정밀 해석한다.
+- 빠른 신호 reservoir를 곧바로 정밀 영상 모델에 보내지 않는다. 먼저 공개 자막 또는 예산 제한 전사 지도를 완성하고, 전체 맥락 모델이 음악·오프닝·엔딩·휴식과 사건 없는 진행이라는 가설 및 우선순위를 만든다. 그 뒤 편집자가 제외하지 않은 후보를 최대 12개씩 나눠 모두 정밀 해석하며, 최종 제외는 화면·오디오 상세 결과가 맥락 가설과 일치할 때만 확정한다.
 - 공개 자막이 있으면 후보의 정확한 30~60초 범위와 겹치는 이벤트만 입력한다. `[음악]` 표기만 있고 한국어 발화가 없는 구간은 모델 판단과 별개로 ineligible이며, 주변 2분 챕터의 대사가 음악 후보를 살리지 못한다.
 - 전체 맥락의 `discoveredLeads`는 최종 클립이 아니라 고회수 라우팅 결과다. Qwen3.6 Flash가 시간순 주제 조각을 훑어 최대 24개를 모으고 Qwen3.7 Plus가 서로 비교해 최종 editorial jury를 수행한다. 자막이 있으면 jury 상위 3개와 인접 맥락 reserve 3개의 전체 범위를 30초 칸으로 무료 재검토한다. 정밀 영상·음성 검증과 최종 선택 게이트가 false positive를 다시 제거한다.
 - 타임라인은 동일 source-time 축에 30분 눈금, 잠재 신호, 시간순 후보 번호, 주제 구간, 의미 단서를 분리된 레이어로 보여 준다. 의미 단서 번호와 종류별 색은 접을 수 있는 사건·시각·종류·확신 목록과 일치한다.
@@ -223,7 +242,7 @@
 
 The working assumption for the clip page is a maximized desktop window. The top of the page therefore uses a wide two-column workspace: source input and an always-visible readiness summary. The primary analysis action is placed immediately below that row so a beginner does not have to scroll to start.
 
-The analysis pipeline is phased: fast local audio/visual/chat signals scan the full source (up to 12 hours) and produce a broad reservoir of 30–60 second leads. Event Episode grouping removes fragments of the same moment before a context-aware selector forms a bounded reservoir. The complete caption/transcript map is prepared next, and Qwen3.7 Plus rejects fast peaks without a grounded event while discovering quieter semantic leads. Only context-surviving candidates are sent with audio and timestamp-labelled representative frames to Qwen3.5 Omni Flash. Broad semantic leads use free 30-second caption cells when available or bounded one-minute ASR cells otherwise. A whole-broadcast judgment may select, defer, or reject every candidate; zero final clips is valid for a negative stream.
+The analysis pipeline is phased: fast local audio/visual/chat signals scan the full source (up to 12 hours) and produce a broad reservoir of 30–60 second leads. Event Episode grouping removes fragments of the same moment before a context-aware selector forms a bounded reservoir. The complete caption/transcript map is prepared next, and Qwen3.7 Plus assigns grounded context priorities while discovering quieter semantic leads. Every candidate not explicitly rejected by the editor is then sent, in bounded missing-only batches, with audio and four timestamp-labelled representative frames to Qwen3.5 Omni Flash. A context-negative hypothesis becomes a final exclusion only when this multimodal result agrees that it is not a live streamer event. Broad semantic leads use free 30-second caption cells when available or bounded one-minute ASR cells otherwise. Zero final clips remains valid after every required candidate reaches a complete judgement.
 
 The fast pass includes a conservative dialogue-led signal. A novel speech-band and articulation change can become a candidate even without a loudness spike. It is a review lead, not semantic understanding; multimodal AI and playback confirmation remain authoritative.
 
@@ -235,7 +254,7 @@ Whole-broadcast context has an independent hard allocation. A matching public Yo
 
 ### YouTube script boundary
 
-A bracketed YouTube ID in the selected source filename identifies a matching public video. ExClipper first tries the public Android player caption track through the Worker with fixed-host and response-size validation. Public caption availability is not guaranteed: YouTube 403/429, a missing Korean track, or malformed timedtext falls through to Qwen audio transcription without blocking analysis.
+A bracketed YouTube ID in the selected source filename identifies a matching public video. ExClipper first opens a hidden `sandbox="allow-scripts"` frame without `allow-same-origin`; that opaque frame can request the public Android player and timedtext track from the editor's network while the parent validates the exact video ID, Korean language, bounded JSON3 schema, and event limits. The frame receives no source file, AI credential, storage access, or analysis state. A sandbox/CORS/network failure or one Android surface reporting no Korean track falls through to the fixed Worker proxy and then bounded Qwen audio transcription; one surface alone never proves global caption absence or blocks analysis.
 
 ### `0.3.26` 편집자 중심 작업공간
 

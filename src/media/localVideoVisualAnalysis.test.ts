@@ -6,6 +6,8 @@ import {
   VISUAL_FINGERPRINT_SIZE,
   analyzeLocalVideoVisuals,
   buildVisualSampleTimestamps,
+  eraseLocalVideoLumaSamples,
+  sampleLocalVideoLumaFrames,
   selectVisualHighlightsFromSamples,
   type LocalVideoVisualAnalysisAdapters,
   type LocalVideoVisualCanvas,
@@ -538,5 +540,45 @@ describe("analyzeLocalVideoVisuals browser sampler", () => {
     expect(harness.calls).toContain("video:remove");
     expect(harness.calls).toContain("canvas:remove");
     expect(harness.calls).toContain("url:revoke:blob:visual-analysis");
+  });
+});
+
+describe("explicit local luma sampling", () => {
+  it("captures only the requested timestamps and lets the caller erase them", async () => {
+    const harness = createVisualHarness();
+
+    const result = await sampleLocalVideoLumaFrames(
+      fakeVideoFile(),
+      [10_000, 60_000, 110_000],
+      { adapters: harness.adapters },
+    );
+
+    expect(result.sourceDurationMs).toBe(120_000);
+    expect(result.samples.map(({ timestampMs }) => timestampMs)).toEqual([
+      10_000,
+      60_000,
+      110_000,
+    ]);
+    expect(result.samples[0]?.luma[0]).toBe(20);
+    expect(result.samples[1]?.luma[0]).toBe(235);
+    expectFullResourceCleanup(harness);
+
+    eraseLocalVideoLumaSamples(result.samples);
+    expect(result.samples.every(({ luma }) => luma.every((value) => value === 0)))
+      .toBe(true);
+  });
+
+  it("rejects an out-of-range sample and erases captured luma before failing", async () => {
+    const harness = createVisualHarness();
+
+    await expect(
+      sampleLocalVideoLumaFrames(
+        fakeVideoFile(),
+        [10_000, 120_000],
+        { adapters: harness.adapters },
+      ),
+    ).rejects.toMatchObject({ code: "INVALID_SAMPLE_PLAN" });
+    expect(harness.calls.filter((call) => call.startsWith("capture:"))).toHaveLength(0);
+    expectFullResourceCleanup(harness);
   });
 });

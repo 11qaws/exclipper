@@ -1,5 +1,6 @@
 export interface CandidateVerificationIdentity {
   readonly id: string;
+  readonly reviewState?: "unreviewed" | "approved" | "rejected";
 }
 
 export interface CandidateVerificationCohortInput<
@@ -26,6 +27,9 @@ export function selectCandidateVerificationCohort<
   input: CandidateVerificationCohortInput<TCandidate>,
 ): readonly TCandidate[] {
   return input.candidates.filter((candidate) => {
+    if (candidate.reviewState === "rejected") {
+      return false;
+    }
     if (
       input.contextExcludedCandidateIds.has(candidate.id) ||
       input.detailScheduledCandidateIds.has(candidate.id)

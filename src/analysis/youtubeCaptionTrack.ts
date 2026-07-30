@@ -12,7 +12,7 @@ export const YOUTUBE_VIDEO_ID_PATTERN = /^[A-Za-z0-9_-]{11}$/u;
 export const MAX_YOUTUBE_CAPTION_EVENTS = 120_000;
 export const MAX_YOUTUBE_CAPTION_EVENT_TEXT_LENGTH = 500;
 export const YOUTUBE_CAPTION_MODEL_REVISION =
-  "youtube-korean-caption-json3-android-player-2026-07-22" as const;
+  "youtube-korean-caption-json3-sandbox-first-2026-07-30" as const;
 const MAX_CAPTION_TIME_MS = 12 * 60 * 60_000;
 
 export interface YouTubeCaptionTrackReference {

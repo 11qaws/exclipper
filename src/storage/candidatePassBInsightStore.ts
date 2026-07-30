@@ -34,6 +34,11 @@ export const CANDIDATE_PASS_B_INSIGHT_SCHEMA_VERSION = "4.0.0" as const;
 export type CandidatePassBInsightSchemaVersion =
   typeof CANDIDATE_PASS_B_INSIGHT_SCHEMA_VERSION;
 export const CANDIDATE_PASS_B_PLAN_RECEIPT_SCHEMA_VERSION = "1.0.0" as const;
+/**
+ * The durable plan covers the whole fast-pass reservoir. Provider execution
+ * remains bounded separately to 12 candidates per batch.
+ */
+export const CANDIDATE_PASS_B_PLAN_MAX_CANDIDATES = 96 as const;
 
 export interface StoredCandidatePassBInsight {
   readonly eventSummaryKo: string;
@@ -131,6 +136,7 @@ export async function createCandidatePassBPlanReceipt(input: {
     input.runId.trim().length === 0 ||
     input.inputSignature.trim().length === 0 ||
     input.contextInputSignature.trim().length === 0 ||
+    plannedCandidateIds.length > CANDIDATE_PASS_B_PLAN_MAX_CANDIDATES ||
     plannedCandidateIds.some((candidateId) => candidateId.trim().length === 0) ||
     new Set(plannedCandidateIds).size !== plannedCandidateIds.length ||
     contextCandidateIds.length !== plannedCandidateIds.length ||
@@ -380,7 +386,7 @@ function isCandidatePassBPlanReceipt(
         512,
       )) &&
     Array.isArray(value.plannedCandidateIds) &&
-    value.plannedCandidateIds.length <= 12 &&
+    value.plannedCandidateIds.length <= CANDIDATE_PASS_B_PLAN_MAX_CANDIDATES &&
     value.plannedCandidateIds.every((candidateId) =>
       isNonEmptyBoundedString(candidateId, 256),
     ) &&

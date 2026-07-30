@@ -9,6 +9,19 @@ const allCandidateIds = new Set(candidates.map(({ id }) => id));
 const paidDetailIds = new Set(candidates.slice(0, 12).map(({ id }) => id));
 
 describe("selectCandidateVerificationCohort", () => {
+  it("does not require AI verification after an explicit editor rejection", () => {
+    const rejected = { id: "rejected", reviewState: "rejected" as const };
+    expect(
+      selectCandidateVerificationCohort({
+        candidates: [rejected],
+        contextScheduledCandidateIds: new Set([rejected.id]),
+        contextExcludedCandidateIds: new Set([rejected.id]),
+        detailScheduledCandidateIds: new Set(),
+        contextByCandidateId: {},
+      }),
+    ).toEqual([]);
+  });
+
   it("does not drop context-qualified candidates outside one detail batch", () => {
     const contextByCandidateId = Object.fromEntries(
       candidates.map(({ id }) => [id, { context: true }]),

@@ -380,7 +380,7 @@ function maximumMultibyteCandidateContext(): CandidatePassBContextPacket {
     MAX_CANDIDATE_PASS_B_CONTEXT_TEXT_LENGTH,
   );
   return {
-    schemaVersion: "1.0.0",
+    schemaVersion: "2.0.0",
     transcriptSource: "broadcast-transcript",
     transcriptKo: maximumField,
     beforeContextKo: maximumField,

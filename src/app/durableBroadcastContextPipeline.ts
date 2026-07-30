@@ -32,9 +32,15 @@ import { rebaseBroadcastParticipantGrounding } from "../analysis/broadcastPartic
 import {
   createBroadcastContextRequest,
   isFinalBroadcastContextResult,
+  MAX_BROADCAST_CONTEXT_CANDIDATES,
   type BroadcastContextRequestInput,
   type BroadcastContextResult,
 } from "../analysis/broadcastContextProtocol";
+import {
+  validateChannelPreanalysisContextSeed,
+  type ChannelPreanalysisContextSeed,
+  type ChannelPreanalysisTrustedSourceIdentity,
+} from "../analysis/channelPreanalysisContextSeed";
 import {
   createBroadcastTopicalLeadJuryPlan,
   createParallelBroadcastTopicalDiscoverySlices,
@@ -81,19 +87,32 @@ export type DurableBroadcastContextRetryMode =
   | "automatic-free-tier"
   | "editor-approved-paid";
 
-interface DiscoveryUnitRequest {
-  readonly input: BroadcastContextRequestInput;
-  readonly analysisMode: Extract<
-    BroadcastContextAnalysisMode,
-    "overview" | "discovery"
-  >;
-}
+type DiscoveryUnitRequest =
+  | {
+      readonly kind: "provider";
+      readonly input: BroadcastContextRequestInput;
+      readonly analysisMode: Extract<
+        BroadcastContextAnalysisMode,
+        "overview" | "discovery"
+      >;
+    }
+  | {
+      readonly kind: "precomputed-global-seed";
+      readonly input: BroadcastContextRequestInput;
+      readonly result: BroadcastContextResult;
+      readonly seedSchemaVersion: ChannelPreanalysisContextSeed["schemaVersion"];
+      readonly seedFingerprint: string;
+      readonly sourceIdentity: ChannelPreanalysisContextSeed["sourceIdentity"];
+      readonly provenance: ChannelPreanalysisContextSeed["provenance"];
+    };
 
 interface JuryRuntime {
   readonly input: BroadcastContextRequestInput | null;
   readonly inputDigest: string;
   readonly result: BroadcastContextResult;
   readonly plan: ReturnType<typeof createBroadcastTopicalLeadJuryPlan>;
+  readonly importedGlobalSeed: boolean;
+  readonly currentCandidateIds: ReadonlySet<string>;
 }
 
 export interface DurableBroadcastContextPipelineInput {
@@ -108,6 +127,19 @@ export interface DurableBroadcastContextPipelineInput {
   readonly operationGeneration: number;
   readonly retryMode: DurableBroadcastContextRetryMode;
   readonly signal: AbortSignal;
+  /**
+   * Optional transcript-only whole-broadcast map from the verified channel
+   * catalog. It may replace overview/discovery provider calls, but can never
+   * replace the current-candidate jury.
+   */
+  readonly precomputedGlobalContextSeed?: ChannelPreanalysisContextSeed | null;
+  /**
+   * Independent identity assertion from the App's exact local-file/catalog
+   * match. Supplying a bundle object alone is never enough to import it.
+   */
+  readonly trustedPrecomputedSourceIdentity?:
+    | ChannelPreanalysisTrustedSourceIdentity
+    | null;
   readonly request?: ContextRequest;
   readonly fingerprint?: ContextFingerprint;
   /**
@@ -337,6 +369,32 @@ function juryAbstentionIsValid(value: unknown): boolean {
   );
 }
 
+function storedLedgerCanUsePrecomputedGlobalSeed(
+  ledgerJson: string | null,
+): boolean {
+  if (ledgerJson === null) return true;
+  const ledger = parseBroadcastContextPhaseLedgerJson(ledgerJson);
+  if (ledger === null) return false;
+  const discoveryUnits = ledger.units.filter(
+    ({ phase }) => phase === "discovery",
+  );
+  const overview = discoveryUnits.find(
+    ({ unitId }) => unitId === "overview",
+  );
+  return (
+    discoveryUnits.length === 1 &&
+    overview !== undefined &&
+    (
+      overview.operationId.startsWith("context-import-global-") ||
+      (
+        overview.status === "succeeded" &&
+        overview.modelReceipt?.executionSource ===
+          "precomputed-global-seed"
+      )
+    )
+  );
+}
+
 export async function runDurableBroadcastContextPipeline(
   options: DurableBroadcastContextPipelineInput,
 ): Promise<DurableBroadcastContextPipelineResult> {
@@ -356,24 +414,65 @@ export async function runDurableBroadcastContextPipeline(
       "The durable participant pre-context plan, receipts, and grounding must be replayed before context analysis.",
     );
   }
+  const suppliedPrecomputedGlobalSeed =
+    storedLedgerCanUsePrecomputedGlobalSeed(
+      options.initialSession.contextPhaseLedgerJson,
+    )
+      ? options.precomputedGlobalContextSeed ?? null
+      : null;
+  const validatedPrecomputedGlobalResult =
+    suppliedPrecomputedGlobalSeed === null
+      ? null
+      : await validateChannelPreanalysisContextSeed(
+          suppliedPrecomputedGlobalSeed,
+          options.contextInput,
+          options.trustedPrecomputedSourceIdentity ?? null,
+          fingerprint,
+        );
+  const importedGlobalSeed =
+    validatedPrecomputedGlobalResult === null ||
+    suppliedPrecomputedGlobalSeed === null
+      ? null
+      : {
+          result: validatedPrecomputedGlobalResult,
+          seedSchemaVersion: suppliedPrecomputedGlobalSeed.schemaVersion,
+          seedFingerprint: suppliedPrecomputedGlobalSeed.seedFingerprint,
+          sourceIdentity: suppliedPrecomputedGlobalSeed.sourceIdentity,
+          provenance: suppliedPrecomputedGlobalSeed.provenance,
+        };
   const overviewInput: BroadcastContextRequestInput = {
     sourceDurationMs: canonicalOverview.sourceDurationMs,
     chapters: canonicalOverview.chapters,
-    candidates: canonicalOverview.candidates,
+    candidates:
+      importedGlobalSeed === null ? canonicalOverview.candidates : [],
     castRosterId: canonicalOverview.castRosterId,
     participantGrounding: canonicalOverview.participantGrounding,
     outputLanguage: canonicalOverview.outputLanguage,
   };
-  const discoverySlices = createParallelBroadcastTopicalDiscoverySlices(
-    canonicalOverview.chapters,
-  );
+  const discoverySlices =
+    importedGlobalSeed === null
+      ? createParallelBroadcastTopicalDiscoverySlices(
+          canonicalOverview.chapters,
+        )
+      : [];
   const discoveryRequestByUnitId = new Map<string, DiscoveryUnitRequest>([
     [
       "overview",
-      {
-        input: overviewInput,
-        analysisMode: "overview",
-      },
+      importedGlobalSeed === null
+        ? {
+            kind: "provider",
+            input: overviewInput,
+            analysisMode: "overview",
+          }
+        : {
+            kind: "precomputed-global-seed",
+            input: overviewInput,
+            result: importedGlobalSeed.result,
+            seedSchemaVersion: importedGlobalSeed.seedSchemaVersion,
+            seedFingerprint: importedGlobalSeed.seedFingerprint,
+            sourceIdentity: importedGlobalSeed.sourceIdentity,
+            provenance: importedGlobalSeed.provenance,
+          },
     ],
   ]);
   discoverySlices.forEach((slice, index) => {
@@ -396,6 +495,7 @@ export async function runDurableBroadcastContextPipeline(
       );
     }
     discoveryRequestByUnitId.set(`slice-${index}`, {
+      kind: "provider",
       input: {
         sourceDurationMs: canonicalOverview.sourceDurationMs,
         chapters: slice.chapters,
@@ -423,12 +523,24 @@ export async function runDurableBroadcastContextPipeline(
       async ([unitId, unitRequest], index) => ({
         phase: "discovery" as const,
         unitId,
-        inputDigest: await requestInputDigest(
-          unitRequest.analysisMode,
-          unitRequest.input,
-        ),
+        inputDigest:
+          unitRequest.kind === "provider"
+            ? await requestInputDigest(
+                unitRequest.analysisMode,
+                unitRequest.input,
+              )
+            : await fingerprint([
+                BROADCAST_CONTEXT_UNIT_INPUT_FINGERPRINT_DOMAIN,
+                "precomputed-global-seed",
+                unitRequest.seedFingerprint,
+                JSON.stringify(
+                  createBroadcastContextRequest(unitRequest.input),
+                ),
+              ]),
         operationId:
-          `context-discovery-${index}-g${options.operationGeneration}`,
+          unitRequest.kind === "provider"
+            ? `context-discovery-${index}-g${options.operationGeneration}`
+            : `context-import-global-g${options.operationGeneration}`,
         attemptOrdinal: 0,
         required: true,
       }),
@@ -636,7 +748,30 @@ export async function runDurableBroadcastContextPipeline(
       result.discoveredLeads,
       canonicalOverview.participantGrounding,
     );
-    if (plan.candidates.length === 0) {
+    const currentCandidateIds = new Set(
+      canonicalOverview.candidates.map(({ candidateId }) => candidateId),
+    );
+    const usingImportedGlobalSeed =
+      discoveryRequestByUnitId.get("overview")?.kind ===
+      "precomputed-global-seed";
+    const juryCandidates = usingImportedGlobalSeed
+      ? [
+          ...canonicalOverview.candidates,
+          ...plan.candidates
+            .filter(
+              ({ candidateId }) => !currentCandidateIds.has(candidateId),
+            )
+            .slice(
+              0,
+              Math.max(
+                0,
+                MAX_BROADCAST_CONTEXT_CANDIDATES -
+                  canonicalOverview.candidates.length,
+              ),
+            ),
+        ]
+      : plan.candidates;
+    if (juryCandidates.length === 0) {
       return {
         input: null,
         inputDigest: await fingerprint([
@@ -647,6 +782,8 @@ export async function runDurableBroadcastContextPipeline(
         ]),
         result,
         plan,
+        importedGlobalSeed: usingImportedGlobalSeed,
+        currentCandidateIds,
       };
     }
     if (plan.chapters.length === 0) {
@@ -675,7 +812,7 @@ export async function runDurableBroadcastContextPipeline(
     const input: BroadcastContextRequestInput = {
       sourceDurationMs: canonicalOverview.sourceDurationMs,
       chapters: plan.chapters,
-      candidates: plan.candidates,
+      candidates: juryCandidates,
       castRosterId: canonicalOverview.castRosterId,
       participantGrounding: projectedGrounding,
       outputLanguage: canonicalOverview.outputLanguage,
@@ -685,6 +822,8 @@ export async function runDurableBroadcastContextPipeline(
       inputDigest: await requestInputDigest("selection", input),
       result,
       plan,
+      importedGlobalSeed: usingImportedGlobalSeed,
+      currentCandidateIds,
     };
   };
 
@@ -713,8 +852,12 @@ export async function runDurableBroadcastContextPipeline(
     inputDigest: string,
     result: BroadcastContextPhaseLedgerJsonValue,
     parentContextResult?: BroadcastContextResult,
+    metadata: Readonly<
+      Record<string, BroadcastContextPhaseLedgerJsonValue>
+    > = {},
   ) => ({
     analysisMode,
+    ...metadata,
     resultFingerprint: await fingerprint([
       BROADCAST_CONTEXT_UNIT_RESULT_FINGERPRINT_DOMAIN,
       inputDigest,
@@ -747,6 +890,37 @@ export async function runDurableBroadcastContextPipeline(
           "The discovery unit is not part of the current context plan.",
         );
       }
+      if (unitRequest.kind === "precomputed-global-seed") {
+        const ledgerResult = asLedgerJsonValue(unitRequest.result);
+        return {
+          result: ledgerResult,
+          modelReceipt: await resultModelReceipt(
+            "overview",
+            identity.inputDigest,
+            ledgerResult,
+            undefined,
+            {
+              executionSource: "precomputed-global-seed",
+              seedSchemaVersion: unitRequest.seedSchemaVersion,
+              contextResultSchemaVersion:
+                unitRequest.result.schemaVersion,
+              seedFingerprint: unitRequest.seedFingerprint,
+              sourceVideoId: unitRequest.sourceIdentity.videoId,
+              sourceTranscriptDigest:
+                unitRequest.sourceIdentity.transcriptDigest,
+              sourceArtifactDigest:
+                unitRequest.sourceIdentity.artifactDigest,
+              seedGeneratedAt: unitRequest.provenance.generatedAt,
+              modelRoutingRevision:
+                unitRequest.provenance.modelRoutingRevision,
+              evidenceScope: unitRequest.provenance.evidenceScope,
+              localVisualVerificationRequired:
+                unitRequest.provenance.localVisualVerificationRequired,
+              localJuryRequired: true,
+            },
+          ),
+        };
+      }
       const result = await request(unitRequest.input, {
         signal: options.signal,
         analysisMode: unitRequest.analysisMode,
@@ -763,6 +937,8 @@ export async function runDurableBroadcastContextPipeline(
           unitRequest.analysisMode,
           identity.inputDigest,
           ledgerResult,
+          undefined,
+          { executionSource: "provider-discovery" },
         ),
       };
     }
@@ -797,6 +973,11 @@ export async function runDurableBroadcastContextPipeline(
           identity.inputDigest,
           ledgerResult,
           juryRuntime.result,
+          {
+            executionSource: juryRuntime.importedGlobalSeed
+              ? "local-jury-abstention-after-import"
+              : "local-jury-abstention",
+          },
         ),
       };
     }
@@ -817,6 +998,12 @@ export async function runDurableBroadcastContextPipeline(
         identity.inputDigest,
         ledgerResult,
         juryRuntime.result,
+        {
+          executionSource: juryRuntime.importedGlobalSeed
+            ? "provider-local-selection-jury-after-import"
+            : "provider-selection-jury",
+          currentCandidateCount: juryRuntime.currentCandidateIds.size,
+        },
       ),
     };
   };
@@ -1026,6 +1213,7 @@ export async function runDurableBroadcastContextPipeline(
   const juryPayload = successfulUnitResult(activeLedger, "jury", "selection");
   let refinementLeadIds: readonly string[];
   let fastRefinementLeadIds: readonly string[];
+  let finalResult = juryRuntime.result;
   if (juryRuntime.input === null) {
     if (!juryAbstentionIsValid(juryPayload)) {
       throw new Error("후보 없음 판정의 저장 영수증이 올바르지 않아요.");
@@ -1054,10 +1242,39 @@ export async function runDurableBroadcastContextPipeline(
       juryRuntime.plan,
       juryResult.annotations,
     ).filter((leadId) => refinementLeadIdSet.has(leadId));
+    if (juryRuntime.importedGlobalSeed) {
+      const localCandidateAnnotations = juryResult.annotations
+        .filter(({ candidateId }) =>
+          juryRuntime.currentCandidateIds.has(candidateId),
+        )
+        .map((annotation) => ({
+          ...annotation,
+          relatedCandidateIds: annotation.relatedCandidateIds.filter(
+            (candidateId) =>
+              juryRuntime.currentCandidateIds.has(candidateId),
+          ),
+        }));
+      const locallyJudgedResult = parseBroadcastContextProxyResult(
+        {
+          ...juryRuntime.result,
+          annotations: localCandidateAnnotations,
+        },
+        canonicalOverview,
+      );
+      if (
+        locallyJudgedResult === null ||
+        !isFinalBroadcastContextResult(locallyJudgedResult)
+      ) {
+        throw new BroadcastContextLocalContractError(
+          "The imported broadcast map could not be joined to the complete local candidate jury.",
+        );
+      }
+      finalResult = locallyJudgedResult;
+    }
   }
 
   return {
-    result: juryRuntime.result,
+    result: finalResult,
     refinementLeadIds,
     fastRefinementLeadIds,
     ledger: activeLedger,

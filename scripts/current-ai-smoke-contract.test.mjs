@@ -9,6 +9,7 @@ import {
   runCandidateSmoke,
   runContextSmoke,
   runTranscriptSmoke,
+  runWithQuota,
   sha256Digest,
   TRANSCRIPT_RESOLVE_CONTENT_TYPE,
   TRANSCRIPT_ROUTE_HEADER,
@@ -41,6 +42,20 @@ function grantedQuota() {
     activeParticipantCount: 1,
     poolInFlightCount: 1,
   });
+}
+
+function capacityFullQuota() {
+  return jsonResponse(
+    {
+      schemaVersion: "1.0.0",
+      status: "capacity-full",
+      retryAfterMs: 125,
+      activeParticipantCount: 5,
+      poolInFlightCount: 6,
+    },
+    429,
+    { "Retry-After": "1" },
+  );
 }
 
 function currentHealth() {
@@ -250,6 +265,35 @@ test("transcript smoke retains the staged ticket across an explicit 429 retry", 
   assert.notEqual(operationIds[0], operationIds[1]);
   assert.match(operationIds[0], /\.attempt-0$/u);
   assert.match(operationIds[1], /\.attempt-1$/u);
+});
+
+test("smoke quota waits through an HTTP 429 capacity-full response", async () => {
+  let quotaCount = 0;
+  const waits = [];
+  const fetchImplementation = async (input) => {
+    const url = new URL(urlString(input));
+    if (url.pathname !== "/v1/ai-quota") {
+      throw new Error(`Unexpected request: ${url}`);
+    }
+    quotaCount += 1;
+    return quotaCount === 1 ? capacityFullQuota() : grantedQuota();
+  };
+
+  const response = await runWithQuota({
+    proxyOrigin: TEST_ORIGIN,
+    pool: "candidate",
+    payload: JSON.stringify({ smoke: true }),
+    identity: IDENTITY,
+    fetchImplementation,
+    sleep: async (delayMs) => {
+      waits.push(delayMs);
+    },
+    execute: async () => jsonResponse({ ok: true }),
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(quotaCount, 2);
+  assert.deepEqual(waits, [125]);
 });
 
 test("context smoke sends the current sealed grounding through context quota", async () => {

@@ -275,7 +275,7 @@ describe("runDurableAnalysisPipelineCertification", () => {
     expect(store.getCandidatePassBInsights).toHaveBeenCalledTimes(2);
   });
 
-  it("certifies a durably reopened exact empty Candidate Pass B plan", async () => {
+  it("certifies a durably reopened editor-rejected empty Candidate Pass B plan", async () => {
     const fixture = await createAnalysisPipelineIntentionalEmptyFixture();
 
     const result = await runDurableAnalysisPipelineCertification(

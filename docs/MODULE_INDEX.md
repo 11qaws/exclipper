@@ -52,6 +52,22 @@
 | 파일 | 실제 책임 |
 |---|---|
 | `analysis/broadcastTranscriptQwen.ts` | 이름과 달리 방송 전사의 provider-neutral 계약이다. Qwen·Gemini·Groq 요청/응답 검증, model ID/revision, 공통 `BroadcastTranscriptQwenResult`를 소유한다. Groq는 서버가 만든 URL 또는 bounded WAV만 받고 한국어·segment timestamp를 검증한다. |
+| `analysis/youtubeCaptionSandbox.ts` | opaque iframe의 수명·nonce/request ID·postMessage source fence와 JSON3 재검증을 소유한다. 자막 transport의 순서는 이 모듈 뒤 `youtubeCaptionClient.ts`의 Worker fallback으로 이어진다. |
+| `public/youtube-caption-sandbox.html` | source file·저장소·credential에 접근하지 않는 `allow-scripts` 전용 iframe 실행부다. Android player와 timedtext만 fixed-host로 읽고 bounded 원문을 부모 검증기로 돌려준다. |
+| `analysis/channelPreanalysisCatalog.ts` | 고정 아모레또 YouTube 채널 feed, 원격 영상 생애주기, exact/probable 로컬 identity 매칭 규칙을 소유한다. sampled SHA는 등록된 동일 파일끼리만 비교한다. |
+| `analysis/channelPreanalysisBundle.ts` | 공개 자막·연속 챕터·선분석 맥락을 담는 provider-neutral bundle 스키마와 transcript SHA-256 검증을 소유한다. 예약 맥락의 자막 전용 evidence scope, 로컬 visual 검증 필요 여부와 proxy contract·routing·실제 model ID/revision의 bounded `contextReceipt`도 보존한다. |
+| `analysis/channelPreanalysisClient.ts` | raw catalog branch → Pages fallback, revision별 immutable bundle·시각 지문 artifact의 bounded fetch와 manifest-bound SHA-256 readback을 소유한다. 단일 후보뿐 아니라 최대 12개 duration cohort도 한 snapshot에서 읽으며 exact identity와 bundle 가용성은 별도 결과다. |
+| `analysis/channelPreanalysisVisualFingerprint.ts` | 원격 12-anchor 화면 지문 schema, 32×18 luma에서의 dHash/blockHash·밝기·edge 비교, 3등분 coverage, 유일 합의와 단일 후보 bounded offset 복구를 소유한다. 오디오 landmark는 이 모듈의 현재 계약이 아니다. |
+| `analysis/channelPreanalysisBundleBinding.ts` | 현재 로컬 source 지문, 실제로 검증해 읽은 bundle bytes, manifest의 exact artifact ID·SHA-256을 하나의 원자적 receipt로 묶는다. manifest가 바뀌거나 병렬 lookup 자료가 섞이면 자막·맥락 seed 사용을 거부한다. |
+| `analysis/channelPreanalysisLocalBinding.ts` | 편집자가 확인한 로컬 sampled-file 지문과 아모레또 YouTube 영상 ID의 브라우저 내 exact 연결을 소유한다. 손상 자료는 신뢰하지 않으며 최근 256개만 유지한다. |
+| `analysis/channelPreanalysisTrust.ts` | 명시 URL, 등록 로컬 지문, 편집자 확인, `visual-fingerprint-consensus`, 파일명 단서의 우선순위와 원격/로컬 시간축 compatibility를 분리해 roster·caption·bundle 사용 권한을 결정한다. |
+| `analysis/channelPreanalysisContextSeed.ts` | 검증된 자막 기반 전체 맥락을 현재 로컬 챕터 시간축에 재매핑한다. exact source identity와 provenance가 없거나 coverage gap을 건너면 거부하며 후보 annotation은 가져오지 않는다. |
+| `app/channelPreanalysisVisualIdentity.ts` | App의 로컬 영상 화면 검증 orchestration이다. 단일 probable 후보 또는 이름이 완전히 바뀐 duration cohort의 공통 sampling plan을 한 번 실행하고, 유일한 합의일 때만 snapshot-bound exact lookup을 반환한다. |
+| `media/localVideoVisualAnalysis.ts` | 로컬 파일의 지정 source 시각을 seek·decode하고 원본 pixel buffer를 남기지 않는 고정 32×18 luma 표본으로 축소한다. 표본은 지문 비교 직후 명시적으로 지운다. |
+| `../scripts/channel-preanalysis-visual-fingerprint.mjs` | bounded YouTube storyboard metadata·sheet를 받아 12개 분산 anchor의 manifest-bound 시각 지문 artifact를 생성한다. sheet host·개수·bytes와 이미지 decode를 제한한다. |
+| `../scripts/sync-amoretto-preanalysis.mjs` | 공식 Atom feed reconciliation, pinned `yt-dlp` metadata/`ko-orig` 추출, revision별 immutable bundle-first commit, artifact closure와 단계별 retry checkpoint를 수행하는 GitHub Actions runner다. 기본 cron은 transcript-only이며, 별도 인증·별도 예산의 context proxy URL+token이 함께 있을 때만 자막 기반 context 승격을 opt-in한다. 시각 지문은 주 artifact 성공 뒤 독립된 post lane으로 생성·복구한다. 공유 5인 Worker는 거부한다. |
+| `cloudflare/preanalysisContextProxy.worker.ts` | 예약 context 전용 Bearer·payload digest gate와 operation별 Durable Object checkpoint를 소유한다. 성공만 terminal 재사용하고 실패·불명 응답은 같은 operation의 retry checkpoint로 보존한다. |
+| `../wrangler.preanalysis-context.jsonc` | 전경 5인 Worker와 분리된 예약 context Worker, Durable Object, 4회/분 rate limiter와 전용 secret 이름을 정의한다. |
 | `cloudflare/aiProviderConfiguration.ts` | 후보·전체 맥락·전사의 provider 선택, secret readiness, endpoint와 bounded fallback 정책을 소유한다. Groq secret이 있어도 기본 Qwen route를 자동 변경하지 않는다. |
 | `cloudflare/aiProxy.worker.ts` | `free-r2` ticket을 provider URL 요청으로 해소하고, `paid-direct` WAV를 multipart file로 변환하며, credential과 upstream 오류를 브라우저에서 차단한다. |
 | `analysis/speakerEmbeddingWorkerProtocol.ts` | WavLM 모델·revision·입력 PCM 상한과 source/preparation fingerprint를 고정하는 화자 임베딩 Worker 계약이다. |
