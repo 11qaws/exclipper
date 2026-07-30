@@ -2,29 +2,26 @@
   "schemaVersion": 1,
   "channelId": "UCHycoTBFDhXz4XNz8jBP-_A",
   "channelHandle": "@AmorettoVODs",
-  "revision": 19,
-  "generatedAt": "2026-07-30T13:34:24.173Z",
+  "revision": 25,
+  "generatedAt": "2026-07-30T16:52:52.322Z",
   "videos": [
     {
       "channelId": "UCHycoTBFDhXz4XNz8jBP-_A",
       "videoId": "bm4R6rZI4t4",
       "title": "2026 07 24 - 출장방송",
       "normalizedTitle": "2026 07 24 출장방송",
-      "durationMs": null,
+      "durationMs": 6298000,
       "publishedAt": "2026-07-25T06:27:42.000Z",
       "updatedAt": "2026-07-26T06:01:39.000Z",
       "watchUrl": "https://www.youtube.com/watch?v=bm4R6rZI4t4",
-      "state": "retryable",
-      "revision": 2,
-      "artifactIds": [],
+      "state": "transcript-ready",
+      "revision": 5,
+      "artifactIds": [
+        "youtube-caption-bundle:bm4R6rZI4t4:v1",
+        "youtube-storyboard-visual-fingerprint:bm4R6rZI4t4:v1"
+      ],
       "registeredLocalSampledFingerprints": [],
-      "retry": {
-        "stage": "metadata",
-        "lastSuccessfulState": "discovered",
-        "attemptCount": 1,
-        "nextAttemptAt": "2026-07-30T15:35:43.214Z",
-        "errorCode": "YT_DLP_FAILED"
-      }
+      "retry": null
     },
     {
       "channelId": "UCHycoTBFDhXz4XNz8jBP-_A",
@@ -106,23 +103,20 @@
     {
       "channelId": "UCHycoTBFDhXz4XNz8jBP-_A",
       "videoId": "EZfCGS5ms_Q",
-      "title": "2026 07 16 - 실수로 구독을 열었다",
+      "title": "2026 07 16 - 실수로 구독을 열었다",
       "normalizedTitle": "2026 07 16 실수로 구독을 열었다",
-      "durationMs": null,
+      "durationMs": 11116000,
       "publishedAt": "2026-07-17T03:20:46.000Z",
       "updatedAt": "2026-07-17T04:13:32.000Z",
       "watchUrl": "https://www.youtube.com/watch?v=EZfCGS5ms_Q",
-      "state": "retryable",
-      "revision": 2,
-      "artifactIds": [],
+      "state": "transcript-ready",
+      "revision": 5,
+      "artifactIds": [
+        "youtube-caption-bundle:EZfCGS5ms_Q:v1",
+        "youtube-storyboard-visual-fingerprint:EZfCGS5ms_Q:v1"
+      ],
       "registeredLocalSampledFingerprints": [],
-      "retry": {
-        "stage": "metadata",
-        "lastSuccessfulState": "discovered",
-        "attemptCount": 1,
-        "nextAttemptAt": "2026-07-30T15:37:50.606Z",
-        "errorCode": "YT_DLP_FAILED"
-      }
+      "retry": null
     },
     {
       "channelId": "UCHycoTBFDhXz4XNz8jBP-_A",
@@ -325,6 +319,46 @@
       "contentDigest": "sha256:712e6e2f23947708aa3aacdb233e60f39791d149fe7009d11db4840ef4e1e8cb",
       "byteLength": 2193,
       "createdAt": "2026-07-18T17:01:25.000Z"
+    },
+    {
+      "artifactId": "youtube-caption-bundle:bm4R6rZI4t4:v1",
+      "videoId": "bm4R6rZI4t4",
+      "kind": "transcript",
+      "revision": 1,
+      "storageKey": "amoretto-vods/videos/bm4R6rZI4t4.v1.json",
+      "contentDigest": "sha256:4c139b9b009801e7e6a4e686cb798ae882dd9adcd9eaae6dc6c1043079f89657",
+      "byteLength": 301047,
+      "createdAt": "2026-07-30T16:52:45.525Z"
+    },
+    {
+      "artifactId": "youtube-storyboard-visual-fingerprint:bm4R6rZI4t4:v1",
+      "videoId": "bm4R6rZI4t4",
+      "kind": "fingerprint",
+      "revision": 1,
+      "storageKey": "amoretto-vods/videos/bm4R6rZI4t4.visual-fingerprint.v1.json",
+      "contentDigest": "sha256:2069f024fd1109a42d0d75ae00f2830f21833620201ffb193fb635bbbc3831b7",
+      "byteLength": 2198,
+      "createdAt": "2026-07-26T06:01:39.000Z"
+    },
+    {
+      "artifactId": "youtube-caption-bundle:EZfCGS5ms_Q:v1",
+      "videoId": "EZfCGS5ms_Q",
+      "kind": "transcript",
+      "revision": 1,
+      "storageKey": "amoretto-vods/videos/EZfCGS5ms_Q.v1.json",
+      "contentDigest": "sha256:370d5b53af159e0b58b8cf0691baea189a0ef8eb93b5fa37722e89444a82b56a",
+      "byteLength": 513295,
+      "createdAt": "2026-07-30T16:52:51.772Z"
+    },
+    {
+      "artifactId": "youtube-storyboard-visual-fingerprint:EZfCGS5ms_Q:v1",
+      "videoId": "EZfCGS5ms_Q",
+      "kind": "fingerprint",
+      "revision": 1,
+      "storageKey": "amoretto-vods/videos/EZfCGS5ms_Q.visual-fingerprint.v1.json",
+      "contentDigest": "sha256:416059985c87f8e44df548510896fcbaefc2e999101534858243be5b9b0fcf10",
+      "byteLength": 2199,
+      "createdAt": "2026-07-17T04:13:32.000Z"
     }
   ]
 }
