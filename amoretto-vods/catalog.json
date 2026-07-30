@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "channelId": "UCHycoTBFDhXz4XNz8jBP-_A",
   "channelHandle": "@AmorettoVODs",
-  "revision": 17,
-  "generatedAt": "2026-07-30T13:28:06.316Z",
+  "revision": 19,
+  "generatedAt": "2026-07-30T13:34:24.173Z",
   "videos": [
     {
       "channelId": "UCHycoTBFDhXz4XNz8jBP-_A",
@@ -53,17 +53,14 @@
       "publishedAt": "2026-07-18T15:35:05.000Z",
       "updatedAt": "2026-07-18T17:01:25.000Z",
       "watchUrl": "https://www.youtube.com/watch?v=VFCOVyDeWWk",
-      "state": "retryable",
-      "revision": 4,
-      "artifactIds": [],
+      "state": "transcript-ready",
+      "revision": 6,
+      "artifactIds": [
+        "youtube-caption-bundle:VFCOVyDeWWk:v1",
+        "youtube-storyboard-visual-fingerprint:VFCOVyDeWWk:v1"
+      ],
       "registeredLocalSampledFingerprints": [],
-      "retry": {
-        "stage": "transcript",
-        "lastSuccessfulState": "metadata-ready",
-        "attemptCount": 2,
-        "nextAttemptAt": "2026-07-30T19:28:06.316Z",
-        "errorCode": "DIGEST_MISMATCH"
-      }
+      "retry": null
     },
     {
       "channelId": "UCHycoTBFDhXz4XNz8jBP-_A",
@@ -308,6 +305,26 @@
       "contentDigest": "sha256:5fac97916430550c55e12ffcfe9ff9ac9ff7ca340d451526ba7566f1146a0767",
       "byteLength": 2192,
       "createdAt": "2026-07-18T06:14:18.000Z"
+    },
+    {
+      "artifactId": "youtube-caption-bundle:VFCOVyDeWWk:v1",
+      "videoId": "VFCOVyDeWWk",
+      "kind": "transcript",
+      "revision": 1,
+      "storageKey": "amoretto-vods/videos/VFCOVyDeWWk.v1.json",
+      "contentDigest": "sha256:24c993d3e04ee23ff6a4b228675fcb2b18a09756630a6a40f6bc7ac6f55a2533",
+      "byteLength": 479511,
+      "createdAt": "2026-07-30T13:34:21.195Z"
+    },
+    {
+      "artifactId": "youtube-storyboard-visual-fingerprint:VFCOVyDeWWk:v1",
+      "videoId": "VFCOVyDeWWk",
+      "kind": "fingerprint",
+      "revision": 1,
+      "storageKey": "amoretto-vods/videos/VFCOVyDeWWk.visual-fingerprint.v1.json",
+      "contentDigest": "sha256:712e6e2f23947708aa3aacdb233e60f39791d149fe7009d11db4840ef4e1e8cb",
+      "byteLength": 2193,
+      "createdAt": "2026-07-18T17:01:25.000Z"
     }
   ]
 }
