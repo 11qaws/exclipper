@@ -1,0 +1,115 @@
+name: TEMPORARY WARP ingress probe
+
+# Disposable diagnostic. Answers one question: does YouTube's player path serve
+# a GitHub-hosted runner when the request egresses through Cloudflare WARP?
+# Delete this file once the answer is recorded. It deliberately does not touch
+# the catalog branch, needs no secrets, and writes nothing outside the runner.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Record the unproxied egress for comparison
+        shell: bash
+        run: |
+          set -uo pipefail
+          echo "--- direct trace ---"
+          curl -sS --max-time 20 https://www.cloudflare.com/cdn-cgi/trace \
+            | grep -E '^(warp|loc)=' || echo "trace unavailable"
+
+      - name: Install Cloudflare WARP
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsSL https://pkg.cloudflareclient.com/pubkey.gpg \
+            | sudo gpg --yes --dearmor -o /usr/share/keyrings/cloudflare-warp.gpg
+          echo "deb [signed-by=/usr/share/keyrings/cloudflare-warp.gpg] https://pkg.cloudflareclient.com/ $(lsb_release -cs) main" \
+            | sudo tee /etc/apt/sources.list.d/cloudflare-client.list
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends cloudflare-warp
+          warp-cli --version
+
+      - name: Register and connect in proxy mode
+        id: warp
+        shell: bash
+        run: |
+          set -uo pipefail
+          sudo systemctl enable --now warp-svc || true
+          for _ in $(seq 1 20); do
+            warp-cli --accept-tos status >/dev/null 2>&1 && break
+            sleep 1
+          done
+          # Newer and older warp-cli spell registration differently.
+          warp-cli --accept-tos registration new \
+            || warp-cli --accept-tos register \
+            || echo "registration reported failure"
+          warp-cli --accept-tos mode proxy || echo "mode proxy reported failure"
+          warp-cli --accept-tos connect || echo "connect reported failure"
+          for _ in $(seq 1 30); do
+            if curl -sS --max-time 10 --proxy socks5://127.0.0.1:40000 \
+                 https://www.cloudflare.com/cdn-cgi/trace | grep -q '^warp=on'; then
+              echo "tunnel=up" >> "${GITHUB_OUTPUT}"
+              break
+            fi
+            sleep 2
+          done
+          echo "--- warp-cli status ---"
+          warp-cli --accept-tos status || true
+          echo "--- proxied trace ---"
+          curl -sS --max-time 20 --proxy socks5://127.0.0.1:40000 \
+            https://www.cloudflare.com/cdn-cgi/trace \
+            | grep -E '^(warp|loc)=' || echo "proxied trace unavailable"
+
+      - name: Download the same pinned yt-dlp the catalog workflow uses
+        shell: bash
+        env:
+          YT_DLP_VERSION: "2026.07.04"
+          YT_DLP_SHA256: "495be29ff4d9d4e9be7eabdfef225221e5d5282e77f2f505abc6dca80349f3fd"
+        run: |
+          set -euo pipefail
+          curl --fail --location --proto '=https' --tlsv1.2 --retry 3 \
+            --output "${RUNNER_TEMP}/yt-dlp" \
+            "https://github.com/yt-dlp/yt-dlp/releases/download/${YT_DLP_VERSION}/yt-dlp"
+          echo "${YT_DLP_SHA256}  ${RUNNER_TEMP}/yt-dlp" | sha256sum --check --strict
+          chmod 0755 "${RUNNER_TEMP}/yt-dlp"
+
+      - name: Metadata without the proxy, then through WARP
+        shell: bash
+        run: |
+          set -uo pipefail
+          ARGS=(--no-config --no-playlist --skip-download --dump-single-json
+                --no-warnings --no-progress --
+                "https://www.youtube.com/watch?v=EZfCGS5ms_Q")
+
+          echo "=================== DIRECT ==================="
+          if "${RUNNER_TEMP}/yt-dlp" "${ARGS[@]}" > /tmp/direct.json 2>/tmp/direct.err; then
+            echo "direct: EXIT 0, $(wc -c < /tmp/direct.json) bytes"
+          else
+            echo "direct: EXIT $?"
+            head -c 600 /tmp/direct.err
+          fi
+
+          echo "=================== VIA WARP ==================="
+          if "${RUNNER_TEMP}/yt-dlp" --proxy socks5://127.0.0.1:40000 "${ARGS[@]}" \
+               > /tmp/warp.json 2>/tmp/warp.err; then
+            echo "warp: EXIT 0, $(wc -c < /tmp/warp.json) bytes"
+            python3 - <<'PY'
+import json
+with open("/tmp/warp.json", encoding="utf-8") as handle:
+    meta = json.load(handle)
+auto = sorted(k for k in (meta.get("automatic_captions") or {}) if k.startswith("ko"))
+manual = sorted(k for k in (meta.get("subtitles") or {}) if k.startswith("ko"))
+print("id:", meta.get("id"), "duration:", meta.get("duration"))
+print("korean manual:", manual, "korean auto:", auto)
+PY
+          else
+            echo "warp: EXIT $?"
+            head -c 600 /tmp/warp.err
+          fi
