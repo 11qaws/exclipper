@@ -1485,8 +1485,15 @@ export async function synchronizeAmorettoCatalog(
         state: "retryable",
         errorCode: retry.errorCode,
       });
+      // Without the message an operator sees only the code, which cannot
+      // distinguish a refused request from a broken one. The captured
+      // diagnostic is already bounded; redact it before it reaches a log.
+      const diagnostic = redactDiagnostic(
+        error instanceof Error ? error.message : String(error),
+      );
       log.warn(
-        `Deferred ${selectedVideo.videoId} at ${stage}: ${retry.errorCode}; next attempt ${retry.nextAttemptAt}.`,
+        `Deferred ${selectedVideo.videoId} at ${stage}: ${retry.errorCode}; next attempt ${retry.nextAttemptAt}.` +
+          (diagnostic === "" ? "" : ` Diagnostic: ${diagnostic}`),
       );
     }
   }
@@ -3180,6 +3187,21 @@ export async function runBoundedCommand(
     }, timeoutMs);
     timer.unref();
   });
+}
+
+/**
+ * Deferral diagnostics are printed into workflow logs, and a public
+ * repository's logs are public. Drop every query string, which is where signed
+ * URLs carry their tokens, and any long opaque run that could be a credential.
+ */
+function redactDiagnostic(text) {
+  if (typeof text !== "string" || text === "") return "";
+  return text
+    .replace(/(https?:\/\/[^\s?#]+)[?#][^\s]*/giu, "$1?[redacted]")
+    .replace(/[A-Za-z0-9_-]{24,}/gu, "[redacted]")
+    .replace(/\s+/gu, " ")
+    .trim()
+    .slice(0, 300);
 }
 
 function parseJson(text, label) {

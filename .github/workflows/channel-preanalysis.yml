@@ -1,8 +1,14 @@
 name: Refresh Amoretto preanalysis catalog
 
 on:
-  schedule:
-    - cron: "17 */3 * * *"
+  # The schedule is deliberately disabled. A GitHub-hosted runner is refused on
+  # the YouTube player path yt-dlp needs, while the same pinned binary and the
+  # same arguments succeed from the editor's network, so every scheduled run
+  # would defer every video and still push a revision bump to the catalog
+  # branch. Manual dispatch stays available for diagnosis. Restore the cron only
+  # once this workflow runs somewhere YouTube serves.
+  # schedule:
+  #   - cron: "17 */3 * * *"
   workflow_dispatch:
     inputs:
       video_id:
