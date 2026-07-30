@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "channelId": "UCHycoTBFDhXz4XNz8jBP-_A",
   "channelHandle": "@AmorettoVODs",
-  "revision": 11,
-  "generatedAt": "2026-07-30T13:09:34.299Z",
+  "revision": 16,
+  "generatedAt": "2026-07-30T13:18:42.571Z",
   "videos": [
     {
       "channelId": "UCHycoTBFDhXz4XNz8jBP-_A",
@@ -49,28 +49,37 @@
       "videoId": "VFCOVyDeWWk",
       "title": "2026 07 18 - 마크 게릴라",
       "normalizedTitle": "2026 07 18 마크 게릴라",
-      "durationMs": null,
+      "durationMs": 8259000,
       "publishedAt": "2026-07-18T15:35:05.000Z",
       "updatedAt": "2026-07-18T17:01:25.000Z",
       "watchUrl": "https://www.youtube.com/watch?v=VFCOVyDeWWk",
-      "state": "discovered",
-      "revision": 1,
+      "state": "retryable",
+      "revision": 3,
       "artifactIds": [],
       "registeredLocalSampledFingerprints": [],
-      "retry": null
+      "retry": {
+        "stage": "transcript",
+        "lastSuccessfulState": "metadata-ready",
+        "attemptCount": 1,
+        "nextAttemptAt": "2026-07-30T16:18:37.800Z",
+        "errorCode": "INVALID_TRANSCRIPT"
+      }
     },
     {
       "channelId": "UCHycoTBFDhXz4XNz8jBP-_A",
       "videoId": "vadCuMEo5PQ",
       "title": "2026 07 18 - 마크 릴레이 방송",
       "normalizedTitle": "2026 07 18 마크 릴레이 방송",
-      "durationMs": null,
+      "durationMs": 7231000,
       "publishedAt": "2026-07-18T05:42:21.000Z",
       "updatedAt": "2026-07-18T06:14:18.000Z",
       "watchUrl": "https://www.youtube.com/watch?v=vadCuMEo5PQ",
-      "state": "discovered",
-      "revision": 1,
-      "artifactIds": [],
+      "state": "transcript-ready",
+      "revision": 4,
+      "artifactIds": [
+        "youtube-caption-bundle:vadCuMEo5PQ:v1",
+        "youtube-storyboard-visual-fingerprint:vadCuMEo5PQ:v1"
+      ],
       "registeredLocalSampledFingerprints": [],
       "retry": null
     },
@@ -279,6 +288,26 @@
       "contentDigest": "sha256:3e052b01e5febbeece8c294d52d27b595b5b67aa498d0034ebd499d362e1eaf6",
       "byteLength": 2193,
       "createdAt": "2026-07-24T20:47:12.000Z"
+    },
+    {
+      "artifactId": "youtube-caption-bundle:vadCuMEo5PQ:v1",
+      "videoId": "vadCuMEo5PQ",
+      "kind": "transcript",
+      "revision": 1,
+      "storageKey": "amoretto-vods/videos/vadCuMEo5PQ.v1.json",
+      "contentDigest": "sha256:b238779d98b293346a712f9e3836b4d619ee60868efb868b255edd534dc8f7cf",
+      "byteLength": 321706,
+      "createdAt": "2026-07-30T13:18:42.026Z"
+    },
+    {
+      "artifactId": "youtube-storyboard-visual-fingerprint:vadCuMEo5PQ:v1",
+      "videoId": "vadCuMEo5PQ",
+      "kind": "fingerprint",
+      "revision": 1,
+      "storageKey": "amoretto-vods/videos/vadCuMEo5PQ.visual-fingerprint.v1.json",
+      "contentDigest": "sha256:5fac97916430550c55e12ffcfe9ff9ac9ff7ca340d451526ba7566f1146a0767",
+      "byteLength": 2192,
+      "createdAt": "2026-07-18T06:14:18.000Z"
     }
   ]
 }
