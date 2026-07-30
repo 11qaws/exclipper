@@ -113,12 +113,52 @@ jobs:
           chmod 0755 "${YT_DLP_PATH}"
           test "$("${YT_DLP_PATH}" --version)" = "${YT_DLP_VERSION}"
 
+      # YouTube answers this runner's own address with "Sign in to confirm
+      # you're not a bot" -- a pure address refusal, not a stale binary: the
+      # same pinned yt-dlp and arguments succeed from the editor's network.
+      # WARP egress is served, so only yt-dlp is routed through it. The Atom
+      # feed already succeeds directly, and Node does not read proxy variables,
+      # so the tunnel's blast radius stays limited to the refused path.
+      - name: Route YouTube requests through Cloudflare WARP
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsSL https://pkg.cloudflareclient.com/pubkey.gpg \
+            | sudo gpg --yes --dearmor -o /usr/share/keyrings/cloudflare-warp.gpg
+          echo "deb [signed-by=/usr/share/keyrings/cloudflare-warp.gpg] https://pkg.cloudflareclient.com/ $(lsb_release -cs) main" \
+            | sudo tee /etc/apt/sources.list.d/cloudflare-client.list
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends cloudflare-warp
+          sudo systemctl enable --now warp-svc
+          for _ in $(seq 1 20); do
+            warp-cli --accept-tos status >/dev/null 2>&1 && break
+            sleep 1
+          done
+          warp-cli --accept-tos registration new
+          warp-cli --accept-tos mode proxy
+          warp-cli --accept-tos connect
+          # Prove the tunnel carries traffic before anything depends on it, so a
+          # later refusal cannot be confused with a tunnel that never came up.
+          for attempt in $(seq 1 30); do
+            if curl -sS --max-time 10 --proxy socks5://127.0.0.1:40000 \
+                 https://www.cloudflare.com/cdn-cgi/trace | grep -q '^warp=on'; then
+              echo "WARP egress confirmed after ${attempt} attempt(s)."
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "::error::WARP never reported warp=on; refusing to fall back to the blocked address."
+          exit 1
+
       - name: Reconcile feed and prepare due transcripts
         working-directory: source
         shell: bash
         env:
           CATALOG_DIRECTORY: ${{ github.workspace }}/catalog/amoretto-vods
           YT_DLP_PATH: ${{ runner.temp }}/yt-dlp
+          # The child environment allowlist forwards this to yt-dlp and rejects
+          # any proxy URL carrying credentials.
+          ALL_PROXY: socks5://127.0.0.1:40000
           VIDEO_ID: ${{ inputs.video_id || '' }}
           MAX_VIDEOS: ${{ inputs.max_videos || '2' }}
           CHANNEL_PREANALYSIS_CONTEXT_PROXY_URL: ${{ secrets.CHANNEL_PREANALYSIS_CONTEXT_PROXY_URL }}
