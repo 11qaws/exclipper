@@ -425,18 +425,19 @@ test("CLI defaults are bounded and every override is explicit", () => {
   );
 });
 
-test("manual dispatch checkouts the immutable workflow event revision while the schedule stays disabled", async () => {
+test("scheduled and manual runs checkout the immutable workflow event revision through a proven WARP egress", async () => {
   const workflow = await readFile(
     new URL("../.github/workflows/channel-preanalysis.yml", import.meta.url),
     "utf8",
   );
+  assert.match(workflow, /^\s{2}schedule:/mu);
   assert.match(workflow, /^\s{2}workflow_dispatch:/mu);
-  // The schedule is disabled while a GitHub-hosted runner is refused on the
-  // YouTube player path: every run would defer every video and still push a
-  // revision bump. Restoring the cron has to be a deliberate decision taken
-  // together with an ingress that works, so guard against an accidental one.
-  assert.doesNotMatch(workflow, /^\s{2}schedule:/mu);
-  assert.match(workflow, /^\s{2}#\s*schedule:/mu);
+  // YouTube refuses this runner's own address, so yt-dlp must go through WARP
+  // and the tunnel must be proven before anything depends on it. Losing either
+  // of these silently returns every run to deferring every video.
+  assert.match(workflow, /warp-cli --accept-tos connect/u);
+  assert.match(workflow, /ALL_PROXY:\s*socks5:\/\/127\.0\.0\.1:40000/u);
+  assert.match(workflow, /grep -q '\^warp=on'/u);
   const checkoutStart = workflow.indexOf(
     "- name: Checkout application source",
   );

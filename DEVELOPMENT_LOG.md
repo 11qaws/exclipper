@@ -40,6 +40,41 @@ Node **22.12.0**을 고정하고 로컬 개발은 Node 24라, 아래 두 결함�
   기전 자체를 양방향으로 검증했다 — unref된 타이머 + 정착하지 않는 read는 발화
   없이 exit 13, 참조된 타이머는 발화하고 exit 0.
 
+### 정정: ingress는 WARP로 열렸다
+
+아래 "예약 러너의 YouTube ingress는 GitHub Actions에서 막혀 있다" 항목의 관찰은
+맞지만, 거기서 끌어낸 결론과 권고는 틀렸다. 남겨 두고 여기서 정정한다.
+
+- **틀린 일반화:** Workers egress가 거부된 측정으로부터 "데이터센터 egress는 다
+  막히므로 Oracle을 포함한 어떤 proxy도 무의미하다"고 했다. WARP 소비자 대역과
+  Workers egress 대역은 다르며, `D:\agents\Developer_notes\youtube-audio-extraction.md`
+  는 이 문제의 ★1순위 해법으로 WARP를 지목하고 "YouTube는 Cloudflare IP를
+  블랙리스트로 안 본다"고 이미 기록해 두고 있었다. 기존 프로젝트 노트를 먼저
+  찾아보라는 규칙을 지켰다면 self-hosted runner를 권하기 전에 알 수 있었다.
+- **측정으로 확정했다.** 버릴 수 있는 별도 진단 workflow로 러너에서 직접과 WARP
+  경유를 한 job에서 비교했다. 직접은 `Sign in to confirm you're not a bot`,
+  WARP 경유는 exit 0에 612,342 bytes와 한국어 자동 자막이었다. `warp=off` →
+  `warp=on`을 YouTube 호출 전에 먼저 확인해 "tunnel이 뜨지 않은 것"과 "YouTube가
+  거부한 것"을 분리했다.
+- **적용은 환경만으로 끝났다.** child 환경 allowlist가 이미 `ALL_PROXY`와
+  `socks5:`를 허용하고 credential이 포함된 proxy URL을 spawn 전에 거부하므로
+  스크립트 코드 변경이 없었다. yt-dlp만 tunnel을 지나고 Atom feed·storyboard는
+  직접 경로를 유지한다 — Node는 proxy 환경변수를 읽지 않는다.
+- **실제로 집계가 시작됐다.** `Xns8EY3gae0`이 예약 경로에서 `transcript-ready`가
+  됐다. caption 1,595 event 중 1,364개가 한국어, 챕터 52개가 전체 6,177초를 정확히
+  덮고, manifest 선언 digest·byte length가 raw 경로의 실제 bytes와 일치했다. 같은
+  실행에서 시각 지문도 만들어졌다. 그래서 cron을 다시 켰고, 계약 테스트는 이제
+  cron 부재가 아니라 **WARP connect·`ALL_PROXY`·`warp=on` 증명이 사라지는 것**을
+  막는 가드로 바꿨다.
+- **진단 workflow는 삭제했다.** 답이 이 로그에 남았으므로 유지할 이유가 없다.
+- **남은 취약점과 다음 개선:** YouTube가 WARP 대역을 조이면 증상은
+  `retryable(metadata)` 증가로 나타난다. `rekasong`의 `prepare_worker.py`에는
+  `classify_failure`가 botwall → unavailable → network → unknown 순서로 이미
+  구현돼 있고, 이 프로젝트는 아직 전부 `YT_DLP_FAILED` 하나로 묶는다. 이 분류를
+  가져오면 봇월 악화와 영구 불가 영상을 구분해 실패율을 계측할 수 있다. 그때
+  같은 노트의 경고도 함께 지켜야 한다 — `unavailable`을 조기 중단으로 쓰지 말
+  것. 클라이언트별로 접근성이 갈리므로 오분류 비용이 영구적이다.
+
 ### 예약 러너의 YouTube ingress는 GitHub Actions에서 막혀 있다
 
 세 번째 실행에서 `prepare`·`publish`의 모든 step이 통과했고 catalog push까지

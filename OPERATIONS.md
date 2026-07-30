@@ -1,39 +1,44 @@
 # ExClipper 개인용 운영·배포·복구 계획
 
-## 2026-07-30 실측 상태: 예약 카탈로그는 활성이지만 자막을 만들지 못한다
+## 2026-07-30 예약 카탈로그 ingress: WARP 경유로 실제 작동 확인
 
-배포와 branch seed는 끝났고 workflow는 모든 step을 통과한다. 그러나 실제 자막
-준비는 되지 않는다. 두 영상(`bm4R6rZI4t4`, 그리고 로컬에서 정상 확인된
-`EZfCGS5ms_Q`)이 `metadata` 단계에서 `YT_DLP_FAILED`로 3~4초 만에 지연됐다.
+배포와 branch seed가 끝났고, 예약 카탈로그는 실제로 자막을 만든다. 다만 그 전에
+YouTube가 GitHub 러너의 주소를 거부하는 문제를 통과해야 했다.
 
-같은 러너에서 Atom feed는 정상적으로 읽힌다. 따라서 YouTube HTTPS 전반이 아니라
-yt-dlp가 쓰는 player/watch 경로만 거부되며, 이는 대화형 경로에서 opaque sandbox로
-우회한 Cloudflare 증상과 같은 데이터센터 egress 패턴이다. 현재
-`transcript-ready`인 `KzAW3yow80Q`는 편집자 PC에서 만들어 seed한 것이다.
+### 측정한 사실
 
-운영상 지금 아는 것과 모르는 것을 구분한다.
+- 러너 자신의 주소로는 고정 yt-dlp가 `Sign in to confirm you're not a bot`을
+  받는다. 순수한 주소 거부이며 바이너리 노후가 아니다 — 같은 고정 버전과 같은
+  인자가 편집자 네트워크에서 exit 0으로 성공한다.
+- 같은 러너에서 Atom feed와 storyboard 이미지 host는 직접 정상 응답한다.
+  거부되는 것은 yt-dlp가 쓰는 player/watch 경로뿐이다.
+- **WARP egress는 YouTube가 받아 준다.** 러너에서 `warp=off` → `warp=on` 전환 후
+  같은 명령이 612,342 bytes의 metadata와 한국어 자동 자막을 반환했다. Workers
+  egress 측정에서 끌어낸 "데이터센터는 전부 막힌다"는 일반화는 틀렸다 — WARP
+  소비자 대역과 Workers egress 대역은 다르다.
+- 실제 예약 실행에서 `Xns8EY3gae0`이 `transcript-ready`로 진전했다. 자막
+  1,595 event 중 1,364개가 한국어이고 챕터 52개가 전체 6,177초를 정확히 덮으며,
+  manifest 선언 digest·byte length가 raw 경로의 실제 bytes와 일치한다. 시각 지문도
+  같은 실행에서 만들어졌다.
 
-- **아는 것:** GitHub Actions 러너에서 yt-dlp metadata가 재현 가능하게 실패한다.
-  실패는 상태를 오염시키지 않고 `retryable(metadata)`로 안전하게 남는다.
-- **모르는 것:** 러너가 yt-dlp stderr를 출력하지 않아 봇 체크 거부인지 고정
-  yt-dlp `2026.07.04`의 노후인지 확증하지 못했다. 진단 공백을 닫는 최소 작업은
-  bounded·redacted stderr 노출이다.
-- **부작용:** 실패 run도 revision·retry 타임스탬프 때문에 catalog branch에
-  커밋을 push한다. 3시간 cron은 하루 8개의 무의미한 커밋을 만들면서 어떤 영상도
-  `discovered` 밖으로 진전시키지 못한다. 진단이 끝날 때까지 `schedule`을 끄고
-  `workflow_dispatch`만 남기는 것을 권한다.
-- **전용 context Worker 배포는 보류한다.** 분석할 transcript가 생기지 않으므로
-  지금 배포·secret 등록은 비용만 만든다.
+### 운영 경계
 
-ingress를 여는 선택지는 다음 세 가지다. 아직 어느 것도 채택하지 않았다.
-
-- 편집자 PC의 self-hosted runner: YouTube가 허용하는 네트워크에서 실행된다.
-  대신 PC가 켜져 있어야 하고 러너 보안 경계를 별도로 정해야 한다.
-- 자격 증명 없는 proxy: 러너는 이미 `http_proxy`/`https_proxy`를 yt-dlp child에
-  allowlist로 전달하며 credential이 포함된 URL은 spawn 전에 거부한다. 즉 이
-  경로는 코드 변경 없이 설정만으로 시도할 수 있다.
-- 로컬 실행 유지: 편집자가 필요할 때 로컬에서 sync 스크립트를 돌려 catalog
-  branch에 push한다. seed된 음식 토크가 만들어진 방식이며 추가 인프라가 없다.
+- yt-dlp만 tunnel을 통과한다. Atom feed는 직접 성공하고 Node는 proxy 환경변수를
+  읽지 않으므로 tunnel의 영향 범위는 거부된 경로에 한정된다. `ALL_PROXY`는 기존
+  child 환경 allowlist로 전달되며 credential이 포함된 proxy URL은 spawn 전에
+  거부된다. 즉 이 경로는 코드 변경 없이 환경만으로 작동한다.
+- WARP step은 무엇에도 의존시키기 전에 SOCKS5 포트로 `warp=on`을 먼저 증명하고,
+  실패하면 막힌 주소로 조용히 되돌아가지 않고 fail-closed한다. 이후의 거부를
+  "tunnel이 아예 뜨지 않은 것"과 혼동하지 않기 위한 경계다.
+- **취약점:** YouTube가 나중에 WARP 대역을 조일 수 있다. 그때 증상은 다시
+  `retryable(metadata)`의 증가로 나타난다. deferral 로그가 이제 redact된 진단
+  메시지를 함께 출력하므로 봇월 거부와 네트워크 오류를 구분할 수 있다. 실패율이
+  올라가면 다음 수단은 레지덴셜 proxy이며, `ALL_PROXY` 하나만 바꾸면 되도록
+  구조는 이미 준비돼 있다.
+- WARP 등록은 무료·무계정이고 실행마다 새로 등록된다. 소비자 VPN을 무인 CI에서
+  쓰는 것이므로 정책 변경에 노출된다는 점은 감수하는 리스크로 명시한다.
+- **전용 context Worker 배포는 계속 보류한다.** 이제 transcript는 쌓이지만
+  `context-ready` 승격은 별도 provider 예산과 과금 판단이 필요하다.
 
 ## 2026-07-30 아모레또 VOD 선분석 운영 경계
 
