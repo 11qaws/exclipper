@@ -1,5 +1,75 @@
 # Development Log
 
+## 2026-07-30 첫 실제 배포와 예약 러너의 YouTube ingress 차단 확인
+
+### 배포한 것
+
+- `main`에 0.9.0을 push해 Pages 배포를 발동했다. CI가 러너에서 `npm run check`를
+  독립적으로 다시 통과했고, 배포본의 `/`, `/youtube-caption-sandbox.html`,
+  `/preanalysis/amoretto-vods/catalog.json`, transcript, visual fingerprint가
+  모두 HTTP 200으로 서빙됐다.
+- `preanalysis-catalog` orphan branch를 seed했다(3파일). 커밋 전에 staged blob의
+  sha256과 byte length를 manifest 선언값과 대조해 일치를 확인했다
+  (`fa137b2c…`/442509, `9544dd21…`/2199). Windows CRLF 경고는 blob에 영향이
+  없었다. raw 경로도 442509 bytes, digest 일치, `Access-Control-Allow-Origin: *`로
+  확인했다.
+
+### 첫 실제 CI 실행이 잡아낸 두 결함
+
+로컬에서 44개 계약 테스트가 통과하는데 CI에서는 같은 파일이 실패했다. 러너는
+Node **22.12.0**을 고정하고 로컬 개발은 Node 24라, 아래 두 결함이 로컬에서
+보이지 않았다.
+
+- **버린 body를 정착시키지 않았다:** deadline 경로에서 `reader.cancel()`을
+  await하지 않고 곧바로 `releaseLock()`이 같은 tick에 실행돼, race에서 진 read
+  request의 운명을 런타임 stream 구현에 맡겼다. 실제 fetch는 signal이 body를
+  찢으므로 가려졌고, signal을 무시하는 fetch 구현(=deadline 테스트가 주입하는 것)
+  에서만 드러난다. cancel을 await한 뒤 lock을 풀고, `releaseLock()`이 던지는
+  버전별 TypeError가 호출자가 봐야 할 deadline 오류를 대체하지 못하게 감쌌다.
+- **deadline 타이머가 unref돼 발화 자체를 못 했다(진짜 원인):** 이 경로에는
+  핸들을 보장하는 것이 없다 — JS에서 멈춘 body는 소켓이 없다. unref된 타이머는
+  루프를 살려두지 못하므로 루프가 비어 abort가 아예 발화하지 않고 프로세스가
+  종료됐다. 그래서 러너는 35번 이후 6건을 "Promise resolution is still pending"
+  으로 보고했다 — 36~40번은 실행조차 되지 않았고 35번이 프로세스를 데려갔다.
+  실제 fetch에서 deadline이 작동한 것은 소켓이 우연히 루프를 잡고 있었기
+  때문이며, 보장이 타이머가 아닌 무관한 핸들에 얹혀 있었다. 같은 함수의
+  `clearTimeout`이 이미 만족된 요청의 종료 지연을 막으므로 unref가 살 것은
+  없었다. yt-dlp 타임아웃의 `unref`는 살아 있는 자식 프로세스가 루프를 잡으므로
+  그대로 둔다.
+- 로컬 Node 24 test runner는 루프를 잡고 있어 두 경우를 구분하지 못한다. 그래서
+  기전 자체를 양방향으로 검증했다 — unref된 타이머 + 정착하지 않는 read는 발화
+  없이 exit 13, 참조된 타이머는 발화하고 exit 0.
+
+### 예약 러너의 YouTube ingress는 GitHub Actions에서 막혀 있다
+
+세 번째 실행에서 `prepare`·`publish`의 모든 step이 통과했고 catalog push까지
+됐다. 그런데 실제로 자막이 준비되지는 않았다.
+
+- 두 영상이 `metadata` 단계에서 `YT_DLP_FAILED`로 3~4초 만에 지연됐다. 하나는
+  최신 영상 `bm4R6rZI4t4`, 다른 하나는 Codex가 로컬에서 정상 확인한
+  `EZfCGS5ms_Q`다. 영상별 문제가 아니라 구조적이다.
+- 결정적 비대칭: **같은 러너에서 Atom feed는 정상적으로 읽혔다**(그래서 영상을
+  선택할 수 있었다). YouTube HTTPS 전반이 막힌 게 아니라 yt-dlp가 쓰는
+  player/watch 경로만 거부된다. 이것은 이번 릴리스가 방금 고친 Cloudflare 증상
+  (`android:http-403`, `watch-page:http-429`)과 같은 패턴이다 — 데이터센터
+  egress에서 YouTube player 경로가 거부되는 것.
+- 즉 예약 러너는 자막 egress 문제를 opaque sandbox로 해결한 바로 그 구조를
+  데이터센터에서 다시 시도하고 있다. 현재 `transcript-ready`인 음식 토크
+  `KzAW3yow80Q`는 편집자 PC에서 만들어 seed한 것이며 CI가 만든 것이 아니다.
+- **아직 확증하지 못한 것:** 러너가 yt-dlp stderr를 출력하지 않으므로 오류
+  코드만 있고 메시지가 없다. 봇 체크 거부와 고정 yt-dlp `2026.07.04`의 노후를
+  이 로그만으로는 완전히 가리지 못한다. 다음 시도 전에 bounded·redacted stderr를
+  노출하는 것이 진단 공백을 닫는 최소 작업이다.
+- **부작용:** 실패 run도 revision과 retry 타임스탬프를 바꾸므로 catalog branch에
+  커밋을 push한다. 살아 있는 cron은 3시간마다 실행되어 하루 8개의 무의미한
+  커밋을 만들면서 어떤 영상도 `discovered` 밖으로 진전시키지 못한다.
+- **C(전용 context Worker)는 지금 의미가 없다.** 분석할 transcript가 생기지
+  않으므로 배포와 provider key 등록을 보류한다. 이 순서를 지킨 덕분에 불필요한
+  과금이 발생하지 않았다.
+- 실패 자체는 설계대로 동작했다. 상태 오염 없이 `retryable(metadata)`,
+  `lastSuccessfulState: discovered`, bounded backoff로 남았고 확정된 자막·지문은
+  손대지 않았다.
+
 ## 2026-07-30 아모레또 VOD 예약 자막 카탈로그와 원본 연결
 
 - 예약 workflow를 `prepare(contents: read)`와 `publish(contents: write)`로 분리했다.

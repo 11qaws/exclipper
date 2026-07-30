@@ -1,5 +1,40 @@
 # ExClipper 개인용 운영·배포·복구 계획
 
+## 2026-07-30 실측 상태: 예약 카탈로그는 활성이지만 자막을 만들지 못한다
+
+배포와 branch seed는 끝났고 workflow는 모든 step을 통과한다. 그러나 실제 자막
+준비는 되지 않는다. 두 영상(`bm4R6rZI4t4`, 그리고 로컬에서 정상 확인된
+`EZfCGS5ms_Q`)이 `metadata` 단계에서 `YT_DLP_FAILED`로 3~4초 만에 지연됐다.
+
+같은 러너에서 Atom feed는 정상적으로 읽힌다. 따라서 YouTube HTTPS 전반이 아니라
+yt-dlp가 쓰는 player/watch 경로만 거부되며, 이는 대화형 경로에서 opaque sandbox로
+우회한 Cloudflare 증상과 같은 데이터센터 egress 패턴이다. 현재
+`transcript-ready`인 `KzAW3yow80Q`는 편집자 PC에서 만들어 seed한 것이다.
+
+운영상 지금 아는 것과 모르는 것을 구분한다.
+
+- **아는 것:** GitHub Actions 러너에서 yt-dlp metadata가 재현 가능하게 실패한다.
+  실패는 상태를 오염시키지 않고 `retryable(metadata)`로 안전하게 남는다.
+- **모르는 것:** 러너가 yt-dlp stderr를 출력하지 않아 봇 체크 거부인지 고정
+  yt-dlp `2026.07.04`의 노후인지 확증하지 못했다. 진단 공백을 닫는 최소 작업은
+  bounded·redacted stderr 노출이다.
+- **부작용:** 실패 run도 revision·retry 타임스탬프 때문에 catalog branch에
+  커밋을 push한다. 3시간 cron은 하루 8개의 무의미한 커밋을 만들면서 어떤 영상도
+  `discovered` 밖으로 진전시키지 못한다. 진단이 끝날 때까지 `schedule`을 끄고
+  `workflow_dispatch`만 남기는 것을 권한다.
+- **전용 context Worker 배포는 보류한다.** 분석할 transcript가 생기지 않으므로
+  지금 배포·secret 등록은 비용만 만든다.
+
+ingress를 여는 선택지는 다음 세 가지다. 아직 어느 것도 채택하지 않았다.
+
+- 편집자 PC의 self-hosted runner: YouTube가 허용하는 네트워크에서 실행된다.
+  대신 PC가 켜져 있어야 하고 러너 보안 경계를 별도로 정해야 한다.
+- 자격 증명 없는 proxy: 러너는 이미 `http_proxy`/`https_proxy`를 yt-dlp child에
+  allowlist로 전달하며 credential이 포함된 URL은 spawn 전에 거부한다. 즉 이
+  경로는 코드 변경 없이 설정만으로 시도할 수 있다.
+- 로컬 실행 유지: 편집자가 필요할 때 로컬에서 sync 스크립트를 돌려 catalog
+  branch에 push한다. seed된 음식 토크가 만들어진 방식이며 추가 인프라가 없다.
+
 ## 2026-07-30 아모레또 VOD 선분석 운영 경계
 
 - 고정 source는 `https://www.youtube.com/@AmorettoVODs`, channel ID
