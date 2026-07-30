@@ -408,13 +408,11 @@ function validateCaptionTrack(
     }
     return {
       startMs: event.startMs as number,
-      // Absorbing the truncation must not hand a timeline that runs past the
-      // declared duration to everything downstream. Clamp instead, which is
-      // idempotent: a clamped event re-validates unchanged on readback.
-      durationMs: Math.min(
-        event.durationMs as number,
-        sourceDurationMs - (event.startMs as number),
-      ),
+      // Stored exactly as received. Clamping here looked tidier but broke the
+      // stronger invariant: the transcript digest is taken over the caption
+      // track, so normalising during validation makes the stored bytes disagree
+      // with their own digest and every readback fails DIGEST_MISMATCH.
+      durationMs: event.durationMs as number,
       text: event.text,
     };
   });
