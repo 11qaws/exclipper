@@ -40,6 +40,36 @@ Node **22.12.0**을 고정하고 로컬 개발은 Node 24라, 아래 두 결함�
   기전 자체를 양방향으로 검증했다 — unref된 타이머 + 정착하지 않는 read는 발화
   없이 exit 13, 참조된 타이머는 발화하고 exit 0.
 
+### 자막 44ms 초과가 방송 전체를 영구히 막던 단위 오류
+
+WARP로 ingress가 열린 직후 첫 완전 실행이 `VFCOVyDeWWk`를 `INVALID_TRANSCRIPT`로
+지연시켰다. 바로 앞에서 추가한 redact 진단 로그가 `Caption event is invalid.`를
+함께 출력한 덕분에 네트워크 문제가 아님을 즉시 구분할 수 있었다.
+
+- **원인:** 검사식이 `startMs + durationMs > sourceDurationMs`면 자막 전체를
+  거부했다. 그런데 `sourceDurationMs`는 yt-dlp의 정수 초 `duration`에
+  `Math.round(× 1000)`을 한 값이라 항상 초 단위로 잘려 있고, 자막 타이밍은 ms다.
+  실측하면 6,085개 event 중 **정확히 1개가 44ms 초과**한다(8,259,044 vs
+  8,259,000). 손상이 아니라 산술적 필연이며, 3시간마다 영원히 재시도하는
+  poison pill이었다.
+- **고친 방향:** 이 bound의 진짜 목적은 *다른(더 긴) 영상의 자막이 붙는 것*을
+  막는 identity 검사다. 그런 자막은 1초를 훨씬 넘게 초과하므로, 절삭이 만들 수
+  있는 오차(1,000ms)만 정확히 흡수하고 그 밖은 그대로 fail-closed로 둔다.
+- **한 번 틀렸다:** 처음에는 저장 `durationMs`를 duration에 맞춰 clamp했다.
+  다음 실행이 `DIGEST_MISMATCH`로 답했다 — `transcriptDigest`는 생성 시
+  **검증 전** caption track으로 계산되므로, 검증 단계에서 값을 정규화하면 저장된
+  bytes가 자기 digest와 어긋나 모든 readback이 실패한다. clamp가 멱등이라는 내
+  주장은 재검증에 대해서만 참이었고 digest에는 무관했다. digest가 더 강한
+  불변식이고 1초 미만 초과는 downstream에 무해하므로(챕터 coverage는 별도로 정확히
+  검사된다) clamp를 버리고 원본 그대로 저장한다.
+- **테스트:** 실측 초과값으로 bundle을 만들어 생성 직후와 파서 왕복 후 양쪽에서
+  digest를 검증한다. 이 단언이 있었다면 CI에 가기 전에 잡혔을 것이다. 기존 거부
+  테스트는 1ms 초과를 쓰고 있어 새 허용치에 걸리므로, 절삭으로 설명할 수 없는
+  크기로 옮겨 외부 자막 방어 역할을 유지시켰다.
+- **결과:** `VFCOVyDeWWk`가 `transcript-ready`로 복구됐다. 카탈로그는 seed 1개에서
+  `transcript-ready` 4개, artifact 8개가 됐다. 남은 `retryable` 2개는 WARP 이전
+  실패의 backoff가 남은 것으로 다음 cron이 자동으로 이어 간다.
+
 ### 정정: ingress는 WARP로 열렸다
 
 아래 "예약 러너의 YouTube ingress는 GitHub Actions에서 막혀 있다" 항목의 관찰은
