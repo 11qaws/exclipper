@@ -259,6 +259,32 @@ describe("channelPreanalysisBundle", () => {
     );
   });
 
+  it("keeps a final cue that overhangs by the duration truncation, clamped to the source", async () => {
+    // Measured on VFCOVyDeWWk: one event of 6,085 ended 44ms past a duration
+    // YouTube reports in whole seconds. The whole broadcast was being rejected
+    // on every scheduled retry because of it.
+    const bundle = await validBundle();
+    const parsed = parseChannelPreanalysisBundle(
+      JSON.stringify({
+        ...bundle,
+        captionTrack: {
+          ...bundle.captionTrack,
+          events: [
+            {
+              startMs: DURATION_MS - 2_000,
+              durationMs: 2_044,
+              text: "마지막 대사",
+            },
+          ],
+        },
+      }),
+    );
+    const [event] = parsed.captionTrack.events;
+    expect(event?.startMs).toBe(DURATION_MS - 2_000);
+    expect(event?.durationMs).toBe(2_000);
+    expect(event!.startMs + event!.durationMs).toBe(DURATION_MS);
+  });
+
   it("rejects caption and discovered-lead ranges beyond the source", async () => {
     const bundle = await validBundle();
     expect(() =>
@@ -269,8 +295,10 @@ describe("channelPreanalysisBundle", () => {
             ...bundle.captionTrack,
             events: [
               {
+                // Beyond what a whole-second duration truncation could ever
+                // explain, which is what this bound exists to catch.
                 startMs: DURATION_MS - 1_000,
-                durationMs: 1_001,
+                durationMs: 2_002,
                 text: "영상 밖으로 넘어가는 자막",
               },
             ],

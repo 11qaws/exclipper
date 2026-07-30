@@ -123,6 +123,18 @@ export class ChannelPreanalysisBundleValidationError extends Error {
   }
 }
 
+/**
+ * YouTube reports a video's duration in whole seconds while caption timings are
+ * in milliseconds, so the real media can run up to one second past the declared
+ * duration and a final cue that reaches into that last partial second overhangs
+ * by arithmetic rather than corruption. One 44ms overhang out of 6,085 events
+ * was rejecting an entire broadcast on every scheduled retry. Absorb exactly
+ * the error the truncation can produce and nothing beyond it: a caption track
+ * belonging to a different, longer video overhangs by far more than this, so
+ * the identity check the bound exists for still holds.
+ */
+const CAPTION_END_TRUNCATION_TOLERANCE_MS = 1_000;
+
 const SHA256_PATTERN = /^sha256:[0-9a-f]{64}$/u;
 const ISO_DATE_TIME_PATTERN =
   /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/u;
@@ -384,7 +396,7 @@ function validateCaptionTrack(
       (event.durationMs as number) < 0 ||
       (event.durationMs as number) > MAX_BROADCAST_CONTEXT_SOURCE_DURATION_MS ||
       (event.startMs as number) + (event.durationMs as number) >
-        sourceDurationMs ||
+        sourceDurationMs + CAPTION_END_TRUNCATION_TOLERANCE_MS ||
       !isBoundedText(event.text, MAX_YOUTUBE_CAPTION_EVENT_TEXT_LENGTH)
     ) {
       throw validationError("INVALID_TRANSCRIPT", "Caption event is invalid.");
@@ -396,7 +408,13 @@ function validateCaptionTrack(
     }
     return {
       startMs: event.startMs as number,
-      durationMs: event.durationMs as number,
+      // Absorbing the truncation must not hand a timeline that runs past the
+      // declared duration to everything downstream. Clamp instead, which is
+      // idempotent: a clamped event re-validates unchanged on readback.
+      durationMs: Math.min(
+        event.durationMs as number,
+        sourceDurationMs - (event.startMs as number),
+      ),
       text: event.text,
     };
   });
