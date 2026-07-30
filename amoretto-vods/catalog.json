@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "channelId": "UCHycoTBFDhXz4XNz8jBP-_A",
   "channelHandle": "@AmorettoVODs",
-  "revision": 7,
-  "generatedAt": "2026-07-30T12:35:43.214Z",
+  "revision": 8,
+  "generatedAt": "2026-07-30T12:37:50.606Z",
   "videos": [
     {
       "channelId": "UCHycoTBFDhXz4XNz8jBP-_A",
@@ -103,11 +103,17 @@
       "publishedAt": "2026-07-17T03:20:46.000Z",
       "updatedAt": "2026-07-17T04:13:32.000Z",
       "watchUrl": "https://www.youtube.com/watch?v=EZfCGS5ms_Q",
-      "state": "discovered",
-      "revision": 1,
+      "state": "retryable",
+      "revision": 2,
       "artifactIds": [],
       "registeredLocalSampledFingerprints": [],
-      "retry": null
+      "retry": {
+        "stage": "metadata",
+        "lastSuccessfulState": "discovered",
+        "attemptCount": 1,
+        "nextAttemptAt": "2026-07-30T15:37:50.606Z",
+        "errorCode": "YT_DLP_FAILED"
+      }
     },
     {
       "channelId": "UCHycoTBFDhXz4XNz8jBP-_A",
