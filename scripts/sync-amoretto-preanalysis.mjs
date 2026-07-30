@@ -1488,11 +1488,13 @@ export async function synchronizeAmorettoCatalog(
       // Without the message an operator sees only the code, which cannot
       // distinguish a refused request from a broken one. The captured
       // diagnostic is already bounded; redact it before it reaches a log.
-      const diagnostic = redactDiagnostic(
-        error instanceof Error ? error.message : String(error),
-      );
+      const rawMessage = error instanceof Error ? error.message : String(error);
+      const diagnostic = redactDiagnostic(rawMessage);
+      // Classify the raw message: redaction is a lossy transform meant for
+      // display, so matching against it would couple the classifier to it.
+      const failureKind = classifyYtDlpFailure(rawMessage);
       log.warn(
-        `Deferred ${selectedVideo.videoId} at ${stage}: ${retry.errorCode}; next attempt ${retry.nextAttemptAt}.` +
+        `Deferred ${selectedVideo.videoId} at ${stage}: ${retry.errorCode} (${failureKind}); next attempt ${retry.nextAttemptAt}.` +
           (diagnostic === "" ? "" : ` Diagnostic: ${diagnostic}`),
       );
     }
@@ -3187,6 +3189,60 @@ export async function runBoundedCommand(
     }, timeoutMs);
     timer.unref();
   });
+}
+
+/**
+ * Ported from rekasong's prepare_worker, which solved this first. Order
+ * matters: botwall wins over unavailable, unavailable over network. The point
+ * is measurement -- a rising botwall share is how a tightening WARP range
+ * announces itself, and it must not be averaged in with a video that is simply
+ * gone.
+ *
+ * Do not turn `unavailable` into an early abort. YouTube's availability varies
+ * by client, so a video one surface calls unavailable can be fetched by
+ * another, and a permanent skip makes a misclassification permanent too.
+ */
+const YT_DLP_FAILURE_PATTERNS = [
+  ["botwall", [/sign in to confirm you['’]re not a bot/iu, /confirm you['’]re not a bot/iu]],
+  [
+    "unavailable",
+    [
+      /video unavailable/iu,
+      /private video/iu,
+      /this video is private/iu,
+      /\bremoved\b/iu,
+      /has been terminated/iu,
+      /no longer available/iu,
+      /content isn['’]t available/iu,
+      /video is not available/iu,
+    ],
+  ],
+  [
+    "network",
+    [
+      /time[d]? ?out/iu,
+      /connection (reset|refused|aborted)/iu,
+      /network is unreachable/iu,
+      /temporary failure in name resolution/iu,
+      /name or service not known/iu,
+      /getaddrinfo failed/iu,
+      /nodename nor servname/iu,
+      /incomplete read/iu,
+      /eof occurred/iu,
+      /http error 5\d\d/iu,
+      /unable to connect/iu,
+    ],
+  ],
+];
+
+export function classifyYtDlpFailure(text) {
+  if (typeof text !== "string" || text === "") return "unknown";
+  for (const [kind, patterns] of YT_DLP_FAILURE_PATTERNS) {
+    for (const pattern of patterns) {
+      if (pattern.test(text)) return kind;
+    }
+  }
+  return "unknown";
 }
 
 /**

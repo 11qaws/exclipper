@@ -50,6 +50,7 @@ import {
   artifactForVisualFingerprint,
   createContextReadyBundle,
   createEmptyCatalog,
+  classifyYtDlpFailure,
   createExpectedScheduledContextReceipt,
   createRetryCheckpoint,
   createScheduledContextRequest,
@@ -2114,4 +2115,25 @@ test("an empty catalog starts with the pinned source contract", () => {
     videos: [],
     artifacts: [],
   });
+});
+
+test("classifies yt-dlp failures so a tightening egress can be counted", () => {
+  // The exact string the runner received before WARP was in place.
+  assert.equal(
+    classifyYtDlpFailure(
+      "yt-dlp failed (1): ERROR: [youtube] EZfCGS5ms_Q: Sign in to confirm you’re not a bot. Use --cookies-from-browser",
+    ),
+    "botwall",
+  );
+  assert.equal(classifyYtDlpFailure("ERROR: Video unavailable"), "unavailable");
+  assert.equal(classifyYtDlpFailure("ERROR: unable to connect: timed out"), "network");
+  assert.equal(classifyYtDlpFailure("something nobody has seen yet"), "unknown");
+  assert.equal(classifyYtDlpFailure(""), "unknown");
+  assert.equal(classifyYtDlpFailure(null), "unknown");
+  // Order matters: a botwall that also mentions availability stays a botwall,
+  // because the two demand opposite operator responses.
+  assert.equal(
+    classifyYtDlpFailure("Video unavailable. Sign in to confirm you're not a bot."),
+    "botwall",
+  );
 });
