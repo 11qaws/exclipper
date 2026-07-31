@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "channelId": "UCHycoTBFDhXz4XNz8jBP-_A",
   "channelHandle": "@AmorettoVODs",
-  "revision": 39,
-  "generatedAt": "2026-07-31T09:20:43.957Z",
+  "revision": 45,
+  "generatedAt": "2026-07-31T14:40:32.599Z",
   "videos": [
     {
       "channelId": "UCHycoTBFDhXz4XNz8jBP-_A",
@@ -195,13 +195,16 @@
       "videoId": "-F5j70sytkw",
       "title": "2026 07 10 - 메이플 하다 롤체하는 방송",
       "normalizedTitle": "2026 07 10 메이플 하다 롤체하는 방송",
-      "durationMs": null,
+      "durationMs": 12986000,
       "publishedAt": "2026-07-10T14:52:28.000Z",
       "updatedAt": "2026-07-10T15:58:37.000Z",
       "watchUrl": "https://www.youtube.com/watch?v=-F5j70sytkw",
-      "state": "discovered",
-      "revision": 1,
-      "artifactIds": [],
+      "state": "transcript-ready",
+      "revision": 4,
+      "artifactIds": [
+        "youtube-caption-bundle:-F5j70sytkw:v1",
+        "youtube-storyboard-visual-fingerprint:-F5j70sytkw:v1"
+      ],
       "registeredLocalSampledFingerprints": [],
       "retry": null
     },
@@ -210,13 +213,16 @@
       "videoId": "8yKYLyYciGs",
       "title": "2026 07 09 - 메이플 실패해서 주식리딩방이 된 방송",
       "normalizedTitle": "2026 07 09 메이플 실패해서 주식리딩방이 된 방송",
-      "durationMs": null,
+      "durationMs": 11003000,
       "publishedAt": "2026-07-09T15:14:11.000Z",
       "updatedAt": "2026-07-09T16:08:17.000Z",
       "watchUrl": "https://www.youtube.com/watch?v=8yKYLyYciGs",
-      "state": "discovered",
-      "revision": 1,
-      "artifactIds": [],
+      "state": "transcript-ready",
+      "revision": 4,
+      "artifactIds": [
+        "youtube-caption-bundle:8yKYLyYciGs:v1",
+        "youtube-storyboard-visual-fingerprint:8yKYLyYciGs:v1"
+      ],
       "registeredLocalSampledFingerprints": [],
       "retry": null
     },
@@ -451,6 +457,46 @@
       "contentDigest": "sha256:414e708683fbdc78961ecf2d6a3e6de0a35030e3679e120c5683a222ae264b30",
       "byteLength": 2199,
       "createdAt": "2026-07-12T05:20:44.000Z"
+    },
+    {
+      "artifactId": "youtube-caption-bundle:-F5j70sytkw:v1",
+      "videoId": "-F5j70sytkw",
+      "kind": "transcript",
+      "revision": 1,
+      "storageKey": "amoretto-vods/videos/-F5j70sytkw.v1.json",
+      "contentDigest": "sha256:27050833580668e7b55f2d7e7efdf033361e388bd3e41b64f5597cafeb54091c",
+      "byteLength": 555231,
+      "createdAt": "2026-07-31T14:40:25.566Z"
+    },
+    {
+      "artifactId": "youtube-storyboard-visual-fingerprint:-F5j70sytkw:v1",
+      "videoId": "-F5j70sytkw",
+      "kind": "fingerprint",
+      "revision": 1,
+      "storageKey": "amoretto-vods/videos/-F5j70sytkw.visual-fingerprint.v1.json",
+      "contentDigest": "sha256:2427a449365c94d65c04e85c7ed6d934501a5c66625e0ed0bd5605bc3f47a68b",
+      "byteLength": 2198,
+      "createdAt": "2026-07-10T15:58:37.000Z"
+    },
+    {
+      "artifactId": "youtube-caption-bundle:8yKYLyYciGs:v1",
+      "videoId": "8yKYLyYciGs",
+      "kind": "transcript",
+      "revision": 1,
+      "storageKey": "amoretto-vods/videos/8yKYLyYciGs.v1.json",
+      "contentDigest": "sha256:7f8f76eedae01b352f0a787913c554665c8eca4147cfcbc4c8c9f3160e9af9cc",
+      "byteLength": 514564,
+      "createdAt": "2026-07-31T14:40:31.961Z"
+    },
+    {
+      "artifactId": "youtube-storyboard-visual-fingerprint:8yKYLyYciGs:v1",
+      "videoId": "8yKYLyYciGs",
+      "kind": "fingerprint",
+      "revision": 1,
+      "storageKey": "amoretto-vods/videos/8yKYLyYciGs.visual-fingerprint.v1.json",
+      "contentDigest": "sha256:ae88e01e56dbb4756bf970042af54ba6a9a172f268cc2c1f1f34a106e8db6915",
+      "byteLength": 2194,
+      "createdAt": "2026-07-09T16:08:17.000Z"
     }
   ]
 }
