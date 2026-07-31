@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "channelId": "UCHycoTBFDhXz4XNz8jBP-_A",
   "channelHandle": "@AmorettoVODs",
-  "revision": 33,
-  "generatedAt": "2026-07-30T22:30:00.999Z",
+  "revision": 39,
+  "generatedAt": "2026-07-31T09:20:43.957Z",
   "videos": [
     {
       "channelId": "UCHycoTBFDhXz4XNz8jBP-_A",
@@ -159,42 +159,36 @@
       "videoId": "IBNZkZw-T2g",
       "title": "2026 07 12 - 밈 배우기",
       "normalizedTitle": "2026 07 12 밈 배우기",
-      "durationMs": null,
+      "durationMs": 9972000,
       "publishedAt": "2026-07-14T13:20:12.000Z",
       "updatedAt": "2026-07-14T15:15:04.000Z",
       "watchUrl": "https://www.youtube.com/watch?v=IBNZkZw-T2g",
-      "state": "retryable",
-      "revision": 2,
-      "artifactIds": [],
+      "state": "transcript-ready",
+      "revision": 5,
+      "artifactIds": [
+        "youtube-caption-bundle:IBNZkZw-T2g:v1",
+        "youtube-storyboard-visual-fingerprint:IBNZkZw-T2g:v1"
+      ],
       "registeredLocalSampledFingerprints": [],
-      "retry": {
-        "stage": "metadata",
-        "lastSuccessfulState": "discovered",
-        "attemptCount": 1,
-        "nextAttemptAt": "2026-07-31T01:29:59.066Z",
-        "errorCode": "YT_DLP_FAILED"
-      }
+      "retry": null
     },
     {
       "channelId": "UCHycoTBFDhXz4XNz8jBP-_A",
       "videoId": "LxfT_f_L7t4",
       "title": "2026 07 11 - 노래방송",
       "normalizedTitle": "2026 07 11 노래방송",
-      "durationMs": null,
+      "durationMs": 8303000,
       "publishedAt": "2026-07-12T05:20:43.000Z",
       "updatedAt": "2026-07-12T05:20:44.000Z",
       "watchUrl": "https://www.youtube.com/watch?v=LxfT_f_L7t4",
-      "state": "retryable",
-      "revision": 2,
-      "artifactIds": [],
+      "state": "transcript-ready",
+      "revision": 5,
+      "artifactIds": [
+        "youtube-caption-bundle:LxfT_f_L7t4:v1",
+        "youtube-storyboard-visual-fingerprint:LxfT_f_L7t4:v1"
+      ],
       "registeredLocalSampledFingerprints": [],
-      "retry": {
-        "stage": "metadata",
-        "lastSuccessfulState": "discovered",
-        "attemptCount": 1,
-        "nextAttemptAt": "2026-07-31T01:30:00.999Z",
-        "errorCode": "YT_DLP_FAILED"
-      }
+      "retry": null
     },
     {
       "channelId": "UCHycoTBFDhXz4XNz8jBP-_A",
@@ -417,6 +411,46 @@
       "contentDigest": "sha256:f7012178711650aa9bf90cc99df89263f04d0c18cffc6052a541c553ebb7456b",
       "byteLength": 2192,
       "createdAt": "2026-07-14T18:48:33.000Z"
+    },
+    {
+      "artifactId": "youtube-caption-bundle:IBNZkZw-T2g:v1",
+      "videoId": "IBNZkZw-T2g",
+      "kind": "transcript",
+      "revision": 1,
+      "storageKey": "amoretto-vods/videos/IBNZkZw-T2g.v1.json",
+      "contentDigest": "sha256:b352b3554a4493c67e8cc4cbbf29794b7a5360defebe08951e1266d9f1f004d1",
+      "byteLength": 443054,
+      "createdAt": "2026-07-31T09:20:37.897Z"
+    },
+    {
+      "artifactId": "youtube-storyboard-visual-fingerprint:IBNZkZw-T2g:v1",
+      "videoId": "IBNZkZw-T2g",
+      "kind": "fingerprint",
+      "revision": 1,
+      "storageKey": "amoretto-vods/videos/IBNZkZw-T2g.visual-fingerprint.v1.json",
+      "contentDigest": "sha256:93d75d31413b43f12fce4bd3a9b5113fd450d05326094dc3ec73d69134f24681",
+      "byteLength": 2195,
+      "createdAt": "2026-07-14T15:15:04.000Z"
+    },
+    {
+      "artifactId": "youtube-caption-bundle:LxfT_f_L7t4:v1",
+      "videoId": "LxfT_f_L7t4",
+      "kind": "transcript",
+      "revision": 1,
+      "storageKey": "amoretto-vods/videos/LxfT_f_L7t4.v1.json",
+      "contentDigest": "sha256:b5891e674a97e7794da053deea7f331f31c9b4b5821a2a7190e0faa7e738d400",
+      "byteLength": 343915,
+      "createdAt": "2026-07-31T09:20:43.516Z"
+    },
+    {
+      "artifactId": "youtube-storyboard-visual-fingerprint:LxfT_f_L7t4:v1",
+      "videoId": "LxfT_f_L7t4",
+      "kind": "fingerprint",
+      "revision": 1,
+      "storageKey": "amoretto-vods/videos/LxfT_f_L7t4.visual-fingerprint.v1.json",
+      "contentDigest": "sha256:414e708683fbdc78961ecf2d6a3e6de0a35030e3679e120c5683a222ae264b30",
+      "byteLength": 2199,
+      "createdAt": "2026-07-12T05:20:44.000Z"
     }
   ]
 }
