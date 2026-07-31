@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "channelId": "UCHycoTBFDhXz4XNz8jBP-_A",
   "channelHandle": "@AmorettoVODs",
-  "revision": 45,
-  "generatedAt": "2026-07-31T14:40:32.599Z",
+  "revision": 50,
+  "generatedAt": "2026-07-31T16:59:56.118Z",
   "videos": [
     {
       "channelId": "UCHycoTBFDhXz4XNz8jBP-_A",
@@ -231,28 +231,37 @@
       "videoId": "eLo7hzvhg1c",
       "title": "2026 07 06 [잡담방송] lovely한 레또가 왔어요 !!",
       "normalizedTitle": "2026 07 06 잡담방송 lovely한 레또가 왔어요",
-      "durationMs": null,
+      "durationMs": 8060000,
       "publishedAt": "2026-07-06T17:28:17.000Z",
       "updatedAt": "2026-07-08T05:16:13.000Z",
       "watchUrl": "https://www.youtube.com/watch?v=eLo7hzvhg1c",
-      "state": "discovered",
-      "revision": 1,
+      "state": "retryable",
+      "revision": 3,
       "artifactIds": [],
       "registeredLocalSampledFingerprints": [],
-      "retry": null
+      "retry": {
+        "stage": "transcript",
+        "lastSuccessfulState": "metadata-ready",
+        "attemptCount": 1,
+        "nextAttemptAt": "2026-07-31T19:59:50.955Z",
+        "errorCode": "KOREAN_CAPTION_NOT_FOUND"
+      }
     },
     {
       "channelId": "UCHycoTBFDhXz4XNz8jBP-_A",
       "videoId": "Prc5wRTE36A",
       "title": "2026-07-05 [데뷔방송] 앙뇽~ 러블리한 아모레또가 왔어요!",
       "normalizedTitle": "2026 07 05 데뷔방송 앙뇽 러블리한 아모레또가 왔어요",
-      "durationMs": null,
+      "durationMs": 5128000,
       "publishedAt": "2026-07-05T09:06:21.000Z",
       "updatedAt": "2026-07-08T05:17:06.000Z",
       "watchUrl": "https://www.youtube.com/watch?v=Prc5wRTE36A",
-      "state": "discovered",
-      "revision": 1,
-      "artifactIds": [],
+      "state": "transcript-ready",
+      "revision": 4,
+      "artifactIds": [
+        "youtube-caption-bundle:Prc5wRTE36A:v1",
+        "youtube-storyboard-visual-fingerprint:Prc5wRTE36A:v1"
+      ],
       "registeredLocalSampledFingerprints": [],
       "retry": null
     }
@@ -497,6 +506,26 @@
       "contentDigest": "sha256:ae88e01e56dbb4756bf970042af54ba6a9a172f268cc2c1f1f34a106e8db6915",
       "byteLength": 2194,
       "createdAt": "2026-07-09T16:08:17.000Z"
+    },
+    {
+      "artifactId": "youtube-caption-bundle:Prc5wRTE36A:v1",
+      "videoId": "Prc5wRTE36A",
+      "kind": "transcript",
+      "revision": 1,
+      "storageKey": "amoretto-vods/videos/Prc5wRTE36A.v1.json",
+      "contentDigest": "sha256:5162377d94ffc78c7e6c38db883cd557f2c6e4bf91d1981d3b726cbed9a1f910",
+      "byteLength": 304562,
+      "createdAt": "2026-07-31T16:59:55.646Z"
+    },
+    {
+      "artifactId": "youtube-storyboard-visual-fingerprint:Prc5wRTE36A:v1",
+      "videoId": "Prc5wRTE36A",
+      "kind": "fingerprint",
+      "revision": 1,
+      "storageKey": "amoretto-vods/videos/Prc5wRTE36A.visual-fingerprint.v1.json",
+      "contentDigest": "sha256:51f994da46d2ef6f4dcfc3821357c7dab0c04625786a39fc84e9006992a0e711",
+      "byteLength": 2197,
+      "createdAt": "2026-07-08T05:17:06.000Z"
     }
   ]
 }
