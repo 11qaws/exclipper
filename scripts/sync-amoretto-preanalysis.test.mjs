@@ -1460,6 +1460,48 @@ test("missing or corrupt ready artifacts become immediately recoverable checkpoi
   });
 });
 
+test("retryable artifact closures are reconciled before an unrelated exact review", async () => {
+  const catalogDir = await mkdtemp(
+    join(tmpdir(), "exclipper-retry-closure-reconcile-"),
+  );
+  try {
+    const fixture = await readyCatalogFixture(catalogDir);
+    const priorVideo = fixture.manifest.videos[0];
+    const retryableManifest = {
+      ...fixture.manifest,
+      videos: [{
+        ...priorVideo,
+        state: "retryable",
+        revision: priorVideo.revision + 1,
+        retry: {
+          stage: "fingerprint",
+          lastSuccessfulState: "transcript-ready",
+          attemptCount: 1,
+          nextAttemptAt: "2026-08-03T00:00:00.000Z",
+          errorCode: "FINGERPRINT_STORYBOARD_UNAVAILABLE",
+        },
+      }],
+    };
+    await rm(fixture.bundlePath, { force: true });
+
+    const result = await reconcileReadyCatalogArtifacts(retryableManifest, {
+      catalogDir,
+      nowIso: BASE_TIME,
+      log: { warn() {} },
+    });
+    const repaired = result.manifest.videos[0];
+
+    assert.equal(result.changed, true);
+    assert.equal(repaired?.state, "retryable");
+    assert.equal(repaired?.retry?.stage, "transcript");
+    assert.equal(repaired?.retry?.nextAttemptAt, BASE_TIME);
+    assert.deepEqual(repaired?.artifactIds, []);
+    assert.equal(result.manifest.artifacts.length, 0);
+  } finally {
+    await rm(catalogDir, { recursive: true, force: true });
+  }
+});
+
 test("fingerprint damage preserves the transcript and repairs only the visual artifact", async (t) => {
   for (const damage of ["missing", "same-length corruption"]) {
     await t.test(damage, async () => {

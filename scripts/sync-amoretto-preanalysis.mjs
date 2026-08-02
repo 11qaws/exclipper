@@ -1628,7 +1628,12 @@ export async function reconcileReadyCatalogArtifacts(
   const invalidatedVideoIds = [];
 
   for (const snapshotVideo of manifest.videos) {
-    if (!SUCCESSFUL_STATES.has(snapshotVideo.state)) continue;
+    if (
+      !SUCCESSFUL_STATES.has(snapshotVideo.state) &&
+      !(snapshotVideo.state === "retryable" && snapshotVideo.artifactIds.length > 0)
+    ) {
+      continue;
+    }
     const currentVideo =
       manifest.videos.find(({ videoId }) => videoId === snapshotVideo.videoId) ??
       snapshotVideo;

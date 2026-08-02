@@ -523,7 +523,7 @@ export function extractBroadcastContextQwenDiscoveryResponse(
       typeof value.event !== "string" ||
       typeof value.cue !== "string"
     ) {
-      return { ok: false };
+      continue;
     }
     rawLeads.push({
       leadId: `discovery-${value.s}-${value.e}-${index + 1}`,
@@ -542,8 +542,11 @@ export function extractBroadcastContextQwenDiscoveryResponse(
     try {
       discoveredLeads.push(...normalizeDiscoveredLeads([lead], request.chapters));
     } catch {
-      return { ok: false };
+      // Preserve the other paid rows when one chapter reference is invented.
     }
+  }
+  if (parsed.leads.length > 0 && discoveredLeads.length === 0) {
+    return { ok: false, reason: "lead-item" };
   }
   discoveredLeads.sort(
     (left, right) =>
@@ -713,7 +716,7 @@ export function extractBroadcastContextQwenOverviewResponse(
       typeof value.event !== "string" ||
       typeof value.cue !== "string"
     ) {
-      return { ok: false, reason: "lead-item" };
+      continue;
     }
     const lead: BroadcastContextDiscoveredLeadReference = {
       leadId: `overview-${value.s}-${value.e}-${index + 1}`,
@@ -730,7 +733,7 @@ export function extractBroadcastContextQwenOverviewResponse(
     try {
       normalizedLead = normalizeDiscoveredLeads([lead], request.chapters);
     } catch {
-      return { ok: false, reason: "lead-item" };
+      continue;
     }
     // Low-confidence and routine rows are valid provider judgements, not a
     // malformed response. They may intentionally yield no editor candidate.
@@ -742,6 +745,9 @@ export function extractBroadcastContextQwenOverviewResponse(
     }
     discoveredLeads.push(...normalizedLead);
   }
+  // Overview leads are an optional reservoir duplicated by the three
+  // dedicated discovery calls. Keep the paid summary and chapter map even if
+  // every volunteered overview lead is malformed.
   discoveredLeads.sort(
     (left, right) =>
       right.confidence - left.confidence ||

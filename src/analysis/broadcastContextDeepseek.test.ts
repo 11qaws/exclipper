@@ -878,7 +878,7 @@ describe("broadcastContextDeepseek", () => {
       }
     });
 
-    it("retries an overview when a valid lead is mixed with an invalid source range", () => {
+    it("keeps valid overview leads when one row has an invalid source range", () => {
       const payload = qwenOverviewPayloadWithLeads([
         {
           s: "c1",
@@ -899,10 +899,16 @@ describe("broadcastContextDeepseek", () => {
       ]);
 
       const parsed = extractBroadcastContextQwenOverviewResponse(payload, dummyRequest);
-      expect(parsed).toEqual({ ok: false, reason: "lead-item" });
+      expect(parsed.ok).toBe(true);
+      if (parsed.ok) {
+        expect(parsed.result.discoveredLeads).toHaveLength(1);
+        expect(parsed.result.discoveredLeads[0]?.eventSummaryKo).toBe(
+          "채팅에 반응한 사건",
+        );
+      }
     });
 
-    it("retries an overview when a valid lead is mixed with a malformed row", () => {
+    it("keeps valid overview leads when one row is malformed", () => {
       const payload = qwenOverviewPayloadWithLeads([
         {
           s: "c1",
@@ -922,9 +928,24 @@ describe("broadcastContextDeepseek", () => {
         },
       ]);
 
-      expect(
-        extractBroadcastContextQwenOverviewResponse(payload, dummyRequest),
-      ).toEqual({ ok: false, reason: "lead-item" });
+      const parsed = extractBroadcastContextQwenOverviewResponse(payload, dummyRequest);
+      expect(parsed.ok).toBe(true);
+      if (parsed.ok) expect(parsed.result.discoveredLeads).toHaveLength(1);
+    });
+
+    it("keeps a valid paid overview when all optional lead rows are malformed", () => {
+      const payload = qwenOverviewPayloadWithLeads([{
+        s: "missing",
+        e: "missing",
+        c: "reaction",
+        p: "high",
+        event: "잘못된 선택 행",
+        cue: "존재하지 않는 근거",
+      }]);
+
+      const parsed = extractBroadcastContextQwenOverviewResponse(payload, dummyRequest);
+      expect(parsed.ok).toBe(true);
+      if (parsed.ok) expect(parsed.result.discoveredLeads).toEqual([]);
     });
 
     it("accepts an intentional empty result when all valid leads are low confidence", () => {
@@ -975,7 +996,7 @@ describe("broadcastContextDeepseek", () => {
       ).toBe(false);
     });
 
-    it("retries discovery when any returned lead is malformed", () => {
+    it("retries discovery when all returned leads are malformed", () => {
       const payload = {
         choices: [{
           message: {
@@ -1000,6 +1021,48 @@ describe("broadcastContextDeepseek", () => {
           candidates: [],
         }).ok,
       ).toBe(false);
+    });
+
+    it("keeps valid discovery leads when another paid row is malformed", () => {
+      const payload = {
+        choices: [{
+          message: {
+            content: JSON.stringify({
+              summary: "주제 내부 사건 탐색",
+              leads: [
+                {
+                  s: "c1",
+                  e: "c2",
+                  c: "reaction",
+                  p: 0.9,
+                  event: "채팅과 음식 취향을 두고 논쟁한다.",
+                  cue: "그건 음식이 아니잖아",
+                },
+                {
+                  s: "missing",
+                  e: "missing",
+                  c: "reaction",
+                  p: 0.9,
+                  event: "존재하지 않는 범위",
+                  cue: "잘못된 챕터",
+                },
+              ],
+            }),
+          },
+        }],
+      };
+
+      const parsed = extractBroadcastContextQwenDiscoveryResponse(payload, {
+        ...dummyRequest,
+        candidates: [],
+      });
+      expect(parsed.ok).toBe(true);
+      if (parsed.ok) {
+        expect(parsed.result.discoveredLeads).toHaveLength(1);
+        expect(parsed.result.discoveredLeads[0]?.eventSummaryKo).toContain(
+          "음식 취향",
+        );
+      }
     });
 
     it("retries selection when one selected item violates the current schema", () => {
