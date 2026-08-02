@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "channelId": "UCk0Mu5MpVzJ056e65XpAj0Q",
   "channelHandle": "@SENAREPLAY",
-  "revision": 11,
-  "generatedAt": "2026-08-02T19:54:00.173Z",
+  "revision": 16,
+  "generatedAt": "2026-08-02T20:01:41.571Z",
   "videos": [
     {
       "channelId": "UCk0Mu5MpVzJ056e65XpAj0Q",
@@ -71,15 +71,24 @@
       "videoId": "_4TABW52aj0",
       "title": "【26. 07. 23】 팬티 벗고 노래 부른 날... ★",
       "normalizedTitle": "26 07 23 팬티 벗고 노래 부른 날",
-      "durationMs": null,
+      "durationMs": 11564000,
       "publishedAt": "2026-07-23T07:00:43.000Z",
       "updatedAt": "2026-07-23T08:06:01.000Z",
       "watchUrl": "https://www.youtube.com/watch?v=_4TABW52aj0",
-      "state": "discovered",
-      "revision": 1,
-      "artifactIds": [],
+      "state": "retryable",
+      "revision": 6,
+      "artifactIds": [
+        "youtube-caption-bundle:_4TABW52aj0:v2",
+        "youtube-storyboard-visual-fingerprint:_4TABW52aj0:v1"
+      ],
       "registeredLocalSampledFingerprints": [],
-      "retry": null
+      "retry": {
+        "stage": "review",
+        "lastSuccessfulState": "context-ready",
+        "attemptCount": 1,
+        "nextAttemptAt": "2026-08-02T23:01:41.571Z",
+        "errorCode": "PROCESS_FAILED"
+      }
     },
     {
       "channelId": "UCk0Mu5MpVzJ056e65XpAj0Q",
@@ -277,6 +286,26 @@
       "contentDigest": "sha256:2a53554bc5c90cc1c71b0a83c63a345a27991c7e535e799e7b5d2d5998f0e9d1",
       "byteLength": 2062667,
       "createdAt": "2026-08-02T19:50:56.772Z"
+    },
+    {
+      "artifactId": "youtube-caption-bundle:_4TABW52aj0:v2",
+      "videoId": "_4TABW52aj0",
+      "kind": "transcript",
+      "revision": 2,
+      "storageKey": "sena-replay/videos/_4TABW52aj0.v2.json",
+      "contentDigest": "sha256:8bb08af1f76549f5738d0365d38d6bc7aa05863b679eee0eecdf61c15535d48c",
+      "byteLength": 544484,
+      "createdAt": "2026-08-02T20:01:34.544Z"
+    },
+    {
+      "artifactId": "youtube-storyboard-visual-fingerprint:_4TABW52aj0:v1",
+      "videoId": "_4TABW52aj0",
+      "kind": "fingerprint",
+      "revision": 1,
+      "storageKey": "sena-replay/videos/_4TABW52aj0.visual-fingerprint.v1.json",
+      "contentDigest": "sha256:e8a45048e4c86936a6d1b18af066e39b2884bcc23f5804dceea880658921eec3",
+      "byteLength": 2202,
+      "createdAt": "2026-07-23T08:06:01.000Z"
     }
   ]
 }
