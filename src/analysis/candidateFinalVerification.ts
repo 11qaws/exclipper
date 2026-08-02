@@ -703,14 +703,14 @@ function candidateVerdictGap(
       : "detail-verdict-incoherent";
   }
 
-  if (
-    insight.programMaterial === "music-or-intermission" ||
-    insight.programMaterial === "routine-or-unclear"
-  ) {
-    return "program-material-excluded";
-  }
   if (insight.contextConsistency === "conflict") {
     return "context-conflict";
+  }
+  if (insight.programMaterial === "music-or-intermission") {
+    return "program-material-excluded";
+  }
+  if (insight.programMaterial === "routine-or-unclear") {
+    return "program-material-unclear";
   }
   return insight.programMaterial === "streamer-event" &&
     insight.contextConsistency === "consistent"

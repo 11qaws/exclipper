@@ -32,6 +32,31 @@ const CONTEXT_PROVENANCE = {
   localVisualVerificationRequired: true,
 } as const;
 
+function compositeContextReceipt() {
+  const overview = CONTEXT_PROVENANCE.contextReceipt;
+  return {
+    ...overview,
+    componentReceipts: Array.from({ length: 4 }, (_, componentIndex) => ({
+      componentIndex,
+      analysisMode: componentIndex === 0 ? "overview" : "discovery",
+      contractVersion: overview.contractVersion,
+      routingRevision: overview.routingRevision,
+      modelId: componentIndex === 0 ? overview.modelId : "qwen3.6-flash",
+      modelRevision:
+        componentIndex === 0
+          ? overview.modelRevision
+          : "qwen3.6-flash-context-discovery-2026-08-02",
+      operationId: `channel-context-amoretto-vods-${String(componentIndex + 1).repeat(64)}`,
+      payloadDigest: `sha256:${String(componentIndex + 5).repeat(64)}`,
+      workerAttempt: componentIndex + 1,
+      retryRisk:
+        componentIndex === 0
+          ? "possible-duplicate-provider-charge"
+          : null,
+    })),
+  } as const;
+}
+
 async function validBundle(): Promise<ChannelPreanalysisBundle> {
   return createChannelPreanalysisBundle({
     channelId: AMORETTO_CHANNEL_PREANALYSIS_SOURCE.channelId,
@@ -258,6 +283,138 @@ describe("channelPreanalysisBundle", () => {
       expect.objectContaining<Partial<ChannelPreanalysisBundleValidationError>>({
         code: "INVALID_CONTEXT",
       }),
+    );
+  });
+
+  it("preserves every ordered context component receipt and rejects incomplete or forged sets", async () => {
+    const bundle = await validBundle();
+    const contextReceipt = compositeContextReceipt();
+    const contextReady = {
+      ...bundle,
+      chapters: Array.from({ length: 4 }, (_, index) => ({
+        chapterId: `youtube-component-${index + 1}`,
+        startMs: index * 30_000,
+        endMs: (index + 1) * 30_000,
+        evidenceMode: "complete-transcript",
+        evidenceCoverageRatio: 1,
+        summaryKo: `구간 ${index + 1}`,
+      })),
+      state: "context-ready",
+      broadcastContext: validContext(),
+      contextProvenance: {
+        ...CONTEXT_PROVENANCE,
+        contextReceipt,
+      },
+    };
+    expect(
+      parseChannelPreanalysisBundle(JSON.stringify(contextReady))
+        .contextProvenance?.contextReceipt,
+    ).toEqual(contextReceipt);
+
+    const legacyComponentReceipts = contextReceipt.componentReceipts.map(
+      ({
+        componentIndex,
+        analysisMode,
+        contractVersion,
+        routingRevision,
+        modelId,
+        modelRevision,
+        operationId,
+        payloadDigest,
+      }) => ({
+        componentIndex,
+        analysisMode,
+        contractVersion,
+        routingRevision,
+        modelId,
+        modelRevision,
+        operationId,
+        payloadDigest,
+      }),
+    );
+    expect(
+      parseChannelPreanalysisBundle(
+        JSON.stringify({
+          ...contextReady,
+          contextProvenance: {
+            ...contextReady.contextProvenance,
+            contextReceipt: {
+              ...contextReceipt,
+              componentReceipts: legacyComponentReceipts,
+            },
+          },
+        }),
+      ).contextProvenance?.contextReceipt.componentReceipts,
+    ).toEqual(legacyComponentReceipts);
+
+    const expectInvalid = (componentReceipts: readonly unknown[]) => {
+      expect(() =>
+        parseChannelPreanalysisBundle(
+          JSON.stringify({
+            ...contextReady,
+            contextProvenance: {
+              ...contextReady.contextProvenance,
+              contextReceipt: { ...contextReceipt, componentReceipts },
+            },
+          }),
+        ),
+      ).toThrowError(
+        expect.objectContaining<Partial<ChannelPreanalysisBundleValidationError>>({
+          code: "INVALID_CONTEXT",
+        }),
+      );
+    };
+
+    expectInvalid(contextReceipt.componentReceipts.slice(0, 3));
+    expectInvalid([
+      ...contextReceipt.componentReceipts,
+      contextReceipt.componentReceipts[3],
+    ]);
+    expectInvalid([
+      contextReceipt.componentReceipts[0],
+      contextReceipt.componentReceipts[2],
+      contextReceipt.componentReceipts[1],
+      contextReceipt.componentReceipts[3],
+    ]);
+    expectInvalid([
+      contextReceipt.componentReceipts[0],
+      contextReceipt.componentReceipts[1],
+      {
+        ...contextReceipt.componentReceipts[2],
+        operationId: contextReceipt.componentReceipts[1]!.operationId,
+      },
+      contextReceipt.componentReceipts[3],
+    ]);
+    expectInvalid([
+      contextReceipt.componentReceipts[0],
+      {
+        ...contextReceipt.componentReceipts[1],
+        contractVersion: "forged-contract",
+      },
+      contextReceipt.componentReceipts[2],
+      contextReceipt.componentReceipts[3],
+    ]);
+    expectInvalid(
+      contextReceipt.componentReceipts.map((receipt, index) =>
+        index === 1 ? { ...receipt, workerAttempt: 0 } : receipt,
+      ),
+    );
+    expectInvalid(
+      contextReceipt.componentReceipts.map((receipt, index) =>
+        index === 1
+          ? { ...receipt, workerAttempt: 1_000_000_000 }
+          : receipt,
+      ),
+    );
+    expectInvalid(
+      contextReceipt.componentReceipts.map((receipt, index) =>
+        index === 1 ? { ...receipt, retryRisk: "unknown-risk" } : receipt,
+      ),
+    );
+    expectInvalid(
+      legacyComponentReceipts.map((receipt, index) =>
+        index === 1 ? { ...receipt, workerAttempt: 2 } : receipt,
+      ),
     );
   });
 

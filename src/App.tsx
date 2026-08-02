@@ -609,6 +609,7 @@ import {
 } from "./app/FrontSurface";
 import {
   deriveFrontSurfaceModel,
+  selectFrontRecoveryAction,
   type FrontPipelineInput,
   type FrontPreanalysisInput,
   type FrontRecoveryActionId,
@@ -3323,6 +3324,18 @@ function App() {
       gap === "verification-receipt-missing" ||
       gap === "evidence-incomplete",
   );
+  const candidateDetailGapIds = useMemo(
+    () =>
+      Object.entries(finalCandidateVerification.gapByCandidateId).flatMap(
+        ([candidateId, gap]) =>
+          gap === "detail-result-missing" ||
+          gap === "verification-receipt-missing" ||
+          gap === "evidence-incomplete"
+            ? [candidateId]
+            : [],
+      ),
+    [finalCandidateVerification.gapByCandidateId],
+  );
   const durableCandidatePlanReceipt =
     candidatePassBDurableInsights?.planReceipt ?? null;
   const activeCandidatePlanReceipt = candidatePassBPlanReceiptRef.current;
@@ -4419,11 +4432,21 @@ function App() {
   ]);
 
   const inspectSelectedFile = useCallback(
-    async (file: File) => {
+    async (
+      file: File,
+      options: { readonly preserveCurrentSession?: boolean } = {},
+    ) => {
       const recoveryTarget = openedRecoveredResult;
-      const replacingExistingSource = recoveryTarget === null && sourceFile !== null;
+      const recheckingRetainedSource =
+        options.preserveCurrentSession === true &&
+        recoveryTarget === null &&
+        sourceFile === file;
+      const replacingExistingSource =
+        recoveryTarget === null &&
+        sourceFile !== null &&
+        !recheckingRetainedSource;
       const previousRecoveryBinding =
-        recoveryTarget !== null &&
+        (recoveryTarget !== null || recheckingRetainedSource) &&
         sourceFile !== null &&
         preflight !== null &&
         sourceContentFingerprint !== null &&
@@ -4460,7 +4483,7 @@ function App() {
       replaceChannelPreanalysisConnection({ status: "checking" });
       setPendingFileName(file.name);
       setSourceError(null);
-      if (recoveryTarget === null) {
+      if (recoveryTarget === null && !recheckingRetainedSource) {
         replaceSourceFile(null);
         setPreflight(null);
         setSourceContentFingerprint(null);
@@ -4484,6 +4507,9 @@ function App() {
         jobId: createOperationId("source-check"),
         sourceDefinitionId:
           recoveryTarget?.finalResult.result.input.source.sourceDefinitionId ??
+          (recheckingRetainedSource
+            ? sourceCheck?.sourceDefinitionId
+            : null) ??
           createOperationId("source"),
         bindingRevision: epoch,
       });
@@ -4851,6 +4877,18 @@ function App() {
         ) {
           throw new SourceRebindMismatchError();
         }
+        if (
+          recheckingRetainedSource &&
+          previousRecoveryBinding !== null &&
+          (sourceDescriptor.contentFingerprint !==
+            previousRecoveryBinding.sourceContentFingerprint ||
+            sourceDescriptor.sizeBytes !==
+              previousRecoveryBinding.preflight.metadata.sizeBytes ||
+            sourceDescriptor.durationMs !==
+              previousRecoveryBinding.preflight.metadata.durationMs)
+        ) {
+          throw new SourceRebindMismatchError();
+        }
 
         const isUsableVideo = result.metadata.kind === "video" && result.metadata.durationMs > 0;
         if (
@@ -4925,7 +4963,8 @@ function App() {
         setPreflight(result);
         setSourceContentFingerprint(fingerprint.value);
         replaceSourceFile(isUsableVideo ? file : null, {
-          preserveAnalysisArtifacts: recoveryTarget !== null,
+          preserveAnalysisArtifacts:
+            recoveryTarget !== null || recheckingRetainedSource,
         });
         channelPreanalysisBundleBindingRef.current = matchedCatalogBinding;
         if (
@@ -13775,10 +13814,15 @@ function App() {
       : null;
 
   const frontIdentityDetail = sourceError !== null
-    ? ui(
-        "원본 확인을 끝내지 못했어요. 같은 파일을 다시 확인할 수 있어요",
-        "Source inspection did not finish. The same file can be checked again",
-      )
+    ? sourceReady
+      ? ui(
+          "새 확인은 끝내지 못했지만 기존에 확인된 원본은 그대로 사용할 수 있어요",
+          "The new check did not finish, but the previously verified source remains usable",
+        )
+      : ui(
+          "원본 확인을 끝내지 못했어요. 같은 파일을 다시 확인할 수 있어요",
+          "Source inspection did not finish. The same file can be checked again",
+        )
     : !sourceReady
       ? ui("선택한 원본을 확인하고 있어요", "Inspecting the selected source")
     : channelPreanalysisConnection.status === "connected" &&
@@ -13934,121 +13978,45 @@ function App() {
     candidateAudioEventRun?.status === "failed" ||
     candidateAudioEventRun?.status === "cancelled" ||
     candidateAudioEventError !== null;
-  const frontRecoveryInput: FrontRecoveryInput | null = (() => {
-    if (!sourceReady && sourceError !== null) {
-      return {
-        actionId: sourceFile === null ? "choose-source" : "retry-source-check",
-        safeDetail:
-          sourceFile === null
-            ? ui(
-                "원본 파일을 다시 연결하면 재생 가능 여부와 길이를 확인합니다.",
-                "Reconnect the source file to check playback and duration.",
-              )
-            : ui(
-                "선택한 원본을 유지하고 파일 확인 단계만 다시 실행합니다.",
-                "The selected source is kept while only file inspection is retried.",
-              ),
-      };
-    }
-    if (
+  const frontVisualSourceRequired =
+    broadcastVisualInspectionStatus === "blocked" && sourceFile === null;
+  const frontCandidateDetailBlocked =
+    !candidateRefinementBusy &&
+    (candidatePassBNeedsRecovery ||
+      frontCandidateAudioNeedsRetry ||
+      candidatePassBRun?.status === "completedWithGaps" ||
+      blockedByCandidateDetailGap ||
+      semanticLeadRefinementStatus === "failed" ||
+      broadcastVisualInspectionStatus === "failed" ||
+      broadcastVisualInspectionStatus === "blocked");
+  const frontRecoveryAction = selectFrontRecoveryAction({
+    sourceReady,
+    retainedSourceAvailable: sourceFile !== null,
+    sourceBlocked: sourceError !== null || frontVisualSourceRequired,
+    transcriptBlocked:
       broadcastTranscriptStatus === "failed" ||
-      broadcastTranscriptStatus === "completedWithGaps"
-    ) {
-      return {
-        actionId: "retry-transcript",
-        safeDetail: ui(
-          "완료된 대사는 유지하고 실패한 조각만 다시 확인합니다.",
-          "Completed transcript fragments are kept and only failed fragments are retried.",
-        ),
-      };
-    }
-    if (broadcastContextStatus === "failed") {
-      return {
-        actionId: "retry-context",
-        safeDetail: ui(
-          "확정된 대사와 주제 자료는 유지하고 멈춘 맥락 작업부터 이어갑니다.",
-          "Verified transcript and topic data are kept while context work resumes.",
-        ),
-      };
-    }
-    if (
+      broadcastTranscriptStatus === "completedWithGaps",
+    contextBlocked: broadcastContextStatus === "failed",
+    candidateDetailBlocked: frontCandidateDetailBlocked,
+    saveBlocked: currentPipelineCertificationFailure !== null,
+    pipelineContextBlocked:
       !candidateRefinementBusy &&
-      (candidatePassBNeedsRecovery ||
-        frontCandidateAudioNeedsRetry ||
-        (candidatePassBRun?.status === "completedWithGaps" &&
-          candidatePassBActionIds.length > 0) ||
-        (blockedByCandidateDetailGap &&
-          contextualCandidatePublicationReady &&
-          (candidatePassBActionIds.length > 0 ||
-            automaticCandidateDetailIds.length > 0)) ||
-        semanticLeadRefinementStatus === "failed" ||
-        broadcastVisualInspectionStatus === "failed" ||
-        broadcastVisualInspectionStatus === "blocked")
-    ) {
-      return {
-        actionId: "retry-candidate-detail",
-        safeDetail: ui(
-          "완료된 후보 근거는 보존하고 화면·오디오·대사가 덜 갖춰진 구간만 다시 확인합니다.",
-          "Completed evidence is preserved while only incomplete visual, audio, and dialogue ranges are retried.",
-        ),
-      };
-    }
-    if (currentPipelineCertificationFailure !== null) {
-      return {
-        actionId: "retry-save",
-        safeDetail: ui(
-          "AI를 다시 호출하기 전에 저장된 결과와 완료 증명부터 다시 확인합니다.",
-          "Saved results and completion receipts are checked before any AI work is repeated.",
-        ),
-      };
-    }
-    if (
+      wholeContextPhaseComplete &&
       blockedByPipelineGap &&
-      contextualCandidatePublicationReady &&
-      !blockedByCandidateDetailGap
-    ) {
-      return {
-        actionId: "retry-context",
-        safeDetail: ui(
-          "완료된 후보 근거는 유지하고 방송 흐름에 연결되지 않은 맥락 구간만 다시 확인합니다.",
-          "Completed candidate evidence is kept while only context ranges missing from the broadcast flow are retried.",
-        ),
-      };
-    }
-    if (analysisRun?.status === "completedWithGaps") {
-      return broadcastContextStatus === "completed"
-        ? {
-            actionId: "retry-candidate-detail",
-            safeDetail: ui(
-              "완료된 분석은 유지하고 최종 검증에 필요한 후보 근거만 다시 확인합니다.",
-              "Completed analysis is kept while candidate evidence required for final verification is retried.",
-            ),
-          }
-        : {
-            actionId: "retry-context",
-            safeDetail: ui(
-              "완료된 대사와 빠른 탐색 결과는 유지하고 끝나지 않은 방송 맥락부터 이어갑니다.",
-              "Completed transcript and fast-scan results are kept while unfinished broadcast context resumes.",
-            ),
-          };
-    }
-    if (
+      !blockedByCandidateDetailGap,
+    runCompletedWithGaps: analysisRun?.status === "completedWithGaps",
+    contextComplete: wholeContextPhaseComplete,
+    runNeedsResume:
       analysisRun?.status === "paused" ||
       analysisRun?.status === "cancelled" ||
       analysisRun?.status === "failed" ||
       analysisRun?.status === "interrupted" ||
-      (analysisError !== null && !analysisBusy)
-    ) {
-      return {
-        actionId: "resume-analysis",
-        safeDetail: ui(
-          "확정된 저장 지점은 유지하고 남은 작업부터 다시 시작합니다.",
-          "The durable checkpoint is kept and analysis resumes from remaining work.",
-        ),
-      };
-    }
-    return null;
-  })();
+      (analysisError !== null && !analysisBusy),
+  });
+  const frontRecoveryInput: FrontRecoveryInput | null =
+    frontRecoveryAction === null
+      ? null
+      : { actionId: frontRecoveryAction };
 
   const frontAnalysisStarted =
     analysisStartPending ||
@@ -14242,6 +14210,12 @@ function App() {
       : undefined;
 
   const handleFrontSourceFile = (file: File): void => {
+    if (!sourceInputLocked && frontVisualSourceRequired) {
+      dismissedPreparedChannelReviewKeyRef.current = null;
+      setPreparedChannelReview({ status: "idle" });
+      void inspectSelectedFile(file, { preserveCurrentSession: true });
+      return;
+    }
     if (
       !sourceInputLocked &&
       (openedRecoveredResult !== null || confirmDiscardCurrentWork())
@@ -14253,12 +14227,12 @@ function App() {
   };
   const handleFrontRecoveryAction = (actionId: FrontRecoveryActionId): void => {
     if (actionId === "choose-source") {
-      startFreshAnalysis();
+      focusSourceSection();
       return;
     }
     if (actionId === "retry-source-check") {
       if (sourceFile !== null) {
-        void inspectSelectedFile(sourceFile);
+        void inspectSelectedFile(sourceFile, { preserveCurrentSession: true });
       }
       return;
     }
@@ -14275,6 +14249,28 @@ function App() {
       return;
     }
     if (actionId === "retry-candidate-detail") {
+      if (semanticLeadRefinementStatus === "failed") {
+        autoSemanticLeadRefinementSourceRef.current = null;
+        allowAmbiguousSemanticRefinementRetryRef.current = true;
+        semanticRefinementRouteChangeCountRef.current = 0;
+        setSemanticLeadRefinementAttemptOrdinal((current) => current + 1);
+        setSemanticLeadRefinementStatus("idle");
+        setSemanticLeadRefinementError(null);
+        return;
+      }
+      if (
+        broadcastVisualInspectionStatus === "failed" ||
+        broadcastVisualInspectionStatus === "blocked"
+      ) {
+        if (sourceFile === null) {
+          focusSourceSection();
+          return;
+        }
+        setBroadcastVisualInspectionStatus("preparing");
+        setBroadcastVisualInspectionError(null);
+        setBroadcastVisualInspectionAttemptOrdinal((current) => current + 1);
+        return;
+      }
       if (frontCandidateAudioNeedsRetry && !candidateAudioEventBusy) {
         void runCandidateAudioEvent();
         return;
@@ -14284,9 +14280,11 @@ function App() {
         return;
       }
       const retryCandidateIds =
-        candidatePassBActionIds.length > 0
-          ? candidatePassBActionIds
-          : automaticCandidateDetailIds;
+        candidateDetailGapIds.length > 0
+          ? candidateDetailGapIds
+          : candidatePassBActionIds.length > 0
+            ? candidatePassBActionIds
+            : automaticCandidateDetailIds;
       if (!candidatePassBBusy && retryCandidateIds.length > 0) {
         void runCandidatePassB(retryCandidateIds, undefined, true);
         return;

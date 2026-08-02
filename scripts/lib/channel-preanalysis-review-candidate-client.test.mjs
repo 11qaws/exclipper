@@ -141,6 +141,10 @@ function analysisPayload(overrides = {}) {
       sourceDurationMs: SOURCE_DURATION_MS,
       castRosterId: CAST_ROSTER_ID,
     },
+    semanticAttempt: {
+      attemptOrdinal: 0,
+      retryGrantId: null,
+    },
     ...overrides,
   };
 }
@@ -380,6 +384,76 @@ test("retries network, in-progress, rate-limit and 5xx with the same exact opera
     1,
   );
   assert.deepEqual(delays, [1_000, 1_000, 2_000, 8_000]);
+});
+
+test("semantic recovery attempts get fresh operations while an exact resume keeps its operation", async () => {
+  const stages = [];
+  const resolves = [];
+  const analyze = createAnalyzer(async (url, init) => {
+    if (isMediaStageUrl(url)) {
+      stages.push({ url, headers: new Headers(init.headers) });
+      return stagedResponse(url);
+    }
+    resolves.push({ headers: new Headers(init.headers), body: init.body });
+    return successResponse();
+  });
+  const grant1 = "scheduled-semantic-1-test-grant";
+  const grant2 = "scheduled-semantic-2-test-grant";
+  const results = [];
+  results.push(await analyze(analysisPayload()));
+  results.push(await analyze(analysisPayload({
+    semanticAttempt: { attemptOrdinal: 1, retryGrantId: grant1 },
+  })));
+  results.push(await analyze(analysisPayload({
+    semanticAttempt: { attemptOrdinal: 1, retryGrantId: grant1 },
+  })));
+  results.push(await analyze(analysisPayload({
+    semanticAttempt: { attemptOrdinal: 2, retryGrantId: grant2 },
+  })));
+
+  const operationIds = resolves.map(({ headers }) =>
+    headers.get(PREANALYSIS_CONTEXT_OPERATION_HEADER));
+  const candidateHashes = stages.map(({ url }) =>
+    new URL(url).searchParams.get("candidateHash"));
+  assert.equal(new Set([operationIds[0], operationIds[1], operationIds[3]]).size, 3);
+  assert.equal(operationIds[1], operationIds[2]);
+  assert.equal(new Set([candidateHashes[0], candidateHashes[1], candidateHashes[3]]).size, 3);
+  assert.equal(candidateHashes[1], candidateHashes[2]);
+  assert.equal(
+    new Set(results.map(({ verificationReceipt }) =>
+      verificationReceipt.dispatchIntent.mediaReceipt.providerPayloadDigest)).size,
+    1,
+  );
+  assert.deepEqual(
+    results.map(({ verificationReceipt }) => ({
+      attemptOrdinal: verificationReceipt.dispatchIntent.attemptOrdinal,
+      retryGrantId: verificationReceipt.dispatchIntent.retryGrantId,
+    })),
+    [
+      { attemptOrdinal: 0, retryGrantId: null },
+      { attemptOrdinal: 1, retryGrantId: grant1 },
+      { attemptOrdinal: 1, retryGrantId: grant1 },
+      { attemptOrdinal: 2, retryGrantId: grant2 },
+    ],
+  );
+});
+
+test("rejects a malformed semantic attempt before staging media", async () => {
+  let callCount = 0;
+  const analyze = createAnalyzer(async () => {
+    callCount += 1;
+    return successResponse();
+  });
+
+  await assert.rejects(
+    analyze(analysisPayload({
+      semanticAttempt: { attemptOrdinal: 1, retryGrantId: null },
+    })),
+    (error) =>
+      error instanceof ChannelPreanalysisReviewCandidateClientError &&
+      error.code === "INVALID_IDENTITY",
+  );
+  assert.equal(callCount, 0);
 });
 
 test("renews an expired media capability without changing the paid operation", async () => {

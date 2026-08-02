@@ -62,6 +62,41 @@ const dummyRequest: BroadcastContextRequest = createBroadcastContextRequest({
   }),
 });
 
+function qwenOverviewPayloadWithLeads(leads: readonly unknown[]) {
+  return {
+    choices: [{
+      message: {
+        content: JSON.stringify({
+          summary: "음식 취향과 반응을 이어 가는 방송입니다.",
+          host: {
+            name: null,
+            profile: "음식 취향을 설명하고 채팅 반응에 답하며 자신의 판단을 정리합니다.",
+            evidence: ["음식 취향 설명", "채팅 반응에 답함"],
+            uncertainty: ["인물 식별 근거 없음"],
+          },
+          themes: ["음식 토크"],
+          chapters: [{
+            s: "c1",
+            e: "c2",
+            title: "음식 토크",
+            desc: "음식 이름과 취향을 두고 채팅과 대화합니다.",
+            kind: "main-event",
+            sal: "primary",
+          }],
+          candidates: [{
+            id: "can1",
+            d: "select",
+            c: "reaction",
+            p: 0.91,
+            reason: "채팅과 대화하며 반응한 후보입니다.",
+          }],
+          leads,
+        }),
+      },
+    }],
+  };
+}
+
 const EXCHANGE_CAST_NAMES = [
   "세라 교수님",
   "아모레또",
@@ -841,6 +876,70 @@ describe("broadcastContextDeepseek", () => {
         });
         expect(parsed.result.discoveredLeads).toEqual([]);
       }
+    });
+
+    it("retries an overview when a valid lead is mixed with an invalid source range", () => {
+      const payload = qwenOverviewPayloadWithLeads([
+        {
+          s: "c1",
+          e: "c2",
+          c: "reaction",
+          p: 0.9,
+          event: "채팅에 반응한 사건",
+          cue: "음식 취향을 두고 대화함",
+        },
+        {
+          s: "missing",
+          e: "missing",
+          c: "reaction",
+          p: 0.9,
+          event: "존재하지 않는 범위",
+          cue: "잘못된 챕터",
+        },
+      ]);
+
+      const parsed = extractBroadcastContextQwenOverviewResponse(payload, dummyRequest);
+      expect(parsed).toEqual({ ok: false, reason: "lead-item" });
+    });
+
+    it("retries an overview when a valid lead is mixed with a malformed row", () => {
+      const payload = qwenOverviewPayloadWithLeads([
+        {
+          s: "c1",
+          e: "c2",
+          c: "reaction",
+          p: 0.9,
+          event: "채팅에 반응한 사건",
+          cue: "음식 취향을 두고 대화함",
+        },
+        {
+          s: "c1",
+          e: "c2",
+          c: "reaction",
+          p: "high",
+          event: "잘못된 신뢰도 형식",
+          cue: "구조가 불완전한 행",
+        },
+      ]);
+
+      expect(
+        extractBroadcastContextQwenOverviewResponse(payload, dummyRequest),
+      ).toEqual({ ok: false, reason: "lead-item" });
+    });
+
+    it("accepts an intentional empty result when all valid leads are low confidence", () => {
+      const payload = qwenOverviewPayloadWithLeads([{
+        s: "c1",
+        e: "c2",
+        c: "reaction",
+        p: 0.4,
+        event: "약한 가능성",
+        cue: "뚜렷하지 않은 근거",
+      }]);
+
+      const parsed = extractBroadcastContextQwenOverviewResponse(payload, dummyRequest);
+      expect(parsed.ok).toBe(true);
+      if (parsed.ok) expect(parsed.result.discoveredLeads).toEqual([]);
     });
 
     it("retries the whole overview unit instead of inventing a missing candidate verdict", () => {

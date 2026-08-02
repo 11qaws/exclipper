@@ -36,7 +36,7 @@ import {
 } from "./channel-preanalysis-review-runner.mjs";
 
 export const CHANNEL_PREANALYSIS_REVIEW_PIPELINE_REVISION =
-  "scheduled-review-ready-v3";
+  "scheduled-review-ready-v5";
 export const CHANNEL_PREANALYSIS_REVIEW_JOB_MAX_VIDEOS = 2;
 
 const MANIFEST_MAX_BYTES = 4 * 1_024 * 1_024;
@@ -415,7 +415,10 @@ export async function prepareChannelPreanalysisReviewVideo(
             pipelineRevision,
             outputLanguage: "ko",
             candidateConcurrency,
-            previousCandidateResults: checkpoint.previousCandidateResults,
+            previousCandidateResults: [
+              ...checkpoint.previousCandidateResults,
+              ...checkpoint.retryableDiagnostics,
+            ],
             onCandidateCheckpoint: checkpointStore.onCandidateCheckpoint,
             extractCandidateMedia,
             analyzeCandidate,

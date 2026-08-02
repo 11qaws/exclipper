@@ -111,6 +111,19 @@ describe("broadcastTopicalDiscovery", () => {
       .toBe(chapters.length);
   });
 
+  it("keeps exact full coverage when the free route allows three discovery calls", () => {
+    const slices = createParallelBroadcastTopicalDiscoverySlices(chapters, 3);
+
+    expect(slices).toHaveLength(3);
+    expect(slices.flatMap((slice) => slice.chapters)).toEqual(chapters);
+    expect(
+      new Set(
+        slices.flatMap((slice) =>
+          slice.chapters.map((chapter) => chapter.chapterId)),
+      ).size,
+    ).toBe(chapters.length);
+  });
+
   it("round-robins topics and removes only near-identical ranges", () => {
     const merged = mergeBroadcastTopicalDiscoveryLeads([
       [lead("global", 0, 0.95), lead("global-2", 600_000, 0.9)],

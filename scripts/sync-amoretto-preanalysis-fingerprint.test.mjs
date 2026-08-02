@@ -10,7 +10,10 @@ import {
   AMORETTO_YOUTUBE_CHANNEL_FEED_URL,
   AMORETTO_YOUTUBE_CHANNEL_ID,
 } from "../src/analysis/channelPreanalysisCatalog.ts";
-import { BROADCAST_CONTEXT_SCHEMA_VERSION } from "../src/analysis/broadcastContextProtocol.ts";
+import {
+  BROADCAST_CONTEXT_SCHEMA_VERSION,
+  calculateCoverage,
+} from "../src/analysis/broadcastContextProtocol.ts";
 import { AI_BROADCAST_CONTEXT_ROUTING_REVISION } from "../src/analysis/aiModelRoutingPolicy.ts";
 import {
   fetchChannelPreanalysisVisualFingerprint,
@@ -24,13 +27,13 @@ import {
 } from "../src/analysis/channelPreanalysisVisualFingerprint.ts";
 import {
   PINNED_YT_DLP_VERSION,
+  PREANALYSIS_CONTEXT_ATTEMPT_HEADER,
   PREANALYSIS_CONTEXT_CONTRACT_HEADER,
-  PREANALYSIS_CONTEXT_EXPECTED_MODEL_ID,
-  PREANALYSIS_CONTEXT_EXPECTED_MODEL_REVISION,
   PREANALYSIS_CONTEXT_MODEL_ID_HEADER,
   PREANALYSIS_CONTEXT_MODEL_REVISION_HEADER,
   PREANALYSIS_CONTEXT_PROXY_VERSION,
   PREANALYSIS_CONTEXT_ROUTING_REVISION_HEADER,
+  createExpectedScheduledContextReceipt,
   synchronizeAmorettoCatalog,
 } from "./sync-amoretto-preanalysis.mjs";
 
@@ -303,7 +306,7 @@ test("context is durable and loadable before a failed fingerprint resumes alone"
     const storyboard = await syntheticStoryboard();
     let storyboardAvailable = false;
     let contextCalls = 0;
-    const fetchImplementation = async (input) => {
+    const fetchImplementation = async (input, init) => {
       const url = String(input);
       if (url === AMORETTO_YOUTUBE_CHANNEL_FEED_URL) {
         return new Response(atomFeed(), { status: 200 });
@@ -318,7 +321,7 @@ test("context is durable and loadable before a failed fingerprint resumes alone"
       }
       if (new URL(url).pathname === "/v1/broadcast-context") {
         contextCalls += 1;
-        return contextSuccessResponse();
+        return contextSuccessResponse(init);
       }
       throw new Error(`Unexpected fetch: ${url}`);
     };
@@ -341,7 +344,8 @@ test("context is durable and loadable before a failed fingerprint resumes alone"
     assert.equal(first.outcomes[0]?.errorCode, "FINGERPRINT_STORYBOARD_HTTP");
     assert.equal(firstVideo?.retry?.stage, "fingerprint");
     assert.equal(firstVideo?.retry?.lastSuccessfulState, "context-ready");
-    assert.equal(contextCalls, 1);
+    assert.ok(contextCalls > 1);
+    const completedContextCalls = contextCalls;
     assert.deepEqual(
       first.manifest.artifacts.map(({ kind }) => kind),
       ["transcript"],
@@ -398,7 +402,7 @@ test("context is durable and loadable before a failed fingerprint resumes alone"
         ?.revision,
       2,
     );
-    assert.equal(contextCalls, 1);
+    assert.equal(contextCalls, completedContextCalls);
   } finally {
     await rm(catalogDir, { recursive: true, force: true });
   }
@@ -422,7 +426,11 @@ async function syntheticStoryboard() {
     .toBuffer();
 }
 
-function contextSuccessResponse() {
+function contextSuccessResponse(init) {
+  const request = JSON.parse(String(init?.body));
+  const expected = createExpectedScheduledContextReceipt(
+    request.analysisMode,
+  );
   return Response.json(
     {
       schemaVersion: BROADCAST_CONTEXT_SCHEMA_VERSION,
@@ -431,17 +439,11 @@ function contextSuccessResponse() {
       hostStreamerProfile: null,
       recurringThemesKo: ["음식 취향", "메뉴 토크"],
       annotations: [],
-      semanticChaptersSupported: true,
+      semanticChaptersSupported: request.analysisMode !== "discovery",
       semanticChapters: [],
       discoveredLeadsSupported: true,
       discoveredLeads: [],
-      coverage: {
-        status: "complete",
-        coveredMs: SOURCE.durationMs,
-        coverageRatio: 1,
-        gaps: [],
-        partialChapterIds: [],
-      },
+      coverage: calculateCoverage(request.chapters, request.sourceDurationMs),
     },
     {
       headers: {
@@ -450,9 +452,10 @@ function contextSuccessResponse() {
         [PREANALYSIS_CONTEXT_ROUTING_REVISION_HEADER]:
           AI_BROADCAST_CONTEXT_ROUTING_REVISION,
         [PREANALYSIS_CONTEXT_MODEL_ID_HEADER]:
-          PREANALYSIS_CONTEXT_EXPECTED_MODEL_ID,
+          expected.modelId,
         [PREANALYSIS_CONTEXT_MODEL_REVISION_HEADER]:
-          PREANALYSIS_CONTEXT_EXPECTED_MODEL_REVISION,
+          expected.modelRevision,
+        [PREANALYSIS_CONTEXT_ATTEMPT_HEADER]: "1",
       },
     },
   );

@@ -155,6 +155,45 @@ export interface FrontRecoveryInput {
   readonly safeDetail?: string | null;
 }
 
+/**
+ * Terminal App facts used to choose the one recovery boundary shown up front.
+ * Active work must not be projected as blocked before it reaches this input.
+ */
+export interface FrontRecoveryBoundaryInput {
+  readonly sourceReady: boolean;
+  readonly retainedSourceAvailable: boolean;
+  readonly sourceBlocked: boolean;
+  readonly transcriptBlocked: boolean;
+  readonly contextBlocked: boolean;
+  readonly candidateDetailBlocked: boolean;
+  readonly saveBlocked: boolean;
+  readonly pipelineContextBlocked: boolean;
+  readonly runCompletedWithGaps: boolean;
+  readonly contextComplete: boolean;
+  readonly runNeedsResume: boolean;
+}
+
+export function selectFrontRecoveryAction(
+  input: FrontRecoveryBoundaryInput,
+): FrontRecoveryActionId | null {
+  if (!input.sourceReady && input.sourceBlocked) {
+    return input.retainedSourceAvailable
+      ? "retry-source-check"
+      : "choose-source";
+  }
+  if (input.transcriptBlocked) return "retry-transcript";
+  if (input.contextBlocked) return "retry-context";
+  if (input.candidateDetailBlocked) return "retry-candidate-detail";
+  if (input.saveBlocked) return "retry-save";
+  if (input.pipelineContextBlocked) return "retry-context";
+  if (input.runCompletedWithGaps) {
+    return input.contextComplete
+      ? "retry-candidate-detail"
+      : "retry-context";
+  }
+  return input.runNeedsResume ? "resume-analysis" : null;
+}
+
 export interface FrontSurfaceModelInput {
   readonly language: FrontLanguage;
   readonly source: FrontSourceInput | null;
@@ -950,12 +989,12 @@ function recoveryCopy(
     "retry-source-check": {
       ko: [
         "원본 확인을 끝내지 못했어요",
-        "분석 결과는 만들지 않았으며 같은 원본을 다시 확인할 수 있어요.",
+        "선택한 원본과 저장된 작업을 유지하고 파일 확인 단계만 다시 실행해요.",
         "원본 다시 확인",
       ],
       en: [
         "Source inspection did not finish",
-        "No analysis result was created; the same source can be checked again.",
+        "The selected source and saved work are kept while only file inspection is retried.",
         "Check source again",
       ],
     },
@@ -986,12 +1025,12 @@ function recoveryCopy(
     "retry-context": {
       ko: [
         "전체 맥락 분석이 멈췄어요",
-        "저장된 대사와 주제 근거는 유지하고 끝나지 않은 맥락 작업부터 이어가요.",
+        "저장된 대사와 빠른 탐색 결과는 유지하고 끝나지 않은 맥락 작업부터 이어가요.",
         "맥락 분석 이어서 하기",
       ],
       en: [
         "Whole-context analysis stopped",
-        "Saved dialogue and topic evidence are kept while unfinished context work resumes.",
+        "Saved dialogue and fast-scan results are kept while unfinished context work resumes.",
         "Resume context analysis",
       ],
     },

@@ -31,7 +31,7 @@ import {
   CHANNEL_PREANALYSIS_REVIEW_RUNNER_SCHEMA_VERSION,
 } from "./channel-preanalysis-review-runner.mjs";
 
-export const CHANNEL_PREANALYSIS_REVIEW_CHECKPOINT_SCHEMA_VERSION = "1.1.0";
+export const CHANNEL_PREANALYSIS_REVIEW_CHECKPOINT_SCHEMA_VERSION = "1.2.0";
 export const CHANNEL_PREANALYSIS_REVIEW_CHECKPOINT_MAX_BYTES = 4 * 1024 * 1024;
 export const CHANNEL_PREANALYSIS_REVIEW_CHECKPOINT_MAX_ENTRIES = 12;
 
@@ -40,6 +40,13 @@ const SHA256_PATTERN = /^sha256:[0-9a-f]{64}$/u;
 const SAFE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u;
 const SAFE_REVISION_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u;
 const SAFE_ERROR_CODE_PATTERN = /^[A-Z][A-Z0-9_]{0,63}$/u;
+const SAFE_RETRY_GRANT_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,239}$/u;
+const MAX_SEMANTIC_ATTEMPT_ORDINAL = 2;
+const ANALYZED_RESOLUTIONS = new Set([
+  "publish",
+  "terminal-excluded",
+  "editor-review",
+]);
 const FORBIDDEN_RAW_AUDIO_KEYS = new Set([
   "audioBase64",
   "wavBase64",
@@ -174,6 +181,23 @@ function validateCommonCheckpoint(value) {
   }
 }
 
+function validateAttemptIdentity(value) {
+  if (
+    !Number.isSafeInteger(value.attemptOrdinal) ||
+    value.attemptOrdinal < 0 ||
+    value.attemptOrdinal > MAX_SEMANTIC_ATTEMPT_ORDINAL ||
+    (value.attemptOrdinal === 0
+      ? value.retryGrantId !== null
+      : typeof value.retryGrantId !== "string" ||
+        !SAFE_RETRY_GRANT_ID_PATTERN.test(value.retryGrantId))
+  ) {
+    throw checkpointError(
+      "INVALID_ENTRY",
+      "A candidate semantic attempt identity is invalid.",
+    );
+  }
+}
+
 function validateEvidence(value, candidateId) {
   if (
     !isRecord(value) ||
@@ -291,8 +315,12 @@ function validateAnalyzedCheckpoint(value) {
       "sourceStartMs",
       "sourceEndMs",
       "status",
+      "attemptOrdinal",
+      "retryGrantId",
+      "resolution",
       "record",
     ]) ||
+    !ANALYZED_RESOLUTIONS.has(value.resolution) ||
     !isRecord(value.record) ||
     !hasExactKeys(value.record, [
       "candidateId",
@@ -309,6 +337,7 @@ function validateAnalyzedCheckpoint(value) {
   ) {
     throw checkpointError("INVALID_ENTRY", "An analyzed checkpoint is invalid.");
   }
+  validateAttemptIdentity(value);
   const record = value.record;
   const receipt = record.verificationReceipt;
   if (
@@ -332,6 +361,8 @@ function validateAnalyzedCheckpoint(value) {
     !hasExactKeys(record.model, ["id", "revision"]) ||
     record.model.id !== receipt.settlement.providerModelId ||
     record.model.revision !== receipt.settlement.providerModelRevision ||
+    receipt.dispatchIntent.attemptOrdinal !== value.attemptOrdinal ||
+    receipt.dispatchIntent.retryGrantId !== value.retryGrantId ||
     !Array.isArray(record.frames) ||
     record.frames.length !== 4 ||
     !Number.isSafeInteger(record.impactThumbnailFrameIndex) ||
@@ -404,11 +435,37 @@ function normalizeCheckpointEntry(input) {
         "sourceEndMs",
         "status",
         "errorCode",
+        "attemptOrdinal",
+        "retryGrantId",
+        "lastRecord",
       ]) ||
       typeof value.errorCode !== "string" ||
-      !SAFE_ERROR_CODE_PATTERN.test(value.errorCode)
+      !SAFE_ERROR_CODE_PATTERN.test(value.errorCode) ||
+      (value.lastRecord !== null && !isRecord(value.lastRecord))
     ) {
       throw checkpointError("INVALID_ENTRY", "A retryable checkpoint is invalid.");
+    }
+    validateAttemptIdentity(value);
+    if (value.lastRecord !== null) {
+      const previousAttempt = value.lastRecord.verificationReceipt
+        ?.dispatchIntent;
+      validateAnalyzedCheckpoint({
+        checkpointKey: value.checkpointKey,
+        candidateId: value.candidateId,
+        sourceStartMs: value.sourceStartMs,
+        sourceEndMs: value.sourceEndMs,
+        status: "analyzed",
+        attemptOrdinal: previousAttempt?.attemptOrdinal,
+        retryGrantId: previousAttempt?.retryGrantId,
+        resolution: "editor-review",
+        record: value.lastRecord,
+      });
+      if (previousAttempt.attemptOrdinal >= value.attemptOrdinal) {
+        throw checkpointError(
+          "INVALID_ENTRY",
+          "A retryable checkpoint must advance beyond its preserved result.",
+        );
+      }
     }
   } else {
     throw checkpointError("INVALID_ENTRY", "The checkpoint status is invalid.");
@@ -437,6 +494,9 @@ function normalizeSnapshot(value, expectedIdentity) {
   const entries = value.entries.map(normalizeCheckpointEntry);
   if (new Set(entries.map(({ checkpointKey }) => checkpointKey)).size !== entries.length) {
     throw checkpointError("INVALID_FILE", "Checkpoint keys must be unique.");
+  }
+  if (new Set(entries.map(({ candidateId }) => candidateId)).size !== entries.length) {
+    throw checkpointError("INVALID_FILE", "Checkpoint candidate IDs must be unique.");
   }
   return {
     schemaVersion: CHANNEL_PREANALYSIS_REVIEW_CHECKPOINT_SCHEMA_VERSION,
@@ -640,7 +700,7 @@ export function createChannelPreanalysisReviewCheckpointStore(options) {
     const current = await readSnapshot(paths.path, identity);
     const entries = current === null ? [] : [...current.entries];
     const index = entries.findIndex(
-      ({ checkpointKey }) => checkpointKey === entry.checkpointKey,
+      ({ candidateId }) => candidateId === entry.candidateId,
     );
     if (index < 0) {
       if (entries.length >= CHANNEL_PREANALYSIS_REVIEW_CHECKPOINT_MAX_ENTRIES) {
@@ -654,12 +714,12 @@ export function createChannelPreanalysisReviewCheckpointStore(options) {
     if (!isIsoDate(updatedAt)) {
       throw checkpointError("INVALID_INPUT", "nowIso returned an invalid timestamp.");
     }
-    const snapshot = {
+    const snapshot = normalizeSnapshot({
       schemaVersion: CHANNEL_PREANALYSIS_REVIEW_CHECKPOINT_SCHEMA_VERSION,
       runIdentity: identity,
       updatedAt,
       entries,
-    };
+    }, identity);
     await writeSnapshotAtomic(paths.path, snapshot, identity);
     return projectSnapshot(snapshot);
   });

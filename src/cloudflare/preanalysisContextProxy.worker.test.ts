@@ -7,6 +7,8 @@ import {
 import { AI_BROADCAST_CONTEXT_ROUTING_REVISION } from "../analysis/aiModelRoutingPolicy";
 import { extractCandidatePassBGeminiResponse } from "../analysis/candidatePassBGemini";
 import {
+  QWEN_CONTEXT_DISCOVERY_MODEL_ID,
+  QWEN_CONTEXT_DISCOVERY_MODEL_REVISION,
   QWEN_CONTEXT_OVERVIEW_FALLBACK_MODEL_ID,
   QWEN_CONTEXT_OVERVIEW_FALLBACK_MODEL_REVISION,
 } from "./aiProviderConfiguration";
@@ -61,6 +63,7 @@ import {
   PREANALYSIS_CONTEXT_ORIGIN,
   PREANALYSIS_CONTEXT_PAYLOAD_DIGEST_HEADER,
   PREANALYSIS_CONTEXT_PROXY_VERSION,
+  PREANALYSIS_CONTEXT_POSSIBLE_DUPLICATE_PROVIDER_CHARGE,
   PREANALYSIS_CONTEXT_RETRY_RISK_HEADER,
   PREANALYSIS_CONTEXT_ROUTING_REVISION_HEADER,
   PREANALYSIS_CONTEXT_TRANSPORT_DIGEST_HEADER,
@@ -307,6 +310,7 @@ class FakeDurableObjectNamespace {
 function scheduledRequestBody(
   summaryKo = "진행자가 음식 취향을 설명하고 시청자와 이야기를 나눴다.",
   sourceCase: (typeof SOURCE_CASES)[number] = SOURCE_CASES[0],
+  analysisMode: "overview" | "discovery" = "overview",
 ): string {
   const chapters = [
     {
@@ -332,6 +336,7 @@ function scheduledRequestBody(
     castRosterId: sourceCase.rosterId,
     participantGrounding,
     outputLanguage: "ko",
+    analysisMode,
   });
 }
 
@@ -368,9 +373,13 @@ function configuredSourceForBody(
 
 async function operationIdForBody(body: string): Promise<string> {
   const source = configuredSourceForBody(body);
+  const value = JSON.parse(body) as {
+    readonly analysisMode: "overview" | "discovery";
+  };
   return createPreanalysisContextOperationId(
     await payloadDigest(body),
     source.sourceId,
+    value.analysisMode,
   );
 }
 
@@ -390,6 +399,18 @@ async function createScheduledRequest(
   } = {},
 ): Promise<Request> {
   const digest = overrides.digest ?? (await payloadDigest(body));
+  const analysisMode = (
+    JSON.parse(body) as { readonly analysisMode: "overview" | "discovery" }
+  ).analysisMode;
+  const expectedContextModel = analysisMode === "discovery"
+    ? {
+        modelId: QWEN_CONTEXT_DISCOVERY_MODEL_ID,
+        modelRevision: QWEN_CONTEXT_DISCOVERY_MODEL_REVISION,
+      }
+    : {
+        modelId: PREANALYSIS_CONTEXT_EXPECTED_MODEL_ID,
+        modelRevision: PREANALYSIS_CONTEXT_EXPECTED_MODEL_REVISION,
+      };
   return new Request(overrides.url ?? ENDPOINT, {
     method: overrides.method ?? "POST",
     headers: {
@@ -401,15 +422,16 @@ async function createScheduledRequest(
       [PREANALYSIS_CONTEXT_ROUTING_REVISION_HEADER]:
         overrides.routingRevision ?? AI_BROADCAST_CONTEXT_ROUTING_REVISION,
       [PREANALYSIS_CONTEXT_EXPECTED_MODEL_ID_HEADER]:
-        overrides.expectedModelId ?? PREANALYSIS_CONTEXT_EXPECTED_MODEL_ID,
+        overrides.expectedModelId ?? expectedContextModel.modelId,
       [PREANALYSIS_CONTEXT_EXPECTED_MODEL_REVISION_HEADER]:
         overrides.expectedModelRevision ??
-        PREANALYSIS_CONTEXT_EXPECTED_MODEL_REVISION,
+        expectedContextModel.modelRevision,
       [PREANALYSIS_CONTEXT_OPERATION_HEADER]:
         overrides.operationId ??
         (await createPreanalysisContextOperationId(
           digest,
           configuredSourceForBody(body).sourceId,
+          analysisMode,
         )),
       [PREANALYSIS_CONTEXT_PAYLOAD_DIGEST_HEADER]: digest,
     },
@@ -729,6 +751,34 @@ function qwenSuccessResponse(
   );
 }
 
+function qwenDiscoverySuccessResponse(): Response {
+  return new Response(
+    JSON.stringify({
+      choices: [
+        {
+          finish_reason: "stop",
+          message: {
+            content: JSON.stringify({
+              summary: "음식 취향 대화 안에서 짧은 반응 사건을 찾았다.",
+              leads: [
+                {
+                  s: "chapter-1",
+                  e: "chapter-1",
+                  c: "reaction",
+                  p: 0.91,
+                  event: "낯선 음식 이름을 듣고 놀랐다.",
+                  cue: "그게 진짜 음식 이름이야?",
+                },
+              ],
+            }),
+          },
+        },
+      ],
+    }),
+    { status: 200 },
+  );
+}
+
 function candidateAnalysisText(): string {
   return JSON.stringify({
     segments: [
@@ -870,7 +920,7 @@ describe("preanalysisContextProxy.worker", () => {
     const digest = `sha256:${"1".repeat(64)}`;
     const operationIds = await Promise.all(
       SOURCE_CASES.map(({ source }) =>
-        createPreanalysisContextOperationId(digest, source.sourceId),
+        createPreanalysisContextOperationId(digest, source.sourceId, "overview"),
       ),
     );
 
@@ -883,6 +933,18 @@ describe("preanalysisContextProxy.worker", () => {
         ),
       );
     }
+  });
+
+  it("binds overview and discovery to different operation namespaces", async () => {
+    const digest = `sha256:${"2".repeat(64)}`;
+    const sourceId = SOURCE_CASES[0].source.sourceId;
+
+    const [overviewId, discoveryId] = await Promise.all([
+      createPreanalysisContextOperationId(digest, sourceId, "overview"),
+      createPreanalysisContextOperationId(digest, sourceId, "discovery"),
+    ]);
+
+    expect(overviewId).not.toBe(discoveryId);
   });
 
   it("rejects source, channel, and roster mismatches before the durable operation", async () => {
@@ -929,6 +991,7 @@ describe("preanalysisContextProxy.worker", () => {
         operationId: await createPreanalysisContextOperationId(
           unknownSourceDigest,
           amoretto.source.sourceId,
+          "overview",
         ),
       }),
       harness.environment,
@@ -1011,6 +1074,76 @@ describe("preanalysisContextProxy.worker", () => {
       replayWhileLimited.headers.get(PREANALYSIS_CONTEXT_CACHE_HEADER),
     ).toBe("hit");
     expect(harness.rateLimit).toHaveBeenCalledTimes(1);
+  });
+
+  it("uses the discovery model and parser and replays its own terminal", async () => {
+    const upstreamFetch = vi.fn(
+      (_input: RequestInfo | URL, _init?: RequestInit) => {
+        void _input;
+        void _init;
+        return Promise.resolve(qwenDiscoverySuccessResponse());
+      },
+    );
+    const harness = createHarness(upstreamFetch);
+    const body = scheduledRequestBody(
+      "진행자가 음식 이름을 듣고 놀라며 질문했다.",
+      SOURCE_CASES[0],
+      "discovery",
+    );
+
+    const first = await handlePreanalysisContextProxyRequest(
+      await createScheduledRequest(body),
+      harness.environment,
+    );
+
+    expect(first.status).toBe(200);
+    expect(first.headers.get(PREANALYSIS_CONTEXT_MODEL_ID_HEADER)).toBe(
+      QWEN_CONTEXT_DISCOVERY_MODEL_ID,
+    );
+    expect(first.headers.get(PREANALYSIS_CONTEXT_MODEL_REVISION_HEADER)).toBe(
+      QWEN_CONTEXT_DISCOVERY_MODEL_REVISION,
+    );
+    expect(await first.json()).toMatchObject({
+      hostStreamerProfile: null,
+      semanticChaptersSupported: false,
+      discoveredLeadsSupported: true,
+      discoveredLeads: [
+        expect.objectContaining({ category: "reaction", confidence: 0.91 }),
+      ],
+    });
+    const providerInit = upstreamFetch.mock.calls[0]?.[1];
+    if (typeof providerInit?.body !== "string") {
+      throw new TypeError("Expected a serialized discovery provider body.");
+    }
+    expect(JSON.parse(providerInit.body)).toMatchObject({
+      model: QWEN_CONTEXT_DISCOVERY_MODEL_ID,
+      enable_thinking: false,
+    });
+
+    harness.namespace.restart(await operationIdForBody(body));
+    const replay = await handlePreanalysisContextProxyRequest(
+      await createScheduledRequest(body),
+      harness.environment,
+    );
+    expect(replay.status).toBe(200);
+    expect(replay.headers.get(PREANALYSIS_CONTEXT_CACHE_HEADER)).toBe("hit");
+    expect(upstreamFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects a discovery body paired with overview model headers", async () => {
+    const harness = createHarness();
+    const body = scheduledRequestBody(undefined, SOURCE_CASES[0], "discovery");
+    const response = await handlePreanalysisContextProxyRequest(
+      await createScheduledRequest(body, {
+        expectedModelId: PREANALYSIS_CONTEXT_EXPECTED_MODEL_ID,
+        expectedModelRevision: PREANALYSIS_CONTEXT_EXPECTED_MODEL_REVISION,
+      }),
+      harness.environment,
+    );
+
+    expect(response.status).toBe(409);
+    await expect(errorCode(response)).resolves.toBe("PROXY_ROUTE_MISMATCH");
+    expect(harness.upstreamFetch).not.toHaveBeenCalled();
   });
 
   it("accepts bounded provisional candidates and returns their context annotations", async () => {
@@ -1648,6 +1781,9 @@ describe("preanalysisContextProxy.worker", () => {
     );
     expect(backoff.status).toBe(503);
     await expect(errorCode(backoff)).resolves.toBe("RETRY_BACKOFF");
+    expect(backoff.headers.get(PREANALYSIS_CONTEXT_RETRY_RISK_HEADER)).toBe(
+      PREANALYSIS_CONTEXT_POSSIBLE_DUPLICATE_PROVIDER_CHARGE,
+    );
     expect(upstreamFetch).toHaveBeenCalledTimes(1);
 
     nowMs = 30_000;
@@ -1658,7 +1794,7 @@ describe("preanalysisContextProxy.worker", () => {
     );
     expect(recovered.status).toBe(200);
     expect(recovered.headers.get(PREANALYSIS_CONTEXT_RETRY_RISK_HEADER)).toBe(
-      "possible-duplicate-provider-charge",
+      PREANALYSIS_CONTEXT_POSSIBLE_DUPLICATE_PROVIDER_CHARGE,
     );
     expect(recovered.headers.get(PREANALYSIS_CONTEXT_ATTEMPT_HEADER)).toBe("2");
     expect(upstreamFetch).toHaveBeenCalledTimes(2);

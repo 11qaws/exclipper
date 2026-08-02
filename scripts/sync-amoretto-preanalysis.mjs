@@ -17,6 +17,8 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 import {
+  QWEN_CONTEXT_DISCOVERY_MODEL_ID,
+  QWEN_CONTEXT_DISCOVERY_MODEL_REVISION,
   QWEN_CONTEXT_OVERVIEW_FALLBACK_MODEL_ID,
   QWEN_CONTEXT_OVERVIEW_FALLBACK_MODEL_REVISION,
 } from "../src/cloudflare/aiProviderConfiguration.ts";
@@ -51,6 +53,10 @@ import {
 } from "../src/analysis/broadcastContextProtocol.ts";
 import { compactBroadcastContextChapters } from "../src/analysis/broadcastContextChapterCompaction.ts";
 import {
+  createParallelBroadcastTopicalDiscoverySlices,
+  mergeBroadcastTopicalDiscoveryLeads,
+} from "../src/analysis/broadcastTopicalDiscovery.ts";
+import {
   MAX_BROADCAST_CONTEXT_DEEPSEEK_RESPONSE_BYTES,
   parseCurrentBroadcastContextResult,
 } from "../src/analysis/broadcastContextDeepseek.ts";
@@ -65,12 +71,15 @@ import {
   PREANALYSIS_CONTEXT_EXPECTED_MODEL_ID_HEADER,
   PREANALYSIS_CONTEXT_EXPECTED_MODEL_REVISION,
   PREANALYSIS_CONTEXT_EXPECTED_MODEL_REVISION_HEADER,
+  PREANALYSIS_CONTEXT_ATTEMPT_HEADER,
+  PREANALYSIS_CONTEXT_POSSIBLE_DUPLICATE_PROVIDER_CHARGE,
   PREANALYSIS_CONTEXT_MODEL_ID_HEADER,
   PREANALYSIS_CONTEXT_MODEL_REVISION_HEADER,
   PREANALYSIS_CONTEXT_OPERATION_HEADER,
   PREANALYSIS_CONTEXT_ORIGIN,
   PREANALYSIS_CONTEXT_PAYLOAD_DIGEST_HEADER,
   PREANALYSIS_CONTEXT_PROXY_VERSION,
+  PREANALYSIS_CONTEXT_RETRY_RISK_HEADER,
   PREANALYSIS_CONTEXT_ROUTING_REVISION_HEADER,
   createPreanalysisContextOperationId,
 } from "../src/cloudflare/preanalysisContextProxy.worker.ts";
@@ -107,18 +116,22 @@ export const MAX_VIDEOS_PER_RUN = 2;
 export const MAX_CAPTION_JSON3_BYTES = 32 * 1024 * 1024;
 export const CHANNEL_PREANALYSIS_MANIFEST_MAX_BYTES = 4 * 1024 * 1024;
 export const DEFAULT_CONTEXT_PROXY_URL = null;
+export const DEFAULT_CONTEXT_PROVIDER_RETRY_POLICY = "free-tier-recovery";
 export {
   PREANALYSIS_CONTEXT_CONTRACT_HEADER,
   PREANALYSIS_CONTEXT_EXPECTED_MODEL_ID,
   PREANALYSIS_CONTEXT_EXPECTED_MODEL_ID_HEADER,
   PREANALYSIS_CONTEXT_EXPECTED_MODEL_REVISION,
   PREANALYSIS_CONTEXT_EXPECTED_MODEL_REVISION_HEADER,
+  PREANALYSIS_CONTEXT_ATTEMPT_HEADER,
+  PREANALYSIS_CONTEXT_POSSIBLE_DUPLICATE_PROVIDER_CHARGE,
   PREANALYSIS_CONTEXT_MODEL_ID_HEADER,
   PREANALYSIS_CONTEXT_MODEL_REVISION_HEADER,
   PREANALYSIS_CONTEXT_OPERATION_HEADER,
   PREANALYSIS_CONTEXT_ORIGIN,
   PREANALYSIS_CONTEXT_PAYLOAD_DIGEST_HEADER,
   PREANALYSIS_CONTEXT_PROXY_VERSION,
+  PREANALYSIS_CONTEXT_RETRY_RISK_HEADER,
   PREANALYSIS_CONTEXT_ROUTING_REVISION_HEADER,
 };
 export const DEFAULT_CATALOG_DIRECTORY = join(
@@ -223,6 +236,14 @@ const PERMANENT_CAPTION_RETRY_CODES = new Set([
   "KOREAN_CAPTION_EMPTY",
   "KOREAN_CAPTION_CHAPTERS_EMPTY",
 ]);
+const MAX_SCHEDULED_CONTEXT_RETRIES = 3;
+const MAX_SCHEDULED_CONTEXT_RETRY_AFTER_MS = 120_000;
+const SCHEDULED_CONTEXT_DISCOVERY_CALLS = 3;
+const SCHEDULED_CONTEXT_PROVIDER_RETRY_POLICIES = new Set([
+  DEFAULT_CONTEXT_PROVIDER_RETRY_POLICY,
+  "strict-paid",
+]);
+const MAX_SCHEDULED_CONTEXT_WORKER_ATTEMPT = 999_999_999;
 
 export class ChannelPreanalysisSyncError extends Error {
   constructor(code, message, options = {}) {
@@ -242,6 +263,9 @@ export function parseSyncArguments(
       DEFAULT_CONTEXT_PROXY_URL,
     defaultContextToken =
       process.env.CHANNEL_PREANALYSIS_CONTEXT_TOKEN ?? null,
+    defaultContextProviderRetryPolicy =
+      process.env.CHANNEL_PREANALYSIS_CONTEXT_PROVIDER_RETRY_POLICY ??
+      DEFAULT_CONTEXT_PROVIDER_RETRY_POLICY,
   } = {},
 ) {
   const values = new Map();
@@ -267,6 +291,7 @@ export function parseSyncArguments(
         "--catalog-dir",
         "--yt-dlp",
         "--context-proxy",
+        "--context-retry-policy",
         "--source",
       ].includes(key)
     ) {
@@ -318,6 +343,9 @@ export function parseSyncArguments(
     contextProxyUrl,
     contextAuthorizationToken,
   );
+  const contextProviderRetryPolicy = normalizeContextProviderRetryPolicy(
+    values.get("--context-retry-policy") ?? defaultContextProviderRetryPolicy,
+  );
 
   const sourceValue = values.get("--source") ?? ALL_CHANNEL_PREANALYSIS_SOURCES;
   const configuredSource =
@@ -350,6 +378,7 @@ export function parseSyncArguments(
     ytDlpPath: values.get("--yt-dlp") ?? defaultYtDlp,
     contextProxyUrl,
     contextAuthorizationToken,
+    contextProviderRetryPolicy,
   };
 }
 
@@ -849,7 +878,10 @@ export async function createContextReadyBundle({
       "Only a verified transcript-ready bundle can be promoted to context-ready.",
     );
   }
-  const verifiedReceipt = verifyScheduledContextReceipt(contextReceipt);
+  const verifiedReceipt = await verifyScheduledContextCompositeReceipt(
+    contextReceipt,
+    transcriptBundle,
+  );
   assertIsoDate(generatedAt, "context generatedAt");
   return createChannelPreanalysisBundle({
     channelId: transcriptBundle.channelId,
@@ -876,21 +908,33 @@ export async function createContextReadyBundle({
   });
 }
 
-export function createExpectedScheduledContextReceipt() {
+export function createExpectedScheduledContextReceipt(
+  analysisMode = "overview",
+) {
+  if (analysisMode !== "overview" && analysisMode !== "discovery") {
+    throw new TypeError("Scheduled context analysis mode is invalid.");
+  }
   return {
     contractVersion: PREANALYSIS_CONTEXT_PROXY_VERSION,
     routingRevision: AI_BROADCAST_CONTEXT_ROUTING_REVISION,
-    modelId: PREANALYSIS_CONTEXT_EXPECTED_MODEL_ID,
-    modelRevision: PREANALYSIS_CONTEXT_EXPECTED_MODEL_REVISION,
+    modelId:
+      analysisMode === "discovery"
+        ? QWEN_CONTEXT_DISCOVERY_MODEL_ID
+        : PREANALYSIS_CONTEXT_EXPECTED_MODEL_ID,
+    modelRevision:
+      analysisMode === "discovery"
+        ? QWEN_CONTEXT_DISCOVERY_MODEL_REVISION
+        : PREANALYSIS_CONTEXT_EXPECTED_MODEL_REVISION,
   };
 }
 
-function verifyScheduledContextReceipt(value) {
-  const expected = createExpectedScheduledContextReceipt();
+function verifyScheduledContextReceipt(value, analysisMode = "overview") {
+  const expected = createExpectedScheduledContextReceipt(analysisMode);
   const expectedModel =
     value?.modelId === expected.modelId &&
     value?.modelRevision === expected.modelRevision;
   const boundedFallbackModel =
+    analysisMode === "overview" &&
     value?.modelId === QWEN_CONTEXT_OVERVIEW_FALLBACK_MODEL_ID &&
     value?.modelRevision === QWEN_CONTEXT_OVERVIEW_FALLBACK_MODEL_REVISION;
   if (
@@ -916,6 +960,149 @@ function verifyScheduledContextReceipt(value) {
     modelId: value.modelId,
     modelRevision: value.modelRevision,
   };
+}
+
+async function verifyScheduledContextCompositeReceipt(
+  value,
+  transcriptBundle,
+) {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, [
+      "contractVersion",
+      "routingRevision",
+      "modelId",
+      "modelRevision",
+      "componentReceipts",
+    ]) ||
+    !Array.isArray(value.componentReceipts)
+  ) {
+    throw syncError(
+      "CONTEXT_PROXY_RECEIPT_INVALID",
+      "The context result does not retain its bounded component receipts.",
+    );
+  }
+  const configuredSource = channelPreanalysisSourceByChannelId(
+    transcriptBundle.channelId,
+  );
+  if (configuredSource === null) {
+    throw syncError(
+      "CONTEXT_PROXY_RECEIPT_INVALID",
+      "The context result has an incomplete component receipt set.",
+    );
+  }
+  const overviewRequest = createScheduledContextRequest(transcriptBundle);
+  const discoveryRequests = createParallelBroadcastTopicalDiscoverySlices(
+    overviewRequest.chapters,
+    SCHEDULED_CONTEXT_DISCOVERY_CALLS,
+  ).map((slice) =>
+    createScheduledContextRequestForChapters(
+      transcriptBundle,
+      configuredSource,
+      slice.chapters,
+    ));
+  const expectedIdentities = await Promise.all([
+    createScheduledContextComponentIdentity(
+      configuredSource,
+      overviewRequest,
+      "overview",
+      0,
+    ),
+    ...discoveryRequests.map((request, index) =>
+      createScheduledContextComponentIdentity(
+        configuredSource,
+        request,
+        "discovery",
+        index + 1,
+      )),
+  ]);
+  if (value.componentReceipts.length !== expectedIdentities.length) {
+    throw syncError(
+      "CONTEXT_PROXY_RECEIPT_INVALID",
+      "The context result has an incomplete component receipt set.",
+    );
+  }
+  const overviewReceipt = verifyScheduledContextReceipt({
+    contractVersion: value.contractVersion,
+    routingRevision: value.routingRevision,
+    modelId: value.modelId,
+    modelRevision: value.modelRevision,
+  });
+  const operationIds = new Set();
+  const payloadDigests = new Set();
+  const componentReceipts = [];
+  for (const [componentIndex, raw] of value.componentReceipts.entries()) {
+    const expectedIdentity = expectedIdentities[componentIndex];
+    const analysisMode = expectedIdentity.analysisMode;
+    if (
+      !isRecord(raw) ||
+      !hasExactKeys(raw, [
+        "componentIndex",
+        "analysisMode",
+        "contractVersion",
+        "routingRevision",
+        "modelId",
+        "modelRevision",
+        "operationId",
+        "payloadDigest",
+        "workerAttempt",
+        "retryRisk",
+      ]) ||
+      raw.componentIndex !== componentIndex ||
+      raw.analysisMode !== analysisMode ||
+      typeof raw.payloadDigest !== "string" ||
+      !SHA256_PATTERN.test(raw.payloadDigest) ||
+      typeof raw.operationId !== "string" ||
+      !Number.isSafeInteger(raw.workerAttempt) ||
+      raw.workerAttempt < 1 ||
+      raw.workerAttempt > MAX_SCHEDULED_CONTEXT_WORKER_ATTEMPT ||
+      (raw.retryRisk !== null &&
+        raw.retryRisk !==
+          PREANALYSIS_CONTEXT_POSSIBLE_DUPLICATE_PROVIDER_CHARGE)
+    ) {
+      throw syncError(
+        "CONTEXT_PROXY_RECEIPT_INVALID",
+        "A context component receipt is malformed or out of order.",
+      );
+    }
+    const verified = verifyScheduledContextReceipt(
+      {
+        contractVersion: raw.contractVersion,
+        routingRevision: raw.routingRevision,
+        modelId: raw.modelId,
+        modelRevision: raw.modelRevision,
+      },
+      analysisMode,
+    );
+    if (
+      raw.operationId !== expectedIdentity.operationId ||
+      raw.payloadDigest !== expectedIdentity.payloadDigest ||
+      raw.contractVersion !== overviewReceipt.contractVersion ||
+      raw.routingRevision !== overviewReceipt.routingRevision ||
+      (componentIndex === 0 &&
+        (raw.modelId !== overviewReceipt.modelId ||
+          raw.modelRevision !== overviewReceipt.modelRevision)) ||
+      operationIds.has(raw.operationId) ||
+      payloadDigests.has(raw.payloadDigest)
+    ) {
+      throw syncError(
+        "CONTEXT_PROXY_RECEIPT_INVALID",
+        "A context component receipt is forged, duplicated, or inconsistent.",
+      );
+    }
+    operationIds.add(raw.operationId);
+    payloadDigests.add(raw.payloadDigest);
+    componentReceipts.push({
+      componentIndex,
+      analysisMode,
+      ...verified,
+      operationId: raw.operationId,
+      payloadDigest: raw.payloadDigest,
+      workerAttempt: raw.workerAttempt,
+      retryRisk: raw.retryRisk,
+    });
+  }
+  return { ...overviewReceipt, componentReceipts };
 }
 
 export function serializeBundle(bundle) {
@@ -1019,6 +1206,19 @@ export function createScheduledContextRequest(transcriptBundle) {
       "Scheduled context bundle has an unsupported source channel.",
     );
   }
+  const chapters = compactBroadcastContextChapters(transcriptBundle.chapters);
+  return createScheduledContextRequestForChapters(
+    transcriptBundle,
+    configuredSource,
+    chapters,
+  );
+}
+
+function createScheduledContextRequestForChapters(
+  transcriptBundle,
+  configuredSource,
+  chapters,
+) {
   const castRosterId = candidatePassBCastRosterIdForYouTubeChannelId(
     configuredSource.channelId,
   );
@@ -1028,7 +1228,6 @@ export function createScheduledContextRequest(transcriptBundle) {
       "Scheduled context source has no configured cast roster.",
     );
   }
-  const chapters = compactBroadcastContextChapters(transcriptBundle.chapters);
   const participantGrounding = createBroadcastParticipantGrounding({
     sourceDurationMs: transcriptBundle.durationMs,
     castRosterId,
@@ -1044,41 +1243,46 @@ export function createScheduledContextRequest(transcriptBundle) {
   });
 }
 
-export async function requestScheduledBroadcastContext(
-  transcriptBundle,
-  {
-    proxyUrl,
-    authorizationToken,
-    fetchImplementation = globalThis.fetch,
-    requestTimeoutMs = CONTEXT_REQUEST_TIMEOUT_MS,
-  },
+function scheduledContextRetryAfterMs(response) {
+  const value = response.headers.get("Retry-After");
+  if (value !== null && /^\d{1,3}$/u.test(value)) {
+    return Math.min(
+      MAX_SCHEDULED_CONTEXT_RETRY_AFTER_MS,
+      Math.max(1_000, Number(value) * 1_000),
+    );
+  }
+  return 60_000;
+}
+
+function isRetryableScheduledContextCheckpoint(
+  response,
+  proxyError,
+  providerRetryPolicy,
 ) {
-  const normalizedProxyUrl = normalizeContextProxyUrl(proxyUrl);
-  if (normalizedProxyUrl === null) {
-    throw syncError(
-      "CONTEXT_PROXY_DISABLED",
-      "Scheduled context analysis is not enabled.",
-    );
+  if (
+    providerRetryPolicy === "strict-paid" &&
+    response.headers.get(PREANALYSIS_CONTEXT_RETRY_RISK_HEADER) !== null
+  ) {
+    return false;
   }
-  const normalizedAuthorizationToken =
-    normalizeContextAuthorizationToken(authorizationToken);
-  if (normalizedAuthorizationToken === null) {
-    throw syncError(
-      "CONTEXT_AUTH_REQUIRED",
-      "Scheduled context analysis requires a dedicated bearer token.",
-    );
+  if (response.status === 429) return true;
+  if (response.headers.get("Retry-After") === null) return false;
+  if (response.status === 409) {
+    return proxyError?.code === "OPERATION_IN_PROGRESS";
   }
-  const request = createScheduledContextRequest(transcriptBundle);
-  const configuredSource = channelPreanalysisSourceByChannelId(
-    transcriptBundle.channelId,
+  if (response.status !== 503) return false;
+  if (proxyError?.code === "RETRY_BACKOFF") return true;
+  return /^[1-9]\d{0,8}$/u.test(
+    response.headers.get(PREANALYSIS_CONTEXT_ATTEMPT_HEADER) ?? "",
   );
-  if (configuredSource === null) {
-    throw syncError(
-      "CONTEXT_SOURCE_INVALID",
-      "Scheduled context bundle has an unsupported source channel.",
-    );
-  }
-  const requestBody = JSON.stringify({
+}
+
+function waitForScheduledContextRetry(delayMs) {
+  return new Promise((resolve) => setTimeout(resolve, delayMs));
+}
+
+function scheduledContextRequestBody(configuredSource, request, analysisMode) {
+  return JSON.stringify({
     sourceId: configuredSource.sourceId,
     sourceChannelId: configuredSource.channelId,
     sourceDurationMs: request.sourceDurationMs,
@@ -1087,13 +1291,57 @@ export async function requestScheduledBroadcastContext(
     castRosterId: request.castRosterId,
     participantGrounding: request.participantGrounding,
     outputLanguage: request.outputLanguage,
+    analysisMode,
   });
+}
+
+async function createScheduledContextComponentIdentity(
+  configuredSource,
+  request,
+  analysisMode,
+  componentIndex,
+) {
+  const requestBody = scheduledContextRequestBody(
+    configuredSource,
+    request,
+    analysisMode,
+  );
   const payloadDigest =
     `sha256:${createHash("sha256").update(requestBody).digest("hex")}`;
-  const operationId =
-    await createPreanalysisContextOperationId(
+  return {
+    componentIndex,
+    analysisMode,
+    requestBody,
+    payloadDigest,
+    operationId: await createPreanalysisContextOperationId(
       payloadDigest,
       configuredSource.sourceId,
+      analysisMode,
+    ),
+  };
+}
+
+async function requestScheduledBroadcastContextMode(
+  configuredSource,
+  request,
+  analysisMode,
+  componentIndex,
+  {
+    normalizedProxyUrl,
+    normalizedAuthorizationToken,
+    fetchImplementation,
+    requestTimeoutMs,
+    waitImplementation,
+    providerRetryPolicy,
+  },
+) {
+  const expectedReceipt = createExpectedScheduledContextReceipt(analysisMode);
+  const { requestBody, payloadDigest, operationId } =
+    await createScheduledContextComponentIdentity(
+      configuredSource,
+      request,
+      analysisMode,
+      componentIndex,
     );
   const headers = {
     "Content-Type": "application/json",
@@ -1103,48 +1351,89 @@ export async function requestScheduledBroadcastContext(
       PREANALYSIS_CONTEXT_PROXY_VERSION,
     [PREANALYSIS_CONTEXT_ROUTING_REVISION_HEADER]:
       AI_BROADCAST_CONTEXT_ROUTING_REVISION,
-    [PREANALYSIS_CONTEXT_EXPECTED_MODEL_ID_HEADER]:
-      PREANALYSIS_CONTEXT_EXPECTED_MODEL_ID,
+    [PREANALYSIS_CONTEXT_EXPECTED_MODEL_ID_HEADER]: expectedReceipt.modelId,
     [PREANALYSIS_CONTEXT_EXPECTED_MODEL_REVISION_HEADER]:
-      PREANALYSIS_CONTEXT_EXPECTED_MODEL_REVISION,
+      expectedReceipt.modelRevision,
     [PREANALYSIS_CONTEXT_OPERATION_HEADER]: operationId,
     [PREANALYSIS_CONTEXT_PAYLOAD_DIGEST_HEADER]: payloadDigest,
   };
   try {
-    return await fetchWithTimeout(
-      normalizedProxyUrl,
-      {
-        method: "POST",
-        headers,
-        body: requestBody,
-      },
-      requestTimeoutMs,
-      fetchImplementation,
-      async (response, signal) => {
+    for (
+      let retryAttempt = 0;
+      retryAttempt <= MAX_SCHEDULED_CONTEXT_RETRIES;
+      retryAttempt += 1
+    ) {
+      const outcome = await fetchWithTimeout(
+        normalizedProxyUrl,
+        {
+          method: "POST",
+          headers,
+          body: requestBody,
+        },
+        requestTimeoutMs,
+        fetchImplementation,
+        async (response, signal) => {
         if (!response.ok) {
           const proxyError = await readBoundedProxyError(response, signal);
+          if (
+            isRetryableScheduledContextCheckpoint(
+              response,
+              proxyError,
+              providerRetryPolicy,
+            )
+          ) {
+            return {
+              kind: "retryable",
+              retryAfterMs: scheduledContextRetryAfterMs(response),
+              errorCode: proxyError?.code ?? "CONTEXT_HTTP_429",
+              diagnostic: proxyError?.diagnostic ?? null,
+            };
+          }
           throw syncError(
             proxyError?.code ?? `CONTEXT_HTTP_${response.status}`,
-            `Scheduled context request failed with HTTP ${response.status}.` +
+            `Scheduled ${analysisMode} context request failed with HTTP ${response.status}.` +
               (proxyError?.diagnostic === null || proxyError?.diagnostic === undefined
                 ? ""
                 : ` Provider diagnostic: ${proxyError.diagnostic}`),
           );
         }
-        const contextReceipt = verifyScheduledContextReceipt({
-          contractVersion: response.headers.get(
-            PREANALYSIS_CONTEXT_CONTRACT_HEADER,
-          ),
-          routingRevision: response.headers.get(
-            PREANALYSIS_CONTEXT_ROUTING_REVISION_HEADER,
-          ),
-          modelId: response.headers.get(
-            PREANALYSIS_CONTEXT_MODEL_ID_HEADER,
-          ),
-          modelRevision: response.headers.get(
-            PREANALYSIS_CONTEXT_MODEL_REVISION_HEADER,
-          ),
-        });
+        const contextReceipt = verifyScheduledContextReceipt(
+          {
+            contractVersion: response.headers.get(
+              PREANALYSIS_CONTEXT_CONTRACT_HEADER,
+            ),
+            routingRevision: response.headers.get(
+              PREANALYSIS_CONTEXT_ROUTING_REVISION_HEADER,
+            ),
+            modelId: response.headers.get(
+              PREANALYSIS_CONTEXT_MODEL_ID_HEADER,
+            ),
+            modelRevision: response.headers.get(
+              PREANALYSIS_CONTEXT_MODEL_REVISION_HEADER,
+            ),
+          },
+          analysisMode,
+        );
+        const workerAttemptText = response.headers.get(
+          PREANALYSIS_CONTEXT_ATTEMPT_HEADER,
+        );
+        const workerAttempt = Number(workerAttemptText);
+        const retryRisk = response.headers.get(
+          PREANALYSIS_CONTEXT_RETRY_RISK_HEADER,
+        );
+        if (
+          !/^[1-9]\d{0,8}$/u.test(workerAttemptText ?? "") ||
+          !Number.isSafeInteger(workerAttempt) ||
+          workerAttempt > MAX_SCHEDULED_CONTEXT_WORKER_ATTEMPT ||
+          (retryRisk !== null &&
+            retryRisk !==
+              PREANALYSIS_CONTEXT_POSSIBLE_DUPLICATE_PROVIDER_CHARGE)
+        ) {
+          throw syncError(
+            "CONTEXT_PROXY_RECEIPT_INVALID",
+            "Scheduled context response has an invalid Worker execution receipt.",
+          );
+        }
         const responseBytes = await readBoundedResponseBytes(
           response,
           MAX_BROADCAST_CONTEXT_DEEPSEEK_RESPONSE_BYTES,
@@ -1174,20 +1463,159 @@ export async function requestScheduledBroadcastContext(
             "Scheduled context response does not satisfy the current result contract.",
           );
         }
-        return { broadcastContext: result, contextReceipt };
-      },
+          return {
+            kind: "success",
+            broadcastContext: result,
+            contextReceipt,
+            workerAttempt,
+            retryRisk,
+          };
+        },
+      );
+      if (outcome.kind === "success") {
+        return {
+          broadcastContext: outcome.broadcastContext,
+          contextReceipt: {
+            componentIndex,
+            analysisMode,
+            ...outcome.contextReceipt,
+            operationId,
+            payloadDigest,
+            workerAttempt: outcome.workerAttempt,
+            retryRisk: outcome.retryRisk,
+          },
+        };
+      }
+      if (retryAttempt >= MAX_SCHEDULED_CONTEXT_RETRIES) {
+        throw syncError(
+          outcome.errorCode,
+          `Scheduled ${analysisMode} context request did not complete after bounded checkpoint recovery.` +
+            (outcome.diagnostic === null
+              ? ""
+              : ` Provider diagnostic: ${outcome.diagnostic}`),
+        );
+      }
+      await waitImplementation(outcome.retryAfterMs);
+    }
+    throw syncError(
+      "CONTEXT_HTTP_429",
+      `Scheduled ${analysisMode} context request exhausted its retry budget.`,
     );
   } catch (cause) {
     if (cause instanceof ChannelPreanalysisSyncError) throw cause;
-    // Do not retry an ambiguous transport result in the same run. The durable
-    // transcript checkpoint is kept, and the next cron uses the same operation
-    // ID so the dedicated proxy can return its cached result without rebilling.
     throw syncError(
       "CONTEXT_OUTCOME_UNKNOWN",
-      "The scheduled context request may have reached the provider.",
+      `The scheduled ${analysisMode} context request may have reached the provider.`,
       cause,
     );
   }
+}
+
+export async function requestScheduledBroadcastContext(
+  transcriptBundle,
+  {
+    proxyUrl,
+    authorizationToken,
+    fetchImplementation = globalThis.fetch,
+    requestTimeoutMs = CONTEXT_REQUEST_TIMEOUT_MS,
+    waitImplementation = waitForScheduledContextRetry,
+    providerRetryPolicy = DEFAULT_CONTEXT_PROVIDER_RETRY_POLICY,
+  },
+) {
+  const normalizedProviderRetryPolicy = normalizeContextProviderRetryPolicy(
+    providerRetryPolicy,
+  );
+  const normalizedProxyUrl = normalizeContextProxyUrl(proxyUrl);
+  if (normalizedProxyUrl === null) {
+    throw syncError(
+      "CONTEXT_PROXY_DISABLED",
+      "Scheduled context analysis is not enabled.",
+    );
+  }
+  const normalizedAuthorizationToken =
+    normalizeContextAuthorizationToken(authorizationToken);
+  if (normalizedAuthorizationToken === null) {
+    throw syncError(
+      "CONTEXT_AUTH_REQUIRED",
+      "Scheduled context analysis requires a dedicated bearer token.",
+    );
+  }
+  const overviewRequest = createScheduledContextRequest(transcriptBundle);
+  const configuredSource = channelPreanalysisSourceByChannelId(
+    transcriptBundle.channelId,
+  );
+  if (configuredSource === null) {
+    throw syncError(
+      "CONTEXT_SOURCE_INVALID",
+      "Scheduled context bundle has an unsupported source channel.",
+    );
+  }
+  const requestOptions = {
+    normalizedProxyUrl,
+    normalizedAuthorizationToken,
+    fetchImplementation,
+    requestTimeoutMs,
+    waitImplementation,
+    providerRetryPolicy: normalizedProviderRetryPolicy,
+  };
+  const discoveryRequests = createParallelBroadcastTopicalDiscoverySlices(
+    overviewRequest.chapters,
+    SCHEDULED_CONTEXT_DISCOVERY_CALLS,
+  ).map((slice) =>
+    createScheduledContextRequestForChapters(
+      transcriptBundle,
+      configuredSource,
+      slice.chapters,
+    ));
+  const [overview, ...discoveries] = await Promise.all([
+    requestScheduledBroadcastContextMode(
+      configuredSource,
+      overviewRequest,
+      "overview",
+      0,
+      requestOptions,
+    ),
+    ...discoveryRequests.map((request, index) =>
+      requestScheduledBroadcastContextMode(
+        configuredSource,
+        request,
+        "discovery",
+        index + 1,
+        requestOptions,
+      )),
+  ]);
+  const mergedPayload = {
+    ...overview.broadcastContext,
+    discoveredLeadsSupported: true,
+    discoveredLeads: mergeBroadcastTopicalDiscoveryLeads([
+      overview.broadcastContext.discoveredLeads,
+      ...discoveries.map(({ broadcastContext }) =>
+        broadcastContext.discoveredLeads),
+    ]),
+  };
+  const broadcastContext = parseCurrentBroadcastContextResult(
+    mergedPayload,
+    overviewRequest,
+  );
+  if (broadcastContext === null) {
+    throw syncError(
+      "CONTEXT_RESPONSE_INVALID",
+      "Merged scheduled context results do not satisfy the current result contract.",
+    );
+  }
+  return {
+    broadcastContext,
+    contextReceipt: {
+      contractVersion: overview.contextReceipt.contractVersion,
+      routingRevision: overview.contextReceipt.routingRevision,
+      modelId: overview.contextReceipt.modelId,
+      modelRevision: overview.contextReceipt.modelRevision,
+      componentReceipts: [
+        overview.contextReceipt,
+        ...discoveries.map(({ contextReceipt }) => contextReceipt),
+      ],
+    },
+  };
 }
 
 export async function reconcileReadyCatalogArtifacts(
@@ -1744,6 +2172,10 @@ export async function synchronizeChannelPreanalysisCatalog(
     contextProxyUrl,
     contextAuthorizationToken,
   );
+  const contextProviderRetryPolicy = normalizeContextProviderRetryPolicy(
+    options.contextProviderRetryPolicy ??
+      DEFAULT_CONTEXT_PROVIDER_RETRY_POLICY,
+  );
   const contextEnabled =
     contextProxyUrl !== null && contextAuthorizationToken !== null;
 
@@ -1834,6 +2266,7 @@ export async function synchronizeChannelPreanalysisCatalog(
         scheduledAsrProvider,
         contextProxyUrl,
         contextAuthorizationToken,
+        contextProviderRetryPolicy,
         fetchImplementation: fetchImpl,
         nowIso,
         configuredSource,
@@ -2237,6 +2670,7 @@ async function processCatalogVideo({
   scheduledAsrProvider,
   contextProxyUrl,
   contextAuthorizationToken,
+  contextProviderRetryPolicy,
   fetchImplementation,
   nowIso,
   configuredSource,
@@ -2663,6 +3097,7 @@ async function processCatalogVideo({
         catalogDir,
         contextProxyUrl,
         contextAuthorizationToken,
+        contextProviderRetryPolicy,
         fetchImplementation,
         nowIso,
       }));
@@ -2958,6 +3393,7 @@ async function promoteTranscriptBundleToContext({
   catalogDir,
   contextProxyUrl,
   contextAuthorizationToken,
+  contextProviderRetryPolicy,
   fetchImplementation,
   nowIso,
 }) {
@@ -2978,6 +3414,7 @@ async function promoteTranscriptBundleToContext({
       proxyUrl: contextProxyUrl,
       authorizationToken: contextAuthorizationToken,
       fetchImplementation,
+      providerRetryPolicy: contextProviderRetryPolicy,
     },
   );
   const prospectiveCatalogRevision = manifest.revision + 1;
@@ -4335,6 +4772,16 @@ function normalizeContextAuthorizationToken(value) {
   return value;
 }
 
+function normalizeContextProviderRetryPolicy(value) {
+  if (!SCHEDULED_CONTEXT_PROVIDER_RETRY_POLICIES.has(value)) {
+    throw syncError(
+      "INVALID_ARGUMENT",
+      "Context provider retry policy must be free-tier-recovery or strict-paid.",
+    );
+  }
+  return value;
+}
+
 function assertContextConfigurationPair(proxyUrl, authorizationToken) {
   if ((proxyUrl === null) !== (authorizationToken === null)) {
     throw syncError(
@@ -4359,6 +4806,7 @@ Options:
   --catalog-dir PATH  Catalog root for all, or source directory for one source.
   --yt-dlp PATH       Pinned yt-dlp ${PINNED_YT_DLP_VERSION} executable.
   --context-proxy URL Opt in through a dedicated authenticated context endpoint.
+  --context-retry-policy POLICY  free-tier-recovery (default) or strict-paid.
   --help              Show this help.`);
 }
 

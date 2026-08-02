@@ -3083,3 +3083,39 @@ PassB가 정상 동작해도 `context-missing` 6개는 남는다. 대사 텍스�
 - **검증:** 자막 우선 경로, 자막 없는 영상의 ASR fallback, 중간 실패 후 범위 재개, 완성
   체크포인트 재사용, R2 stage에서 request body 미버퍼링, Groq URL multipart, terminal 저장
   후 media 삭제와 cache replay를 회귀 테스트로 고정했다.
+
+### 예약 전체 맥락 고회수 병렬 탐색 · 2026-08-02
+
+- **Before/After:** 예약 `context-ready`가 Qwen 3.7 Plus overview 한 번에만 의존하던
+  경로를 `overview 1 + Qwen 3.6 Flash discovery 3` 병렬 경로로 바꿨다. 세 discovery
+  slice는 방송 전체 챕터를 중복·누락 없이 정확히 한 번 덮고, overview가 놓친 lead도
+  `mergeBroadcastTopicalDiscoveryLeads`로 최종 context에 보존한다.
+- **무료 한도:** 전용 Worker의 4회/분 limiter 때문에 discovery를 4개로 잘라 총 5회를
+  보내는 안은 폐기했다. 최대 두 영상이 같은 분에 이어져 429가 나면 `Retry-After` 뒤
+  동일 body·digest·operation ID를 bounded 재생해 실패 조각만 복구한다.
+- **정직한 모델 계약:** `analysisMode`를 exact request key, payload digest, Durable Object
+  namespace에 넣었다. overview는 Qwen 3.7 parser와 bounded 3.6 overview fallback만,
+  discovery는 Qwen 3.6 discovery parser와 해당 revision receipt만 허용한다. proxy
+  protocol은 `3.3.0`, operation generation은 `6`으로 올려 이전 terminal과 섞이지 않는다.
+- **검증:** overview와 세 discovery가 응답 gate 전에 모두 시작되는지, 3분할 전체
+  coverage, discovery-only 두바이 초콜릿 lead merge, mode별 provider body·receipt·cache,
+  mode namespace 분리, 429 동일 operation 재생을 회귀 테스트로 고정했다. 집중 테스트
+  86개, 전체 TypeScript typecheck, 변경 파일 ESLint가 통과했다.
+
+### 후보 의미 판정 복구와 정직한 발행 · 2026-08-02
+
+- **미디어 선행:** 후보마다 서로 다른 JPEG 4장과 WAV를 먼저 한 번만 확정한 뒤 AI에
+  전달한다. 같은 실행의 의미 재판정은 이 검증된 미디어를 재사용하며, 재시작 뒤 다시
+  추출한 digest가 체크포인트와 다르면 provider 호출 전에 중단한다.
+- **복구 identity:** 최초 판정 뒤 모호함·응답 형식·영수증 오류가 남으면
+  `attemptOrdinal 0 → 1 → 2`와 deterministic retry grant로 새 semantic operation을
+  발급한다. 409·429·5xx 같은 전송 복구는 같은 operation을 재생해 중복 호출을 막는다.
+- **후보 보존:** 두 번의 의미 복구 뒤에도 불명확한 후보는 삭제하지 않는다. 이전 AI
+  결과, 전체 맥락, 대사, JPEG 4장, 영수증을 갖춘 `editor-review` 후보로 발행한다.
+  화면·맥락이 일치하는 명시적 음악/중간 영상 또는 비추천 스트리머 사건만 terminal
+  제외할 수 있다.
+- **비용 영수증:** 전체 맥락의 네 component마다 실제 Worker attempt와 중복 provider
+  호출 가능성을 영수증에 봉인한다. 기본 `free-tier-recovery`는 성공 복구를 우선하고,
+  `strict-paid`는 중복 과금 위험이 표시된 재호출만 차단한다.
+- **검증:** 전체 Vitest 177파일 2,188개, 실제 Actions와 같은 Node 계약 138개, 음성 등록
+  도구 9개, TypeScript, ESLint, production build, Worker dry-run이 모두 통과했다.

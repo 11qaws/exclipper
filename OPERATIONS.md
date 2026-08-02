@@ -30,6 +30,29 @@ bundle로 묶어 private R2에 streaming stage한다. Worker JavaScript는 이 �
 시각·canonical context로 만든 semantic operation ID는 바꾸지 않는다. Durable terminal
 replay가 같은 후보의 중복 provider 호출과 호출 누락이 최종 후보 0개로 바뀌는 일을 막는다.
 
+예약 전체 맥락도 같은 무료 4회/분 한도를 넘기지 않는다. 한 영상은 Qwen 3.7 Plus
+`overview` 1회와 방송 전체 챕터를 정확히 한 번씩 덮는 Qwen 3.6 Flash `discovery`
+3분할을 동시에 시작한다. `analysisMode`는 request body·SHA-256 digest·Durable Object
+operation namespace·expected model receipt에 모두 포함한다. 다음 영상이나 upstream
+backoff 때문에 429가 발생하면 runner는 `Retry-After`를 기다린 뒤 동일 body와 동일
+operation ID를 재생하며, 성공한 terminal은 다시 결제하지 않는다.
+
+기본 `free-tier-recovery` 정책은 무료 한도에서 복구를 우선해 중복 과금 가능성이 표시된
+provider checkpoint도 같은 operation ID로 재개한다. 유료 전환 시에는
+`--context-retry-policy strict-paid` 또는
+`CHANNEL_PREANALYSIS_CONTEXT_PROVIDER_RETRY_POLICY=strict-paid`를 사용하면 해당 위험이
+표시된 요청만 자동 재호출하지 않는다. 아직 provider에 도달하지 않은 안전한 in-progress와
+backoff polling은 계속한다. 성공한 각 context component 영수증에는 실제 Worker attempt와
+retry-risk가 함께 저장되며, 이 필드가 없던 기존 영수증도 계속 읽을 수 있다.
+
+후보 상세 분석은 JPEG 4장과 WAV가 모두 준비된 뒤에만 시작한다. `attemptOrdinal`은
+최초 0에서 최대 2까지 올라가며, 형식·영수증처럼 캐시된 잘못된 terminal을 반복할 수 있는
+오류만 새 semantic operation으로 승격한다. 409·429·5xx 전송 복구는 같은 operation을
+유지한다. 다음 attempt를 호출하기 전에 retry grant와 이전 완전한 근거를 체크포인트에
+원자적으로 기록해야 한다. 최대 복구 뒤에도 판정이 모호하면 해당 후보를 버리지 말고
+`editor-review`로 발행한다. 후보를 최종 제외하려면 화면·오디오·전체 맥락이 일치하는
+명시적 부정 판정이 있어야 한다.
+
 활성화에는 전용 Worker의 `PREANALYSIS_CONTEXT_TOKEN`·`PREANALYSIS_QWEN_API_KEY`·
 `PREANALYSIS_GROQ_API_KEY`와
 GitHub Actions의 `CHANNEL_PREANALYSIS_CONTEXT_PROXY_URL`·

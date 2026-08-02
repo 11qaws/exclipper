@@ -276,6 +276,40 @@ describe("Candidate Pass B current final verification", () => {
       },
       "detail-verdict-incoherent",
     ],
+    [
+      "unclear routine rejection",
+      {
+        clipDecision: "reject" as const,
+        programMaterial: "routine-or-unclear" as const,
+      },
+      "program-material-unclear",
+    ],
+    [
+      "music rejection with insufficient context",
+      {
+        clipDecision: "reject" as const,
+        contextConsistency: "insufficient" as const,
+        programMaterial: "music-or-intermission" as const,
+      },
+      "context-insufficient",
+    ],
+    [
+      "routine rejection with insufficient context",
+      {
+        clipDecision: "reject" as const,
+        contextConsistency: "insufficient" as const,
+        programMaterial: "routine-or-unclear" as const,
+      },
+      "context-insufficient",
+    ],
+    [
+      "explicit context conflict",
+      {
+        clipDecision: "reject" as const,
+        contextConsistency: "conflict" as const,
+      },
+      "context-conflict",
+    ],
   ] as const)(
     "keeps %s as a recoverable verification gap",
     (_label, overrides, expectedGap) => {
@@ -299,22 +333,6 @@ describe("Candidate Pass B current final verification", () => {
         programMaterial: "music-or-intermission" as const,
       },
       "program-material-excluded",
-    ],
-    [
-      "routine material",
-      {
-        clipDecision: "reject" as const,
-        programMaterial: "routine-or-unclear" as const,
-      },
-      "program-material-excluded",
-    ],
-    [
-      "explicit context conflict",
-      {
-        clipDecision: "reject" as const,
-        contextConsistency: "conflict" as const,
-      },
-      "context-conflict",
     ],
   ] as const)(
     "keeps %s as a completed negative judgement",

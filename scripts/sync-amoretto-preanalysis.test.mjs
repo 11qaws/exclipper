@@ -20,9 +20,12 @@ import {
 } from "../src/analysis/channelPreanalysisCatalog.ts";
 import {
   BROADCAST_CONTEXT_SCHEMA_VERSION,
+  calculateCoverage,
 } from "../src/analysis/broadcastContextProtocol.ts";
 import { AI_BROADCAST_CONTEXT_ROUTING_REVISION } from "../src/analysis/aiModelRoutingPolicy.ts";
 import {
+  QWEN_CONTEXT_DISCOVERY_MODEL_ID,
+  QWEN_CONTEXT_DISCOVERY_MODEL_REVISION,
   QWEN_CONTEXT_OVERVIEW_FALLBACK_MODEL_ID,
   QWEN_CONTEXT_OVERVIEW_FALLBACK_MODEL_REVISION,
 } from "../src/cloudflare/aiProviderConfiguration.ts";
@@ -47,11 +50,14 @@ import {
   PREANALYSIS_CONTEXT_EXPECTED_MODEL_ID_HEADER,
   PREANALYSIS_CONTEXT_EXPECTED_MODEL_REVISION,
   PREANALYSIS_CONTEXT_EXPECTED_MODEL_REVISION_HEADER,
+  PREANALYSIS_CONTEXT_ATTEMPT_HEADER,
+  PREANALYSIS_CONTEXT_POSSIBLE_DUPLICATE_PROVIDER_CHARGE,
   PREANALYSIS_CONTEXT_MODEL_ID_HEADER,
   PREANALYSIS_CONTEXT_MODEL_REVISION_HEADER,
   PREANALYSIS_CONTEXT_OPERATION_HEADER,
   PREANALYSIS_CONTEXT_PAYLOAD_DIGEST_HEADER,
   PREANALYSIS_CONTEXT_PROXY_VERSION,
+  PREANALYSIS_CONTEXT_RETRY_RISK_HEADER,
   PREANALYSIS_CONTEXT_ROUTING_REVISION_HEADER,
   artifactForBundle,
   artifactForVisualFingerprint,
@@ -230,7 +236,11 @@ function completeContextResult(sourceDurationMs) {
   return { ...result, hostStreamerProfile: null };
 }
 
-function contextSuccessResponse(result, headerOverrides = {}) {
+function contextSuccessResponse(
+  result,
+  headerOverrides = {},
+  analysisMode = "overview",
+) {
   return Response.json(result, {
     headers: {
       [PREANALYSIS_CONTEXT_CONTRACT_HEADER]:
@@ -238,12 +248,96 @@ function contextSuccessResponse(result, headerOverrides = {}) {
       [PREANALYSIS_CONTEXT_ROUTING_REVISION_HEADER]:
         AI_BROADCAST_CONTEXT_ROUTING_REVISION,
       [PREANALYSIS_CONTEXT_MODEL_ID_HEADER]:
-        PREANALYSIS_CONTEXT_EXPECTED_MODEL_ID,
+        analysisMode === "discovery"
+          ? QWEN_CONTEXT_DISCOVERY_MODEL_ID
+          : PREANALYSIS_CONTEXT_EXPECTED_MODEL_ID,
       [PREANALYSIS_CONTEXT_MODEL_REVISION_HEADER]:
-        PREANALYSIS_CONTEXT_EXPECTED_MODEL_REVISION,
+        analysisMode === "discovery"
+          ? QWEN_CONTEXT_DISCOVERY_MODEL_REVISION
+          : PREANALYSIS_CONTEXT_EXPECTED_MODEL_REVISION,
+      [PREANALYSIS_CONTEXT_ATTEMPT_HEADER]: "1",
       ...headerOverrides,
     },
   });
+}
+
+function discoveryContextResult(request, leadOrdinal = 1) {
+  const chapters = [...request.chapters].sort(
+    (left, right) => left.startMs - right.startMs,
+  );
+  const first = chapters[0];
+  return {
+    schemaVersion: BROADCAST_CONTEXT_SCHEMA_VERSION,
+    broadcastSummaryKo: "해당 방송 구간에서 서로 다른 반응 사건을 탐색했습니다.",
+    hostStreamerProfile: null,
+    recurringThemesKo: [],
+    annotations: [],
+    semanticChaptersSupported: false,
+    semanticChapters: [],
+    discoveredLeadsSupported: true,
+    discoveredLeads: first === undefined
+      ? []
+      : [{
+          leadId: `discovery-test-${leadOrdinal}`,
+          startMs: first.startMs,
+          endMs: first.endMs,
+          startChapterId: first.chapterId,
+          endChapterId: first.chapterId,
+          category: "reaction",
+          confidence: 0.8,
+          eventSummaryKo: `구간 ${leadOrdinal}의 반응 사건입니다.`,
+          whyThisMomentKo: "대사 흐름 안에서 독립된 반응이 확인됩니다.",
+          evidenceCueKo: first.summaryKo,
+          uncertaintiesKo: ["영상과 음성으로 최종 확인이 필요합니다."],
+        }],
+    coverage: calculateCoverage(chapters, request.sourceDurationMs),
+  };
+}
+
+function contextSuccessResponseForRequest(
+  init,
+  overviewResult = null,
+  overviewHeaderOverrides = {},
+) {
+  const request = JSON.parse(init.body);
+  return request.analysisMode === "discovery"
+    ? contextSuccessResponse(
+        discoveryContextResult(
+          request,
+          Number(request.chapters[0]?.chapterId?.match(/\d+/u)?.[0] ?? 1),
+        ),
+        {},
+        "discovery",
+      )
+    : contextSuccessResponse(
+        overviewResult ?? completeContextResult(request.sourceDurationMs),
+        overviewHeaderOverrides,
+        "overview",
+      );
+}
+
+function scheduledContextOutcomeForBundle(transcriptBundle, overviewResult) {
+  return requestScheduledBroadcastContext(transcriptBundle, {
+    proxyUrl: "https://worker.example/v1/broadcast-context",
+    authorizationToken: TEST_CONTEXT_TOKEN,
+    fetchImplementation: async (_input, init) =>
+      contextSuccessResponseForRequest(init, overviewResult),
+  });
+}
+
+function transcriptBundleWithChapterCount(transcriptBundle, chapterCount) {
+  const chapterDurationMs = transcriptBundle.durationMs / chapterCount;
+  return {
+    ...transcriptBundle,
+    chapters: Array.from({ length: chapterCount }, (_, index) => ({
+      chapterId: `coverage-chapter-${String(index + 1).padStart(2, "0")}`,
+      startMs: Math.round(index * chapterDurationMs),
+      endMs: Math.round((index + 1) * chapterDurationMs),
+      evidenceMode: "complete-transcript",
+      evidenceCoverageRatio: 1,
+      summaryKo: `방송 구간 ${index + 1}의 대사와 사건입니다.`,
+    })),
+  };
 }
 
 function testVisualFingerprintForVideo(source) {
@@ -361,6 +455,7 @@ test("CLI defaults are bounded and every override is explicit", () => {
   assert.equal(defaults.ytDlpPath, "/tools/yt-dlp");
   assert.equal(defaults.contextProxyUrl, null);
   assert.equal(defaults.contextAuthorizationToken, null);
+  assert.equal(defaults.contextProviderRetryPolicy, "free-tier-recovery");
   assert.match(
     defaults.catalogDir.replaceAll("\\", "/"),
     /\/work\/preanalysis-catalog$/u,
@@ -379,6 +474,8 @@ test("CLI defaults are bounded and every override is explicit", () => {
       "amoretto-vods",
       "--context-proxy",
       "https://worker.example/v1/broadcast-context",
+      "--context-retry-policy",
+      "strict-paid",
     ],
     {
       cwd: "/work",
@@ -397,7 +494,12 @@ test("CLI defaults are bounded and every override is explicit", () => {
     selected.contextAuthorizationToken,
     TEST_CONTEXT_TOKEN,
   );
+  assert.equal(selected.contextProviderRetryPolicy, "strict-paid");
 
+  assert.throws(
+    () => parseSyncArguments(["--context-retry-policy", "speculative"]),
+    /free-tier-recovery or strict-paid/u,
+  );
   assert.throws(
     () => parseSyncArguments(["--max-videos", "3"]),
     /between 1 and 2/u,
@@ -1077,10 +1179,14 @@ test("context promotion is transcript-only provenance and never claims local vis
     "unavailable",
   );
 
+  const contextOutcome = await scheduledContextOutcomeForBundle(
+    transcriptBundle,
+    completeContextResult(source.durationMs),
+  );
   const contextBundle = await createContextReadyBundle({
     transcriptBundle,
-    broadcastContext: completeContextResult(source.durationMs),
-    contextReceipt: createExpectedScheduledContextReceipt(),
+    broadcastContext: contextOutcome.broadcastContext,
+    contextReceipt: contextOutcome.contextReceipt,
     catalogRevision: 9,
     generatedAt: BASE_TIME,
   });
@@ -1088,7 +1194,7 @@ test("context promotion is transcript-only provenance and never claims local vis
   assert.deepEqual(contextBundle.contextProvenance, {
     generatedAt: BASE_TIME,
     modelRoutingRevision: AI_BROADCAST_CONTEXT_ROUTING_REVISION,
-    contextReceipt: createExpectedScheduledContextReceipt(),
+    contextReceipt: contextOutcome.contextReceipt,
     evidenceScope: "youtube-caption-transcript-only",
     localVisualVerificationRequired: true,
   });
@@ -1723,14 +1829,15 @@ test("captionless uploads fall back to checkpointed scheduled ASR and reach cont
       },
       {
         now: () => new Date(BASE_TIME),
-        fetch: async (input) => {
+        fetch: async (input, init) => {
           const url = new URL(String(input));
           if (url.href === AMORETTO_YOUTUBE_CHANNEL_FEED_URL) {
             return new Response(atomFeedFor(source), { status: 200 });
           }
           if (url.pathname === "/v1/broadcast-context") {
             contextCalls += 1;
-            return contextSuccessResponse(
+            return contextSuccessResponseForRequest(
+              init,
               completeContextResult(source.durationMs),
             );
           }
@@ -1777,7 +1884,7 @@ test("captionless uploads fall back to checkpointed scheduled ASR and reach cont
     );
 
     assert.equal(asrCalls, 1);
-    assert.equal(contextCalls, 1);
+    assert.equal(contextCalls, 3);
     assert.equal(result.outcomes[0]?.state, "context-ready");
     const bundle = JSON.parse(
       await readFile(
@@ -1862,15 +1969,18 @@ test("a dedicated opt-in context endpoint promotes a durable transcript to revis
           init.headers[PREANALYSIS_CONTEXT_ROUTING_REVISION_HEADER],
           AI_BROADCAST_CONTEXT_ROUTING_REVISION,
         );
+        const expectedReceipt = createExpectedScheduledContextReceipt(
+          request.analysisMode,
+        );
         assert.equal(
           init.headers[PREANALYSIS_CONTEXT_EXPECTED_MODEL_ID_HEADER],
-          PREANALYSIS_CONTEXT_EXPECTED_MODEL_ID,
+          expectedReceipt.modelId,
         );
         assert.equal(
           init.headers[
             PREANALYSIS_CONTEXT_EXPECTED_MODEL_REVISION_HEADER
           ],
-          PREANALYSIS_CONTEXT_EXPECTED_MODEL_REVISION,
+          expectedReceipt.modelRevision,
         );
         assert.match(
           init.headers[PREANALYSIS_CONTEXT_OPERATION_HEADER],
@@ -1880,7 +1990,8 @@ test("a dedicated opt-in context endpoint promotes a durable transcript to revis
           init.headers[PREANALYSIS_CONTEXT_PAYLOAD_DIGEST_HEADER],
           /^sha256:[0-9a-f]{64}$/u,
         );
-        return contextSuccessResponse(
+        return contextSuccessResponseForRequest(
+          init,
           completeContextResult(source.durationMs),
         );
       }
@@ -1907,7 +2018,7 @@ test("a dedicated opt-in context endpoint promotes a durable transcript to revis
       },
     );
 
-    assert.equal(contextCalls, 1);
+    assert.equal(contextCalls, 3);
     assert.equal(
       result.outcomes[0]?.state,
       "context-ready",
@@ -1930,9 +2041,28 @@ test("a dedicated opt-in context endpoint promotes a durable transcript to revis
       ),
     );
     assert.equal(bundle.state, "context-ready");
+    const persistedReceipt = bundle.contextProvenance.contextReceipt;
     assert.deepEqual(
-      bundle.contextProvenance.contextReceipt,
+      {
+        contractVersion: persistedReceipt.contractVersion,
+        routingRevision: persistedReceipt.routingRevision,
+        modelId: persistedReceipt.modelId,
+        modelRevision: persistedReceipt.modelRevision,
+      },
       createExpectedScheduledContextReceipt(),
+    );
+    assert.deepEqual(
+      persistedReceipt.componentReceipts.map(
+        ({ componentIndex, analysisMode }) => ({
+          componentIndex,
+          analysisMode,
+        }),
+      ),
+      [
+        { componentIndex: 0, analysisMode: "overview" },
+        { componentIndex: 1, analysisMode: "discovery" },
+        { componentIndex: 2, analysisMode: "discovery" },
+      ],
     );
     assert.equal(
       bundle.contextProvenance.evidenceScope,
@@ -1975,8 +2105,8 @@ test("schema-valid context bodies without the exact proxy receipt are rejected",
       requestScheduledBroadcastContext(transcriptBundle, {
         proxyUrl: "https://worker.example/v1/broadcast-context",
         authorizationToken: TEST_CONTEXT_TOKEN,
-        fetchImplementation: async () =>
-          contextSuccessResponse(result, {
+        fetchImplementation: async (_input, init) =>
+          contextSuccessResponseForRequest(init, result, {
             [PREANALYSIS_CONTEXT_ROUTING_REVISION_HEADER]: "stale-route",
           }),
       }),
@@ -2000,20 +2130,518 @@ test("a bounded Qwen overview fallback receipt is preserved as the actual proven
     const response = await requestScheduledBroadcastContext(transcriptBundle, {
       proxyUrl: "https://worker.example/v1/broadcast-context",
       authorizationToken: TEST_CONTEXT_TOKEN,
-      fetchImplementation: async () =>
-        contextSuccessResponse(result, {
+      fetchImplementation: async (_input, init) =>
+        contextSuccessResponseForRequest(init, result, {
           [PREANALYSIS_CONTEXT_MODEL_ID_HEADER]:
             QWEN_CONTEXT_OVERVIEW_FALLBACK_MODEL_ID,
           [PREANALYSIS_CONTEXT_MODEL_REVISION_HEADER]:
             QWEN_CONTEXT_OVERVIEW_FALLBACK_MODEL_REVISION,
+          [PREANALYSIS_CONTEXT_ATTEMPT_HEADER]: "2",
+          [PREANALYSIS_CONTEXT_RETRY_RISK_HEADER]:
+            PREANALYSIS_CONTEXT_POSSIBLE_DUPLICATE_PROVIDER_CHARGE,
         }),
     });
-    assert.deepEqual(response.contextReceipt, {
-      contractVersion: PREANALYSIS_CONTEXT_PROXY_VERSION,
-      routingRevision: AI_BROADCAST_CONTEXT_ROUTING_REVISION,
-      modelId: QWEN_CONTEXT_OVERVIEW_FALLBACK_MODEL_ID,
-      modelRevision: QWEN_CONTEXT_OVERVIEW_FALLBACK_MODEL_REVISION,
+    assert.deepEqual(
+      {
+        contractVersion: response.contextReceipt.contractVersion,
+        routingRevision: response.contextReceipt.routingRevision,
+        modelId: response.contextReceipt.modelId,
+        modelRevision: response.contextReceipt.modelRevision,
+      },
+      {
+        contractVersion: PREANALYSIS_CONTEXT_PROXY_VERSION,
+        routingRevision: AI_BROADCAST_CONTEXT_ROUTING_REVISION,
+        modelId: QWEN_CONTEXT_OVERVIEW_FALLBACK_MODEL_ID,
+        modelRevision: QWEN_CONTEXT_OVERVIEW_FALLBACK_MODEL_REVISION,
+      },
+    );
+    assert.equal(
+      response.contextReceipt.componentReceipts[0].modelId,
+      QWEN_CONTEXT_OVERVIEW_FALLBACK_MODEL_ID,
+    );
+    assert.deepEqual(
+      {
+        workerAttempt:
+          response.contextReceipt.componentReceipts[0].workerAttempt,
+        retryRisk: response.contextReceipt.componentReceipts[0].retryRisk,
+      },
+      {
+        workerAttempt: 2,
+        retryRisk: PREANALYSIS_CONTEXT_POSSIBLE_DUPLICATE_PROVIDER_CHARGE,
+      },
+    );
+    assert.ok(
+      response.contextReceipt.componentReceipts
+        .slice(1)
+        .every(({ modelId }) => modelId === QWEN_CONTEXT_DISCOVERY_MODEL_ID),
+    );
+  } finally {
+    await rm(catalogDir, { recursive: true, force: true });
+  }
+});
+
+test("overview and three full-coverage discovery requests start together and preserve a discovery-only lead", async () => {
+  const catalogDir = await mkdtemp(
+    join(tmpdir(), "exclipper-context-parallel-discovery-"),
+  );
+  try {
+    const fixture = await readyCatalogFixture(catalogDir);
+    const transcriptBundle = transcriptBundleWithChapterCount(
+      JSON.parse(fixture.serialized),
+      12,
+    );
+    const calls = [];
+    let releaseRequests;
+    const requestGate = new Promise((resolve) => {
+      releaseRequests = resolve;
     });
+    let discoveryOrdinal = 0;
+    const pending = requestScheduledBroadcastContext(transcriptBundle, {
+      proxyUrl: "https://worker.example/v1/broadcast-context",
+      authorizationToken: TEST_CONTEXT_TOKEN,
+      fetchImplementation: async (_input, init) => {
+        const request = JSON.parse(init.body);
+        calls.push({
+          request,
+          operationId:
+            init.headers[PREANALYSIS_CONTEXT_OPERATION_HEADER],
+          payloadDigest:
+            init.headers[PREANALYSIS_CONTEXT_PAYLOAD_DIGEST_HEADER],
+        });
+        await requestGate;
+        if (request.analysisMode === "overview") {
+          return contextSuccessResponse(
+            completeContextResult(request.sourceDurationMs),
+          );
+        }
+        discoveryOrdinal += 1;
+        const discoveryResult = discoveryContextResult(
+          request,
+          discoveryOrdinal,
+        );
+        if (discoveryOrdinal !== 2) {
+          discoveryResult.discoveredLeads = [];
+        } else {
+          discoveryResult.discoveredLeads[0] = {
+            ...discoveryResult.discoveredLeads[0],
+            leadId: "discovery-dubai-chocolate",
+            eventSummaryKo: "두바이 초콜릿을 맛본 뒤 예상 밖의 반응을 보였습니다.",
+            evidenceCueKo: "두바이 초콜릿 맛이 생각과 달라서 놀랐어.",
+          };
+        }
+        return contextSuccessResponse(discoveryResult, {}, "discovery");
+      },
+    });
+
+    for (let turn = 0; turn < 20 && calls.length < 4; turn += 1) {
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+    assert.equal(calls.length, 4);
+    assert.deepEqual(
+      calls.map(({ request }) => request.analysisMode).sort(),
+      ["discovery", "discovery", "discovery", "overview"],
+    );
+    const overviewChapters = calls.find(
+      ({ request }) => request.analysisMode === "overview",
+    ).request.chapters;
+    assert.deepEqual(
+      calls
+        .filter(({ request }) => request.analysisMode === "discovery")
+        .flatMap(({ request }) => request.chapters),
+      overviewChapters,
+    );
+    assert.equal(new Set(calls.map(({ operationId }) => operationId)).size, 4);
+    assert.equal(new Set(calls.map(({ payloadDigest }) => payloadDigest)).size, 4);
+    releaseRequests();
+
+    const result = await pending;
+    assert.equal(result.broadcastContext.discoveredLeads.length, 1);
+    assert.equal(
+      result.broadcastContext.discoveredLeads[0]?.leadId,
+      "discovery-dubai-chocolate",
+    );
+    assert.deepEqual(
+      result.contextReceipt.componentReceipts.map(
+        ({ componentIndex, analysisMode }) => ({
+          componentIndex,
+          analysisMode,
+        }),
+      ),
+      [
+        { componentIndex: 0, analysisMode: "overview" },
+        { componentIndex: 1, analysisMode: "discovery" },
+        { componentIndex: 2, analysisMode: "discovery" },
+        { componentIndex: 3, analysisMode: "discovery" },
+      ],
+    );
+    assert.deepEqual(
+      new Set(
+        result.contextReceipt.componentReceipts.map(
+          ({ operationId }) => operationId,
+        ),
+      ),
+      new Set(calls.map(({ operationId }) => operationId)),
+    );
+    const contextBundle = await createContextReadyBundle({
+      transcriptBundle,
+      broadcastContext: result.broadcastContext,
+      contextReceipt: result.contextReceipt,
+      catalogRevision: 8,
+      generatedAt: BASE_TIME,
+    });
+    assert.deepEqual(
+      JSON.parse(serializeBundle(contextBundle)).contextProvenance
+        .contextReceipt.componentReceipts,
+      result.contextReceipt.componentReceipts,
+    );
+
+    for (const forgedReceipt of [
+      {
+        ...result.contextReceipt,
+        componentReceipts: result.contextReceipt.componentReceipts.slice(0, 3),
+      },
+      {
+        ...result.contextReceipt,
+        componentReceipts: result.contextReceipt.componentReceipts.map(
+          (receipt, index) =>
+            index === 1
+              ? { ...receipt, modelRevision: "forged-model-revision" }
+              : receipt,
+        ),
+      },
+      {
+        ...result.contextReceipt,
+        componentReceipts: result.contextReceipt.componentReceipts.map(
+          (receipt, index) =>
+            index === 2
+              ? {
+                  ...receipt,
+                  payloadDigest:
+                    "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+                }
+              : receipt,
+        ),
+      },
+      {
+        ...result.contextReceipt,
+        componentReceipts: result.contextReceipt.componentReceipts.map(
+          (receipt, index) =>
+            index === 2
+              ? {
+                  ...receipt,
+                  operationId:
+                    result.contextReceipt.componentReceipts[1].operationId,
+                }
+              : receipt,
+        ),
+      },
+      {
+        ...result.contextReceipt,
+        componentReceipts: result.contextReceipt.componentReceipts.map(
+          (receipt, index) =>
+            index === 1 ? { ...receipt, workerAttempt: 0 } : receipt,
+        ),
+      },
+      {
+        ...result.contextReceipt,
+        componentReceipts: result.contextReceipt.componentReceipts.map(
+          (receipt, index) =>
+            index === 1 ? { ...receipt, retryRisk: "unknown-risk" } : receipt,
+        ),
+      },
+    ]) {
+      await assert.rejects(
+        createContextReadyBundle({
+          transcriptBundle,
+          broadcastContext: result.broadcastContext,
+          contextReceipt: forgedReceipt,
+          catalogRevision: 8,
+          generatedAt: BASE_TIME,
+        }),
+        (error) => error?.code === "CONTEXT_PROXY_RECEIPT_INVALID",
+      );
+    }
+    assert.match(
+      result.broadcastContext.discoveredLeads[0]?.eventSummaryKo ?? "",
+      /두바이 초콜릿/u,
+    );
+  } finally {
+    await rm(catalogDir, { recursive: true, force: true });
+  }
+});
+
+test("rate-limited context pieces retry the exact same operation after Retry-After", async () => {
+  const catalogDir = await mkdtemp(
+    join(tmpdir(), "exclipper-context-rate-limit-recovery-"),
+  );
+  try {
+    const fixture = await readyCatalogFixture(catalogDir);
+    const transcriptBundle = transcriptBundleWithChapterCount(
+      JSON.parse(fixture.serialized),
+      12,
+    );
+    const attemptsByOperation = new Map();
+    const observedByOperation = new Map();
+    const waitedMs = [];
+    const result = await requestScheduledBroadcastContext(transcriptBundle, {
+      proxyUrl: "https://worker.example/v1/broadcast-context",
+      authorizationToken: TEST_CONTEXT_TOKEN,
+      waitImplementation: async (delayMs) => {
+        waitedMs.push(delayMs);
+      },
+      fetchImplementation: async (_input, init) => {
+        const operationId =
+          init.headers[PREANALYSIS_CONTEXT_OPERATION_HEADER];
+        const priorAttempt = attemptsByOperation.get(operationId) ?? 0;
+        attemptsByOperation.set(operationId, priorAttempt + 1);
+        const observed = observedByOperation.get(operationId) ?? [];
+        observed.push({
+          body: init.body,
+          digest: init.headers[PREANALYSIS_CONTEXT_PAYLOAD_DIGEST_HEADER],
+        });
+        observedByOperation.set(operationId, observed);
+        if (priorAttempt === 0) {
+          return Response.json(
+            { error: { code: "RATE_LIMITED" } },
+            { status: 429, headers: { "Retry-After": "7" } },
+          );
+        }
+        return contextSuccessResponseForRequest(init);
+      },
+    });
+
+    assert.equal(result.broadcastContext.schemaVersion, BROADCAST_CONTEXT_SCHEMA_VERSION);
+    assert.equal(attemptsByOperation.size, 4);
+    assert.deepEqual([...attemptsByOperation.values()], [2, 2, 2, 2]);
+    assert.deepEqual(waitedMs, [7_000, 7_000, 7_000, 7_000]);
+    for (const observed of observedByOperation.values()) {
+      assert.equal(observed.length, 2);
+      assert.deepEqual(observed[0], observed[1]);
+    }
+  } finally {
+    await rm(catalogDir, { recursive: true, force: true });
+  }
+});
+
+async function assertScheduledContextCheckpointIsReplayed({
+  status,
+  code,
+  retryAfterSeconds,
+  responseHeaders = {},
+}) {
+  const catalogDir = await mkdtemp(
+    join(tmpdir(), "exclipper-context-checkpoint-recovery-"),
+  );
+  try {
+    const fixture = await readyCatalogFixture(catalogDir);
+    const transcriptBundle = transcriptBundleWithChapterCount(
+      JSON.parse(fixture.serialized),
+      12,
+    );
+    const attemptsByOperation = new Map();
+    const observedByOperation = new Map();
+    const waitedMs = [];
+    await requestScheduledBroadcastContext(transcriptBundle, {
+      proxyUrl: "https://worker.example/v1/broadcast-context",
+      authorizationToken: TEST_CONTEXT_TOKEN,
+      waitImplementation: async (delayMs) => {
+        waitedMs.push(delayMs);
+      },
+      fetchImplementation: async (_input, init) => {
+        const operationId =
+          init.headers[PREANALYSIS_CONTEXT_OPERATION_HEADER];
+        const priorAttempt = attemptsByOperation.get(operationId) ?? 0;
+        attemptsByOperation.set(operationId, priorAttempt + 1);
+        const observed = observedByOperation.get(operationId) ?? [];
+        observed.push({
+          operationId,
+          body: init.body,
+          digest: init.headers[PREANALYSIS_CONTEXT_PAYLOAD_DIGEST_HEADER],
+        });
+        observedByOperation.set(operationId, observed);
+        if (priorAttempt === 0) {
+          return Response.json(
+            { error: { code } },
+            {
+              status,
+              headers: {
+                "Retry-After": String(retryAfterSeconds),
+                ...responseHeaders,
+              },
+            },
+          );
+        }
+        return contextSuccessResponseForRequest(init);
+      },
+    });
+
+    assert.deepEqual([...attemptsByOperation.values()], [2, 2, 2, 2]);
+    assert.deepEqual(
+      waitedMs,
+      Array.from({ length: 4 }, () => retryAfterSeconds * 1_000),
+    );
+    for (const observed of observedByOperation.values()) {
+      assert.deepEqual(observed[0], observed[1]);
+    }
+  } finally {
+    await rm(catalogDir, { recursive: true, force: true });
+  }
+}
+
+test("an in-progress 409 checkpoint replays the exact scheduled context operation", async () => {
+  await assertScheduledContextCheckpointIsReplayed({
+    status: 409,
+    code: "OPERATION_IN_PROGRESS",
+    retryAfterSeconds: 2,
+  });
+});
+
+test("a backoff 503 checkpoint replays the exact scheduled context operation", async () => {
+  await assertScheduledContextCheckpointIsReplayed({
+    status: 503,
+    code: "RETRY_BACKOFF",
+    retryAfterSeconds: 3,
+  });
+});
+
+test("free-tier recovery replays a newly checkpointed risky provider 503", async () => {
+  await assertScheduledContextCheckpointIsReplayed({
+    status: 503,
+    code: "UPSTREAM_UNAVAILABLE",
+    retryAfterSeconds: 4,
+    responseHeaders: {
+      [PREANALYSIS_CONTEXT_ATTEMPT_HEADER]: "1",
+      [PREANALYSIS_CONTEXT_RETRY_RISK_HEADER]:
+        PREANALYSIS_CONTEXT_POSSIBLE_DUPLICATE_PROVIDER_CHARGE,
+    },
+  });
+});
+
+test("strict-paid refuses an automatic provider retry carrying duplicate-charge risk", async () => {
+  const catalogDir = await mkdtemp(
+    join(tmpdir(), "exclipper-context-strict-paid-"),
+  );
+  try {
+    const fixture = await readyCatalogFixture(catalogDir);
+    const transcriptBundle = transcriptBundleWithChapterCount(
+      JSON.parse(fixture.serialized),
+      12,
+    );
+    let requestCount = 0;
+    const waitedMs = [];
+    await assert.rejects(
+      requestScheduledBroadcastContext(transcriptBundle, {
+        proxyUrl: "https://worker.example/v1/broadcast-context",
+        authorizationToken: TEST_CONTEXT_TOKEN,
+        providerRetryPolicy: "strict-paid",
+        waitImplementation: async (delayMs) => {
+          waitedMs.push(delayMs);
+        },
+        fetchImplementation: async () => {
+          requestCount += 1;
+          return Response.json(
+            { error: { code: "UPSTREAM_UNAVAILABLE" } },
+            {
+              status: 503,
+              headers: {
+                "Retry-After": "4",
+                [PREANALYSIS_CONTEXT_ATTEMPT_HEADER]: "1",
+                [PREANALYSIS_CONTEXT_RETRY_RISK_HEADER]:
+                  PREANALYSIS_CONTEXT_POSSIBLE_DUPLICATE_PROVIDER_CHARGE,
+              },
+            },
+          );
+        },
+      }),
+      (error) => error?.code === "UPSTREAM_UNAVAILABLE",
+    );
+    for (let turn = 0; turn < 20 && requestCount < 4; turn += 1) {
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+    assert.equal(requestCount, 4);
+    assert.deepEqual(waitedMs, []);
+  } finally {
+    await rm(catalogDir, { recursive: true, force: true });
+  }
+});
+
+test("strict-paid still polls safe in-progress and backoff checkpoints", async () => {
+  const catalogDir = await mkdtemp(
+    join(tmpdir(), "exclipper-context-strict-paid-safe-"),
+  );
+  try {
+    const fixture = await readyCatalogFixture(catalogDir);
+    const transcriptBundle = transcriptBundleWithChapterCount(
+      JSON.parse(fixture.serialized),
+      12,
+    );
+    for (const checkpoint of [
+      { status: 409, code: "OPERATION_IN_PROGRESS" },
+      { status: 503, code: "RETRY_BACKOFF" },
+    ]) {
+      const attemptsByOperation = new Map();
+      await requestScheduledBroadcastContext(transcriptBundle, {
+        proxyUrl: "https://worker.example/v1/broadcast-context",
+        authorizationToken: TEST_CONTEXT_TOKEN,
+        providerRetryPolicy: "strict-paid",
+        waitImplementation: async () => undefined,
+        fetchImplementation: async (_input, init) => {
+          const operationId =
+            init.headers[PREANALYSIS_CONTEXT_OPERATION_HEADER];
+          const priorAttempt = attemptsByOperation.get(operationId) ?? 0;
+          attemptsByOperation.set(operationId, priorAttempt + 1);
+          return priorAttempt === 0
+            ? Response.json(
+                { error: { code: checkpoint.code } },
+                {
+                  status: checkpoint.status,
+                  headers: { "Retry-After": "1" },
+                },
+              )
+            : contextSuccessResponseForRequest(init);
+        },
+      });
+      assert.deepEqual([...attemptsByOperation.values()], [2, 2, 2, 2]);
+    }
+  } finally {
+    await rm(catalogDir, { recursive: true, force: true });
+  }
+});
+
+test("a permanent route 409 is not retried even when it carries Retry-After", async () => {
+  const catalogDir = await mkdtemp(
+    join(tmpdir(), "exclipper-context-permanent-conflict-"),
+  );
+  try {
+    const fixture = await readyCatalogFixture(catalogDir);
+    const transcriptBundle = transcriptBundleWithChapterCount(
+      JSON.parse(fixture.serialized),
+      12,
+    );
+    let requestCount = 0;
+    const waitedMs = [];
+    await assert.rejects(
+      requestScheduledBroadcastContext(transcriptBundle, {
+        proxyUrl: "https://worker.example/v1/broadcast-context",
+        authorizationToken: TEST_CONTEXT_TOKEN,
+        waitImplementation: async (delayMs) => {
+          waitedMs.push(delayMs);
+        },
+        fetchImplementation: async () => {
+          requestCount += 1;
+          return Response.json(
+            { error: { code: "PROXY_ROUTE_MISMATCH" } },
+            { status: 409, headers: { "Retry-After": "1" } },
+          );
+        },
+      }),
+      (error) => error?.code === "PROXY_ROUTE_MISMATCH",
+    );
+    for (let turn = 0; turn < 20 && requestCount < 4; turn += 1) {
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+    assert.equal(requestCount, 4);
+    assert.deepEqual(waitedMs, []);
   } finally {
     await rm(catalogDir, { recursive: true, force: true });
   }
@@ -2060,16 +2688,17 @@ test("the context request deadline includes a response body that never finishes"
   try {
     const fixture = await readyCatalogFixture(catalogDir);
     const transcriptBundle = JSON.parse(fixture.serialized);
-    const stalledBody = new ReadableStream({
-      start() {},
-    });
     await assert.rejects(
       requestScheduledBroadcastContext(transcriptBundle, {
         proxyUrl: "https://worker.example/v1/broadcast-context",
         authorizationToken: TEST_CONTEXT_TOKEN,
         requestTimeoutMs: 20,
-        fetchImplementation: async () =>
-          new Response(stalledBody, {
+        fetchImplementation: async (_input, init) => {
+          const request = JSON.parse(init.body);
+          const expectedReceipt = createExpectedScheduledContextReceipt(
+            request.analysisMode,
+          );
+          return new Response(new ReadableStream({ start() {} }), {
             status: 200,
             headers: {
               [PREANALYSIS_CONTEXT_CONTRACT_HEADER]:
@@ -2077,11 +2706,13 @@ test("the context request deadline includes a response body that never finishes"
               [PREANALYSIS_CONTEXT_ROUTING_REVISION_HEADER]:
                 AI_BROADCAST_CONTEXT_ROUTING_REVISION,
               [PREANALYSIS_CONTEXT_MODEL_ID_HEADER]:
-                PREANALYSIS_CONTEXT_EXPECTED_MODEL_ID,
+                expectedReceipt.modelId,
               [PREANALYSIS_CONTEXT_MODEL_REVISION_HEADER]:
-                PREANALYSIS_CONTEXT_EXPECTED_MODEL_REVISION,
+                expectedReceipt.modelRevision,
+              [PREANALYSIS_CONTEXT_ATTEMPT_HEADER]: "1",
             },
-          }),
+          });
+        },
       }),
       (error) => error?.code === "CONTEXT_REQUEST_TIMEOUT",
     );
@@ -2103,10 +2734,14 @@ test("a crash after immutable context write resumes from v2 without rebilling or
     );
     const source = fixture.manifest.videos[0];
     const transcriptBundle = JSON.parse(fixture.serialized);
+    const contextOutcome = await scheduledContextOutcomeForBundle(
+      transcriptBundle,
+      completeContextResult(source.durationMs),
+    );
     const contextBundle = await createContextReadyBundle({
       transcriptBundle,
-      broadcastContext: completeContextResult(source.durationMs),
-      contextReceipt: createExpectedScheduledContextReceipt(),
+      broadcastContext: contextOutcome.broadcastContext,
+      contextReceipt: contextOutcome.contextReceipt,
       catalogRevision: fixture.manifest.revision + 1,
       generatedAt: BASE_TIME,
     });
@@ -2195,7 +2830,7 @@ test("a failed context call checkpoints only context and resumes from the preser
     const contextProxyUrl =
       "https://worker.example/v1/broadcast-context";
     const operationIds = [];
-    const fetchForContext = (contextResponse) =>
+    const fetchForContext = (contextResponder) =>
       async (input, init) => {
         const url = new URL(String(input));
         if (url.href === AMORETTO_YOUTUBE_CHANNEL_FEED_URL) {
@@ -2209,7 +2844,7 @@ test("a failed context call checkpoints only context and resumes from the preser
           operationIds.push(
             init.headers[PREANALYSIS_CONTEXT_OPERATION_HEADER],
           );
-          return contextResponse;
+          return contextResponder(init);
         }
         throw new Error(`Unexpected fetch: ${url.href}`);
       };
@@ -2229,7 +2864,7 @@ test("a failed context call checkpoints only context and resumes from the preser
       },
       {
         now: () => new Date(BASE_TIME),
-        fetch: fetchForContext(
+        fetch: fetchForContext(() =>
           Response.json(
             { error: { code: "UPSTREAM_UNAVAILABLE" } },
             { status: 503 },
@@ -2271,11 +2906,11 @@ test("a failed context call checkpoints only context and resumes from the preser
       },
       {
         now: () => new Date(resumedAt),
-        fetch: fetchForContext(
-          contextSuccessResponse(
+        fetch: fetchForContext((init) =>
+          contextSuccessResponseForRequest(
+            init,
             completeContextResult(source.durationMs),
-          ),
-        ),
+          )),
         commandRunner,
         log: { info() {}, warn() {} },
       },
@@ -2291,8 +2926,8 @@ test("a failed context call checkpoints only context and resumes from the preser
         ?.revision,
       2,
     );
-    assert.equal(operationIds.length, 2);
-    assert.equal(operationIds[0], operationIds[1]);
+    assert.equal(operationIds.length, 6);
+    assert.deepEqual(operationIds.slice(0, 3), operationIds.slice(3));
     assert.equal(
       await readFile(fixture.bundlePath, "utf8"),
       fixture.serialized,

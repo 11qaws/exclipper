@@ -22,6 +22,23 @@ export interface BroadcastTopicalDiscoverySlice {
   readonly chapters: readonly BroadcastContextChapterInput[];
 }
 
+function createFullCoverageSlices(
+  chapters: readonly BroadcastContextChapterInput[],
+  maximumCalls: number,
+): readonly BroadcastTopicalDiscoverySlice[] {
+  if (chapters.length === 0) return [];
+  const sliceCount = Math.min(maximumCalls, chapters.length);
+  return Array.from({ length: sliceCount }, (_, index) => {
+    const startIndex = Math.floor((chapters.length * index) / sliceCount);
+    const endIndex = Math.floor((chapters.length * (index + 1)) / sliceCount);
+    return {
+      sliceId: `coverage-${String(index + 1).padStart(2, "0")}`,
+      titleKo: `방송 구간 ${index + 1}`,
+      chapters: chapters.slice(startIndex, Math.max(startIndex + 1, endIndex)),
+    };
+  });
+}
+
 function selectedSemanticChapters(
   semanticChapters: readonly BroadcastContextSemanticChapter[],
 ): readonly BroadcastContextSemanticChapter[] {
@@ -69,16 +86,7 @@ export function createBroadcastTopicalDiscoverySlices(
     });
   }
 
-  const sliceCount = Math.min(MAX_TOPICAL_DISCOVERY_CALLS, chapters.length);
-  return Array.from({ length: sliceCount }, (_, index) => {
-    const startIndex = Math.floor((chapters.length * index) / sliceCount);
-    const endIndex = Math.floor((chapters.length * (index + 1)) / sliceCount);
-    return {
-      sliceId: `coverage-${String(index + 1).padStart(2, "0")}`,
-      titleKo: `방송 구간 ${index + 1}`,
-      chapters: chapters.slice(startIndex, Math.max(startIndex + 1, endIndex)),
-    };
-  });
+  return createFullCoverageSlices(chapters, MAX_TOPICAL_DISCOVERY_CALLS);
 }
 
 /**
@@ -88,8 +96,15 @@ export function createBroadcastTopicalDiscoverySlices(
  */
 export function createParallelBroadcastTopicalDiscoverySlices(
   chapters: readonly BroadcastContextChapterInput[],
+  maximumCalls = MAX_TOPICAL_DISCOVERY_CALLS,
 ): readonly BroadcastTopicalDiscoverySlice[] {
-  return createBroadcastTopicalDiscoverySlices(chapters, []);
+  if (!Number.isSafeInteger(maximumCalls) || maximumCalls < 1) {
+    throw new TypeError("Topical discovery call count must be a positive integer.");
+  }
+  return createFullCoverageSlices(
+    chapters,
+    Math.min(MAX_TOPICAL_DISCOVERY_CALLS, maximumCalls),
+  );
 }
 
 function nearDuplicate(

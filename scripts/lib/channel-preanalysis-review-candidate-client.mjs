@@ -66,7 +66,7 @@ import {
 } from "../../src/cloudflare/preanalysisContextProxy.worker.ts";
 
 export const CHANNEL_PREANALYSIS_REVIEW_CANDIDATE_CLIENT_SCHEMA_VERSION =
-  "1.0.0";
+  "1.1.0";
 
 const MAX_REQUEST_BYTES = 8 * 1024 * 1024;
 const MIN_CANDIDATE_DURATION_MS = 30_000;
@@ -79,6 +79,8 @@ const MAX_ERROR_RESPONSE_BYTES = 16 * 1024;
 const TOKEN_PATTERN = /^[A-Za-z0-9._~-]{24,512}$/u;
 const PIPELINE_REVISION_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u;
 const SHA256_PATTERN = /^sha256:[0-9a-f]{64}$/u;
+const RETRY_GRANT_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,239}$/u;
+const MAX_SEMANTIC_ATTEMPT_ORDINAL = 2;
 
 export class ChannelPreanalysisReviewCandidateClientError extends Error {
   constructor(code, message, options = {}) {
@@ -308,6 +310,29 @@ function normalizeAudio(audio, durationMs) {
   return { bytes, sampleCount: expectedSampleCount };
 }
 
+function normalizeSemanticAttempt(value) {
+  const attempt = value;
+  if (
+    !isRecord(attempt) ||
+    !Number.isSafeInteger(attempt.attemptOrdinal) ||
+    attempt.attemptOrdinal < 0 ||
+    attempt.attemptOrdinal > MAX_SEMANTIC_ATTEMPT_ORDINAL ||
+    (attempt.attemptOrdinal === 0
+      ? attempt.retryGrantId !== null
+      : typeof attempt.retryGrantId !== "string" ||
+        !RETRY_GRANT_ID_PATTERN.test(attempt.retryGrantId))
+  ) {
+    throw clientError(
+      "INVALID_IDENTITY",
+      "Candidate semantic attempt identity is invalid.",
+    );
+  }
+  return Object.freeze({
+    attemptOrdinal: attempt.attemptOrdinal,
+    retryGrantId: attempt.retryGrantId,
+  });
+}
+
 function audioGateReceipt(bytes, sampleCount) {
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   const pcm = new Float32Array(sampleCount);
@@ -343,7 +368,16 @@ function validateAnalysisPayload(identity, payload) {
   if (!isRecord(payload) || !isRecord(payload.candidate)) {
     throw clientError("INVALID_IDENTITY", "Candidate analysis payload is invalid.");
   }
-  const { candidate, context, evidence, frames, audio, broadcastContext, participantGrounding } = payload;
+  const {
+    candidate,
+    context,
+    evidence,
+    frames,
+    audio,
+    broadcastContext,
+    participantGrounding,
+  } = payload;
+  const semanticAttempt = normalizeSemanticAttempt(payload.semanticAttempt);
   if (
     typeof candidate.candidateId !== "string" || candidate.candidateId.length === 0 || candidate.candidateId.length > 256 ||
     !Number.isSafeInteger(candidate.startMs) || candidate.startMs < 0 ||
@@ -391,6 +425,7 @@ function validateAnalysisPayload(identity, payload) {
     durationMs,
     frames: normalizedFrames,
     audio: normalizedAudio,
+    semanticAttempt,
     refinementEvidenceProjectionFingerprint,
   };
 }
@@ -428,8 +463,8 @@ function buildDispatch(identity, normalized, operationId) {
     outputLanguage: "ko",
     castRosterId: identity.castRosterId,
     routingModelRevision: CANDIDATE_PASS_B_ROUTING_MODEL_REVISION,
-    attemptOrdinal: 0,
-    retryGrantId: null,
+    attemptOrdinal: normalized.semanticAttempt.attemptOrdinal,
+    retryGrantId: normalized.semanticAttempt.retryGrantId,
     transportMode: "free-r2",
     mediaReceipt: Object.freeze({
       schemaVersion: CANDIDATE_PASS_B_MEDIA_RECEIPT_SCHEMA_VERSION,
@@ -746,6 +781,8 @@ export function createChannelPreanalysisReviewCandidateAnalyzer(options) {
         normalized.candidate.candidateId,
         normalized.candidate.startMs,
         normalized.candidate.endMs,
+        normalized.semanticAttempt.attemptOrdinal,
+        normalized.semanticAttempt.retryGrantId,
       ]),
     ).slice("sha256:".length, "sha256:".length + 24);
     const semanticPayloadDigest =

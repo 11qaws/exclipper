@@ -3,6 +3,7 @@ import {
   buildBroadcastContextDeepseekRequestBody,
   buildBroadcastContextQwenRequestBody,
   extractBroadcastContextDeepseekResponse,
+  extractBroadcastContextQwenDiscoveryResponse,
   extractBroadcastContextQwenOverviewResponse,
   parseCurrentBroadcastContextResult,
 } from "../analysis/broadcastContextDeepseek";
@@ -81,6 +82,8 @@ import {
 import {
   QWEN_CONTEXT_MODEL_ID,
   QWEN_CONTEXT_MODEL_REVISION,
+  QWEN_CONTEXT_DISCOVERY_MODEL_ID,
+  QWEN_CONTEXT_DISCOVERY_MODEL_REVISION,
   QWEN_CONTEXT_OVERVIEW_FALLBACK_MODEL_ID,
   QWEN_CONTEXT_OVERVIEW_FALLBACK_MODEL_REVISION,
   resolveCandidateInsightConnection,
@@ -144,6 +147,8 @@ export const PREANALYSIS_CONTEXT_ATTEMPT_HEADER =
   "X-ExClipper-Preanalysis-Attempt" as const;
 export const PREANALYSIS_CONTEXT_RETRY_RISK_HEADER =
   "X-ExClipper-Preanalysis-Retry-Risk" as const;
+export const PREANALYSIS_CONTEXT_POSSIBLE_DUPLICATE_PROVIDER_CHARGE =
+  "possible-duplicate-provider-charge" as const;
 export const PREANALYSIS_CONTEXT_MODEL_ID_HEADER =
   "X-ExClipper-Model-Id" as const;
 export const PREANALYSIS_CONTEXT_MODEL_REVISION_HEADER =
@@ -156,8 +161,8 @@ export const PREANALYSIS_CONTEXT_EXPECTED_MODEL_ID_HEADER =
   "X-ExClipper-Expected-Model-Id" as const;
 export const PREANALYSIS_CONTEXT_EXPECTED_MODEL_REVISION_HEADER =
   "X-ExClipper-Expected-Model-Revision" as const;
-export const PREANALYSIS_CONTEXT_PROXY_VERSION = "3.2.0" as const;
-export const PREANALYSIS_CONTEXT_OPERATION_GENERATION = 5 as const;
+export const PREANALYSIS_CONTEXT_PROXY_VERSION = "3.3.0" as const;
+export const PREANALYSIS_CONTEXT_OPERATION_GENERATION = 6 as const;
 export const PREANALYSIS_CONTEXT_EXPECTED_MODEL_ID = QWEN_CONTEXT_MODEL_ID;
 export const PREANALYSIS_CONTEXT_EXPECTED_MODEL_REVISION =
   QWEN_CONTEXT_MODEL_REVISION;
@@ -222,10 +227,14 @@ const ALLOWED_REQUEST_KEYS = new Set([
   "castRosterId",
   "participantGrounding",
   "outputLanguage",
+  "analysisMode",
 ]);
+
+export type ScheduledContextAnalysisMode = "overview" | "discovery";
 
 interface ScheduledContextRequest {
   readonly kind: "context";
+  readonly analysisMode: ScheduledContextAnalysisMode;
   readonly source: ConfiguredChannelPreanalysisSource;
   readonly request: BroadcastContextRequest;
 }
@@ -576,9 +585,46 @@ async function sha256Hex(bytes: Uint8Array): Promise<string> {
   ).join("");
 }
 
+function scheduledContextModel(
+  analysisMode: ScheduledContextAnalysisMode,
+): {
+  readonly modelId: string;
+  readonly modelRevision: string;
+} {
+  return analysisMode === "discovery"
+    ? {
+        modelId: QWEN_CONTEXT_DISCOVERY_MODEL_ID,
+        modelRevision: QWEN_CONTEXT_DISCOVERY_MODEL_REVISION,
+      }
+    : {
+        modelId: PREANALYSIS_CONTEXT_EXPECTED_MODEL_ID,
+        modelRevision: PREANALYSIS_CONTEXT_EXPECTED_MODEL_REVISION,
+      };
+}
+
+function scheduledContextReceiptMatchesMode(
+  analysisMode: ScheduledContextAnalysisMode,
+  modelId: string | undefined,
+  modelRevision: string | undefined,
+): boolean {
+  if (analysisMode === "discovery") {
+    return (
+      modelId === QWEN_CONTEXT_DISCOVERY_MODEL_ID &&
+      modelRevision === QWEN_CONTEXT_DISCOVERY_MODEL_REVISION
+    );
+  }
+  return (
+    (modelId === PREANALYSIS_CONTEXT_EXPECTED_MODEL_ID &&
+      modelRevision === PREANALYSIS_CONTEXT_EXPECTED_MODEL_REVISION) ||
+    (modelId === QWEN_CONTEXT_OVERVIEW_FALLBACK_MODEL_ID &&
+      modelRevision === QWEN_CONTEXT_OVERVIEW_FALLBACK_MODEL_REVISION)
+  );
+}
+
 export async function createPreanalysisContextOperationId(
   payloadDigest: string,
   sourceId: ChannelPreanalysisSourceId,
+  analysisMode: ScheduledContextAnalysisMode,
 ): Promise<string> {
   if (!PAYLOAD_DIGEST_PATTERN.test(payloadDigest)) {
     throw new TypeError("The preanalysis payload digest is invalid.");
@@ -593,9 +639,10 @@ export async function createPreanalysisContextOperationId(
     PREANALYSIS_CONTEXT_OPERATION_GENERATION,
     source.sourceId,
     source.channelId,
+    analysisMode,
     AI_BROADCAST_CONTEXT_ROUTING_REVISION,
-    PREANALYSIS_CONTEXT_EXPECTED_MODEL_ID,
-    PREANALYSIS_CONTEXT_EXPECTED_MODEL_REVISION,
+    scheduledContextModel(analysisMode).modelId,
+    scheduledContextModel(analysisMode).modelRevision,
     payloadDigest,
   ]);
   const digest = await sha256Hex(new TextEncoder().encode(namespace));
@@ -728,6 +775,10 @@ function parseScheduledContextRequest(
   if (source === null || value.sourceChannelId !== source.channelId) {
     return null;
   }
+  const analysisMode = value.analysisMode;
+  if (analysisMode !== "overview" && analysisMode !== "discovery") {
+    return null;
+  }
   const expectedRosterId = candidatePassBCastRosterIdForYouTubeChannelId(
     source.channelId,
   );
@@ -742,7 +793,7 @@ function parseScheduledContextRequest(
     ) {
       return null;
     }
-    return { kind: "context", source, request };
+    return { kind: "context", analysisMode, source, request };
   } catch (error) {
     if (error instanceof BroadcastContextInputError) return null;
     throw error;
@@ -1204,6 +1255,7 @@ async function attemptProviderModel(
     { readonly provider: "disabled" }
   >,
   request: BroadcastContextRequest,
+  analysisMode: ScheduledContextAnalysisMode,
   modelId: string,
   modelRevision: string,
   fetchImplementation: FetchImplementation,
@@ -1213,7 +1265,7 @@ async function attemptProviderModel(
   try {
     body = JSON.stringify(
       connection.provider === "qwen"
-        ? buildBroadcastContextQwenRequestBody(request, modelId, "overview")
+        ? buildBroadcastContextQwenRequestBody(request, modelId, analysisMode)
         : buildBroadcastContextDeepseekRequestBody(request, modelId),
     );
   } catch {
@@ -1322,10 +1374,11 @@ async function attemptProviderModel(
           };
         }
 
-        const parsed =
-          connection.provider === "qwen"
-            ? extractBroadcastContextQwenOverviewResponse(payload, request)
-            : extractBroadcastContextDeepseekResponse(payload, request);
+        const parsed = connection.provider === "qwen"
+          ? analysisMode === "discovery"
+            ? extractBroadcastContextQwenDiscoveryResponse(payload, request)
+            : extractBroadcastContextQwenOverviewResponse(payload, request)
+          : extractBroadcastContextDeepseekResponse(payload, request);
         if (!parsed.ok) {
           const choices: readonly unknown[] =
             isRecord(payload) && Array.isArray(payload.choices)
@@ -1420,24 +1473,34 @@ async function attemptProvider(
     { readonly provider: "disabled" }
   >,
   request: BroadcastContextRequest,
+  analysisMode: ScheduledContextAnalysisMode,
   fetchImplementation: FetchImplementation,
   upstreamTimeoutMs: number,
 ): Promise<ProviderAttempt> {
   const primaryModelId = connection.provider === "qwen"
-    ? QWEN_CONTEXT_MODEL_ID
+    ? analysisMode === "discovery"
+      ? QWEN_CONTEXT_DISCOVERY_MODEL_ID
+      : QWEN_CONTEXT_MODEL_ID
     : connection.descriptor.modelId;
   const primaryModelRevision = connection.provider === "qwen"
-    ? QWEN_CONTEXT_MODEL_REVISION
+    ? analysisMode === "discovery"
+      ? QWEN_CONTEXT_DISCOVERY_MODEL_REVISION
+      : QWEN_CONTEXT_MODEL_REVISION
     : connection.descriptor.modelRevision;
   const primary = await attemptProviderModel(
     connection,
     request,
+    analysisMode,
     primaryModelId,
     primaryModelRevision,
     fetchImplementation,
     upstreamTimeoutMs,
   );
-  if (connection.provider !== "qwen" || !shouldUseScheduledContextFallback(primary)) {
+  if (
+    analysisMode === "discovery" ||
+    connection.provider !== "qwen" ||
+    !shouldUseScheduledContextFallback(primary)
+  ) {
     return primary;
   }
   console.warn("scheduled-context-primary-fallback", {
@@ -1448,6 +1511,7 @@ async function attemptProvider(
   const fallback = await attemptProviderModel(
     connection,
     request,
+    analysisMode,
     QWEN_CONTEXT_OVERVIEW_FALLBACK_MODEL_ID,
     QWEN_CONTEXT_OVERVIEW_FALLBACK_MODEL_REVISION,
     fetchImplementation,
@@ -1998,16 +2062,10 @@ function storedTerminalMatchesCurrentRequest(
         : PREANALYSIS_TRANSCRIPT_EXPECTED_MODEL_REVISION;
   const modelReceiptIsCurrent =
     scheduledRequest.kind === "context"
-      ? (
-          headers[PREANALYSIS_CONTEXT_MODEL_ID_HEADER] ===
-            PREANALYSIS_CONTEXT_EXPECTED_MODEL_ID &&
-          headers[PREANALYSIS_CONTEXT_MODEL_REVISION_HEADER] ===
-            PREANALYSIS_CONTEXT_EXPECTED_MODEL_REVISION
-        ) || (
-          headers[PREANALYSIS_CONTEXT_MODEL_ID_HEADER] ===
-            QWEN_CONTEXT_OVERVIEW_FALLBACK_MODEL_ID &&
-          headers[PREANALYSIS_CONTEXT_MODEL_REVISION_HEADER] ===
-            QWEN_CONTEXT_OVERVIEW_FALLBACK_MODEL_REVISION
+      ? scheduledContextReceiptMatchesMode(
+          scheduledRequest.analysisMode,
+          headers[PREANALYSIS_CONTEXT_MODEL_ID_HEADER],
+          headers[PREANALYSIS_CONTEXT_MODEL_REVISION_HEADER],
         )
       : scheduledRequest.kind === "candidate"
         ? candidateModelReceiptIsCurrent(
@@ -2038,7 +2096,7 @@ function storedTerminalMatchesCurrentRequest(
     !(
       headers[PREANALYSIS_CONTEXT_RETRY_RISK_HEADER] === undefined ||
       headers[PREANALYSIS_CONTEXT_RETRY_RISK_HEADER] ===
-        "possible-duplicate-provider-charge"
+        PREANALYSIS_CONTEXT_POSSIBLE_DUPLICATE_PROVIDER_CHARGE
     )
   ) {
     return false;
@@ -2207,7 +2265,7 @@ function withRetryCheckpointHeaders(
   if (possibleDuplicateProviderCharge) {
     headers.set(
       PREANALYSIS_CONTEXT_RETRY_RISK_HEADER,
-      "possible-duplicate-provider-charge",
+      PREANALYSIS_CONTEXT_POSSIBLE_DUPLICATE_PROVIDER_CHARGE,
     );
   }
   return new Response(response.body, {
@@ -2219,6 +2277,7 @@ function withRetryCheckpointHeaders(
 function requestRouteMatches(
   request: Request,
   kind: ScheduledOperationRequest["kind"],
+  contextAnalysisMode?: ScheduledContextAnalysisMode,
 ): boolean {
   const expectedRoutingRevision =
     kind === "context"
@@ -2226,27 +2285,45 @@ function requestRouteMatches(
       : kind === "candidate"
         ? CANDIDATE_PASS_B_ROUTING_MODEL_REVISION
         : PREANALYSIS_TRANSCRIPT_EXPECTED_MODEL_REVISION;
+  const contextModel = contextAnalysisMode === undefined
+    ? null
+    : scheduledContextModel(contextAnalysisMode);
   const expectedModelId =
     kind === "context"
-      ? PREANALYSIS_CONTEXT_EXPECTED_MODEL_ID
+      ? contextModel?.modelId ?? PREANALYSIS_CONTEXT_EXPECTED_MODEL_ID
       : kind === "candidate"
         ? PREANALYSIS_CANDIDATE_EXPECTED_MODEL_ID
         : PREANALYSIS_TRANSCRIPT_EXPECTED_MODEL_ID;
   const expectedModelRevision =
     kind === "context"
-      ? PREANALYSIS_CONTEXT_EXPECTED_MODEL_REVISION
+      ? contextModel?.modelRevision ?? PREANALYSIS_CONTEXT_EXPECTED_MODEL_REVISION
       : kind === "candidate"
         ? PREANALYSIS_CANDIDATE_EXPECTED_MODEL_REVISION
         : PREANALYSIS_TRANSCRIPT_EXPECTED_MODEL_REVISION;
+  const requestedModelId = request.headers.get(
+    PREANALYSIS_CONTEXT_EXPECTED_MODEL_ID_HEADER,
+  );
+  const requestedModelRevision = request.headers.get(
+    PREANALYSIS_CONTEXT_EXPECTED_MODEL_REVISION_HEADER,
+  );
+  const modelMatches =
+    kind === "context" && contextAnalysisMode === undefined
+      ? (
+          requestedModelId === PREANALYSIS_CONTEXT_EXPECTED_MODEL_ID &&
+          requestedModelRevision ===
+            PREANALYSIS_CONTEXT_EXPECTED_MODEL_REVISION
+        ) || (
+          requestedModelId === QWEN_CONTEXT_DISCOVERY_MODEL_ID &&
+          requestedModelRevision === QWEN_CONTEXT_DISCOVERY_MODEL_REVISION
+        )
+      : requestedModelId === expectedModelId &&
+        requestedModelRevision === expectedModelRevision;
   return (
     request.headers.get(PREANALYSIS_CONTEXT_CONTRACT_HEADER) ===
       PREANALYSIS_CONTEXT_PROXY_VERSION &&
     request.headers.get(PREANALYSIS_CONTEXT_ROUTING_REVISION_HEADER) ===
       expectedRoutingRevision &&
-    request.headers.get(PREANALYSIS_CONTEXT_EXPECTED_MODEL_ID_HEADER) ===
-      expectedModelId &&
-    request.headers.get(PREANALYSIS_CONTEXT_EXPECTED_MODEL_REVISION_HEADER) ===
-      expectedModelRevision
+    modelMatches
   );
 }
 
@@ -2414,11 +2491,26 @@ export class PreanalysisContextOperation {
         "The bounded scheduled analysis contract is invalid.",
       );
     }
+    if (
+      scheduledRequest.kind === "context" &&
+      !requestRouteMatches(
+        request,
+        "context",
+        scheduledRequest.analysisMode,
+      )
+    ) {
+      return errorResponse(
+        409,
+        "PROXY_ROUTE_MISMATCH",
+        "The scheduled context mode does not match its model receipt.",
+      );
+    }
     const expectedOperationId =
       scheduledRequest.kind === "context"
         ? await createPreanalysisContextOperationId(
             payloadDigest,
             scheduledRequest.source.sourceId,
+            scheduledRequest.analysisMode,
           )
         : scheduledRequest.kind === "candidate"
           ? await createPreanalysisCandidateOperationId(payloadDigest)
@@ -2652,21 +2744,27 @@ export class PreanalysisContextOperation {
       this.state.retry !== null &&
       this.now() < this.state.retry.nextAttemptAtMs
     ) {
-      return errorResponse(
-        503,
-        "RETRY_BACKOFF",
-        "The operation is checkpointed and will resume after its bounded backoff.",
-        {
-          "Retry-After": String(
+        return errorResponse(
+          503,
+          "RETRY_BACKOFF",
+          "The operation is checkpointed and will resume after its bounded backoff.",
+          {
+            "Retry-After": String(
             Math.max(
               1,
               Math.ceil(
                 (this.state.retry.nextAttemptAtMs - this.now()) / 1_000,
+                ),
               ),
             ),
-          ),
-        },
-      );
+            ...(this.state.retry.possibleDuplicateProviderCharge
+              ? {
+                  [PREANALYSIS_CONTEXT_RETRY_RISK_HEADER]:
+                    PREANALYSIS_CONTEXT_POSSIBLE_DUPLICATE_PROVIDER_CHARGE,
+                }
+              : {}),
+          },
+        );
     }
 
     const provider =
@@ -2826,6 +2924,7 @@ export class PreanalysisContextOperation {
               { readonly provider: "disabled" }
             >,
             scheduledRequest.request,
+            scheduledRequest.analysisMode,
             this.dependencies.fetchImplementation ?? fetch,
             this.dependencies.upstreamTimeoutMs ?? CONTEXT_UPSTREAM_TIMEOUT_MS,
           )
@@ -2891,7 +2990,7 @@ export class PreanalysisContextOperation {
         ...(inheritedDuplicateChargeRisk
           ? {
               [PREANALYSIS_CONTEXT_RETRY_RISK_HEADER]:
-                "possible-duplicate-provider-charge",
+                PREANALYSIS_CONTEXT_POSSIBLE_DUPLICATE_PROVIDER_CHARGE,
             }
           : {}),
       },
@@ -3654,11 +3753,26 @@ export async function handlePreanalysisContextProxyRequest(
         "The bounded scheduled analysis contract is invalid.",
       );
     }
+    if (
+      operationKind === "context" &&
+      !requestRouteMatches(
+        request,
+        "context",
+        (parsedRequest as ScheduledContextRequest).analysisMode,
+      )
+    ) {
+      return errorResponse(
+        409,
+        "PROXY_ROUTE_MISMATCH",
+        "The scheduled context mode does not match its model receipt.",
+      );
+    }
     const expectedOperationId =
       operationKind === "context"
         ? await createPreanalysisContextOperationId(
             payloadDigest,
             (parsedRequest as ScheduledContextRequest).source.sourceId,
+            (parsedRequest as ScheduledContextRequest).analysisMode,
           )
         : operationKind === "candidate"
           ? await createPreanalysisCandidateOperationId(payloadDigest)
@@ -3701,13 +3815,17 @@ export async function handlePreanalysisContextProxyRequest(
                   : PREANALYSIS_TRANSCRIPT_EXPECTED_MODEL_REVISION,
             [PREANALYSIS_CONTEXT_EXPECTED_MODEL_ID_HEADER]:
               operationKind === "context"
-                ? PREANALYSIS_CONTEXT_EXPECTED_MODEL_ID
+                ? scheduledContextModel(
+                    (parsedRequest as ScheduledContextRequest).analysisMode,
+                  ).modelId
                 : operationKind === "candidate"
                   ? PREANALYSIS_CANDIDATE_EXPECTED_MODEL_ID
                   : PREANALYSIS_TRANSCRIPT_EXPECTED_MODEL_ID,
             [PREANALYSIS_CONTEXT_EXPECTED_MODEL_REVISION_HEADER]:
               operationKind === "context"
-                ? PREANALYSIS_CONTEXT_EXPECTED_MODEL_REVISION
+                ? scheduledContextModel(
+                    (parsedRequest as ScheduledContextRequest).analysisMode,
+                  ).modelRevision
                 : operationKind === "candidate"
                   ? PREANALYSIS_CANDIDATE_EXPECTED_MODEL_REVISION
                   : PREANALYSIS_TRANSCRIPT_EXPECTED_MODEL_REVISION,

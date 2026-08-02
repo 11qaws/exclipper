@@ -1,6 +1,14 @@
 import { createHash } from "node:crypto";
 
 import { selectAudioReactionHighlights } from "../../src/media/localAudioReactionAnalysisCore.ts";
+import { captionTextForRange } from "../../src/analysis/captionCandidateEvidence.ts";
+import {
+  createCaptionDiscoveredLeadRefinementPlan,
+  materializeRefinedDiscoveredLeadEvidence,
+} from "../../src/analysis/discoveredLeadRefinement.ts";
+import {
+  createYouTubeCaptionRefinementTranscripts,
+} from "../../src/analysis/youtubeCaptionTrack.ts";
 import {
   validateChannelPreanalysisBundle,
   verifyChannelPreanalysisTranscriptDigest,
@@ -36,9 +44,10 @@ import {
   verifyChannelPreanalysisReviewBundleIntegrity,
 } from "../../src/analysis/channelPreanalysisReviewBundle.ts";
 
-export const CHANNEL_PREANALYSIS_REVIEW_RUNNER_SCHEMA_VERSION = "3.0.0";
+export const CHANNEL_PREANALYSIS_REVIEW_RUNNER_SCHEMA_VERSION = "4.1.0";
 export const CHANNEL_PREANALYSIS_REVIEW_MAX_CANDIDATES = 12;
 export const CHANNEL_PREANALYSIS_REVIEW_DEFAULT_CONCURRENCY = 2;
+export const CHANNEL_PREANALYSIS_REVIEW_MAX_SEMANTIC_RECOVERIES = 2;
 
 const SCHEDULED_VISUAL_IDENTITY_REVISION =
   "scheduled-review-candidate-visual-identity-v1";
@@ -48,10 +57,23 @@ const SCHEDULED_VOICE_IDENTITY_REVISION =
 const MIN_CANDIDATE_DURATION_MS = 30_000;
 const MAX_CANDIDATE_DURATION_MS = 60_000;
 const DEFAULT_CANDIDATE_DURATION_MS = 45_000;
+const MAX_CANDIDATE_CONTEXT_TEXT_LENGTH = 4_000;
+const SOURCE_SELECTION_CYCLE = ["semantic", "semantic", "audio", "visual"];
+// Only coherent, context-consistent negative judgements may close a candidate.
+// Abstentions, contradictions and unclear material must be retried.
 const TERMINAL_EXCLUSION_GAPS = new Set([
-  "context-excluded",
   "detail-not-recommended",
   "program-material-excluded",
+]);
+const CHECKPOINT_RESOLUTIONS = new Set([
+  "publish",
+  "terminal-excluded",
+  "editor-review",
+]);
+const FRESH_SEMANTIC_ATTEMPT_ERROR_CODES = new Set([
+  "RESPONSE_INVALID",
+  "RESPONSE_RECEIPT_INVALID",
+  "RECEIPT_INVALID",
 ]);
 
 export class ChannelPreanalysisReviewRunnerError extends Error {
@@ -86,6 +108,39 @@ function candidateCheckpointKey(candidate, context) {
   ]))}`;
 }
 
+function semanticAttemptIdentity(checkpointKey, attemptOrdinal) {
+  if (
+    !Number.isSafeInteger(attemptOrdinal) ||
+    attemptOrdinal < 0 ||
+    attemptOrdinal > CHANNEL_PREANALYSIS_REVIEW_MAX_SEMANTIC_RECOVERIES
+  ) {
+    throw runnerError(
+      "SEMANTIC_ATTEMPT_INVALID",
+      "Candidate semantic attempt is outside the bounded recovery policy.",
+    );
+  }
+  return {
+    attemptOrdinal,
+    retryGrantId: attemptOrdinal === 0
+      ? null
+      : `scheduled-semantic-${attemptOrdinal}-${sha256Text(JSON.stringify([
+          CHANNEL_PREANALYSIS_REVIEW_RUNNER_SCHEMA_VERSION,
+          checkpointKey,
+          attemptOrdinal,
+        ])).slice(0, 40)}`,
+  };
+}
+
+function gapErrorCode(gap) {
+  return `CANDIDATE_${gap.replaceAll("-", "_").toUpperCase()}`;
+}
+
+function causeErrorCode(cause, fallback) {
+  return typeof cause?.code === "string" && /^[A-Z][A-Z0-9_]{0,63}$/u.test(cause.code)
+    ? cause.code
+    : fallback;
+}
+
 function normalizeRange(startMs, endMs, sourceDurationMs) {
   const rawStart = Math.max(0, Math.min(sourceDurationMs - 1, Math.round(startMs)));
   const rawEnd = Math.max(rawStart + 1, Math.min(sourceDurationMs, Math.round(endMs)));
@@ -106,14 +161,13 @@ function normalizeRange(startMs, endMs, sourceDurationMs) {
   return { startMs: start, endMs: end, focusMs: Math.round(centerMs) };
 }
 
-function captionText(bundle, startMs, endMs, maximumEvents = 24) {
-  return bundle.captionTrack.events
-    .filter((event) => event.startMs < endMs && event.startMs + event.durationMs > startMs)
-    .slice(0, maximumEvents)
-    .map(({ text }) => text.trim())
-    .filter(Boolean)
-    .join(" ")
-    .slice(0, 4_000);
+function captionText(bundle, startMs, endMs) {
+  return captionTextForRange(
+    bundle.captionTrack.events,
+    startMs,
+    endMs,
+    MAX_CANDIDATE_CONTEXT_TEXT_LENGTH,
+  );
 }
 
 function semanticTopic(bundle, startMs, endMs) {
@@ -177,6 +231,30 @@ function normalizeVisualSeeds(seeds, bundle) {
   });
 }
 
+function localizeSemanticLead(bundle, lead) {
+  const plan = createCaptionDiscoveredLeadRefinementPlan(
+    [lead],
+    { preserveInputOrder: true },
+  );
+  const transcripts = createYouTubeCaptionRefinementTranscripts(
+    bundle.captionTrack,
+    plan,
+  );
+  const refined = materializeRefinedDiscoveredLeadEvidence(
+    lead,
+    transcripts,
+    bundle.durationMs,
+  );
+  if (refined === null) {
+    return normalizeRange(lead.startMs, lead.endMs, bundle.durationMs);
+  }
+  return {
+    startMs: refined.range.startMs,
+    endMs: refined.range.endMs,
+    focusMs: refined.range.peakMs,
+  };
+}
+
 function createRawCandidates(bundle, audioFeatures, visualSeeds) {
   const audio = selectAudioReactionHighlights(
     audioFeatures.windows,
@@ -199,7 +277,7 @@ function createRawCandidates(bundle, audioFeatures, visualSeeds) {
   const semantic = bundle.broadcastContext.discoveredLeads.map((lead) => ({
     originIds: [lead.leadId],
     sourceKinds: ["semantic"],
-    ...normalizeRange(lead.startMs, lead.endMs, bundle.durationMs),
+    ...localizeSemanticLead(bundle, lead),
     score: 0.55 + lead.confidence * 0.45,
     eventKo: lead.eventSummaryKo,
     whyKo: lead.whyThisMomentKo,
@@ -216,22 +294,63 @@ function candidatesOverlap(left, right) {
   return overlap / shorter >= 0.5 || Math.abs(left.focusMs - right.focusMs) <= 8_000;
 }
 
+function candidateOrder(left, right) {
+  return right.score - left.score || left.startMs - right.startMs ||
+    left.originIds.join("\0").localeCompare(right.originIds.join("\0"));
+}
+
+function sourceBalancedSelection(candidates) {
+  const queues = Object.fromEntries(SOURCE_SELECTION_CYCLE.map((kind) => [
+    kind,
+    candidates.filter(({ sourceKinds }) => sourceKinds.includes(kind)).sort(candidateOrder),
+  ]));
+  const selected = [];
+  const selectedCandidates = new Set();
+
+  while (selected.length < CHANNEL_PREANALYSIS_REVIEW_MAX_CANDIDATES) {
+    let addedThisCycle = 0;
+    for (const kind of SOURCE_SELECTION_CYCLE) {
+      const queue = queues[kind];
+      let candidate;
+      while ((candidate = queue.shift()) !== undefined && selectedCandidates.has(candidate)) {
+        // A fused multi-source candidate can occur in more than one queue.
+      }
+      if (candidate === undefined) continue;
+      selected.push(candidate);
+      selectedCandidates.add(candidate);
+      addedThisCycle += 1;
+      if (selected.length >= CHANNEL_PREANALYSIS_REVIEW_MAX_CANDIDATES) break;
+    }
+    if (addedThisCycle === 0) break;
+  }
+  return selected;
+}
+
 function fuseCandidates(rawCandidates) {
   const ranked = [...rawCandidates].sort(
-    (left, right) => right.score - left.score || left.startMs - right.startMs ||
-      left.originIds.join("\0").localeCompare(right.originIds.join("\0")),
+    (left, right) =>
+      Number(right.sourceKinds.includes("semantic")) -
+        Number(left.sourceKinds.includes("semantic")) || candidateOrder(left, right),
   );
   const fused = [];
   for (const candidate of ranked) {
-    const duplicate = fused.find((current) => candidatesOverlap(current, candidate));
+    const duplicate = fused.find((current) =>
+      !(current.sourceKinds.includes("semantic") && candidate.sourceKinds.includes("semantic")) &&
+      candidatesOverlap(current, candidate),
+    );
     if (duplicate === undefined) {
       fused.push({ ...candidate });
       continue;
     }
+    const duplicateIsSemantic = duplicate.sourceKinds.includes("semantic");
+    const candidateIsSemantic = candidate.sourceKinds.includes("semantic");
     duplicate.originIds = [...new Set([...duplicate.originIds, ...candidate.originIds])].sort();
     duplicate.sourceKinds = [...new Set([...duplicate.sourceKinds, ...candidate.sourceKinds])].sort();
     duplicate.score = Math.min(1, 1 - (1 - duplicate.score) * (1 - candidate.score));
-    if (candidate.contextDecision === "select") {
+    if (candidateIsSemantic && !duplicateIsSemantic) {
+      duplicate.startMs = candidate.startMs;
+      duplicate.endMs = candidate.endMs;
+      duplicate.focusMs = candidate.focusMs;
       duplicate.contextDecision = "select";
       duplicate.category = candidate.category;
       duplicate.eventKo = candidate.eventKo;
@@ -239,20 +358,8 @@ function fuseCandidates(rawCandidates) {
       duplicate.evidenceKo = candidate.evidenceKo;
     }
   }
-  const sorted = fused.sort(
-    (left, right) => right.score - left.score || left.startMs - right.startMs,
-  );
-  const selected = [];
-  for (const candidate of sorted.filter(({ sourceKinds }) => sourceKinds.includes("visual"))) {
-    if (selected.length >= CHANNEL_PREANALYSIS_VISUAL_COVERAGE_MAX_SEEDS) break;
-    selected.push(candidate);
-  }
-  for (const candidate of sorted) {
-    if (selected.length >= CHANNEL_PREANALYSIS_REVIEW_MAX_CANDIDATES) break;
-    if (!selected.includes(candidate)) selected.push(candidate);
-  }
-  return selected
-    .sort((left, right) => right.score - left.score || left.startMs - right.startMs)
+  return sourceBalancedSelection(fused)
+    .sort(candidateOrder)
     .map((candidate) => ({
       ...candidate,
       candidateId: `scheduled-${sha256Text(JSON.stringify([
@@ -266,14 +373,6 @@ function fuseCandidates(rawCandidates) {
 function annotationForCandidate(bundle, candidate) {
   const originIds = new Set(candidate.originIds);
   return bundle.broadcastContext.annotations.find(({ candidateId }) => originIds.has(candidateId)) ?? null;
-}
-
-function contextExcludesCandidate(annotation) {
-  return annotation !== null && (
-    annotation.category === "music-or-intermission" ||
-    annotation.rejectionReasons.includes("music-or-song") ||
-    annotation.rejectionReasons.includes("opening-ending-or-break")
-  );
 }
 
 function candidateContext(bundle, candidate, annotation) {
@@ -299,8 +398,23 @@ function candidateEvidence(bundle, candidate) {
   const events = bundle.captionTrack.events.filter(
     (event) => event.startMs < candidate.endMs && event.startMs + event.durationMs > candidate.startMs,
   );
-  const cues = events.slice(0, 3).map((event) => ({
-    phase: event.startMs < candidate.focusMs - 4_000
+  const cues = [...events]
+    .sort((left, right) => {
+      const distance = (event) => {
+        const endMs = event.startMs + event.durationMs;
+        return candidate.focusMs < event.startMs
+          ? event.startMs - candidate.focusMs
+          : candidate.focusMs > endMs
+            ? candidate.focusMs - endMs
+            : 0;
+      };
+      return distance(left) - distance(right) || left.startMs - right.startMs ||
+        left.text.localeCompare(right.text);
+    })
+    .slice(0, 3)
+    .sort((left, right) => left.startMs - right.startMs)
+    .map((event) => ({
+    phase: event.startMs + event.durationMs < candidate.focusMs - 4_000
       ? "before-peak"
       : event.startMs > candidate.focusMs + 4_000
         ? "after-peak"
@@ -453,11 +567,193 @@ function validateInputs(input) {
 function priorCheckpointByKey(checkpoints) {
   const map = new Map();
   for (const checkpoint of checkpoints ?? []) {
-    if (checkpoint?.status === "analyzed" || checkpoint?.status === "context-excluded") {
+    if (
+      checkpoint?.status === "analyzed" ||
+      checkpoint?.status === "retryable"
+    ) {
       map.set(checkpoint.checkpointKey, checkpoint);
     }
   }
   return map;
+}
+
+function candidateRecordGap(record, score, outputLanguage, castRosterId) {
+  const candidateId = record.candidateId;
+  const verification = finalizeFullyVerifiedCandidates({
+    candidates: [{
+      id: candidateId,
+      startMs: record.sourceStartMs,
+      endMs: record.sourceEndMs,
+      peakMs:
+        record.sourceStartMs + record.verificationReceipt.thumbnailTimestampMs,
+      score,
+    }],
+    contextByCandidateId: { [candidateId]: record.context },
+    insightByCandidateId: { [candidateId]: record.insight },
+    receiptByCandidateId: { [candidateId]: record.verificationReceipt },
+    completeEvidenceCandidateIds: new Set([candidateId]),
+    refinementEvidenceProjectionFingerprint:
+      record.verificationReceipt.refinementEvidenceProjectionFingerprint,
+    outputLanguage,
+    castRosterId,
+  });
+  return verification.gapByCandidateId[candidateId] ?? null;
+}
+
+function checkpointResolutionForGap(gap, attemptOrdinal) {
+  if (gap === null) return "publish";
+  if (TERMINAL_EXCLUSION_GAPS.has(gap)) return "terminal-excluded";
+  return attemptOrdinal >= CHANNEL_PREANALYSIS_REVIEW_MAX_SEMANTIC_RECOVERIES
+    ? "editor-review"
+    : null;
+}
+
+function audioDigestFromMedia(audio) {
+  if (typeof audio?.contentDigest === "string") return audio.contentDigest;
+  if (audio?.bytes instanceof Uint8Array) {
+    return `sha256:${createHash("sha256").update(audio.bytes).digest("hex")}`;
+  }
+  return null;
+}
+
+function resumeMedia(extracted, priorRecord) {
+  if (priorRecord === null) return extracted;
+  const priorMedia = priorRecord.verificationReceipt.dispatchIntent.mediaReceipt;
+  const extractedAudioDigest = audioDigestFromMedia(extracted.audio);
+  const framesMatch = extracted.frames.every((frame, index) => {
+    const priorFrame = priorRecord.frames[index];
+    return priorFrame !== undefined &&
+      frame.timestampMs === priorFrame.timestampMs &&
+      frame.byteLength === priorFrame.byteLength &&
+      frame.contentDigest === priorFrame.contentDigest &&
+      frame.extractionRevision === priorFrame.extractionRevision;
+  });
+  if (
+    !framesMatch ||
+    extractedAudioDigest === null ||
+    extractedAudioDigest !== priorMedia.audio.wavContentDigest
+  ) {
+    throw runnerError(
+      "MEDIA_RESUME_DIGEST_MISMATCH",
+      "Re-extracted candidate media differs from the durable semantic attempt.",
+    );
+  }
+  return {
+    frames: priorRecord.frames,
+    audio: extracted.audio,
+  };
+}
+
+function createCandidateRecord(
+  candidate,
+  context,
+  evidence,
+  media,
+  analysis,
+  attempt,
+  outputLanguage,
+  castRosterId,
+) {
+  const receipt = analysis?.verificationReceipt;
+  if (
+    !isCandidatePassBVerificationReceipt(receipt) ||
+    !candidatePassBReceiptMatchesContext(receipt, context, {
+      candidateId: candidate.candidateId,
+      sourceStartMs: candidate.startMs,
+      sourceEndMs: candidate.endMs,
+      routingModelRevision: receipt?.routingModelRevision,
+      refinementEvidenceProjectionFingerprint:
+        receipt?.refinementEvidenceProjectionFingerprint,
+      outputLanguage,
+      castRosterId,
+    }) ||
+    receipt.dispatchIntent.attemptOrdinal !== attempt.attemptOrdinal ||
+    receipt.dispatchIntent.retryGrantId !== attempt.retryGrantId ||
+    analysis?.model?.id !== receipt.settlement.providerModelId ||
+    analysis?.model?.revision !== receipt.settlement.providerModelRevision ||
+    analysis?.insight === null ||
+    typeof analysis?.insight !== "object" ||
+    receipt.dispatchIntent.mediaReceipt.frames.some((frame, index) => {
+      const prepared = media.frames[index];
+      return prepared === undefined ||
+        frame.timestampMs !== prepared.timestampMs ||
+        frame.byteLength !== prepared.byteLength ||
+        frame.contentDigest !== prepared.contentDigest ||
+        frame.extractionRevision !== prepared.extractionRevision;
+    })
+  ) {
+    throw runnerError(
+      "AI_RESULT_INVALID",
+      "AI result is not fenced to this exact candidate media and context.",
+    );
+  }
+  const thumbnailIndex = media.frames.findIndex(
+    ({ timestampMs }) => timestampMs === receipt.thumbnailTimestampMs,
+  );
+  if (thumbnailIndex < 0) {
+    throw runnerError(
+      "AI_RESULT_INVALID",
+      "AI receipt does not select one of the four frames.",
+    );
+  }
+  return {
+    candidateId: candidate.candidateId,
+    sourceStartMs: candidate.startMs,
+    sourceEndMs: candidate.endMs,
+    context,
+    evidence,
+    insight: analysis.insight,
+    model: analysis.model,
+    verificationReceipt: receipt,
+    frames: media.frames,
+    impactThumbnailFrameIndex: thumbnailIndex,
+  };
+}
+
+function retryableCheckpoint(
+  checkpointKey,
+  candidate,
+  attempt,
+  errorCode,
+  lastRecord,
+) {
+  return {
+    checkpointKey,
+    candidateId: candidate.candidateId,
+    sourceStartMs: candidate.startMs,
+    sourceEndMs: candidate.endMs,
+    status: "retryable",
+    errorCode,
+    attemptOrdinal: attempt.attemptOrdinal,
+    retryGrantId: attempt.retryGrantId,
+    lastRecord,
+  };
+}
+
+function analyzedCheckpoint(
+  checkpointKey,
+  candidate,
+  attempt,
+  resolution,
+  record,
+) {
+  if (!CHECKPOINT_RESOLUTIONS.has(resolution)) {
+    throw runnerError(
+      "FINAL_CLOSURE_INVALID",
+      "Candidate checkpoint resolution is invalid.",
+    );
+  }
+  return {
+    checkpointKey,
+    candidateId: candidate.candidateId,
+    sourceStartMs: candidate.startMs,
+    sourceEndMs: candidate.endMs,
+    status: "analyzed",
+    attemptOrdinal: attempt.attemptOrdinal,
+    retryGrantId: attempt.retryGrantId,
+    resolution,
+    record,
+  };
 }
 
 function mediaAdapterReceipt(adapter, revision, inputCount) {
@@ -604,107 +900,173 @@ export async function runChannelPreanalysisReview(input) {
   const previous = priorCheckpointByKey(input.previousCandidateResults);
   const emitCheckpoint = input.onCandidateCheckpoint ?? (async () => {});
 
-  const candidateResults = await mapWithConcurrency(candidates, concurrency, async (candidate) => {
-    const annotation = annotationForCandidate(bundle, candidate);
-    const context = candidateContext(bundle, candidate, annotation);
-    const checkpointKey = candidateCheckpointKey(candidate, context);
-    const reused = previous.get(checkpointKey);
-    if (reused !== undefined) return reused;
-    if (contextExcludesCandidate(annotation)) {
-      const checkpoint = {
-        checkpointKey,
-        candidateId: candidate.candidateId,
-        sourceStartMs: candidate.startMs,
-        sourceEndMs: candidate.endMs,
-        status: "context-excluded",
-        reason: "music-opening-ending-or-break",
-      };
-      await emitCheckpoint(checkpoint);
-      return checkpoint;
-    }
-    const evidence = candidateEvidence(bundle, candidate);
-    try {
-      const media = normalizeMedia(await input.extractCandidateMedia(candidate), candidate);
-      const analysis = await input.analyzeCandidate({
-        candidate,
-        context,
-        evidence,
-        frames: media.frames,
-        audio: media.audio,
-        broadcastContext: bundle.broadcastContext,
-        participantGrounding: input.participantGrounding,
-      });
-      const receipt = analysis?.verificationReceipt;
-      const outputLanguage = input.outputLanguage ?? "ko";
-      if (
-        !isCandidatePassBVerificationReceipt(receipt) ||
-        !candidatePassBReceiptMatchesContext(receipt, context, {
-          candidateId: candidate.candidateId,
-          sourceStartMs: candidate.startMs,
-          sourceEndMs: candidate.endMs,
-          routingModelRevision: receipt?.routingModelRevision,
-          refinementEvidenceProjectionFingerprint:
-            receipt?.refinementEvidenceProjectionFingerprint,
-          outputLanguage,
-          castRosterId: input.participantGrounding.castRosterId,
-        }) ||
-        analysis?.model?.id !== receipt.settlement.providerModelId ||
-        analysis?.model?.revision !== receipt.settlement.providerModelRevision ||
-        analysis?.insight === null || typeof analysis?.insight !== "object" ||
-        receipt.dispatchIntent.mediaReceipt.frames.some((frame, index) => {
-          const prepared = media.frames[index];
-          return prepared === undefined ||
-            frame.timestampMs !== prepared.timestampMs ||
-            frame.byteLength !== prepared.byteLength ||
-            frame.contentDigest !== prepared.contentDigest ||
-            frame.extractionRevision !== prepared.extractionRevision;
-        })
+  const outputLanguage = input.outputLanguage ?? "ko";
+  const castRosterId = input.participantGrounding.castRosterId;
+  const candidateResults = await mapWithConcurrency(
+    candidates,
+    concurrency,
+    async (candidate) => {
+      const annotation = annotationForCandidate(bundle, candidate);
+      const context = candidateContext(bundle, candidate, annotation);
+      const checkpointKey = candidateCheckpointKey(candidate, context);
+      const reused = previous.get(checkpointKey);
+      if (reused?.status === "analyzed") return reused;
+
+      const evidence = candidateEvidence(bundle, candidate);
+      let attempt = reused?.status === "retryable"
+        ? {
+            attemptOrdinal: reused.attemptOrdinal,
+            retryGrantId: reused.retryGrantId,
+          }
+        : semanticAttemptIdentity(checkpointKey, 0);
+      let lastRecord = reused?.status === "retryable"
+        ? reused.lastRecord
+        : null;
+      let media;
+      try {
+        const extracted = normalizeMedia(
+          await input.extractCandidateMedia(candidate),
+          candidate,
+        );
+        media = resumeMedia(extracted, lastRecord);
+      } catch (cause) {
+        const checkpoint = retryableCheckpoint(
+          checkpointKey,
+          candidate,
+          attempt,
+          causeErrorCode(cause, "CANDIDATE_MEDIA_FAILED"),
+          lastRecord,
+        );
+        await emitCheckpoint(checkpoint);
+        return checkpoint;
+      }
+
+      while (
+        attempt.attemptOrdinal <=
+        CHANNEL_PREANALYSIS_REVIEW_MAX_SEMANTIC_RECOVERIES
       ) {
-        throw runnerError("AI_RESULT_INVALID", "AI result is not fenced to this exact candidate media and context.");
+        let record;
+        try {
+          const analysis = await input.analyzeCandidate({
+            candidate,
+            context,
+            evidence,
+            frames: media.frames,
+            audio: media.audio,
+            broadcastContext: bundle.broadcastContext,
+            participantGrounding: input.participantGrounding,
+            semanticAttempt: attempt,
+          });
+          record = createCandidateRecord(
+            candidate,
+            context,
+            evidence,
+            media,
+            analysis,
+            attempt,
+            outputLanguage,
+            castRosterId,
+          );
+        } catch (cause) {
+          const errorCode = causeErrorCode(
+            cause,
+            "CANDIDATE_ANALYSIS_FAILED",
+          );
+          if (
+            FRESH_SEMANTIC_ATTEMPT_ERROR_CODES.has(errorCode) &&
+            attempt.attemptOrdinal <
+              CHANNEL_PREANALYSIS_REVIEW_MAX_SEMANTIC_RECOVERIES
+          ) {
+            attempt = semanticAttemptIdentity(
+              checkpointKey,
+              attempt.attemptOrdinal + 1,
+            );
+            await emitCheckpoint(
+              retryableCheckpoint(
+                checkpointKey,
+                candidate,
+                attempt,
+                errorCode,
+                lastRecord,
+              ),
+            );
+            continue;
+          }
+          if (
+            FRESH_SEMANTIC_ATTEMPT_ERROR_CODES.has(errorCode) &&
+            lastRecord !== null
+          ) {
+            const previousAttempt = {
+              attemptOrdinal:
+                lastRecord.verificationReceipt.dispatchIntent.attemptOrdinal,
+              retryGrantId:
+                lastRecord.verificationReceipt.dispatchIntent.retryGrantId,
+            };
+            const checkpoint = analyzedCheckpoint(
+              checkpointKey,
+              candidate,
+              previousAttempt,
+              "editor-review",
+              lastRecord,
+            );
+            await emitCheckpoint(checkpoint);
+            return checkpoint;
+          }
+          const checkpoint = retryableCheckpoint(
+            checkpointKey,
+            candidate,
+            attempt,
+            errorCode,
+            lastRecord,
+          );
+          await emitCheckpoint(checkpoint);
+          return checkpoint;
+        }
+
+        const gap = candidateRecordGap(
+          record,
+          candidate.score,
+          outputLanguage,
+          castRosterId,
+        );
+        const resolution = checkpointResolutionForGap(
+          gap,
+          attempt.attemptOrdinal,
+        );
+        if (resolution !== null) {
+          const checkpoint = analyzedCheckpoint(
+            checkpointKey,
+            candidate,
+            attempt,
+            resolution,
+            record,
+          );
+          await emitCheckpoint(checkpoint);
+          return checkpoint;
+        }
+
+        lastRecord = record;
+        attempt = semanticAttemptIdentity(
+          checkpointKey,
+          attempt.attemptOrdinal + 1,
+        );
+        await emitCheckpoint(
+          retryableCheckpoint(
+            checkpointKey,
+            candidate,
+            attempt,
+            gapErrorCode(gap),
+            lastRecord,
+          ),
+        );
       }
-      const thumbnailIndex = media.frames.findIndex(
-        ({ timestampMs }) => timestampMs === receipt.thumbnailTimestampMs,
+
+      throw runnerError(
+        "SEMANTIC_ATTEMPT_INVALID",
+        "Candidate semantic recovery escaped its bounded attempt loop.",
       );
-      if (thumbnailIndex < 0) {
-        throw runnerError("AI_RESULT_INVALID", "AI receipt does not select one of the four frames.");
-      }
-      const record = {
-        candidateId: candidate.candidateId,
-        sourceStartMs: candidate.startMs,
-        sourceEndMs: candidate.endMs,
-        context,
-        evidence,
-        insight: analysis.insight,
-        model: analysis.model,
-        verificationReceipt: receipt,
-        frames: media.frames,
-        impactThumbnailFrameIndex: thumbnailIndex,
-      };
-      const checkpoint = {
-        checkpointKey,
-        candidateId: candidate.candidateId,
-        sourceStartMs: candidate.startMs,
-        sourceEndMs: candidate.endMs,
-        status: "analyzed",
-        record,
-      };
-      await emitCheckpoint(checkpoint);
-      return checkpoint;
-    } catch (cause) {
-      const checkpoint = {
-        checkpointKey,
-        candidateId: candidate.candidateId,
-        sourceStartMs: candidate.startMs,
-        sourceEndMs: candidate.endMs,
-        status: "retryable",
-        errorCode: cause instanceof ChannelPreanalysisReviewRunnerError
-          ? cause.code
-          : "CANDIDATE_ANALYSIS_FAILED",
-      };
-      await emitCheckpoint(checkpoint);
-      return checkpoint;
-    }
-  });
+    },
+  );
 
   const retryCandidateIds = candidateResults
     .filter(({ status }) => status === "retryable")
@@ -720,14 +1082,6 @@ export async function runChannelPreanalysisReview(input) {
   }
 
   const analyzed = candidateResults.filter(({ status }) => status === "analyzed");
-  const analyzedCandidates = analyzed.map(({ record }) => ({
-    id: record.candidateId,
-    startMs: record.sourceStartMs,
-    endMs: record.sourceEndMs,
-    peakMs: record.sourceStartMs + record.verificationReceipt.thumbnailTimestampMs,
-    score: candidates.find(({ candidateId }) => candidateId === record.candidateId)?.score ?? 0,
-  }));
-  const recordById = new Map(analyzed.map(({ record }) => [record.candidateId, record]));
   const firstReceipt = analyzed[0]?.record.verificationReceipt ?? null;
   const refinementFingerprint = firstReceipt?.refinementEvidenceProjectionFingerprint ?? null;
   const refinementMismatch = analyzed.some(
@@ -736,32 +1090,31 @@ export async function runChannelPreanalysisReview(input) {
   if (refinementMismatch) {
     throw runnerError("AI_RESULT_INVALID", "Candidate receipts disagree on refinement evidence.");
   }
-  const verification = finalizeFullyVerifiedCandidates({
-    candidates: analyzedCandidates,
-    contextByCandidateId: Object.fromEntries(analyzed.map(({ record }) => [record.candidateId, record.context])),
-    insightByCandidateId: Object.fromEntries(analyzed.map(({ record }) => [record.candidateId, record.insight])),
-    receiptByCandidateId: Object.fromEntries(analyzed.map(({ record }) => [record.candidateId, record.verificationReceipt])),
-    completeEvidenceCandidateIds: new Set(analyzed.map(({ candidateId }) => candidateId)),
-    refinementEvidenceProjectionFingerprint: refinementFingerprint,
-    outputLanguage: input.outputLanguage ?? "ko",
-    castRosterId: input.participantGrounding.castRosterId,
-  });
-  const unresolved = Object.entries(verification.gapByCandidateId)
-    .filter(([, gap]) => !TERMINAL_EXCLUSION_GAPS.has(gap))
-    .map(([candidateId]) => candidateId);
-  if (unresolved.length > 0) {
-    return {
-      status: "incomplete",
-      reviewBundle: null,
-      selectedCandidateIds: candidates.map(({ candidateId }) => candidateId),
-      retryCandidateIds: unresolved,
-      candidateResults,
-    };
+  for (const checkpoint of analyzed) {
+    const score = candidates.find(
+      ({ candidateId }) => candidateId === checkpoint.candidateId,
+    )?.score ?? 0;
+    const gap = candidateRecordGap(
+      checkpoint.record,
+      score,
+      outputLanguage,
+      castRosterId,
+    );
+    const expectedResolution = gap === null
+      ? "publish"
+      : TERMINAL_EXCLUSION_GAPS.has(gap)
+        ? "terminal-excluded"
+        : "editor-review";
+    if (checkpoint.resolution !== expectedResolution) {
+      throw runnerError(
+        "FINAL_CLOSURE_INVALID",
+        "Candidate checkpoint resolution does not match its verified evidence.",
+      );
+    }
   }
-  const finalRecords = verification.candidates.map(({ id }) => recordById.get(id));
-  if (finalRecords.some((record) => record === undefined)) {
-    throw runnerError("FINAL_CLOSURE_INVALID", "Final verification returned an unknown candidate.");
-  }
+  const finalRecords = analyzed
+    .filter(({ resolution }) => resolution !== "terminal-excluded")
+    .map(({ record }) => record);
   const participantGrounding = mediaConfirmedParticipantGrounding(
     bundle,
     input.participantGrounding,
@@ -781,7 +1134,7 @@ export async function runChannelPreanalysisReview(input) {
     candidates: finalRecords,
   };
   const digests = await createChannelPreanalysisReviewContentDigests(digestInput);
-  const finalCandidateIds = finalRecords.map(({ candidateId }) => candidateId);
+  const publishedCandidateIds = finalRecords.map(({ candidateId }) => candidateId);
   const reviewBundle = validateChannelPreanalysisReviewBundle({
     schemaVersion: CHANNEL_PREANALYSIS_REVIEW_BUNDLE_SCHEMA_VERSION,
     artifactId: channelPreanalysisReviewBundleArtifactId(bundle.videoId, input.artifactRevision),
@@ -811,7 +1164,7 @@ export async function runChannelPreanalysisReview(input) {
       participantGroundingDigest: digests.participantGroundingDigest,
       visualCoverageDigest: digests.visualCoverageDigest,
       candidateSetDigest: digests.candidateSetDigest,
-      finalCandidateIds,
+      finalCandidateIds: publishedCandidateIds,
     },
   });
   await verifyChannelPreanalysisReviewBundleIntegrity(reviewBundle);

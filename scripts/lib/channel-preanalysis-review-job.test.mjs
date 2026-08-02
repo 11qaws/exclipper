@@ -281,10 +281,25 @@ test("one scheduled video reaches the publisher only after download, full featur
   const downloadedDirectory = join(workRoot, "downloaded");
   const sourcePath = join(downloadedDirectory, "source.mkv");
   const calls = [];
+  const completedCheckpoint = {
+    checkpointKey: "completed-checkpoint",
+    candidateId: "completed-candidate",
+    status: "analyzed",
+  };
+  const retryableCheckpoint = {
+    checkpointKey: "retryable-checkpoint",
+    candidateId: "retryable-candidate",
+    status: "retryable",
+    attemptOrdinal: 1,
+    retryGrantId: "scheduled-semantic-1-restart",
+  };
   const checkpointStore = {
     load: async () => {
       calls.push("checkpoint-load");
-      return { previousCandidateResults: [], retryableDiagnostics: [] };
+      return {
+        previousCandidateResults: [completedCheckpoint],
+        retryableDiagnostics: [retryableCheckpoint],
+      };
     },
     onCandidateCheckpoint: async () => {},
     finalizeAfterPublisherSuccess: async () => calls.push("checkpoint-finalize"),
@@ -334,7 +349,10 @@ test("one scheduled video reaches the publisher only after download, full featur
       },
       runReview: async (input) => {
         calls.push("review-runner");
-        assert.equal(input.previousCandidateResults.length, 0);
+        assert.deepEqual(input.previousCandidateResults, [
+          completedCheckpoint,
+          retryableCheckpoint,
+        ]);
         assert.equal(input.participantGrounding.status, "sealed");
         return {
           status: "complete",

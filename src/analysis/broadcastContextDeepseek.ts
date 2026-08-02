@@ -697,7 +697,7 @@ export function extractBroadcastContextQwenOverviewResponse(
     return verdict;
   });
 
-  const rawLeads: BroadcastContextDiscoveredLeadReference[] = [];
+  const discoveredLeads: BroadcastContextDiscoveredLead[] = [];
   for (const [index, value] of parsed.leads.entries()) {
     if (
       !isRecord(value) ||
@@ -708,19 +708,14 @@ export function extractBroadcastContextQwenOverviewResponse(
       !isValidDiscoveredLeadCategory(value.c) ||
       typeof value.p !== "number" ||
       !Number.isFinite(value.p) ||
-      value.p < 0.65 ||
+      value.p < 0 ||
       value.p > 1 ||
       typeof value.event !== "string" ||
       typeof value.cue !== "string"
     ) {
-      continue;
+      return { ok: false, reason: "lead-item" };
     }
-    if (
-      isRoutineGameplayEvidence(broadcastSummaryKo, [value.event, value.cue])
-    ) {
-      continue;
-    }
-    rawLeads.push({
+    const lead: BroadcastContextDiscoveredLeadReference = {
       leadId: `overview-${value.s}-${value.e}-${index + 1}`,
       startChapterId: value.s,
       endChapterId: value.e,
@@ -730,15 +725,22 @@ export function extractBroadcastContextQwenOverviewResponse(
       whyThisMomentKo: "방송 전체 맥락에서 다시 확인할 가치가 있는 사건입니다.",
       evidenceCueKo: value.cue,
       uncertaintiesKo: ["최종 영상·음성 재검증 필요"],
-    });
-  }
-  const discoveredLeads: BroadcastContextDiscoveredLead[] = [];
-  for (const lead of rawLeads) {
+    };
+    let normalizedLead: readonly BroadcastContextDiscoveredLead[];
     try {
-      discoveredLeads.push(...normalizeDiscoveredLeads([lead], request.chapters));
+      normalizedLead = normalizeDiscoveredLeads([lead], request.chapters);
     } catch {
+      return { ok: false, reason: "lead-item" };
+    }
+    // Low-confidence and routine rows are valid provider judgements, not a
+    // malformed response. They may intentionally yield no editor candidate.
+    if (value.p < 0.65) continue;
+    if (
+      isRoutineGameplayEvidence(broadcastSummaryKo, [value.event, value.cue])
+    ) {
       continue;
     }
+    discoveredLeads.push(...normalizedLead);
   }
   discoveredLeads.sort(
     (left, right) =>

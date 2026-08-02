@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { Buffer } from "node:buffer";
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -94,7 +94,12 @@ function frame(timestampMs) {
   };
 }
 
-function analyzedCheckpoint() {
+function analyzedCheckpoint(options = {}) {
+  const attemptOrdinal = options.attemptOrdinal ?? 0;
+  const retryGrantId = options.retryGrantId ?? (
+    attemptOrdinal === 0 ? null : `scheduled-semantic-${attemptOrdinal}-checkpoint`
+  );
+  const resolution = options.resolution ?? "publish";
   const candidateId = "scheduled-checkpoint-candidate";
   const sourceStartMs = 10_000;
   const sourceEndMs = 55_000;
@@ -122,7 +127,7 @@ function analyzedCheckpoint() {
   }));
   const dispatch = {
     schemaVersion: CANDIDATE_PASS_B_DISPATCH_INTENT_SCHEMA_VERSION,
-    operationId: `candidate-pass-b.${candidateId}`,
+    operationId: `candidate-pass-b.${candidateId}.${attemptOrdinal}`,
     analysisRunId: "scheduled-review-checkpoint-test",
     candidateId,
     sourceFingerprint: "scheduled-source-checkpoint-test",
@@ -132,8 +137,8 @@ function analyzedCheckpoint() {
     outputLanguage: "ko",
     castRosterId: null,
     routingModelRevision: CANDIDATE_PASS_B_ROUTING_MODEL_REVISION,
-    attemptOrdinal: 0,
-    retryGrantId: null,
+    attemptOrdinal,
+    retryGrantId,
     transportMode: "paid-direct",
     mediaReceipt: {
       schemaVersion: CANDIDATE_PASS_B_MEDIA_RECEIPT_SCHEMA_VERSION,
@@ -211,6 +216,7 @@ function analyzedCheckpoint() {
       clipDecision: "recommend",
       contextConsistency: "consistent",
       programMaterial: "streamer-event",
+      ...(options.insight ?? {}),
     },
     model: {
       id: CANDIDATE_PASS_B_QWEN_MODEL_ID,
@@ -226,6 +232,9 @@ function analyzedCheckpoint() {
     sourceStartMs,
     sourceEndMs,
     status: "analyzed",
+    attemptOrdinal,
+    retryGrantId,
+    resolution,
     record,
   };
 }
@@ -249,6 +258,29 @@ function retryableCheckpoint(index = 1, errorCode = "CANDIDATE_ANALYSIS_FAILED")
     sourceEndMs: 105_000,
     status: "retryable",
     errorCode,
+    attemptOrdinal: 0,
+    retryGrantId: null,
+    lastRecord: null,
+  };
+}
+
+function semanticRetryableCheckpoint() {
+  const previous = analyzedCheckpoint({
+    insight: {
+      clipDecision: "uncertain",
+      uncertaintiesKo: ["추가 확인이 필요합니다."],
+    },
+  });
+  return {
+    checkpointKey: previous.checkpointKey,
+    candidateId: previous.candidateId,
+    sourceStartMs: previous.sourceStartMs,
+    sourceEndMs: previous.sourceEndMs,
+    status: "retryable",
+    errorCode: "CANDIDATE_DETAIL_UNCERTAIN",
+    attemptOrdinal: 1,
+    retryGrantId: "scheduled-semantic-1-checkpoint-recovery",
+    lastRecord: previous.record,
   };
 }
 
@@ -447,6 +479,25 @@ test("enforces the twelve-entry and four-MiB recovery bounds", async (t) => {
   for (let index = 0; index < CHANNEL_PREANALYSIS_REVIEW_CHECKPOINT_MAX_ENTRIES; index += 1) {
     await store.onCandidateCheckpoint(retryableCheckpoint(index));
   }
+  const replacement = retryableCheckpoint(0, "FRAME_BUNDLE_INCOMPLETE");
+  replacement.checkpointKey = contentDigest(Buffer.from("retryable-0-recovery"));
+  await store.onCandidateCheckpoint(replacement);
+  const replaced = await store.load();
+  assert.equal(replaced.entryCount, CHANNEL_PREANALYSIS_REVIEW_CHECKPOINT_MAX_ENTRIES);
+  assert.equal(
+    replaced.retryableDiagnostics.filter(({ candidateId }) => candidateId === replacement.candidateId).length,
+    1,
+  );
+  assert.equal(
+    replaced.retryableDiagnostics.find(({ candidateId }) => candidateId === replacement.candidateId)
+      ?.checkpointKey,
+    replacement.checkpointKey,
+  );
+  assert.equal(
+    replaced.retryableDiagnostics.find(({ candidateId }) => candidateId === replacement.candidateId)
+      ?.errorCode,
+    "FRAME_BUNDLE_INCOMPLETE",
+  );
   await assert.rejects(
     store.onCandidateCheckpoint(
       retryableCheckpoint(CHANNEL_PREANALYSIS_REVIEW_CHECKPOINT_MAX_ENTRIES),
@@ -466,4 +517,94 @@ test("enforces the twelve-entry and four-MiB recovery bounds", async (t) => {
       error instanceof ChannelPreanalysisReviewCheckpointError &&
       error.code === "INVALID_FILE",
   );
+});
+
+test("rejects persisted checkpoints with duplicate candidate IDs", async (t) => {
+  const catalogDir = await fixture(t);
+  const store = createChannelPreanalysisReviewCheckpointStore({
+    catalogDir,
+    runIdentity,
+  });
+  await store.onCandidateCheckpoint(retryableCheckpoint(1));
+  const snapshot = JSON.parse(await readFile(store.checkpointPath, "utf8"));
+  snapshot.entries.push({
+    ...snapshot.entries[0],
+    checkpointKey: contentDigest(Buffer.from("duplicate-candidate-id")),
+  });
+  await writeFile(store.checkpointPath, `${JSON.stringify(snapshot, null, 2)}\n`, "utf8");
+
+  await assert.rejects(
+    store.load(),
+    (error) =>
+      error instanceof ChannelPreanalysisReviewCheckpointError &&
+      error.code === "INVALID_FILE",
+  );
+});
+
+test("persists one exact semantic recovery identity and its completed evidence", async (t) => {
+  const catalogDir = await fixture(t);
+  const store = createChannelPreanalysisReviewCheckpointStore({
+    catalogDir,
+    runIdentity,
+    nowIso: () => CREATED_AT,
+  });
+  const retryable = semanticRetryableCheckpoint();
+  await store.onCandidateCheckpoint(retryable);
+
+  const restarted = createChannelPreanalysisReviewCheckpointStore({
+    catalogDir,
+    runIdentity,
+  });
+  const loaded = await restarted.load();
+  assert.deepEqual(loaded.retryableDiagnostics, [retryable]);
+  assert.equal(loaded.retryableDiagnostics[0].lastRecord.frames.length, 4);
+  assert.equal(
+    loaded.retryableDiagnostics[0].lastRecord.verificationReceipt
+      .dispatchIntent.attemptOrdinal,
+    0,
+  );
+});
+
+test("rejects retry identities that can fork or repeat a paid semantic attempt", async (t) => {
+  const catalogDir = await fixture(t);
+  const store = createChannelPreanalysisReviewCheckpointStore({
+    catalogDir,
+    runIdentity,
+  });
+  const retryable = semanticRetryableCheckpoint();
+  for (const invalid of [
+    { ...retryable, retryGrantId: null },
+    { ...retryable, attemptOrdinal: 0 },
+    {
+      ...retryable,
+      attemptOrdinal: 0,
+      retryGrantId: null,
+    },
+  ]) {
+    await assert.rejects(
+      store.onCandidateCheckpoint(invalid),
+      (error) =>
+        error instanceof ChannelPreanalysisReviewCheckpointError &&
+        error.code === "INVALID_ENTRY",
+    );
+  }
+});
+
+test("preserves a capped uncertain record as an analyzed editor-review checkpoint", async (t) => {
+  const catalogDir = await fixture(t);
+  const store = createChannelPreanalysisReviewCheckpointStore({
+    catalogDir,
+    runIdentity,
+  });
+  const checkpoint = analyzedCheckpoint({
+    attemptOrdinal: 2,
+    resolution: "editor-review",
+    insight: {
+      clipDecision: "uncertain",
+      uncertaintiesKo: ["편집자가 원본을 확인해야 합니다."],
+    },
+  });
+  await store.onCandidateCheckpoint(checkpoint);
+  const loaded = await store.load();
+  assert.deepEqual(loaded.previousCandidateResults, [checkpoint]);
 });

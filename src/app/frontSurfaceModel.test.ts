@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   deriveFrontSurfaceModel,
+  selectFrontRecoveryAction,
   type FrontPipelineInput,
   type FrontPreanalysisInput,
   type FrontSourceInput,
@@ -123,6 +124,9 @@ describe("deriveFrontSurfaceModel modes", () => {
 
     expect(model.mode).toBe("zero");
     expect(model.stage.index).toBe(2);
+    expect(model.stage.description).toBe(
+      "전체 분석과 완료 증명을 확인했지만 최종 공개 기준을 모두 통과한 장면은 없었습니다.",
+    );
     expect(model.recovery).toBeNull();
   });
 
@@ -168,6 +172,63 @@ describe("deriveFrontSurfaceModel modes", () => {
 });
 
 describe("single progress axis and durable recovery", () => {
+  it("maps every terminal pipeline gap to one explicit recovery boundary", () => {
+    const base = {
+      sourceReady: true,
+      retainedSourceAvailable: true,
+      sourceBlocked: false,
+      transcriptBlocked: false,
+      contextBlocked: false,
+      candidateDetailBlocked: false,
+      saveBlocked: false,
+      pipelineContextBlocked: false,
+      runCompletedWithGaps: false,
+      contextComplete: false,
+      runNeedsResume: false,
+    };
+
+    expect(
+      selectFrontRecoveryAction({ ...base, transcriptBlocked: true }),
+    ).toBe("retry-transcript");
+    expect(
+      selectFrontRecoveryAction({ ...base, candidateDetailBlocked: true }),
+    ).toBe("retry-candidate-detail");
+    expect(
+      selectFrontRecoveryAction({ ...base, pipelineContextBlocked: true }),
+    ).toBe("retry-context");
+    expect(
+      selectFrontRecoveryAction({ ...base, runCompletedWithGaps: true }),
+    ).toBe("retry-context");
+    expect(
+      selectFrontRecoveryAction({
+        ...base,
+        runCompletedWithGaps: true,
+        contextComplete: true,
+      }),
+    ).toBe("retry-candidate-detail");
+  });
+
+  it("rechecks a retained failed source without selecting a destructive fresh start", () => {
+    const base = {
+      sourceReady: false,
+      retainedSourceAvailable: true,
+      sourceBlocked: true,
+      transcriptBlocked: false,
+      contextBlocked: false,
+      candidateDetailBlocked: false,
+      saveBlocked: false,
+      pipelineContextBlocked: false,
+      runCompletedWithGaps: false,
+      contextComplete: false,
+      runNeedsResume: false,
+    };
+
+    expect(selectFrontRecoveryAction(base)).toBe("retry-source-check");
+    expect(
+      selectFrontRecoveryAction({ ...base, retainedSourceAvailable: false }),
+    ).toBe("choose-source");
+  });
+
   it("normalizes live progress and exposes one current task and one checkpoint", () => {
     const model = deriveFrontSurfaceModel(
       input({

@@ -123,6 +123,7 @@ const COPY = {
     open: "열기",
     cancelInspection: "확인 취소",
     startAnalysis: "AI로 하이라이트 찾기",
+    startUnavailable: "준비 중인 자료 확인이 끝나면 시작할 수 있어요.",
     changeSource: "원본 바꾸기",
     newSource: "새 영상 분석하기",
     connections: "자료 연결",
@@ -184,6 +185,7 @@ const COPY = {
     open: "Open",
     cancelInspection: "Cancel check",
     startAnalysis: "Find highlights with AI",
+    startUnavailable: "Analysis can start after the pending material check finishes.",
     changeSource: "Change source",
     newSource: "Analyse another video",
     connections: "Connections",
@@ -566,6 +568,7 @@ export function FrontSurface({
   } = model;
   const copy = COPY[language];
   const fileInputId = useId();
+  const startBlockerId = useId();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [dragActive, setDragActive] = useState(false);
   const [sheet, setSheet] = useState<SheetKind | null>(null);
@@ -574,6 +577,9 @@ export function FrontSurface({
   const progressRatio = clampRatio(progress?.ratio);
   const progressPercent =
     progress?.percent ?? Math.round((progressRatio ?? 0) * 100);
+  const visibleStartBlocker =
+    startBlocker ??
+    (onStartAnalysis === undefined ? copy.startUnavailable : undefined);
   const selectedTopic = topics.find(({ id }) => id === selectedTopicId) ?? null;
   const durationMs = Math.max(0, source?.durationMs ?? 0);
   const timelineScale = buildTimelineScale(durationMs);
@@ -826,17 +832,6 @@ export function FrontSurface({
         }}
         onDrop={handleDrop}
       >
-        <input
-          id={fileInputId}
-          ref={fileInputRef}
-          className="frt-visually-hidden"
-          type="file"
-          accept={accept}
-          onChange={(event) => {
-            handleFiles(event.currentTarget.files);
-            event.currentTarget.value = "";
-          }}
-        />
         <span className="frt-drop-icon"><FrontIcon name="add" /></span>
         <strong>{copy.dropTitle}</strong>
         <small>{stage.description}</small>
@@ -923,12 +918,17 @@ export function FrontSurface({
               className="frt-primary-button"
               type="button"
               disabled={onStartAnalysis === undefined}
+              {...(visibleStartBlocker === undefined
+                ? {}
+                : { "aria-describedby": startBlockerId })}
               onClick={onStartAnalysis}
             >
               {copy.startAnalysis}
             </button>
-            {startBlocker !== undefined && (
-              <small role="status">{startBlocker}</small>
+            {visibleStartBlocker !== undefined && (
+              <small id={startBlockerId} role="status">
+                {visibleStartBlocker}
+              </small>
             )}
           </span>
         </div>
@@ -971,6 +971,10 @@ export function FrontSurface({
                 type="button"
                 disabled={onRecoveryAction === undefined || recovery === null}
                 onClick={() => {
+                  if (recovery?.primaryAction.id === "choose-source") {
+                    fileInputRef.current?.click();
+                    return;
+                  }
                   if (recovery !== null) onRecoveryAction?.(recovery.primaryAction.id);
                 }}
               >
@@ -1026,6 +1030,17 @@ export function FrontSurface({
 
   return (
     <div className="frt-app" data-phase={phase}>
+      <input
+        id={fileInputId}
+        ref={fileInputRef}
+        className="frt-visually-hidden"
+        type="file"
+        accept={accept}
+        onChange={(event) => {
+          handleFiles(event.currentTarget.files);
+          event.currentTarget.value = "";
+        }}
+      />
       <header className="frt-app-header">
         <div className="frt-brand">
           <strong>Ex<span>Clipper</span></strong>

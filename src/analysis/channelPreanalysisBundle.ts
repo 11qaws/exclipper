@@ -10,6 +10,7 @@ import {
 } from "./broadcastContextProtocol";
 import type { ChannelPreanalysisCatalogVideo } from "./channelPreanalysisCatalog";
 import {
+  channelPreanalysisSourceByChannelId,
   isChannelPreanalysisYouTubeChannelId,
   type ChannelPreanalysisYouTubeChannelId,
 } from "./channelPreanalysisSources";
@@ -27,6 +28,8 @@ export const CHANNEL_PREANALYSIS_BUNDLE_SCHEMA_VERSION = 1 as const;
 export const CHANNEL_PREANALYSIS_BUNDLE_MAX_BYTES = 32 * 1024 * 1024;
 export const CHANNEL_PREANALYSIS_TRANSCRIPT_MAX_TEXT_LENGTH = 8_000_000;
 export const CHANNEL_PREANALYSIS_CONTEXT_RECEIPT_FIELD_MAX_LENGTH = 128;
+export const CHANNEL_PREANALYSIS_CONTEXT_COMPONENT_RECEIPT_MAX_COUNT = 4;
+export const CHANNEL_PREANALYSIS_CONTEXT_WORKER_ATTEMPT_MAX = 999_999_999;
 
 export const CHANNEL_PREANALYSIS_BUNDLE_STATES = [
   "transcript-ready",
@@ -44,11 +47,30 @@ export interface ChannelPreanalysisBundleProvenance {
   readonly extractorRevision: string;
 }
 
+export interface ChannelPreanalysisContextComponentReceipt {
+  readonly componentIndex: number;
+  readonly analysisMode: "overview" | "discovery";
+  readonly contractVersion: string;
+  readonly routingRevision: typeof AI_BROADCAST_CONTEXT_ROUTING_REVISION;
+  readonly modelId: string;
+  readonly modelRevision: string;
+  readonly operationId: string;
+  readonly payloadDigest: string;
+  /** Absent only on bundles written before the Worker execution receipt. */
+  readonly workerAttempt?: number;
+  readonly retryRisk?: "possible-duplicate-provider-charge" | null;
+}
+
 export interface ChannelPreanalysisContextReceipt {
   readonly contractVersion: string;
   readonly routingRevision: typeof AI_BROADCAST_CONTEXT_ROUTING_REVISION;
   readonly modelId: string;
   readonly modelRevision: string;
+  /**
+   * Legacy bundles have only the overview receipt above. New scheduled runs
+   * retain the ordered overview + bounded discovery call receipts as well.
+   */
+  readonly componentReceipts?: readonly ChannelPreanalysisContextComponentReceipt[];
 }
 
 /**
@@ -283,7 +305,11 @@ export function validateChannelPreanalysisBundle(
   const contextProvenance =
     !hasContextProvenance || bundle.contextProvenance === null
       ? null
-      : validateContextProvenance(bundle.contextProvenance);
+      : validateContextProvenance(
+          bundle.contextProvenance,
+          chapters.length,
+          channelPreanalysisSourceByChannelId(bundle.channelId)?.sourceId ?? null,
+        );
   if (
     (bundle.state === "transcript-ready" &&
       (broadcastContext !== null || contextProvenance !== null)) ||
@@ -769,6 +795,8 @@ function validateCoverage(
 
 function validateContextProvenance(
   value: unknown,
+  chapterCount: number,
+  sourceId: string | null,
 ): ChannelPreanalysisContextProvenance {
   const provenance = recordWithKeys(
     value,
@@ -796,7 +824,11 @@ function validateContextProvenance(
       "Broadcast context provenance is invalid.",
     );
   }
-  const contextReceipt = validateContextReceipt(provenance.contextReceipt);
+  const contextReceipt = validateContextReceipt(
+    provenance.contextReceipt,
+    chapterCount,
+    sourceId,
+  );
   if (contextReceipt.routingRevision !== provenance.modelRoutingRevision) {
     throw validationError(
       "INVALID_CONTEXT",
@@ -816,7 +848,14 @@ function validateContextProvenance(
 
 function validateContextReceipt(
   value: unknown,
+  chapterCount: number,
+  sourceId: string | null,
 ): ChannelPreanalysisContextReceipt {
+  const hasComponentReceipts =
+    typeof value === "object" &&
+    value !== null &&
+    !Array.isArray(value) &&
+    Object.prototype.hasOwnProperty.call(value, "componentReceipts");
   const receipt = recordWithKeys(
     value,
     [
@@ -824,6 +863,7 @@ function validateContextReceipt(
       "routingRevision",
       "modelId",
       "modelRevision",
+      ...(hasComponentReceipts ? ["componentReceipts"] : []),
     ],
     "INVALID_CONTEXT",
     "Broadcast context receipt is invalid.",
@@ -840,12 +880,137 @@ function validateContextReceipt(
       "Broadcast context receipt is invalid.",
     );
   }
-  return {
+  const baseReceipt = {
     contractVersion: receipt.contractVersion,
     routingRevision: AI_BROADCAST_CONTEXT_ROUTING_REVISION,
     modelId: receipt.modelId,
     modelRevision: receipt.modelRevision,
   };
+  if (!hasComponentReceipts) return baseReceipt;
+  if (sourceId === null || !Array.isArray(receipt.componentReceipts)) {
+    throw validationError(
+      "INVALID_CONTEXT",
+      "Broadcast context component receipts are invalid.",
+    );
+  }
+  const expectedCount =
+    1 +
+    Math.min(
+      CHANNEL_PREANALYSIS_CONTEXT_COMPONENT_RECEIPT_MAX_COUNT - 1,
+      chapterCount,
+    );
+  if (receipt.componentReceipts.length !== expectedCount) {
+    throw validationError(
+      "INVALID_CONTEXT",
+      "Broadcast context component receipt count is invalid.",
+    );
+  }
+  const operationIds = new Set<string>();
+  const payloadDigests = new Set<string>();
+  const componentReceipts = receipt.componentReceipts.map((value, index) => {
+    const component = validateContextComponentReceipt(value, index, sourceId);
+    if (
+      component.contractVersion !== baseReceipt.contractVersion ||
+      component.routingRevision !== baseReceipt.routingRevision ||
+      (index === 0 &&
+        (component.modelId !== baseReceipt.modelId ||
+          component.modelRevision !== baseReceipt.modelRevision)) ||
+      operationIds.has(component.operationId) ||
+      payloadDigests.has(component.payloadDigest)
+    ) {
+      throw validationError(
+        "INVALID_CONTEXT",
+        "Broadcast context component receipts are inconsistent or duplicated.",
+      );
+    }
+    operationIds.add(component.operationId);
+    payloadDigests.add(component.payloadDigest);
+    return component;
+  });
+  return { ...baseReceipt, componentReceipts };
+}
+
+function validateContextComponentReceipt(
+  value: unknown,
+  expectedIndex: number,
+  sourceId: string,
+): ChannelPreanalysisContextComponentReceipt {
+  const hasWorkerAttempt =
+    typeof value === "object" &&
+    value !== null &&
+    !Array.isArray(value) &&
+    Object.prototype.hasOwnProperty.call(value, "workerAttempt");
+  const hasRetryRisk =
+    typeof value === "object" &&
+    value !== null &&
+    !Array.isArray(value) &&
+    Object.prototype.hasOwnProperty.call(value, "retryRisk");
+  if (hasWorkerAttempt !== hasRetryRisk) {
+    throw validationError(
+      "INVALID_CONTEXT",
+      "Broadcast context Worker execution receipt is incomplete.",
+    );
+  }
+  const component = recordWithKeys(
+    value,
+    [
+      "componentIndex",
+      "analysisMode",
+      "contractVersion",
+      "routingRevision",
+      "modelId",
+      "modelRevision",
+      "operationId",
+      "payloadDigest",
+      ...(hasWorkerAttempt ? ["workerAttempt", "retryRisk"] : []),
+    ],
+    "INVALID_CONTEXT",
+    "Broadcast context component receipt is invalid.",
+  );
+  const expectedMode: ChannelPreanalysisContextComponentReceipt["analysisMode"] =
+    expectedIndex === 0 ? "overview" : "discovery";
+  if (
+    component.componentIndex !== expectedIndex ||
+    component.analysisMode !== expectedMode ||
+    !isContextReceiptField(component.contractVersion) ||
+    component.routingRevision !== AI_BROADCAST_CONTEXT_ROUTING_REVISION ||
+    !isContextReceiptField(component.modelId) ||
+    !isContextReceiptField(component.modelRevision) ||
+    !isContextOperationId(component.operationId, sourceId) ||
+    typeof component.payloadDigest !== "string" ||
+    !SHA256_PATTERN.test(component.payloadDigest) ||
+    (hasWorkerAttempt &&
+      (!Number.isSafeInteger(component.workerAttempt) ||
+        (component.workerAttempt as number) < 1 ||
+        (component.workerAttempt as number) >
+          CHANNEL_PREANALYSIS_CONTEXT_WORKER_ATTEMPT_MAX ||
+        (component.retryRisk !== null &&
+          component.retryRisk !== "possible-duplicate-provider-charge")))
+  ) {
+    throw validationError(
+      "INVALID_CONTEXT",
+      "Broadcast context component receipt is invalid.",
+    );
+  }
+  const baseComponent = {
+    componentIndex: expectedIndex,
+    analysisMode: expectedMode,
+    contractVersion: component.contractVersion,
+    routingRevision: AI_BROADCAST_CONTEXT_ROUTING_REVISION,
+    modelId: component.modelId,
+    modelRevision: component.modelRevision,
+    operationId: component.operationId,
+    payloadDigest: component.payloadDigest,
+  };
+  return hasWorkerAttempt
+    ? {
+        ...baseComponent,
+        workerAttempt: component.workerAttempt as number,
+        retryRisk: component.retryRisk as
+          | "possible-duplicate-provider-charge"
+          | null,
+      }
+    : baseComponent;
 }
 
 function validateProvenance(
@@ -964,6 +1129,15 @@ function isContextReceiptField(value: unknown): value is string {
     Array.from(value).length <=
       CHANNEL_PREANALYSIS_CONTEXT_RECEIPT_FIELD_MAX_LENGTH &&
     CONTEXT_RECEIPT_FIELD_PATTERN.test(value)
+  );
+}
+
+function isContextOperationId(value: unknown, sourceId: string): value is string {
+  const prefix = `channel-context-${sourceId}-`;
+  return (
+    typeof value === "string" &&
+    value.startsWith(prefix) &&
+    /^[0-9a-f]{64}$/u.test(value.slice(prefix.length))
   );
 }
 
