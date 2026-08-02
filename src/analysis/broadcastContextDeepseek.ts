@@ -45,9 +45,8 @@ export interface BroadcastContextQwenRequestBody {
   readonly messages: BroadcastContextDeepseekRequestBody["messages"];
   readonly response_format: { readonly type: "json_object" };
   readonly temperature: number;
-  readonly max_tokens: number;
-  readonly enable_thinking: true;
-  readonly thinking_budget: number;
+  readonly enable_thinking: boolean;
+  readonly thinking_budget?: number;
 }
 
 export type BroadcastContextQwenMode =
@@ -326,6 +325,7 @@ export function buildBroadcastContextQwenRequestBody(
   mode: BroadcastContextQwenMode = "overview",
 ): BroadcastContextQwenRequestBody {
   const isRefinementMode = mode === "refinement" || mode === "refinement-fast";
+  const enableThinking = model !== "qwen3.6-flash";
   const languageRule = request.outputLanguage === "ko"
     ? "출력 서술은 현대 한국어 한글로만 작성하고 한자·중국어 문자를 섞지 마세요."
     : "Write every generated narrative, title, reason, theme, uncertainty, and host profile in English only. Keep proper VTuber names and verbatim source quotations unchanged.";
@@ -374,9 +374,8 @@ export function buildBroadcastContextQwenRequestBody(
     ],
     response_format: { type: "json_object" },
     temperature: 0.1,
-    max_tokens: mode === "overview" ? 4_096 : mode === "discovery" ? 2_048 : 1_024,
-    enable_thinking: true,
-    thinking_budget: 768,
+    enable_thinking: enableThinking,
+    ...(enableThinking ? { thinking_budget: 768 } : {}),
   };
 }
 

@@ -7,6 +7,10 @@ import {
 import { AI_BROADCAST_CONTEXT_ROUTING_REVISION } from "../analysis/aiModelRoutingPolicy";
 import { extractCandidatePassBGeminiResponse } from "../analysis/candidatePassBGemini";
 import {
+  QWEN_CONTEXT_OVERVIEW_FALLBACK_MODEL_ID,
+  QWEN_CONTEXT_OVERVIEW_FALLBACK_MODEL_REVISION,
+} from "./aiProviderConfiguration";
+import {
   CANDIDATE_INSIGHT_MEDIA_BUNDLE_CONTENT_TYPE,
   CANDIDATE_INSIGHT_MEDIA_RESOLVE_CONTENT_TYPE,
   createCandidateInsightMediaResolveRequest,
@@ -1829,18 +1833,58 @@ describe("preanalysisContextProxy.worker", () => {
     expect(upstreamFetch).toHaveBeenCalledTimes(2);
   });
 
-  it("keeps a provider schema failure retryable for a later parser or model repair", async () => {
+  it("uses one bounded overview fallback before checkpointing a schema failure", async () => {
+    const attemptedBodies: Record<string, unknown>[] = [];
+    const responses = [
+      new Response(
+        JSON.stringify({ choices: [{ message: { content: "{}" } }] }),
+        { status: 200 },
+      ),
+      qwenSuccessResponse(),
+    ];
+    const upstreamFetch = vi.fn(
+      (_input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+        if (typeof init?.body !== "string") {
+          throw new TypeError("Expected a serialized context request.");
+        }
+        attemptedBodies.push(JSON.parse(init.body) as Record<string, unknown>);
+        const response = responses.shift();
+        if (response === undefined) throw new Error("Unexpected provider call.");
+        return Promise.resolve(response);
+      },
+    );
+    const harness = createHarness(upstreamFetch);
+    const recovered = await handlePreanalysisContextProxyRequest(
+      await createScheduledRequest(),
+      harness.environment,
+    );
+    expect(recovered.status).toBe(200);
+    expect(recovered.headers.get(PREANALYSIS_CONTEXT_MODEL_ID_HEADER)).toBe(
+      QWEN_CONTEXT_OVERVIEW_FALLBACK_MODEL_ID,
+    );
+    expect(recovered.headers.get(PREANALYSIS_CONTEXT_MODEL_REVISION_HEADER)).toBe(
+      QWEN_CONTEXT_OVERVIEW_FALLBACK_MODEL_REVISION,
+    );
+    expect(upstreamFetch).toHaveBeenCalledTimes(2);
+    expect(attemptedBodies[1]).toMatchObject({
+      model: QWEN_CONTEXT_OVERVIEW_FALLBACK_MODEL_ID,
+      enable_thinking: false,
+    });
+    expect(attemptedBodies[1]).not.toHaveProperty("max_tokens");
+    expect(attemptedBodies[1]).not.toHaveProperty("thinking_budget");
+  });
+
+  it("keeps both failed overview models retryable for a later repair", async () => {
     let nowMs = 0;
+    const invalidResponse = () =>
+      new Response(
+        JSON.stringify({ choices: [{ message: { content: "{}" } }] }),
+        { status: 200 },
+      );
     const upstreamFetch = vi
       .fn()
-      .mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({
-            choices: [{ message: { content: "{}" } }],
-          }),
-          { status: 200 },
-        ),
-      )
+      .mockResolvedValueOnce(invalidResponse())
+      .mockResolvedValueOnce(invalidResponse())
       .mockResolvedValueOnce(qwenSuccessResponse());
     const harness = createHarness(upstreamFetch, { now: () => nowMs });
     const invalid = await handlePreanalysisContextProxyRequest(
@@ -1856,7 +1900,7 @@ describe("preanalysisContextProxy.worker", () => {
       harness.environment,
     );
     expect(recovered.status).toBe(200);
-    expect(upstreamFetch).toHaveBeenCalledTimes(2);
+    expect(upstreamFetch).toHaveBeenCalledTimes(3);
   });
 
   it("rejects bad auth, wrong digests, browser preflight, and general routes before the DO", async () => {

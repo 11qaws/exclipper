@@ -211,7 +211,7 @@ describe("broadcastContextDeepseek", () => {
       expect(body.model).toBe("qwen3.7-plus");
       expect(body.enable_thinking).toBe(true);
       expect(body.thinking_budget).toBe(768);
-      expect(body.max_tokens).toBe(4_096);
+      expect(body).not.toHaveProperty("max_tokens");
       expect(body.messages[0].content).toContain("600~1000자");
       expect(body.messages[0].content).toContain("host");
       expect(body.messages[0].content).toContain("클립 편집 라우터");
@@ -242,7 +242,8 @@ describe("broadcastContextDeepseek", () => {
         model,
         mode,
       );
-      expect(body.max_tokens).toBe(1_024);
+      expect(body).not.toHaveProperty("max_tokens");
+      expect(body.enable_thinking).toBe(model !== "qwen3.6-flash");
       expect(body.messages[0].content).toContain("최대 3개");
       expect(body.messages[0].content).toContain("1분 단위");
     });
@@ -254,7 +255,9 @@ describe("broadcastContextDeepseek", () => {
         "discovery",
       );
       expect(body.model).toBe("qwen3.6-flash");
-      expect(body.max_tokens).toBe(2_048);
+      expect(body).not.toHaveProperty("max_tokens");
+      expect(body.enable_thinking).toBe(false);
+      expect(body).not.toHaveProperty("thinking_budget");
       expect(body.messages[0].content).toContain("최대 8개");
       expect(body.messages[0].content).toContain("서로 다른 대상의 오답");
     });

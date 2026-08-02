@@ -227,6 +227,30 @@ test("a first-run feed outage leaves a valid empty source checkpoint", async () 
   }
 });
 
+test("an all-source run remains partial while any video has retryable work", () => {
+  const report = createChannelPreanalysisRunReport(
+    {
+      runStartedAt: NOW,
+      globalLimit: 1,
+      processedVideoCount: 1,
+      sourceErrors: [],
+      sources: [{
+        sourceId: "amoretto-vods",
+        manifest: { revision: 4 },
+        selectedVideoIds: [VIDEO_ID],
+        outcomes: [{
+          videoId: VIDEO_ID,
+          state: "retryable",
+          errorCode: "UPSTREAM_INVALID_RESPONSE",
+        }],
+      }],
+    },
+    "2026-08-02T03:05:00.000Z",
+  );
+
+  assert.equal(report.status, "partial");
+});
+
 test("a single-source dispatch emits the same root-level report contract", () => {
   const source = CHANNEL_PREANALYSIS_SOURCES.find(
     ({ sourceId }) => sourceId === "mangjing-compilations",
@@ -258,4 +282,28 @@ test("a single-source dispatch emits the same root-level report contract", () =>
     },
   ]);
   assert.deepEqual(report.sourceErrors, []);
+});
+
+test("a single-source run remains partial while its exact video is retryable", () => {
+  const source = CHANNEL_PREANALYSIS_SOURCES.find(
+    ({ sourceId }) => sourceId === "amoretto-vods",
+  );
+  assert.ok(source);
+  const report = createSingleChannelPreanalysisRunReport(
+    {
+      manifest: { revision: 4 },
+      selectedVideoIds: [VIDEO_ID],
+      outcomes: [{
+        videoId: VIDEO_ID,
+        state: "retryable",
+        errorCode: "UPSTREAM_INVALID_RESPONSE",
+      }],
+    },
+    source,
+    1,
+    NOW,
+    "2026-08-02T03:05:00.000Z",
+  );
+
+  assert.equal(report.status, "partial");
 });

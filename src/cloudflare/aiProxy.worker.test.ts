@@ -35,6 +35,12 @@ import {
   handleYouTubeCaptionsRequest,
   type AiProxyEnvironment,
 } from "./aiProxy.worker";
+import {
+  AI_PROVIDER_CONFIGURATION_VERSION,
+  QWEN_CONTEXT_MODEL_REVISION,
+  QWEN_CONTEXT_QUALITY_REFINEMENT_MODEL_REVISION,
+  QWEN_CONTEXT_REFINEMENT_MODEL_REVISION,
+} from "./aiProviderConfiguration";
 
 const ENDPOINT = "https://rettohighlight-gemini.example/v1/candidate-insights";
 const PRODUCTION_ORIGIN = "https://11qaws.github.io";
@@ -423,7 +429,7 @@ describe("aiProxy.worker", () => {
         expect(body.model).toBe("qwen3.7-plus");
         expect(body.enable_thinking).toBe(true);
         expect(body.thinking_budget).toBe(768);
-        expect(body.max_tokens).toBe(4_096);
+        expect(body).not.toHaveProperty("max_tokens");
         expect(body.response_format).toEqual({ type: "json_object" });
         expect(body).not.toHaveProperty("thinking");
         const messages = body.messages as Array<{ content?: string }>;
@@ -849,9 +855,10 @@ describe("aiProxy.worker", () => {
       (_input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
         const body = JSON.parse(
           typeof init?.body === "string" ? init.body : "{}",
-        ) as { model: string; max_tokens: number };
+        ) as { model: string; max_tokens?: number; enable_thinking?: boolean };
         expect(body.model).toBe("qwen3.6-flash");
-        expect(body.max_tokens).toBe(2_048);
+        expect(body).not.toHaveProperty("max_tokens");
+        expect(body.enable_thinking).toBe(false);
         return Promise.resolve(
           new Response(
             JSON.stringify({
@@ -898,13 +905,13 @@ describe("aiProxy.worker", () => {
       label: "jury-approved fast localization",
       analysisMode: "refinement-fast",
       modelId: "qwen3.6-flash",
-      modelRevision: "qwen3.6-flash-caption-refinement-speed-v1-2026-07-22",
+      modelRevision: QWEN_CONTEXT_REFINEMENT_MODEL_REVISION,
     },
     {
       label: "quality-gated reserve adjudication",
       analysisMode: "refinement",
       modelId: "qwen3.7-plus",
-      modelRevision: "qwen3.7-plus-caption-refinement-quality-v1-2026-07-22",
+      modelRevision: QWEN_CONTEXT_QUALITY_REFINEMENT_MODEL_REVISION,
     },
   ] as const)("uses the bounded Qwen tier for $label", async ({
     analysisMode,
@@ -928,9 +935,10 @@ describe("aiProxy.worker", () => {
       (_input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
         const body = JSON.parse(
           typeof init?.body === "string" ? init.body : "{}",
-        ) as { model: string; max_tokens: number };
+        ) as { model: string; max_tokens?: number; enable_thinking?: boolean };
         expect(body.model).toBe(modelId);
-        expect(body.max_tokens).toBe(1_024);
+        expect(body).not.toHaveProperty("max_tokens");
+        expect(body.enable_thinking).toBe(modelId !== "qwen3.6-flash");
         return Promise.resolve(
           new Response(
             JSON.stringify({
@@ -1439,8 +1447,7 @@ describe("aiProxy.worker", () => {
       service: "rettohighlight-gemini",
       version: 6,
       routingPolicyVersion: "1.11.0",
-      contextModelRevision:
-        "qwen3.7-plus-context-editorial-jury-topic-balanced-2026-07-22",
+      contextModelRevision: QWEN_CONTEXT_MODEL_REVISION,
       transcriptTransport: {
         version: 3,
         mode: "paid-direct",
@@ -1458,7 +1465,7 @@ describe("aiProxy.worker", () => {
         requiredFrameCount: 4,
       },
       providers: {
-        schemaVersion: "1.3.0",
+        schemaVersion: AI_PROVIDER_CONFIGURATION_VERSION,
         geminiRoutes: {
           candidateInsightConfigured: false,
           broadcastTranscriptConfigured: false,

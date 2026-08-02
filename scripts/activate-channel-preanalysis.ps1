@@ -241,8 +241,9 @@ try {
         Remove-PrivateTemporaryDirectory -Path $secretDirectory
     }
 
-    $contextToken | & gh secret set CHANNEL_PREANALYSIS_CONTEXT_TOKEN `
-        --repo $Repository
+    & gh secret set CHANNEL_PREANALYSIS_CONTEXT_TOKEN `
+        --repo $Repository `
+        --body $contextToken
     if ($LASTEXITCODE -ne 0) {
         throw "The GitHub preanalysis token could not be registered."
     }

@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  AI_PROVIDER_CONFIGURATION_VERSION,
   AI_PROVIDER_CATALOG,
+  QWEN_CONTEXT_MODEL_REVISION,
   createAiProviderReadinessManifest,
   isBoundedAiProviderFallbackEnabled,
   resolveBroadcastContextConnection,
@@ -177,7 +179,7 @@ describe("aiProviderConfiguration", () => {
     expect(createAiProviderReadinessManifest(environment).broadcastContext).toEqual({
       selectedProvider: "qwen",
       modelId: "qwen3.7-plus",
-      modelRevision: "qwen3.7-plus-context-editorial-jury-topic-balanced-2026-07-22",
+      modelRevision: QWEN_CONTEXT_MODEL_REVISION,
       implementationStatus: "active",
       configured: true,
       active: true,
@@ -311,7 +313,7 @@ describe("aiProviderConfiguration", () => {
       QWEN_API_KEY: "qwen-secret",
       GEMINI_API_KEY: "shared-gemini-secret",
     });
-    expect(manifest.schemaVersion).toBe("1.3.0");
+    expect(manifest.schemaVersion).toBe(AI_PROVIDER_CONFIGURATION_VERSION);
     expect(manifest.geminiRoutes).toEqual({
       candidateInsightConfigured: true,
       broadcastTranscriptConfigured: true,

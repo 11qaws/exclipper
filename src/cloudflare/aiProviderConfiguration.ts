@@ -17,7 +17,7 @@ import {
   EXCLIPPER_MODEL_IDS,
 } from "../analysis/aiModelRoutingPolicy";
 
-export const AI_PROVIDER_CONFIGURATION_VERSION = "1.3.0" as const;
+export const AI_PROVIDER_CONFIGURATION_VERSION = "1.4.0" as const;
 
 export const QWEN_CANDIDATE_MODEL_ID = CANDIDATE_PASS_B_QWEN_MODEL_ID;
 export const QWEN_CANDIDATE_MODEL_REVISION = CANDIDATE_PASS_B_QWEN_MODEL_REVISION;
@@ -26,18 +26,22 @@ export const DEEPSEEK_CONTEXT_MODEL_REVISION =
   "deepseek-v4-pro-api-reviewed-2026-07-22" as const;
 export const QWEN_CONTEXT_MODEL_ID = EXCLIPPER_MODEL_IDS.broadcastContextReasoning;
 export const QWEN_CONTEXT_MODEL_REVISION =
-  "qwen3.7-plus-context-editorial-jury-topic-balanced-2026-07-22" as const;
+  "qwen3.7-plus-context-editorial-jury-json-complete-v2-2026-08-02" as const;
 export const QWEN_CONTEXT_DISCOVERY_MODEL_ID =
   EXCLIPPER_MODEL_IDS.broadcastContextReasoningFallback;
 export const QWEN_CONTEXT_DISCOVERY_MODEL_REVISION =
-  "qwen3.6-flash-topical-discovery-reviewed-2026-07-22" as const;
+  "qwen3.6-flash-topical-discovery-json-complete-v2-2026-08-02" as const;
+export const QWEN_CONTEXT_OVERVIEW_FALLBACK_MODEL_ID =
+  QWEN_CONTEXT_DISCOVERY_MODEL_ID;
+export const QWEN_CONTEXT_OVERVIEW_FALLBACK_MODEL_REVISION =
+  "qwen3.6-flash-context-overview-fallback-v1-2026-08-02" as const;
 export const QWEN_CONTEXT_REFINEMENT_MODEL_ID =
   EXCLIPPER_MODEL_IDS.broadcastContextReasoningFallback;
 export const QWEN_CONTEXT_REFINEMENT_MODEL_REVISION =
-  "qwen3.6-flash-caption-refinement-speed-v1-2026-07-22" as const;
+  "qwen3.6-flash-caption-refinement-json-complete-v2-2026-08-02" as const;
 export const QWEN_CONTEXT_QUALITY_REFINEMENT_MODEL_ID = QWEN_CONTEXT_MODEL_ID;
 export const QWEN_CONTEXT_QUALITY_REFINEMENT_MODEL_REVISION =
-  "qwen3.7-plus-caption-refinement-quality-v1-2026-07-22" as const;
+  "qwen3.7-plus-caption-refinement-json-complete-v2-2026-08-02" as const;
 
 export type CandidateInsightProviderId = "gemini" | "qwen";
 export type BroadcastContextProviderId = "disabled" | "deepseek" | "qwen";

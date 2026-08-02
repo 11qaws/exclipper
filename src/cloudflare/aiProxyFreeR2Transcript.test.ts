@@ -41,6 +41,7 @@ import {
   createBroadcastTranscriptRouteSelection,
 } from "../analysis/broadcastTranscriptRouteManifest";
 import { currentCandidatePassBContext } from "../testSupport/candidatePassBCurrentFixture";
+import { AI_PROVIDER_CONFIGURATION_VERSION } from "./aiProviderConfiguration";
 import worker, {
   handleCandidateInsightRequest,
   handleBroadcastTranscriptRequest,
@@ -2201,7 +2202,7 @@ describe("free R2 candidate media Worker integration", () => {
         configured: true,
       },
       providers: {
-        schemaVersion: "1.3.0",
+        schemaVersion: AI_PROVIDER_CONFIGURATION_VERSION,
         broadcastTranscript: {
           selectedProvider: "groq",
           modelId: "whisper-large-v3-turbo",

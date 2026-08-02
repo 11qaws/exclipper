@@ -17,6 +17,10 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 import {
+  QWEN_CONTEXT_OVERVIEW_FALLBACK_MODEL_ID,
+  QWEN_CONTEXT_OVERVIEW_FALLBACK_MODEL_REVISION,
+} from "../src/cloudflare/aiProviderConfiguration.ts";
+import {
   CHANNEL_PREANALYSIS_CATALOG_SCHEMA_VERSION,
   YOUTUBE_CHANNEL_ATOM_FEED_MAX_BYTES,
   channelPreanalysisSourceForManifest,
@@ -883,6 +887,12 @@ export function createExpectedScheduledContextReceipt() {
 
 function verifyScheduledContextReceipt(value) {
   const expected = createExpectedScheduledContextReceipt();
+  const expectedModel =
+    value?.modelId === expected.modelId &&
+    value?.modelRevision === expected.modelRevision;
+  const boundedFallbackModel =
+    value?.modelId === QWEN_CONTEXT_OVERVIEW_FALLBACK_MODEL_ID &&
+    value?.modelRevision === QWEN_CONTEXT_OVERVIEW_FALLBACK_MODEL_REVISION;
   if (
     !isRecord(value) ||
     !hasExactKeys(value, [
@@ -893,15 +903,19 @@ function verifyScheduledContextReceipt(value) {
     ]) ||
     value.contractVersion !== expected.contractVersion ||
     value.routingRevision !== expected.routingRevision ||
-    value.modelId !== expected.modelId ||
-    value.modelRevision !== expected.modelRevision
+    (!expectedModel && !boundedFallbackModel)
   ) {
     throw syncError(
       "CONTEXT_PROXY_RECEIPT_INVALID",
       "The context response does not prove the expected proxy contract, route, and model.",
     );
   }
-  return expected;
+  return {
+    contractVersion: expected.contractVersion,
+    routingRevision: expected.routingRevision,
+    modelId: value.modelId,
+    modelRevision: value.modelRevision,
+  };
 }
 
 export function serializeBundle(bundle) {
@@ -2139,12 +2153,22 @@ export function rotateConfiguredSourcesForFairness(nowIso) {
   ];
 }
 
+function hasRetryableOutcome(outcomes) {
+  return outcomes.some((outcome) => outcome?.state === "retryable");
+}
+
 export function createChannelPreanalysisRunReport(result, completedAt) {
   assertIsoDate(completedAt, "run report completedAt");
+  const hasRetryableWork = result.sources.some(({ outcomes }) =>
+    hasRetryableOutcome(outcomes)
+  );
   return {
     schemaVersion: 1,
     mode: "all",
-    status: result.sourceErrors.length === 0 ? "complete" : "partial",
+    status:
+      result.sourceErrors.length === 0 && !hasRetryableWork
+        ? "complete"
+        : "partial",
     runStartedAt: result.runStartedAt,
     completedAt,
     globalLimit: result.globalLimit,
@@ -2181,7 +2205,7 @@ export function createSingleChannelPreanalysisRunReport(
   return {
     schemaVersion: 1,
     mode: "single",
-    status: "complete",
+    status: hasRetryableOutcome(result.outcomes) ? "partial" : "complete",
     runStartedAt,
     completedAt,
     globalLimit,

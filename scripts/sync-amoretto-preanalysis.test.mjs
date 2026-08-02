@@ -23,6 +23,10 @@ import {
 } from "../src/analysis/broadcastContextProtocol.ts";
 import { AI_BROADCAST_CONTEXT_ROUTING_REVISION } from "../src/analysis/aiModelRoutingPolicy.ts";
 import {
+  QWEN_CONTEXT_OVERVIEW_FALLBACK_MODEL_ID,
+  QWEN_CONTEXT_OVERVIEW_FALLBACK_MODEL_REVISION,
+} from "../src/cloudflare/aiProviderConfiguration.ts";
+import {
   CHANNEL_PREANALYSIS_MANIFEST_MAX_BYTES as CLIENT_MANIFEST_MAX_BYTES,
   parseChannelPreanalysisManifest,
 } from "../src/analysis/channelPreanalysisClient.ts";
@@ -1974,6 +1978,38 @@ test("schema-valid context bodies without the exact proxy receipt are rejected",
       }),
       (error) => error?.code === "CONTEXT_PROXY_RECEIPT_INVALID",
     );
+  } finally {
+    await rm(catalogDir, { recursive: true, force: true });
+  }
+});
+
+test("a bounded Qwen overview fallback receipt is preserved as the actual provenance", async () => {
+  const catalogDir = await mkdtemp(
+    join(tmpdir(), "exclipper-context-fallback-receipt-"),
+  );
+  try {
+    const fixture = await readyCatalogFixture(catalogDir);
+    const transcriptBundle = JSON.parse(fixture.serialized);
+    const result = completeContextResult(
+      fixture.manifest.videos[0].durationMs,
+    );
+    const response = await requestScheduledBroadcastContext(transcriptBundle, {
+      proxyUrl: "https://worker.example/v1/broadcast-context",
+      authorizationToken: TEST_CONTEXT_TOKEN,
+      fetchImplementation: async () =>
+        contextSuccessResponse(result, {
+          [PREANALYSIS_CONTEXT_MODEL_ID_HEADER]:
+            QWEN_CONTEXT_OVERVIEW_FALLBACK_MODEL_ID,
+          [PREANALYSIS_CONTEXT_MODEL_REVISION_HEADER]:
+            QWEN_CONTEXT_OVERVIEW_FALLBACK_MODEL_REVISION,
+        }),
+    });
+    assert.deepEqual(response.contextReceipt, {
+      contractVersion: PREANALYSIS_CONTEXT_PROXY_VERSION,
+      routingRevision: AI_BROADCAST_CONTEXT_ROUTING_REVISION,
+      modelId: QWEN_CONTEXT_OVERVIEW_FALLBACK_MODEL_ID,
+      modelRevision: QWEN_CONTEXT_OVERVIEW_FALLBACK_MODEL_REVISION,
+    });
   } finally {
     await rm(catalogDir, { recursive: true, force: true });
   }

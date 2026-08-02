@@ -232,7 +232,7 @@ jobs:
           echo "deb [signed-by=/usr/share/keyrings/cloudflare-warp.gpg] https://pkg.cloudflareclient.com/ $(lsb_release -cs) main" \
             | sudo tee /etc/apt/sources.list.d/cloudflare-client.list
           sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends cloudflare-warp
+          sudo apt-get install -y --no-install-recommends cloudflare-warp ffmpeg
           sudo systemctl enable --now warp-svc
           for _ in $(seq 1 20); do
             warp-cli --accept-tos status >/dev/null 2>&1 && break

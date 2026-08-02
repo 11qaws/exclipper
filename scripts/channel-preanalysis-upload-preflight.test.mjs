@@ -237,6 +237,10 @@ test("workflow gates WARP and media preparation behind preflight while manual ru
     );
   }
   assert.match(workflow, /Require review-ready Worker credentials/u);
+  assert.match(
+    workflow,
+    /apt-get install -y --no-install-recommends cloudflare-warp ffmpeg/u,
+  );
   assert.doesNotMatch(workflow, /"status": "disabled"/u);
   assert.match(workflow, /EXPECTED_BASE_SHA: \$\{\{ needs\.prepare\.outputs\.catalog_base_sha \}\}/u);
   assert.match(workflow, /include-hidden-files:\s*true/u);

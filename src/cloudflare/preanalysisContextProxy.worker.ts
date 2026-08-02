@@ -81,6 +81,8 @@ import {
 import {
   QWEN_CONTEXT_MODEL_ID,
   QWEN_CONTEXT_MODEL_REVISION,
+  QWEN_CONTEXT_OVERVIEW_FALLBACK_MODEL_ID,
+  QWEN_CONTEXT_OVERVIEW_FALLBACK_MODEL_REVISION,
   resolveCandidateInsightConnection,
   resolveBroadcastContextConnection,
   resolveBroadcastTranscriptConnection,
@@ -154,8 +156,8 @@ export const PREANALYSIS_CONTEXT_EXPECTED_MODEL_ID_HEADER =
   "X-ExClipper-Expected-Model-Id" as const;
 export const PREANALYSIS_CONTEXT_EXPECTED_MODEL_REVISION_HEADER =
   "X-ExClipper-Expected-Model-Revision" as const;
-export const PREANALYSIS_CONTEXT_PROXY_VERSION = "3.1.0" as const;
-export const PREANALYSIS_CONTEXT_OPERATION_GENERATION = 4 as const;
+export const PREANALYSIS_CONTEXT_PROXY_VERSION = "3.2.0" as const;
+export const PREANALYSIS_CONTEXT_OPERATION_GENERATION = 5 as const;
 export const PREANALYSIS_CONTEXT_EXPECTED_MODEL_ID = QWEN_CONTEXT_MODEL_ID;
 export const PREANALYSIS_CONTEXT_EXPECTED_MODEL_REVISION =
   QWEN_CONTEXT_MODEL_REVISION;
@@ -1146,23 +1148,17 @@ async function fetchWithTimeout<T>(
   }
 }
 
-async function attemptProvider(
+async function attemptProviderModel(
   connection: Exclude<
     BroadcastContextConnection,
     { readonly provider: "disabled" }
   >,
   request: BroadcastContextRequest,
+  modelId: string,
+  modelRevision: string,
   fetchImplementation: FetchImplementation,
   upstreamTimeoutMs: number,
 ): Promise<ProviderAttempt> {
-  const modelId =
-    connection.provider === "qwen"
-      ? QWEN_CONTEXT_MODEL_ID
-      : connection.descriptor.modelId;
-  const modelRevision =
-    connection.provider === "qwen"
-      ? QWEN_CONTEXT_MODEL_REVISION
-      : connection.descriptor.modelRevision;
   let body: string;
   try {
     body = JSON.stringify(
@@ -1274,6 +1270,40 @@ async function attemptProvider(
             ? extractBroadcastContextQwenOverviewResponse(payload, request)
             : extractBroadcastContextDeepseekResponse(payload, request);
         if (!parsed.ok) {
+          const choices: readonly unknown[] =
+            isRecord(payload) && Array.isArray(payload.choices)
+            ? payload.choices
+            : [];
+          const choice: unknown = choices[0] ?? null;
+          const message = isRecord(choice) && isRecord(choice.message)
+            ? choice.message
+            : null;
+          const content = message !== null && typeof message.content === "string"
+            ? message.content
+            : null;
+          let generatedJson = false;
+          let generatedKeys: readonly string[] = [];
+          if (content !== null) {
+            try {
+              const generated = JSON.parse(content) as unknown;
+              if (isRecord(generated)) {
+                generatedJson = true;
+                generatedKeys = Object.keys(generated).sort();
+              }
+            } catch {
+              // Log shape metadata only; captions and generated prose stay private.
+            }
+          }
+          console.warn("scheduled-context-invalid-response", {
+            modelId,
+            finishReason:
+              isRecord(choice) && typeof choice.finish_reason === "string"
+                ? choice.finish_reason.slice(0, 40)
+                : null,
+            contentLength: content?.length ?? null,
+            generatedJson,
+            generatedKeys,
+          });
           return {
             kind: "failure",
             response: errorResponse(
@@ -1305,6 +1335,63 @@ async function attemptProvider(
       possibleDuplicateProviderCharge: true,
     };
   }
+}
+
+function shouldUseScheduledContextFallback(attempt: ProviderAttempt): boolean {
+  return attempt.kind === "failure" && [
+    "UPSTREAM_INVALID_RESPONSE",
+    "UPSTREAM_MODEL_UNAVAILABLE",
+  ].includes(attempt.code);
+}
+
+async function attemptProvider(
+  connection: Exclude<
+    BroadcastContextConnection,
+    { readonly provider: "disabled" }
+  >,
+  request: BroadcastContextRequest,
+  fetchImplementation: FetchImplementation,
+  upstreamTimeoutMs: number,
+): Promise<ProviderAttempt> {
+  const primaryModelId = connection.provider === "qwen"
+    ? QWEN_CONTEXT_MODEL_ID
+    : connection.descriptor.modelId;
+  const primaryModelRevision = connection.provider === "qwen"
+    ? QWEN_CONTEXT_MODEL_REVISION
+    : connection.descriptor.modelRevision;
+  const primary = await attemptProviderModel(
+    connection,
+    request,
+    primaryModelId,
+    primaryModelRevision,
+    fetchImplementation,
+    upstreamTimeoutMs,
+  );
+  if (connection.provider !== "qwen" || !shouldUseScheduledContextFallback(primary)) {
+    return primary;
+  }
+  console.warn("scheduled-context-primary-fallback", {
+    primaryModelId,
+    primaryFailureCode: primary.kind === "failure" ? primary.code : null,
+    fallbackModelId: QWEN_CONTEXT_OVERVIEW_FALLBACK_MODEL_ID,
+  });
+  const fallback = await attemptProviderModel(
+    connection,
+    request,
+    QWEN_CONTEXT_OVERVIEW_FALLBACK_MODEL_ID,
+    QWEN_CONTEXT_OVERVIEW_FALLBACK_MODEL_REVISION,
+    fetchImplementation,
+    upstreamTimeoutMs,
+  );
+  if (fallback.kind === "failure" && primary.kind === "failure") {
+    return {
+      ...fallback,
+      possibleDuplicateProviderCharge:
+        primary.possibleDuplicateProviderCharge ||
+        fallback.possibleDuplicateProviderCharge,
+    };
+  }
+  return fallback;
 }
 
 function normalizedCandidatePayload(
@@ -1821,10 +1908,17 @@ function storedTerminalMatchesCurrentRequest(
         : PREANALYSIS_TRANSCRIPT_EXPECTED_MODEL_REVISION;
   const modelReceiptIsCurrent =
     scheduledRequest.kind === "context"
-      ? headers[PREANALYSIS_CONTEXT_MODEL_ID_HEADER] ===
-          PREANALYSIS_CONTEXT_EXPECTED_MODEL_ID &&
-        headers[PREANALYSIS_CONTEXT_MODEL_REVISION_HEADER] ===
-          PREANALYSIS_CONTEXT_EXPECTED_MODEL_REVISION
+      ? (
+          headers[PREANALYSIS_CONTEXT_MODEL_ID_HEADER] ===
+            PREANALYSIS_CONTEXT_EXPECTED_MODEL_ID &&
+          headers[PREANALYSIS_CONTEXT_MODEL_REVISION_HEADER] ===
+            PREANALYSIS_CONTEXT_EXPECTED_MODEL_REVISION
+        ) || (
+          headers[PREANALYSIS_CONTEXT_MODEL_ID_HEADER] ===
+            QWEN_CONTEXT_OVERVIEW_FALLBACK_MODEL_ID &&
+          headers[PREANALYSIS_CONTEXT_MODEL_REVISION_HEADER] ===
+            QWEN_CONTEXT_OVERVIEW_FALLBACK_MODEL_REVISION
+        )
       : scheduledRequest.kind === "candidate"
         ? candidateModelReceiptIsCurrent(
             headers[PREANALYSIS_CONTEXT_MODEL_ID_HEADER],

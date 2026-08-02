@@ -169,6 +169,25 @@ function rotatedSources(nowMs) {
   return rotateConfiguredSourcesForFairness(new Date(nowMs).toISOString());
 }
 
+function manifestHasClosedReview(manifest, videoId) {
+  if (
+    typeof manifest !== "object" ||
+    manifest === null ||
+    !Array.isArray(manifest.videos) ||
+    !Array.isArray(manifest.artifacts)
+  ) {
+    return false;
+  }
+  const video = manifest.videos.find(
+    (value) => value?.videoId === videoId && value?.state === "review-ready",
+  );
+  if (video === undefined || !Array.isArray(video.artifactIds)) return false;
+  const referenced = video.artifactIds.map((artifactId) =>
+    manifest.artifacts.find((artifact) => artifact?.artifactId === artifactId)
+  );
+  return referenced.filter((artifact) => artifact?.kind === "review").length === 1;
+}
+
 export async function runScheduledChannelPreanalysisReviews(
   options,
   dependencies = {},
@@ -182,6 +201,7 @@ export async function runScheduledChannelPreanalysisReviews(
   const sources = options.source === null ? rotatedSources(nowMs) : [options.source];
   const outcomes = [];
   const sourceErrors = [];
+  const verifiedManifests = new Map();
   let remaining = options.maxVideos;
   for (const source of sources) {
     if (remaining <= 0) break;
@@ -226,9 +246,13 @@ export async function runScheduledChannelPreanalysisReviews(
     }
     // A source-level operation may fail after writing a valid retry checkpoint.
     // Preserve it only after the same full artifact-closure verifier succeeds.
-    await verifySnapshot(join(options.catalogRoot, source.sourceId), source);
+    const verifiedManifest = await verifySnapshot(
+      join(options.catalogRoot, source.sourceId),
+      source,
+    );
+    verifiedManifests.set(source.sourceId, verifiedManifest);
   }
-  const reviewErrors = outcomes.flatMap(({ sourceId, outcomes: sourceOutcomes }) =>
+  const outcomeErrors = outcomes.flatMap(({ sourceId, outcomes: sourceOutcomes }) =>
     sourceOutcomes
       .filter(({ state }) => state !== "review-ready")
       .map((outcome) => ({
@@ -238,6 +262,27 @@ export async function runScheduledChannelPreanalysisReviews(
         errorCode: outcome.errorCode ?? "REVIEW_NOT_READY",
       })),
   );
+  const requestedVideoReady =
+    options.videoId === null || (
+      options.source !== null &&
+      manifestHasClosedReview(
+        verifiedManifests.get(options.source.sourceId),
+        options.videoId,
+      )
+    );
+  const requestedVideoAlreadyReported =
+    options.videoId !== null && outcomeErrors.some(
+      ({ videoId }) => videoId === options.videoId,
+    );
+  const requestedVideoErrors = requestedVideoReady || requestedVideoAlreadyReported
+    ? []
+    : [{
+        sourceId: options.source?.sourceId ?? "unknown",
+        videoId: options.videoId,
+        state: "retryable",
+        errorCode: "REQUESTED_VIDEO_NOT_REVIEW_READY",
+      }];
+  const reviewErrors = [...outcomeErrors, ...requestedVideoErrors];
   const sourceReports = outcomes.map(
     ({ sourceId, selectedVideoIds, outcomes: sourceOutcomes }) => ({
       sourceId,

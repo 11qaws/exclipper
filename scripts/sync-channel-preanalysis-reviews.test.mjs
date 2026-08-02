@@ -233,3 +233,119 @@ test("retryable review outcomes make the persisted run contract partial", async 
     errorCode: "CANDIDATE_PROVIDER_UNAVAILABLE",
   }]);
 });
+
+test("an exact video cannot report success before its context enters the review queue", async () => {
+  const result = await runScheduledChannelPreanalysisReviews(
+    {
+      source: AMORETTO_CHANNEL_PREANALYSIS_SOURCE,
+      videoId: "KzAW3yow80Q",
+      maxVideos: 1,
+      catalogRoot: "D:/catalog",
+      workRoot: "D:/work",
+      ytDlpPath: "yt-dlp-test",
+      ffmpegPath: "ffmpeg-test",
+      ffprobePath: "ffprobe-test",
+      candidateEndpoint:
+        "https://exclipper-preanalysis.example.workers.dev/v1/candidate-insights",
+      authorizationToken: TOKEN,
+    },
+    {
+      nowMs: Date.parse("2026-08-02T05:00:00.000Z"),
+      environment: { PATH: "bounded-path" },
+      verifySnapshot: async () => {},
+      runQueue: async () => ({ selectedVideoIds: [], outcomes: [] }),
+    },
+  );
+
+  assert.equal(result.status, "partial");
+  assert.equal(result.selectedVideoCount, 0);
+  assert.deepEqual(result.reviewErrors, [{
+    sourceId: "amoretto-vods",
+    videoId: "KzAW3yow80Q",
+    state: "retryable",
+    errorCode: "REQUESTED_VIDEO_NOT_REVIEW_READY",
+  }]);
+});
+
+test("an exact video already closed in the verified catalog succeeds without reprocessing", async () => {
+  const result = await runScheduledChannelPreanalysisReviews(
+    {
+      source: AMORETTO_CHANNEL_PREANALYSIS_SOURCE,
+      videoId: "KzAW3yow80Q",
+      maxVideos: 1,
+      catalogRoot: "D:/catalog",
+      workRoot: "D:/work",
+      ytDlpPath: "yt-dlp-test",
+      ffmpegPath: "ffmpeg-test",
+      ffprobePath: "ffprobe-test",
+      candidateEndpoint:
+        "https://exclipper-preanalysis.example.workers.dev/v1/candidate-insights",
+      authorizationToken: TOKEN,
+    },
+    {
+      nowMs: Date.parse("2026-08-02T05:00:00.000Z"),
+      environment: { PATH: "bounded-path" },
+      verifySnapshot: async () => ({
+        videos: [{
+          videoId: "KzAW3yow80Q",
+          state: "review-ready",
+          artifactIds: ["review-KzAW3yow80Q-r1"],
+        }],
+        artifacts: [{
+          artifactId: "review-KzAW3yow80Q-r1",
+          kind: "review",
+        }],
+      }),
+      runQueue: async () => ({ selectedVideoIds: [], outcomes: [] }),
+    },
+  );
+
+  assert.equal(result.status, "complete");
+  assert.equal(result.selectedVideoCount, 0);
+  assert.deepEqual(result.reviewErrors, []);
+});
+
+test("an optimistic queue result cannot bypass the verified exact review closure", async () => {
+  const result = await runScheduledChannelPreanalysisReviews(
+    {
+      source: AMORETTO_CHANNEL_PREANALYSIS_SOURCE,
+      videoId: "KzAW3yow80Q",
+      maxVideos: 1,
+      catalogRoot: "D:/catalog",
+      workRoot: "D:/work",
+      ytDlpPath: "yt-dlp-test",
+      ffmpegPath: "ffmpeg-test",
+      ffprobePath: "ffprobe-test",
+      candidateEndpoint:
+        "https://exclipper-preanalysis.example.workers.dev/v1/candidate-insights",
+      authorizationToken: TOKEN,
+    },
+    {
+      nowMs: Date.parse("2026-08-02T05:00:00.000Z"),
+      environment: { PATH: "bounded-path" },
+      verifySnapshot: async () => ({
+        videos: [{
+          videoId: "KzAW3yow80Q",
+          state: "context-ready",
+          artifactIds: [],
+        }],
+        artifacts: [],
+      }),
+      runQueue: async () => ({
+        selectedVideoIds: ["KzAW3yow80Q"],
+        outcomes: [{
+          state: "review-ready",
+          video: { videoId: "KzAW3yow80Q" },
+        }],
+      }),
+    },
+  );
+
+  assert.equal(result.status, "partial");
+  assert.deepEqual(result.reviewErrors, [{
+    sourceId: "amoretto-vods",
+    videoId: "KzAW3yow80Q",
+    state: "retryable",
+    errorCode: "REQUESTED_VIDEO_NOT_REVIEW_READY",
+  }]);
+});
