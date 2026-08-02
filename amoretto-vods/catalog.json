@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "channelId": "UCHycoTBFDhXz4XNz8jBP-_A",
   "channelHandle": "@AmorettoVODs",
-  "revision": 53,
-  "generatedAt": "2026-08-01T22:14:18.468Z",
+  "revision": 54,
+  "generatedAt": "2026-08-02T13:32:44.043Z",
   "videos": [
     {
       "channelId": "UCHycoTBFDhXz4XNz8jBP-_A",
@@ -86,8 +86,8 @@
       "publishedAt": "2026-07-17T15:23:47.000Z",
       "updatedAt": "2026-07-19T06:46:05.000Z",
       "watchUrl": "https://www.youtube.com/watch?v=KzAW3yow80Q",
-      "state": "transcript-ready",
-      "revision": 5,
+      "state": "retryable",
+      "revision": 6,
       "artifactIds": [
         "youtube-caption-bundle:KzAW3yow80Q:v1",
         "youtube-storyboard-visual-fingerprint:KzAW3yow80Q:v1"
@@ -98,7 +98,13 @@
           "registeredAt": "2026-07-29T18:47:47.704Z"
         }
       ],
-      "retry": null
+      "retry": {
+        "stage": "context",
+        "lastSuccessfulState": "transcript-ready",
+        "attemptCount": 1,
+        "nextAttemptAt": "2026-08-02T16:32:44.042Z",
+        "errorCode": "UPSTREAM_INVALID_RESPONSE"
+      }
     },
     {
       "channelId": "UCHycoTBFDhXz4XNz8jBP-_A",
