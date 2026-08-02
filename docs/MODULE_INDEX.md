@@ -75,6 +75,7 @@
 | `../scripts/lib/channel-preanalysis-review-candidate-client.mjs` | 후보 WAV·JPEG를 private R2에 stage하고 맥락을 전용 Worker로 보낸다. 만료 가능한 transport ticket과 고정 semantic operation을 분리해 409·429·5xx를 복구하며 실제 model receipt를 runner 계약으로 봉인한다. |
 | `../scripts/lib/channel-preanalysis-review-publisher.mjs` | 완전한 review bundle을 immutable write/readback한 뒤에만 catalog를 `review-ready`로 바꾸며 partial 결과는 `retryable(review)`로 남긴다. |
 | `../scripts/sync-channel-preanalysis-reviews.mjs` | 다섯 source의 전역 최대 2개 review queue, 안전한 yt-dlp 환경, 임시 media cleanup, 후보 Worker adapter와 최종 catalog closure 검증을 연결한다. |
+| `../scripts/activate-channel-preanalysis.ps1` | Groq·Qwen key를 보안 입력으로 받아 전용 Worker의 네 필수 secret과 코드를 원자 배포하고, GitHub Actions secret 연결 및 무과금 인증 probe를 수행한다. |
 | `app/PreparedReviewExperience.tsx` | exact `review-ready` artifact를 기존 검토 UI에 즉시 투영하고 편집자의 선택·경계 조정만 artifact digest별로 로컬 저장한다. |
 | `cloudflare/preanalysisContextProxy.worker.ts` | 예약 context·candidate·transcript 전용 Bearer/source fence와 operation Durable Object checkpoint를 소유한다. 무료 후보·전사 media는 Worker JS가 큰 본문을 읽지 않고 private R2 native checksum과 bounded header만 검증하며 provider key는 Worker Secret 밖으로 내보내지 않는다. |
 | `../wrangler.preanalysis-context.jsonc` | 전경 5인 Worker와 분리된 예약 Worker, Durable Object, context 4회/분·transcript 20회/분 limiter, free-R2 transport와 전용 secret 이름을 정의한다. |

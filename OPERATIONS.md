@@ -300,19 +300,26 @@ overview·주제·의미 lead의 seed로만 들어간다. 현재 로컬 후보�
 사용한 selection jury는 반드시 다시 실행되고, 후보 화면 4장·오디오·대표 썸네일
 receipt는 이후 Candidate Pass B에서 별도로 완성한다.
 
-배포 전 명령은 다음 순서로 사용한다. 실제 secret 값은 shell history·문서·Git에
-남기지 않는다.
+최초 활성화는 다음 순서로 사용한다. 실제 secret 값은 shell history·문서·Git에
+남기지 않는다. `-CheckOnly`는 인증과 로컬 선행 조건만 검사한다. 실제 실행은
+Groq·Qwen key를 보안 입력으로 받은 뒤 접근 권한을 현재 Windows 사용자로 제한한
+임시 파일을 사용해 Worker 코드와 네 필수 secret을 한 번에 배포한다. 이어서 같은
+bearer token과 전용 endpoint를 GitHub Actions secret으로 등록하고, AI 비용이 들지
+않는 HTTP 412 인증 probe까지 확인한다. 임시 파일은 성공·실패와 관계없이 삭제한다.
 
-```bash
-npx wrangler deploy --config wrangler.preanalysis-context.jsonc --dry-run
-npx wrangler secret put PREANALYSIS_CONTEXT_TOKEN \
-  --config wrangler.preanalysis-context.jsonc
-npx wrangler secret put PREANALYSIS_QWEN_API_KEY \
-  --config wrangler.preanalysis-context.jsonc
-npx wrangler secret put PREANALYSIS_GROQ_API_KEY \
-  --config wrangler.preanalysis-context.jsonc
-npx wrangler deploy --config wrangler.preanalysis-context.jsonc
+```powershell
+powershell -NoProfile -File scripts/activate-channel-preanalysis.ps1 -CheckOnly
+powershell -NoProfile -File scripts/activate-channel-preanalysis.ps1
+powershell -NoProfile -File scripts/activate-channel-preanalysis.ps1 -UseSavedCredentials
 ```
+
+`-UseSavedCredentials`는 `%LOCALAPPDATA%\ExClipper\activation`에 현재 Windows
+사용자의 DPAPI로 암호화해 둔 `groq.dpapi`·`qwen.dpapi`를 사용한다. Worker 배포,
+GitHub secret 등록, 인증 probe가 모두 성공한 경우에만 두 암호문을 삭제한다.
+
+활성화 뒤에는 `main`을 배포하고 `channel-preanalysis.yml`을 영상 한 건으로 수동
+실행해 Qwen·Groq·R2·Durable Object·`review-ready` 게시를 실제로 검증한다. secret
+이름이 존재한다는 사실만으로 provider key의 유효성까지 검증됐다고 보지 않는다.
 
 ### 최초 branch seed 배포 차단점
 
