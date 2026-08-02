@@ -490,6 +490,39 @@ function createCommandRunner() {
     if (arguments_.length === 1 && arguments_[0] === "--version") {
       return { stdout: `${PINNED_YT_DLP_VERSION}\n`, stderr: "" };
     }
+    if (arguments_.includes("--write-auto-subs")) {
+      const pathsIndex = arguments_.indexOf("--paths");
+      assert.notEqual(pathsIndex, -1);
+      const outputDirectory = arguments_[pathsIndex + 1];
+      await writeFile(
+        join(outputDirectory, `${VIDEO_ID}.ko-orig.json3`),
+        JSON.stringify({
+          events: [
+            {
+              tStartMs: 1_000,
+              dDurationMs: 2_000,
+              segs: [{ utf8: "칼국수 이야기를 시작합니다." }],
+            },
+          ],
+        }),
+        "utf8",
+      );
+      return {
+        stdout: JSON.stringify({
+          id: VIDEO_ID,
+          channel_id: AMORETTO_YOUTUBE_CHANNEL_ID,
+          availability: "public",
+          live_status: "not_live",
+          title: SOURCE.title,
+          duration: SOURCE.durationMs / 1_000,
+          subtitles: {},
+          automatic_captions: {
+            "ko-orig": [{ ext: "json3" }],
+          },
+        }),
+        stderr: "",
+      };
+    }
     if (arguments_.includes("--dump-single-json")) {
       return {
         stdout: JSON.stringify({
@@ -515,22 +548,6 @@ function createCommandRunner() {
         stderr: "",
       };
     }
-    const pathsIndex = arguments_.indexOf("--paths");
-    assert.notEqual(pathsIndex, -1);
-    const outputDirectory = arguments_[pathsIndex + 1];
-    await writeFile(
-      join(outputDirectory, `${VIDEO_ID}.ko-orig.json3`),
-      JSON.stringify({
-        events: [
-          {
-            tStartMs: 1_000,
-            dDurationMs: 2_000,
-            segs: [{ utf8: "칼국수 이야기를 시작합니다." }],
-          },
-        ],
-      }),
-      "utf8",
-    );
-    return { stdout: "", stderr: "" };
+    throw new Error(`Unexpected yt-dlp arguments: ${arguments_.join(" ")}`);
   };
 }

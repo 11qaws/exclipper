@@ -160,8 +160,11 @@ Cloudflare WARP 출구의 평판이며, 그것은 한도가 아니라 상관 장
   따라서 실행 누락은 영상 terminal 실패가 아니며 다음 feed reconciliation에서
   다시 발견한다.
 - `yt-dlp`는 workflow에서 고정 release와 SHA-256을 검증한 실행 파일만 사용한다.
-  공개 한국어 수동 자막(`ko`)을 우선하고 없으면 자동 자막(`ko-orig`)을 JSON3로
-  받아 기존 strict parser로 정규화한다. 둘 다 없거나 일시 차단되면 해당 영상만
+  공개 한국어 수동 자막(`ko`)을 우선하고 없으면 자동 자막을 JSON3로 받는다. 출처는
+  `.ko` 파일명으로 추측하지 않고 같은 호출의 `subtitles`/`automatic_captions`
+  metadata로 확정한다. YouTube 자막 시계가 원본 끝을 넘으면 재생 가능한 마지막 cue만
+  원본 끝으로 줄이고 원본 밖에서 시작한 cue만 제외한 뒤 digest를 만든다. 저장 bundle의
+  strict validator는 그대로 유지한다. 둘 다 없거나 일시 차단되면 해당 영상만
   `retryable`로 남긴다.
   Atom body는 `Content-Length` 유무와 관계없이 512KiB에서 streaming 중단하고,
   JSON3 임시 파일은 regular file·32MiB 상한을 통과한 뒤 bounded stream으로 읽는다.
@@ -215,8 +218,11 @@ Cloudflare WARP 출구의 평판이며, 그것은 한도가 아니라 상관 장
   coverage, offset 0, median distance 4.5, p90 10으로 합격했다. 같은 길이로
   강제한 다른 방송 `EZfCGS5ms_Q`는 0/12로 거부됐다. 이 실측은 현재 기준의
   회귀 fixture이며 특정 음식 장면의 의미를 학습한 규칙은 아니다.
-- 공개 한국어 수동/자동 자막이 둘 다 없는 VOD는 예약 runner가 90초 단위 16kHz
-  mono PCM16 WAV로 추출해 선분석한다. raw WAV는 전용 Worker JavaScript가 읽거나
+- 공개 한국어 수동/자동 자막이 둘 다 없는 VOD는 예약 runner가 64kbps 이하 오디오를
+  우선 다운로드하고 90초 단위 16kHz mono PCM16 WAV로 추출해 선분석한다. yt-dlp의
+  일반·fragment·extractor·file-access 재시도는 각각 3회로 제한한다. 모두 실패하면
+  redaction된 하위 원인 코드와 기존 checkpoint를 보존해 다음 실행이 같은 stage부터
+  이어 간다. raw WAV는 전용 Worker JavaScript가 읽거나
   해시하지 않고 private R2에 stream upload되며, R2 native SHA-256과 44-byte header
   range만 검증한 뒤 signed capability URL을 Groq Whisper Large V3 Turbo에 전달한다.
   성공한 각 구간은 `<catalog>/.transcript-checkpoints/<videoId>.asr.v2.json`에 즉시

@@ -10,10 +10,12 @@ import {
   BROADCAST_TRANSCRIPT_QWEN_SCHEMA_VERSION,
 } from "../../src/analysis/broadcastTranscriptQwen.ts";
 import {
+  ChannelPreanalysisScheduledAsrError,
   encodeScheduledAsrPcm16Wav,
   prepareScheduledAsrCaptionTrack,
   removeScheduledAsrCheckpoint,
 } from "./channel-preanalysis-scheduled-asr.mjs";
+import { ChannelPreanalysisMediaError } from "./channel-preanalysis-media.mjs";
 
 const INPUT = {
   sourceId: "amoretto-vods",
@@ -196,6 +198,53 @@ test("only high-confidence Whisper no-speech segments are removed", async () => 
         text: "애매하면 이 대사는 보존합니다",
       },
     ]);
+  } finally {
+    await rm(catalogDir, { recursive: true, force: true });
+  }
+});
+
+test("scheduled ASR downloads low-bandwidth audio with bounded retries and preserves safe diagnostics", async () => {
+  const catalogDir = await mkdtemp(join(tmpdir(), "exclipper-asr-download-"));
+  let commandArguments = null;
+  const mediaFailure = new ChannelPreanalysisMediaError(
+    "PROCESS_FAILED",
+    "The process failed (1): Sign in to confirm you're not a bot. " +
+      "https://www.youtube.com/watch?v=abcdefghijk&token=super-secret-query " +
+      "opaque_123456789012345678901234567890",
+  );
+  try {
+    await assert.rejects(
+      prepareScheduledAsrCaptionTrack(
+        { ...INPUT, durationMs: 90_000, catalogDir },
+        {
+          ytDlpPath: "pinned-yt-dlp",
+          commandRunner: async (_command, arguments_) => {
+            commandArguments = arguments_;
+            throw mediaFailure;
+          },
+        },
+      ),
+      (error) => {
+        assert.ok(error instanceof ChannelPreanalysisScheduledAsrError);
+        assert.equal(error.code, "ASR_DOWNLOAD_PROCESS_FAILED");
+        assert.equal(error.cause, mediaFailure);
+        assert.match(error.message, /Sign in to confirm you're not a bot/u);
+        assert.match(error.message, /\?\[redacted\]/u);
+        assert.doesNotMatch(error.message, /super-secret-query|opaque_/u);
+        return true;
+      },
+    );
+
+    assert.notEqual(commandArguments, null);
+    const valueAfter = (flag) => commandArguments[commandArguments.indexOf(flag) + 1];
+    assert.equal(
+      valueAfter("--format"),
+      "bestaudio[abr<=64]/worstaudio[acodec!=none]/bestaudio/best",
+    );
+    assert.equal(valueAfter("--retries"), "3");
+    assert.equal(valueAfter("--fragment-retries"), "3");
+    assert.equal(valueAfter("--extractor-retries"), "3");
+    assert.equal(valueAfter("--file-access-retries"), "3");
   } finally {
     await rm(catalogDir, { recursive: true, force: true });
   }

@@ -33,6 +33,7 @@ import {
   CHANNEL_PREANALYSIS_MANIFEST_MAX_BYTES as CLIENT_MANIFEST_MAX_BYTES,
   parseChannelPreanalysisManifest,
 } from "../src/analysis/channelPreanalysisClient.ts";
+import { verifyChannelPreanalysisTranscriptDigest } from "../src/analysis/channelPreanalysisBundle.ts";
 import {
   createChannelPreanalysisVisualAnchorDescriptor,
   createChannelPreanalysisVisualFingerprint,
@@ -107,6 +108,26 @@ function video(overrides = {}) {
     registeredLocalSampledFingerprints: [],
     retry: null,
     ...overrides,
+  };
+}
+
+function ytDlpCaptionMetadata(
+  source,
+  { manualKorean = false, automaticOriginalKorean = true, automaticKorean = true } = {},
+) {
+  const json3 = [{ ext: "json3", url: "https://captions.example/track" }];
+  return {
+    id: source.videoId,
+    channel_id: source.channelId,
+    title: source.title,
+    duration: source.durationMs / 1_000,
+    availability: "public",
+    live_status: "not_live",
+    subtitles: manualKorean ? { ko: json3 } : {},
+    automatic_captions: {
+      ...(automaticOriginalKorean ? { "ko-orig": json3 } : {}),
+      ...(automaticKorean ? { ko: json3 } : {}),
+    },
   };
 }
 
@@ -1190,6 +1211,69 @@ test("strict transcript bundle is complete, contiguous, and honestly stops befor
   assert.match(artifact.contentDigest, /^sha256:[0-9a-f]{64}$/u);
 });
 
+test("transcript production clamps a trailing cue and drops cues outside the source before hashing", async () => {
+  const source = video({ durationMs: 10_000, state: "metadata-ready" });
+  const bundle = await createTranscriptReadyBundle({
+    video: source,
+    catalogRevision: 8,
+    extractedAt: BASE_TIME,
+    captionJson: {
+      events: [
+        {
+          tStartMs: 1_000,
+          dDurationMs: 2_000,
+          segs: [{ utf8: "정상 대사" }],
+        },
+        {
+          tStartMs: 9_500,
+          dDurationMs: 2_000,
+          segs: [{ utf8: "영상 끝까지 이어지는 대사" }],
+        },
+        {
+          tStartMs: 10_080,
+          dDurationMs: 2_079,
+          segs: [{ utf8: "재생 범위 밖 대사" }],
+        },
+      ],
+    },
+  });
+
+  assert.deepEqual(bundle.captionTrack.events, [
+    { startMs: 1_000, durationMs: 2_000, text: "정상 대사" },
+    { startMs: 9_500, durationMs: 500, text: "영상 끝까지 이어지는 대사" },
+  ]);
+  assert.ok(
+    bundle.captionTrack.events.every(
+      (event) => event.startMs + event.durationMs <= source.durationMs,
+    ),
+  );
+  assert.ok(bundle.chapters.length > 0);
+  assert.equal(bundle.chapters.at(-1)?.endMs, source.durationMs);
+  await verifyChannelPreanalysisTranscriptDigest(bundle);
+});
+
+test("transcript production rejects a caption track with no playable cues", async () => {
+  const source = video({ durationMs: 10_000, state: "metadata-ready" });
+
+  await assert.rejects(
+    createTranscriptReadyBundle({
+      video: source,
+      catalogRevision: 8,
+      extractedAt: BASE_TIME,
+      captionJson: {
+        events: [
+          {
+            tStartMs: 10_080,
+            dDurationMs: 2_079,
+            segs: [{ utf8: "재생 범위 밖 대사" }],
+          },
+        ],
+      },
+    }),
+    (error) => error?.code === "KOREAN_CAPTION_EMPTY",
+  );
+});
+
 test("context promotion is transcript-only provenance and never claims local visual verification", async () => {
   const source = video({ durationMs: 240_000, state: "metadata-ready" });
   const transcriptBundle = await createTranscriptReadyBundle({
@@ -1661,7 +1745,10 @@ test("a corrupt orphan bundle is rebuilt and published in the same invocation", 
             }),
             "utf8",
           );
-          return { stdout: "", stderr: "" };
+          return {
+            stdout: JSON.stringify(ytDlpCaptionMetadata(source)),
+            stderr: "",
+          };
         },
         visualFingerprintProvider: async ({ video: currentVideo }) =>
           testVisualFingerprintForVideo(currentVideo),
@@ -1775,7 +1862,10 @@ test("an oversized sparse caption file becomes a bounded retry checkpoint", asyn
           } finally {
             await handle.close();
           }
-          return { stdout: "", stderr: "" };
+          return {
+            stdout: JSON.stringify(ytDlpCaptionMetadata(source)),
+            stderr: "",
+          };
         },
         visualFingerprintProvider: async ({ video: currentVideo }) =>
           testVisualFingerprintForVideo(currentVideo),
@@ -1854,7 +1944,14 @@ test("scheduled extraction prefers manual ko over automatic ko-orig", async () =
             captionJson("직접 작성한 자막"),
             "utf8",
           );
-          return { stdout: "", stderr: "" };
+          assert.notEqual(arguments_.indexOf("--dump-single-json"), -1);
+          assert.notEqual(arguments_.indexOf("--no-simulate"), -1);
+          return {
+            stdout: JSON.stringify(
+              ytDlpCaptionMetadata(source, { manualKorean: true }),
+            ),
+            stderr: "",
+          };
         },
         visualFingerprintProvider: async ({ video: currentVideo }) =>
           testVisualFingerprintForVideo(currentVideo),
@@ -1872,6 +1969,84 @@ test("scheduled extraction prefers manual ko over automatic ko-orig", async () =
     assert.equal(bundle.captionTrack.languageCode, "ko");
     assert.equal(bundle.captionTrack.isAutoGenerated, false);
     assert.equal(bundle.captionTrack.events[0]?.text, "직접 작성한 자막");
+  } finally {
+    await rm(catalogDir, { recursive: true, force: true });
+  }
+});
+
+test("scheduled extraction records duplicated ko aliases as automatic when metadata says ASR", async () => {
+  const catalogDir = await mkdtemp(
+    join(tmpdir(), "exclipper-auto-caption-provenance-"),
+  );
+  try {
+    const source = video({ durationMs: 240_000, state: "metadata-ready" });
+    await mkdir(join(catalogDir, "videos"), { recursive: true });
+    await writeFile(
+      join(catalogDir, "catalog.json"),
+      `${JSON.stringify(manifest([source]), null, 2)}\n`,
+      "utf8",
+    );
+    const captionJson = JSON.stringify({
+      events: [
+        {
+          tStartMs: 1_000,
+          dDurationMs: 2_000,
+          segs: [{ utf8: "자동 생성 자막" }],
+        },
+      ],
+    });
+
+    const result = await synchronizeAmorettoCatalog(
+      {
+        catalogDir,
+        ytDlpPath: "test-path-yt-dlp",
+        maxVideos: 1,
+        videoId: null,
+      },
+      {
+        now: () => new Date(BASE_TIME),
+        fetch: async () =>
+          new Response(atomFeedFor(source), {
+            status: 200,
+            headers: { "content-type": "application/atom+xml; charset=utf-8" },
+          }),
+        commandRunner: async (_command, arguments_) => {
+          if (arguments_.length === 1 && arguments_[0] === "--version") {
+            return { stdout: `${PINNED_YT_DLP_VERSION}\n`, stderr: "" };
+          }
+          const pathsIndex = arguments_.indexOf("--paths");
+          const outputDirectory = arguments_[pathsIndex + 1];
+          await writeFile(
+            join(outputDirectory, `${source.videoId}.ko-orig.json3`),
+            captionJson,
+            "utf8",
+          );
+          await writeFile(
+            join(outputDirectory, `${source.videoId}.ko.json3`),
+            captionJson,
+            "utf8",
+          );
+          return {
+            stdout: JSON.stringify(ytDlpCaptionMetadata(source)),
+            stderr: "",
+          };
+        },
+        visualFingerprintProvider: async ({ video: currentVideo }) =>
+          testVisualFingerprintForVideo(currentVideo),
+        log: { info() {}, warn() {} },
+      },
+    );
+
+    assert.equal(result.outcomes[0]?.state, "transcript-ready");
+    const bundle = JSON.parse(
+      await readFile(
+        join(catalogDir, "videos", `${source.videoId}.v1.json`),
+        "utf8",
+      ),
+    );
+    assert.equal(bundle.captionTrack.languageCode, "ko-orig");
+    assert.equal(bundle.captionTrack.isAutoGenerated, true);
+    assert.equal(bundle.captionTrack.events[0]?.text, "자동 생성 자막");
   } finally {
     await rm(catalogDir, { recursive: true, force: true });
   }
@@ -1931,7 +2106,15 @@ test("captionless uploads fall back to checkpointed scheduled ASR and reach cont
             return { stdout: `${PINNED_YT_DLP_VERSION}\n`, stderr: "" };
           }
           assert.notEqual(arguments_.indexOf("--write-auto-subs"), -1);
-          return { stdout: "", stderr: "" };
+          return {
+            stdout: JSON.stringify(
+              ytDlpCaptionMetadata(source, {
+                automaticOriginalKorean: false,
+                automaticKorean: false,
+              }),
+            ),
+            stderr: "",
+          };
         },
         scheduledAsrProvider: async (input) => {
           asrCalls += 1;

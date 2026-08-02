@@ -35,7 +35,10 @@ import {
   PREANALYSIS_TRANSCRIPT_VIDEO_ID_HEADER,
   createPreanalysisTranscriptOperationId,
 } from "../../src/cloudflare/preanalysisContextProxy.worker.ts";
-import { runBoundedMediaCommand } from "./channel-preanalysis-media.mjs";
+import {
+  ChannelPreanalysisMediaError,
+  runBoundedMediaCommand,
+} from "./channel-preanalysis-media.mjs";
 
 export const SCHEDULED_ASR_CHUNK_DURATION_MS = 90_000;
 export const SCHEDULED_ASR_CHECKPOINT_SCHEMA_VERSION = 2;
@@ -52,6 +55,9 @@ const MEDIA_DOWNLOAD_TIMEOUT_MS = 45 * 60_000;
 const CHUNK_EXTRACTION_TIMEOUT_MS = 2 * 60_000;
 const REQUEST_TIMEOUT_MS = 2 * 60_000;
 const MAX_RESOLVE_ATTEMPTS = 6;
+const SCHEDULED_ASR_AUDIO_FORMAT =
+  "bestaudio[abr<=64]/worstaudio[acodec!=none]/bestaudio/best";
+const YT_DLP_RETRY_COUNT = "3";
 const VIDEO_ID_PATTERN = /^[A-Za-z0-9_-]{11}$/u;
 const SOURCE_ID_PATTERN = /^[a-z0-9-]{3,64}$/u;
 
@@ -65,6 +71,33 @@ export class ChannelPreanalysisScheduledAsrError extends Error {
 
 function asrError(code, message, cause) {
   return new ChannelPreanalysisScheduledAsrError(code, message, cause);
+}
+
+function scheduledAsrDownloadError(cause) {
+  if (!(cause instanceof ChannelPreanalysisMediaError)) {
+    return asrError(
+      "ASR_DOWNLOAD_FAILED",
+      "Scheduled ASR audio download failed.",
+      cause,
+    );
+  }
+  const mediaCode = /^[A-Z][A-Z0-9_]{0,39}$/u.test(cause.code)
+    ? cause.code
+    : "MEDIA_FAILED";
+  const diagnostic = cause.message
+    .replace(/[\p{Cc}\p{Cf}]+/gu, " ")
+    .replace(/(https?:\/\/[^\s?#]+)[?#][^\s]*/giu, "$1?[redacted]")
+    .replace(/[A-Za-z0-9_-]{24,}/gu, "[redacted]")
+    .replace(/\s+/gu, " ")
+    .trim()
+    .slice(0, 300);
+  return asrError(
+    `ASR_DOWNLOAD_${mediaCode}`,
+    diagnostic === ""
+      ? "Scheduled ASR audio download failed."
+      : `Scheduled ASR audio download failed: ${diagnostic}`,
+    cause,
+  );
 }
 
 function isRecord(value) {
@@ -274,8 +307,16 @@ async function downloadAudio(video, options) {
         "--no-playlist",
         "--no-progress",
         "--no-mtime",
+        "--retries",
+        YT_DLP_RETRY_COUNT,
+        "--fragment-retries",
+        YT_DLP_RETRY_COUNT,
+        "--extractor-retries",
+        YT_DLP_RETRY_COUNT,
+        "--file-access-retries",
+        YT_DLP_RETRY_COUNT,
         "--format",
-        "bestaudio/best",
+        SCHEDULED_ASR_AUDIO_FORMAT,
         "--max-filesize",
         String(MAX_AUDIO_DOWNLOAD_BYTES),
         "--print",
@@ -316,7 +357,7 @@ async function downloadAudio(video, options) {
   } catch (cause) {
     await rm(directory, { recursive: true, force: true });
     if (cause instanceof ChannelPreanalysisScheduledAsrError) throw cause;
-    throw asrError("ASR_DOWNLOAD_FAILED", "Scheduled ASR audio download failed.", cause);
+    throw scheduledAsrDownloadError(cause);
   }
 }
 

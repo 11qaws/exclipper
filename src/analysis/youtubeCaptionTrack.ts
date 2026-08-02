@@ -402,3 +402,26 @@ export function parseYouTubeCaptionJson3(
     events,
   };
 }
+
+/**
+ * YouTube's metadata duration and its JSON3 caption clock occasionally differ
+ * by a few seconds at the end of a VOD. Keep every playable cue, clamp the one
+ * crossing the media boundary, and discard cues that start after playback has
+ * already ended. The persisted bundle validator remains strict, so this is the
+ * single producer-side normalization boundary before transcript hashing.
+ */
+export function boundYouTubeCaptionTrackToDuration(
+  track: YouTubeCaptionTrackResult,
+  sourceDurationMs: number,
+): YouTubeCaptionTrackResult | null {
+  if (!Number.isSafeInteger(sourceDurationMs) || sourceDurationMs <= 0) {
+    return null;
+  }
+  const events = track.events
+    .filter((event) => event.startMs < sourceDurationMs)
+    .map((event) => ({
+      ...event,
+      durationMs: Math.min(event.durationMs, sourceDurationMs - event.startMs),
+    }));
+  return events.length === 0 ? null : { ...track, events };
+}
