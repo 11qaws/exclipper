@@ -2,23 +2,31 @@
   "schemaVersion": 1,
   "channelId": "UC_hftLL-ydsJd1YpcBZ_09g",
   "channelHandle": "@망징-b1t",
-  "revision": 2,
-  "generatedAt": "2026-08-02T13:58:01.305Z",
+  "revision": 6,
+  "generatedAt": "2026-08-02T21:14:30.968Z",
   "videos": [
     {
       "channelId": "UC_hftLL-ydsJd1YpcBZ_09g",
       "videoId": "I4LeuyItmTU",
       "title": "{림버스 컴퍼니} 3.5장 헬스 치킨 풀버전 리액션 몰아보기",
       "normalizedTitle": "림버스 컴퍼니 3 5장 헬스 치킨 풀버전 리액션 몰아보기",
-      "durationMs": null,
+      "durationMs": 20795000,
       "publishedAt": "2026-07-27T08:45:36.000Z",
       "updatedAt": "2026-07-29T23:28:22.000Z",
       "watchUrl": "https://www.youtube.com/watch?v=I4LeuyItmTU",
-      "state": "discovered",
-      "revision": 1,
-      "artifactIds": [],
+      "state": "retryable",
+      "revision": 5,
+      "artifactIds": [
+        "youtube-caption-bundle:I4LeuyItmTU:v2"
+      ],
       "registeredLocalSampledFingerprints": [],
-      "retry": null
+      "retry": {
+        "stage": "fingerprint",
+        "lastSuccessfulState": "context-ready",
+        "attemptCount": 1,
+        "nextAttemptAt": "2026-08-03T00:14:30.968Z",
+        "errorCode": "FINGERPRINT_STORYBOARD_DECODE"
+      }
     },
     {
       "channelId": "UC_hftLL-ydsJd1YpcBZ_09g",
@@ -231,5 +239,16 @@
       "retry": null
     }
   ],
-  "artifacts": []
+  "artifacts": [
+    {
+      "artifactId": "youtube-caption-bundle:I4LeuyItmTU:v2",
+      "videoId": "I4LeuyItmTU",
+      "kind": "transcript",
+      "revision": 2,
+      "storageKey": "mangjing-compilations/videos/I4LeuyItmTU.v2.json",
+      "contentDigest": "sha256:708880507e548f22c8870ac86bd555fa6754c683734899e5c3b62a278a46c83f",
+      "byteLength": 1098770,
+      "createdAt": "2026-08-02T21:14:30.546Z"
+    }
+  ]
 }

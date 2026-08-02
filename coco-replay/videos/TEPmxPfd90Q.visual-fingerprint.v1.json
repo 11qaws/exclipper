@@ -1,0 +1,93 @@
+{
+  "schemaVersion": "1.0.0",
+  "algorithm": "luma-dhash-blockhash-64-v1",
+  "videoId": "TEPmxPfd90Q",
+  "sourceDurationMs": 9456000,
+  "createdAt": "2026-07-12T20:13:52.000Z",
+  "anchors": [
+    {
+      "timestampMs": 728921,
+      "dHash64": "164f4f070b23234f",
+      "blockHash64": "0018183c1e3efffe",
+      "meanLuma": 206,
+      "edgeEnergy": 12
+    },
+    {
+      "timestampMs": 1447856,
+      "dHash64": "1e1f1f571f571f67",
+      "blockHash64": "3038fcfc78787878",
+      "meanLuma": 175,
+      "edgeEnergy": 18
+    },
+    {
+      "timestampMs": 2186762,
+      "dHash64": "0e4f0f230b2b0b73",
+      "blockHash64": "001818361e7efffe",
+      "meanLuma": 206,
+      "edgeEnergy": 13
+    },
+    {
+      "timestampMs": 2905698,
+      "dHash64": "0e4f4f230b2b0b73",
+      "blockHash64": "101818b41e7effe6",
+      "meanLuma": 205,
+      "edgeEnergy": 13
+    },
+    {
+      "timestampMs": 3634619,
+      "dHash64": "0e4f0f2b0b2b0b33",
+      "blockHash64": "181818fc1e7e7f66",
+      "meanLuma": 203,
+      "edgeEnergy": 14
+    },
+    {
+      "timestampMs": 4363540,
+      "dHash64": "0e0f1f2b0b2b0b33",
+      "blockHash64": "1018387c1e7e7f66",
+      "meanLuma": 202,
+      "edgeEnergy": 14
+    },
+    {
+      "timestampMs": 5092460,
+      "dHash64": "0e0f1f2b0f2b0b33",
+      "blockHash64": "1018387e1e3e7f66",
+      "meanLuma": 202,
+      "edgeEnergy": 14
+    },
+    {
+      "timestampMs": 5821381,
+      "dHash64": "4e0f0f230b2b0b33",
+      "blockHash64": "1018387e1e3e7f66",
+      "meanLuma": 202,
+      "edgeEnergy": 14
+    },
+    {
+      "timestampMs": 6550302,
+      "dHash64": "4e0f172b2b2b0f33",
+      "blockHash64": "1818387e3e3e3f26",
+      "meanLuma": 203,
+      "edgeEnergy": 14
+    },
+    {
+      "timestampMs": 7269238,
+      "dHash64": "4e0f0f270b230b33",
+      "blockHash64": "1018387e3e7e7f6e",
+      "meanLuma": 204,
+      "edgeEnergy": 14
+    },
+    {
+      "timestampMs": 7998158,
+      "dHash64": "4e4f0f270b230b33",
+      "blockHash64": "101838fe3e7e7f6e",
+      "meanLuma": 203,
+      "edgeEnergy": 14
+    },
+    {
+      "timestampMs": 8727079,
+      "dHash64": "0e0f0f8f0b2b0b33",
+      "blockHash64": "101838b43e7e7f66",
+      "meanLuma": 204,
+      "edgeEnergy": 14
+    }
+  ]
+}
