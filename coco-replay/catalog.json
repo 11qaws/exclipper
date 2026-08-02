@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "channelId": "UCgq07mhOmrjVeZeJYXiAClw",
   "channelHandle": "@kokotorori",
-  "revision": 10,
-  "generatedAt": "2026-08-02T19:15:22.426Z",
+  "revision": 11,
+  "generatedAt": "2026-08-02T19:26:18.652Z",
   "videos": [
     {
       "channelId": "UCgq07mhOmrjVeZeJYXiAClw",
@@ -14,20 +14,15 @@
       "publishedAt": "2026-05-25T23:38:12.000Z",
       "updatedAt": "2026-06-24T17:50:08.000Z",
       "watchUrl": "https://www.youtube.com/watch?v=o4cpTovEjMw",
-      "state": "retryable",
+      "state": "review-ready",
       "revision": 8,
       "artifactIds": [
         "youtube-caption-bundle:o4cpTovEjMw:v2",
-        "youtube-storyboard-visual-fingerprint:o4cpTovEjMw:v1"
+        "youtube-storyboard-visual-fingerprint:o4cpTovEjMw:v1",
+        "review-bundle:o4cpTovEjMw:v8"
       ],
       "registeredLocalSampledFingerprints": [],
-      "retry": {
-        "stage": "review",
-        "lastSuccessfulState": "context-ready",
-        "attemptCount": 1,
-        "nextAttemptAt": "2026-08-02T22:15:22.426Z",
-        "errorCode": "PROCESS_FAILED"
-      }
+      "retry": null
     },
     {
       "channelId": "UCgq07mhOmrjVeZeJYXiAClw",
@@ -266,6 +261,16 @@
       "contentDigest": "sha256:bfea05d7ce8d0ab2b442cd42417d51867b58639473311a8881ddfb89f8050429",
       "byteLength": 2199,
       "createdAt": "2026-06-24T17:50:08.000Z"
+    },
+    {
+      "artifactId": "review-bundle:o4cpTovEjMw:v8",
+      "videoId": "o4cpTovEjMw",
+      "kind": "review",
+      "revision": 8,
+      "storageKey": "coco-replay/videos/o4cpTovEjMw.review.v8.json",
+      "contentDigest": "sha256:5bf216205873958a8353f1af1a6712a86bbfc72b7b3d931cfaa7747206979221",
+      "byteLength": 2304557,
+      "createdAt": "2026-08-02T19:21:39.161Z"
     }
   ]
 }
