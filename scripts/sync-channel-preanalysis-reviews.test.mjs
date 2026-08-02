@@ -222,6 +222,7 @@ test("retryable review outcomes make the persisted run contract partial", async 
         outcomes: [{
           state: "retryable",
           errorCode: "CANDIDATE_PROVIDER_UNAVAILABLE",
+          diagnostic: "failed https://example.test/media?token=private token=secret-value",
           video: { videoId: "KzAW3yow80Q" },
         }],
       }),
@@ -234,7 +235,12 @@ test("retryable review outcomes make the persisted run contract partial", async 
     videoId: "KzAW3yow80Q",
     state: "retryable",
     errorCode: "CANDIDATE_PROVIDER_UNAVAILABLE",
+    diagnostic: "failed [redacted-url] token=[redacted]",
   }]);
+  assert.equal(
+    result.outcomes[0].outcomes[0].diagnostic,
+    "failed [redacted-url] token=[redacted]",
+  );
 });
 
 test("an exact video cannot report success before its context enters the review queue", async () => {

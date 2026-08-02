@@ -3191,6 +3191,15 @@ PassB가 정상 동작해도 `context-missing` 6개는 남는다. 대사 텍스�
   Sena `U1k8DjM0EN8` 실측 선택은 format 139, 48.782kbps, 약 76.8MB였다. yt-dlp의 일반·fragment·
   extractor·file-access 재시도는 각각 3회이며, 최종 실패는 redaction된 하위 media code와 원인을
   보존해 catalog checkpoint가 다음 실행에서 같은 transcript stage를 이어 간다.
+- **검토 미디어 복구:** 480p 검토 사본의 yt-dlp 다운로드에도 네 재시도를 각각 3회 적용했다.
+  봇 차단은 `YOUTUBE_BOTWALL`로 분류하고 URL·authorization·cookie·key·token을 제거한 500자 이하
+  진단만 transient run report에 남긴다. 영구 catalog retry checkpoint는 기존 code-only 스키마를
+  유지한다.
+- **Coco 운영 폐쇄:** 동일 commit의 첫 실행은 transcript bot-wall, 두 번째 실행은 맥락 완료 뒤
+  review 다운로드의 일시 `PROCESS_FAILED`를 만났지만 각 성공 stage를 보존했다. 세 번째 exact 실행
+  `30763035036`은 context-ready에서 재개해 review-ready와 publish까지 성공했다. 게시 bundle은 자동
+  `ko-orig`, 1,620 event, 44 chapter, 최종 후보 12개, JPEG 48장과 v8 publication certificate를
+  모두 갖췄다.
 - **검증:** 예약 pipeline Node 계약 156개, 전체 Vitest 2,191개, 음성 등록 도구 9개,
   TypeScript, 변경 파일 ESLint, production build, 실제 Coco metadata/JSON3 단일 호출 smoke가
   모두 통과했다.

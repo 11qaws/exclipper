@@ -35,6 +35,7 @@ import {
   serializeChannelPreanalysisVisualFingerprint,
 } from "../../src/analysis/channelPreanalysisVisualFingerprint.ts";
 import { createChannelPreanalysisVisualCoverageReceipt } from "../../src/analysis/channelPreanalysisVisualCoverage.ts";
+import { ChannelPreanalysisMediaError } from "./channel-preanalysis-media.mjs";
 import { publishChannelPreanalysisReview } from "./channel-preanalysis-review-publisher.mjs";
 import { verifyPersistedChannelCatalogSnapshot } from "../sync-amoretto-preanalysis.mjs";
 
@@ -408,6 +409,39 @@ test("preserves the context checkpoint and source artifacts when review preparat
   });
   assert.equal(result.manifest.artifacts.some(({ kind }) => kind === "review"), false);
   await assertInputsRemain(fixture);
+});
+
+test("keeps a redacted media diagnostic out of the durable catalog checkpoint", async (t) => {
+  const fixture = await createFixture(t);
+  const rawDiagnostic =
+    "ERROR: Sign in to confirm you're not a bot at " +
+    "https://www.youtube.com/watch?v=KzAW3yow80Q&token=private-value";
+  const result = await publishChannelPreanalysisReview(
+    publishInput(fixture),
+    {
+      prepareReview: async () => {
+        throw new ChannelPreanalysisMediaError(
+          "YOUTUBE_BOTWALL",
+          "YouTube required an authenticated anti-bot challenge.",
+          undefined,
+          rawDiagnostic,
+        );
+      },
+      nowIso: () => COMMIT_AT,
+    },
+  );
+
+  assert.equal(result.state, "retryable");
+  assert.equal(result.errorCode, "YOUTUBE_BOTWALL");
+  assert.match(result.diagnostic, /\[redacted-url\]/u);
+  assert.doesNotMatch(result.diagnostic, /private-value/u);
+  const persistedText = await readFile(join(fixture.catalogDir, "catalog.json"), "utf8");
+  assert.doesNotMatch(persistedText, /diagnostic|private-value/u);
+  const persisted = parseChannelPreanalysisManifest(
+    persistedText,
+    AMORETTO_CHANNEL_PREANALYSIS_SOURCE,
+  );
+  assert.equal(persisted.videos[0].retry.errorCode, "YOUTUBE_BOTWALL");
 });
 
 test("a review retry reuses the attempted revision so candidate checkpoints remain resumable", async (t) => {

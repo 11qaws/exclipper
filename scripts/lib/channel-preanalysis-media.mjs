@@ -43,19 +43,21 @@ const DEFAULT_FEATURE_EXTRACTION_TIMEOUT_MS = 30 * 60_000;
 const DEFAULT_FRAME_EXTRACTION_TIMEOUT_MS = 90_000;
 const DEFAULT_CANDIDATE_AUDIO_TIMEOUT_MS = 120_000;
 const DEFAULT_MEDIA_DOWNLOAD_TIMEOUT_MS = 45 * 60_000;
+const YT_DLP_RETRY_COUNT = "3";
 const MAX_PATH_TEXT_LENGTH = 4_096;
 const MAX_CANDIDATE_ID_LENGTH = 128;
 
 export class ChannelPreanalysisMediaError extends Error {
-  constructor(code, message, cause) {
+  constructor(code, message, cause, diagnostic) {
     super(message, cause === undefined ? undefined : { cause });
     this.name = "ChannelPreanalysisMediaError";
     this.code = code;
+    if (diagnostic !== undefined) this.diagnostic = diagnostic;
   }
 }
 
-function mediaError(code, message, cause) {
-  return new ChannelPreanalysisMediaError(code, message, cause);
+function mediaError(code, message, cause, diagnostic) {
+  return new ChannelPreanalysisMediaError(code, message, cause, diagnostic);
 }
 
 function boundedPositiveInteger(value, fallback, fieldName) {
@@ -123,13 +125,43 @@ async function inspectSourceFile(sourcePath, maximumBytes) {
   return Object.freeze({ sourcePath: absolutePath, sizeBytes: metadata.size });
 }
 
-function sanitizedDiagnostic(value) {
+export function sanitizeChannelPreanalysisMediaDiagnostic(value) {
   return value
     .toString("utf8")
     .replace(/[\p{Cc}\p{Cf}]+/gu, " ")
+    .replace(/\b(?:https?|socks5h?):\/\/[^\s"'<>]+/giu, "[redacted-url]")
+    .replace(
+      /\b(authorization|proxy-authorization|cookie|set-cookie|api[-_ ]?key|token)\b\s*[:=]\s*(?:"[^"]*"|'[^']*'|[^\s,;]+)/giu,
+      "$1=[redacted]",
+    )
+    .replace(/\b(?:sk|gsk|AIza)[A-Za-z0-9._~-]{12,}\b/gu, "[redacted-secret]")
     .replace(/\s+/gu, " ")
     .trim()
     .slice(0, 500);
+}
+
+export function channelPreanalysisMediaDiagnostic(error) {
+  let current = error;
+  for (let depth = 0; depth < 4; depth += 1) {
+    if (
+      current instanceof ChannelPreanalysisMediaError &&
+      typeof current.diagnostic === "string" &&
+      current.diagnostic.length > 0
+    ) {
+      return sanitizeChannelPreanalysisMediaDiagnostic(current.diagnostic);
+    }
+    current = typeof current === "object" && current !== null
+      ? current.cause
+      : null;
+  }
+  return null;
+}
+
+function isYouTubeBotwallDiagnostic(value) {
+  return typeof value === "string" &&
+    /(sign in to confirm|not a bot|cookies-from-browser|confirm you(?:'|’)re not a bot)/iu.test(
+      value,
+    );
 }
 
 async function consumeBoundedStream(stream, maximumBytes, onChunk, streamName) {
@@ -235,10 +267,12 @@ export async function runBoundedMediaCommand(
     ]);
     if (timeoutFailure !== null) throw timeoutFailure;
     if (exit.code !== 0) {
-      const diagnostic = sanitizedDiagnostic(stderr.buffer);
+      const diagnostic = sanitizeChannelPreanalysisMediaDiagnostic(stderr.buffer);
       throw mediaError(
         "PROCESS_FAILED",
         `The process failed (${String(exit.code ?? exit.signal)}): ${diagnostic || "no diagnostic"}`,
+        undefined,
+        diagnostic || undefined,
       );
     }
     return Object.freeze({
@@ -300,6 +334,14 @@ export async function downloadChannelPreanalysisYouTubeMedia(
         "--no-playlist",
         "--no-progress",
         "--no-mtime",
+        "--retries",
+        YT_DLP_RETRY_COUNT,
+        "--fragment-retries",
+        YT_DLP_RETRY_COUNT,
+        "--extractor-retries",
+        YT_DLP_RETRY_COUNT,
+        "--file-access-retries",
+        YT_DLP_RETRY_COUNT,
         "--format",
         `bestvideo*[height<=${String(CHANNEL_PREANALYSIS_DOWNLOAD_HEIGHT)}]+bestaudio/best[height<=${String(CHANNEL_PREANALYSIS_DOWNLOAD_HEIGHT)}]`,
         "--merge-output-format",
@@ -355,7 +397,20 @@ export async function downloadChannelPreanalysisYouTubeMedia(
     });
   } catch (cause) {
     await rm(workingDirectory, { recursive: true, force: true });
-    if (cause instanceof ChannelPreanalysisMediaError) throw cause;
+    if (cause instanceof ChannelPreanalysisMediaError) {
+      if (
+        cause.code === "PROCESS_FAILED" &&
+        isYouTubeBotwallDiagnostic(cause.diagnostic ?? cause.message)
+      ) {
+        throw mediaError(
+          "YOUTUBE_BOTWALL",
+          "YouTube required an authenticated anti-bot challenge.",
+          cause,
+          cause.diagnostic,
+        );
+      }
+      throw cause;
+    }
     throw mediaError(
       "DOWNLOAD_FAILED",
       "The exact YouTube analysis media could not be downloaded.",

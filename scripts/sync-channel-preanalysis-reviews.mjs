@@ -18,6 +18,7 @@ import {
   CHANNEL_PREANALYSIS_REVIEW_PIPELINE_REVISION,
   runChannelPreanalysisReviewQueue,
 } from "./lib/channel-preanalysis-review-job.mjs";
+import { sanitizeChannelPreanalysisMediaDiagnostic } from "./lib/channel-preanalysis-media.mjs";
 
 export const DEFAULT_CHANNEL_PREANALYSIS_REVIEW_CATALOG_ROOT =
   "preanalysis-catalog";
@@ -38,6 +39,12 @@ function errorCodeOf(error) {
       /^[A-Z][A-Z0-9_]{1,63}$/u.test(error.code)
     ? error.code
     : "REVIEW_SOURCE_FAILED";
+}
+
+function reportedDiagnostic(value) {
+  if (typeof value !== "string") return {};
+  const diagnostic = sanitizeChannelPreanalysisMediaDiagnostic(value);
+  return diagnostic === "" ? {} : { diagnostic };
 }
 
 export function deriveChannelPreanalysisCandidateEndpoint(contextEndpoint) {
@@ -260,6 +267,7 @@ export async function runScheduledChannelPreanalysisReviews(
         videoId: outcome.video?.videoId ?? null,
         state: outcome.state,
         errorCode: outcome.errorCode ?? "REVIEW_NOT_READY",
+        ...reportedDiagnostic(outcome.diagnostic),
       })),
   );
   const requestedVideoSelected = options.videoId === null || outcomes.some(
@@ -310,6 +318,7 @@ export async function runScheduledChannelPreanalysisReviews(
         ...(outcome.errorCode === undefined
           ? {}
           : { errorCode: outcome.errorCode }),
+        ...reportedDiagnostic(outcome.diagnostic),
         recovered: outcome.recovered === true,
       })),
     }),

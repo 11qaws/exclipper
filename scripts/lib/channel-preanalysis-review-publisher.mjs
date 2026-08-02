@@ -30,6 +30,7 @@ import {
   channelPreanalysisSourceById,
   channelPreanalysisStoragePrefix,
 } from "../../src/analysis/channelPreanalysisSources.ts";
+import { channelPreanalysisMediaDiagnostic } from "./channel-preanalysis-media.mjs";
 
 const CATALOG_FILE = "catalog.json";
 const MANIFEST_MAX_BYTES = 4 * 1024 * 1024;
@@ -38,15 +39,16 @@ const RETRY_DELAYS_MS = [3, 6, 12, 24].map(
 );
 
 export class ChannelPreanalysisReviewPublisherError extends Error {
-  constructor(code, message, cause) {
+  constructor(code, message, cause, diagnostic) {
     super(message, cause === undefined ? undefined : { cause });
     this.name = "ChannelPreanalysisReviewPublisherError";
     this.code = code;
+    if (diagnostic !== undefined) this.diagnostic = diagnostic;
   }
 }
 
-function publisherError(code, message, cause) {
-  return new ChannelPreanalysisReviewPublisherError(code, message, cause);
+function publisherError(code, message, cause, diagnostic) {
+  return new ChannelPreanalysisReviewPublisherError(code, message, cause, diagnostic);
 }
 
 function isRecord(value) {
@@ -493,6 +495,7 @@ async function prepareAndPersistReview(
       errorCodeOf(cause, "REVIEW_PREPARATION_FAILED"),
       "The scheduled review orchestrator did not return a complete review bundle.",
       cause,
+      channelPreanalysisMediaDiagnostic(cause) ?? undefined,
     );
   }
   const review = await verifyReviewClosure(
@@ -787,16 +790,19 @@ export async function publishChannelPreanalysisReview(
     };
   } catch (cause) {
     if (forceRefresh && video.state === "review-ready") {
+      const diagnostic = channelPreanalysisMediaDiagnostic(cause);
       return {
         state: "retryable",
         manifest: loaded.manifest,
         video,
         errorCode: errorCodeOf(cause),
+        ...(diagnostic === null ? {} : { diagnostic }),
         preservedReview: true,
       };
     }
     const checkpointAt = assertIsoDate(nowIso(), "review retry time");
     const errorCode = errorCodeOf(cause);
+    const diagnostic = channelPreanalysisMediaDiagnostic(cause);
     const retry = manifestWithReviewRetry(
       loaded.manifest,
       video,
@@ -824,6 +830,7 @@ export async function publishChannelPreanalysisReview(
       return {
         state: "retryable",
         errorCode,
+        ...(diagnostic === null ? {} : { diagnostic }),
         manifest: readback.manifest,
         video: readbackVideo,
         artifact: null,

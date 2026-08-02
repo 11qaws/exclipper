@@ -22,6 +22,11 @@ catalog에 먼저 병합한다. 신규·due retry·context/review 누락이 있�
 후보를 재사용한다. `actions/upload-artifact`의 `include-hidden-files: true`를 제거하면 이
 복구 파일이 publish job으로 전달되지 않으므로 유지해야 한다.
 
+검토용 480p 사본의 yt-dlp 다운로드는 일반·fragment·extractor·file-access 오류를 각각
+최대 3회 재시도한다. 봇 차단은 `YOUTUBE_BOTWALL`로 분류하며 URL·authorization·cookie·key·token을
+제거한 500자 이하 진단만 일회성 run report에 기록한다. 영구 catalog retry에는 오류 코드와 마지막
+성공 stage만 남겨 공개 저장소에 upstream 진단이나 credential이 들어가지 않게 한다.
+
 후보 하나는 최대 60초 16kHz mono PCM16 WAV 약 1.92MB와 JPEG 4장을 bounded binary
 bundle로 묶어 private R2에 streaming stage한다. Worker JavaScript는 이 본문을 Base64로
 디코드하거나 전체 버퍼로 해시하지 않는다. 짧은 resolve JSON만 별도로 보내며, 전용

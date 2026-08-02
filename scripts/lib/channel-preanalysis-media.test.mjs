@@ -14,6 +14,7 @@ import {
   CHANNEL_PREANALYSIS_MAX_DURATION_MS,
   CHANNEL_PREANALYSIS_MAX_JPEG_BYTES,
   ChannelPreanalysisMediaError,
+  channelPreanalysisMediaDiagnostic,
   createChannelPreanalysisCandidateMediaPlan,
   downloadChannelPreanalysisYouTubeMedia,
   executeChannelPreanalysisCandidateMediaPlan,
@@ -121,6 +122,14 @@ test("YouTube download is one exact bounded 480p analysis copy in an isolated di
   assert.deepEqual(calls[0].options.environment, { PATH: "test-path" });
   assert.equal(calls[0].arguments_.at(-1), "https://www.youtube.com/watch?v=KzAW3yow80Q");
   assert.ok(calls[0].arguments_.includes("bestvideo*[height<=480]+bestaudio/best[height<=480]"));
+  for (const flag of [
+    "--retries",
+    "--fragment-retries",
+    "--extractor-retries",
+    "--file-access-retries",
+  ]) {
+    assert.equal(calls[0].arguments_[calls[0].arguments_.indexOf(flag) + 1], "3");
+  }
   assert.equal(media.sizeBytes, 3);
   assert.ok(media.sourcePath.startsWith(media.workingDirectory));
 });
@@ -139,6 +148,45 @@ test("YouTube download rejects noncanonical identity before network work", async
     (error) =>
       error instanceof ChannelPreanalysisMediaError &&
       error.code === "INVALID_YOUTUBE_IDENTITY",
+  );
+});
+
+test("YouTube botwall failures keep only a bounded redacted operational diagnostic", async (t) => {
+  const { directory } = await createFixture(t);
+  const rawDiagnostic =
+    "ERROR: Sign in to confirm you're not a bot. " +
+    "https://www.youtube.com/watch?v=KzAW3yow80Q&token=private-value " +
+    "Authorization=secret-value";
+
+  await assert.rejects(
+    downloadChannelPreanalysisYouTubeMedia(
+      {
+        videoId: "KzAW3yow80Q",
+        watchUrl: "https://www.youtube.com/watch?v=KzAW3yow80Q",
+        outputRoot: join(directory, "downloads"),
+      },
+      {
+        commandRunner: async () => {
+          throw new ChannelPreanalysisMediaError(
+            "PROCESS_FAILED",
+            `The process failed (1): ${rawDiagnostic}`,
+            undefined,
+            rawDiagnostic,
+          );
+        },
+      },
+    ),
+    (error) => {
+      assert.ok(error instanceof ChannelPreanalysisMediaError);
+      assert.equal(error.code, "YOUTUBE_BOTWALL");
+      const diagnostic = channelPreanalysisMediaDiagnostic(error);
+      assert.match(diagnostic, /Sign in to confirm you're not a bot/u);
+      assert.match(diagnostic, /\[redacted-url\]/u);
+      assert.match(diagnostic, /Authorization=\[redacted\]/u);
+      assert.doesNotMatch(diagnostic, /private-value|secret-value/u);
+      assert.ok(diagnostic.length <= 500);
+      return true;
+    },
   );
 });
 
@@ -363,5 +411,27 @@ test("the default command runner enforces stdout limits without invoking a shell
     (error) =>
       error instanceof ChannelPreanalysisMediaError &&
       error.code === "PROCESS_OUTPUT_LIMIT",
+  );
+});
+
+test("the default command runner redacts URLs and credentials from failure diagnostics", async () => {
+  await assert.rejects(
+    runBoundedMediaCommand(
+      process.execPath,
+      [
+        "-e",
+        "process.stderr.write('failed https://example.test/media?token=private token=secret-value sk-test-secret-1234567890'); process.exit(7)",
+      ],
+      { timeoutMs: 10_000 },
+    ),
+    (error) => {
+      assert.ok(error instanceof ChannelPreanalysisMediaError);
+      assert.equal(error.code, "PROCESS_FAILED");
+      assert.match(error.diagnostic, /\[redacted-url\]/u);
+      assert.match(error.diagnostic, /token=\[redacted\]/u);
+      assert.match(error.diagnostic, /\[redacted-secret\]/u);
+      assert.doesNotMatch(error.message, /private|secret-value|sk-test-secret/u);
+      return true;
+    },
   );
 });
