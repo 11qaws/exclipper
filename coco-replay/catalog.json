@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "channelId": "UCgq07mhOmrjVeZeJYXiAClw",
   "channelHandle": "@kokotorori",
-  "revision": 4,
-  "generatedAt": "2026-08-02T18:30:24.029Z",
+  "revision": 5,
+  "generatedAt": "2026-08-02T18:45:47.158Z",
   "videos": [
     {
       "channelId": "UCgq07mhOmrjVeZeJYXiAClw",
@@ -35,11 +35,17 @@
       "publishedAt": "2026-05-25T02:44:46.000Z",
       "updatedAt": "2026-05-25T07:15:55.000Z",
       "watchUrl": "https://www.youtube.com/watch?v=LO0uT8Fu0s0",
-      "state": "discovered",
-      "revision": 1,
+      "state": "retryable",
+      "revision": 2,
       "artifactIds": [],
       "registeredLocalSampledFingerprints": [],
-      "retry": null
+      "retry": {
+        "stage": "metadata",
+        "lastSuccessfulState": "discovered",
+        "attemptCount": 1,
+        "nextAttemptAt": "2026-08-02T21:45:47.158Z",
+        "errorCode": "YT_DLP_FAILED"
+      }
     },
     {
       "channelId": "UCgq07mhOmrjVeZeJYXiAClw",

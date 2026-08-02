@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "channelId": "UCk0Mu5MpVzJ056e65XpAj0Q",
   "channelHandle": "@SENAREPLAY",
-  "revision": 6,
-  "generatedAt": "2026-08-02T18:30:19.119Z",
+  "revision": 7,
+  "generatedAt": "2026-08-02T18:45:45.175Z",
   "videos": [
     {
       "channelId": "UCk0Mu5MpVzJ056e65XpAj0Q",
@@ -56,11 +56,17 @@
       "publishedAt": "2026-07-31T00:43:03.000Z",
       "updatedAt": "2026-07-31T00:43:03.000Z",
       "watchUrl": "https://www.youtube.com/watch?v=2UjkCyKNGFA",
-      "state": "discovered",
-      "revision": 1,
+      "state": "retryable",
+      "revision": 2,
       "artifactIds": [],
       "registeredLocalSampledFingerprints": [],
-      "retry": null
+      "retry": {
+        "stage": "metadata",
+        "lastSuccessfulState": "discovered",
+        "attemptCount": 1,
+        "nextAttemptAt": "2026-08-02T21:45:45.175Z",
+        "errorCode": "YT_DLP_FAILED"
+      }
     },
     {
       "channelId": "UCk0Mu5MpVzJ056e65XpAj0Q",
