@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "channelId": "UCiFzBB8xsUjEBq8_h6Yl6tA",
   "channelHandle": "@eureka_history",
-  "revision": 3,
-  "generatedAt": "2026-08-02T14:00:04.298Z",
+  "revision": 5,
+  "generatedAt": "2026-08-02T15:30:25.062Z",
   "videos": [
     {
       "channelId": "UCiFzBB8xsUjEBq8_h6Yl6tA",
@@ -31,15 +31,21 @@
       "videoId": "ZFMg5irJJU8",
       "title": "2026 07 29 아침의고통노래",
       "normalizedTitle": "2026 07 29 아침의고통노래",
-      "durationMs": null,
+      "durationMs": 21502000,
       "publishedAt": "2026-07-29T04:07:37.000Z",
       "updatedAt": "2026-07-29T07:03:03.000Z",
       "watchUrl": "https://www.youtube.com/watch?v=ZFMg5irJJU8",
-      "state": "discovered",
-      "revision": 1,
+      "state": "retryable",
+      "revision": 3,
       "artifactIds": [],
       "registeredLocalSampledFingerprints": [],
-      "retry": null
+      "retry": {
+        "stage": "transcript",
+        "lastSuccessfulState": "metadata-ready",
+        "attemptCount": 1,
+        "nextAttemptAt": "2026-08-02T18:30:25.061Z",
+        "errorCode": "ASR_DOWNLOAD_FAILED"
+      }
     },
     {
       "channelId": "UCiFzBB8xsUjEBq8_h6Yl6tA",

@@ -2,23 +2,29 @@
   "schemaVersion": 1,
   "channelId": "UCk0Mu5MpVzJ056e65XpAj0Q",
   "channelHandle": "@SENAREPLAY",
-  "revision": 2,
-  "generatedAt": "2026-08-02T13:58:00.678Z",
+  "revision": 4,
+  "generatedAt": "2026-08-02T15:30:30.680Z",
   "videos": [
     {
       "channelId": "UCk0Mu5MpVzJ056e65XpAj0Q",
       "videoId": "PlFjEb8mgPg",
       "title": "【26. 07. 30】 명조 수수 + 수수 전무 뽑음! 1장 7막 민 날 ★",
       "normalizedTitle": "26 07 30 명조 수수 수수 전무 뽑음 1장 7막 민 날",
-      "durationMs": null,
+      "durationMs": 20855000,
       "publishedAt": "2026-07-31T00:43:37.000Z",
       "updatedAt": "2026-07-31T00:43:37.000Z",
       "watchUrl": "https://www.youtube.com/watch?v=PlFjEb8mgPg",
-      "state": "discovered",
-      "revision": 1,
+      "state": "retryable",
+      "revision": 3,
       "artifactIds": [],
       "registeredLocalSampledFingerprints": [],
-      "retry": null
+      "retry": {
+        "stage": "transcript",
+        "lastSuccessfulState": "metadata-ready",
+        "attemptCount": 1,
+        "nextAttemptAt": "2026-08-02T18:30:30.680Z",
+        "errorCode": "INVALID_TRANSCRIPT"
+      }
     },
     {
       "channelId": "UCk0Mu5MpVzJ056e65XpAj0Q",
