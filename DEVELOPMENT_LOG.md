@@ -3160,3 +3160,16 @@ PassB가 정상 동작해도 `context-missing` 6개는 남는다. 대사 텍스�
   2,190개, 음성 등록 도구 9개, TypeScript, 변경 파일 및 generated Worker 제외 전체 ESLint,
   production build가 통과했다. 작업공간의 별도 untracked `.wrangler-dry-run-2` 번들은
   전체 기본 lint 대상에 들어가므로 보존한 채 검증 명령에서만 제외했다.
+- **실데이터:** Actions `30760825558`이 음식 토크 `KzAW3yow80Q`를 이번 실행에서 실제로
+  1건 선택해 catalog revision 68, review artifact revision 16, pipeline certificate
+  `scheduled-review-ready-v8`을 게시했다. 최종 12개 후보는 JPEG 48장을 모두 갖췄고,
+  칼국수 19:45–20:45, 껍데기 23:15–24:15, 두바이초콜릿 28:15–29:15을 각각 포함했다.
+  4분 이전 후보와 `music-or-intermission`/명시 음악 자막 후보는 모두 0개였다.
+- **Pages fallback:** 같은 검증 snapshot의 catalog와 manifest가 참조하는 artifact 25개만
+  `public/preanalysis/amoretto-vods`에 복사했다. 이전 review·legacy bundle·숨김 checkpoint
+  같은 비참조 파일은 넣지 않았으며, 총 26개 파일 7,366,393 bytes의 길이와 SHA-256을
+  manifest receipt에 맞춰 다시 확인했다.
+- **바이트 고정:** Windows의 `core.autocrlf`가 checkout된 JSON을 CRLF로 바꾸면 manifest의
+  SHA-256 receipt가 로컬 Pages fallback에서만 깨질 수 있다. `.gitattributes`로
+  `public/preanalysis/**/*.json`을 `text eol=lf`에 고정해 GitHub Pages와 Windows checkout이
+  같은 UTF-8 bytes를 읽도록 했다.

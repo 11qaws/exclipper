@@ -2,36 +2,45 @@
   "schemaVersion": 1,
   "channelId": "UCHycoTBFDhXz4XNz8jBP-_A",
   "channelHandle": "@AmorettoVODs",
-  "revision": 6,
-  "generatedAt": "2026-07-30T06:25:00.000Z",
+  "revision": 68,
+  "generatedAt": "2026-08-02T18:22:30.893Z",
   "videos": [
     {
       "channelId": "UCHycoTBFDhXz4XNz8jBP-_A",
       "videoId": "bm4R6rZI4t4",
       "title": "2026 07 24 - 출장방송",
       "normalizedTitle": "2026 07 24 출장방송",
-      "durationMs": null,
+      "durationMs": 6298000,
       "publishedAt": "2026-07-25T06:27:42.000Z",
       "updatedAt": "2026-07-26T06:01:39.000Z",
       "watchUrl": "https://www.youtube.com/watch?v=bm4R6rZI4t4",
-      "state": "discovered",
-      "revision": 1,
+      "state": "retryable",
+      "revision": 8,
       "artifactIds": [],
       "registeredLocalSampledFingerprints": [],
-      "retry": null
+      "retry": {
+        "stage": "transcript",
+        "lastSuccessfulState": "metadata-ready",
+        "attemptCount": 1,
+        "nextAttemptAt": "2026-08-02T17:29:04.298Z",
+        "errorCode": "ARTIFACT_INVALID_CONTEXT"
+      }
     },
     {
       "channelId": "UCHycoTBFDhXz4XNz8jBP-_A",
       "videoId": "Xns8EY3gae0",
-      "title": "2026 07 21 - 잔잔하게 노래 흥얼거리는 방송",
+      "title": "2026 07 21 - 잔잔하게 노래 흥얼거리는 방송",
       "normalizedTitle": "2026 07 21 잔잔하게 노래 흥얼거리는 방송",
-      "durationMs": null,
+      "durationMs": 6177000,
       "publishedAt": "2026-07-24T20:30:51.000Z",
       "updatedAt": "2026-07-24T20:47:12.000Z",
       "watchUrl": "https://www.youtube.com/watch?v=Xns8EY3gae0",
-      "state": "discovered",
-      "revision": 1,
-      "artifactIds": [],
+      "state": "transcript-ready",
+      "revision": 4,
+      "artifactIds": [
+        "youtube-caption-bundle:Xns8EY3gae0:v1",
+        "youtube-storyboard-visual-fingerprint:Xns8EY3gae0:v1"
+      ],
       "registeredLocalSampledFingerprints": [],
       "retry": null
     },
@@ -40,13 +49,16 @@
       "videoId": "VFCOVyDeWWk",
       "title": "2026 07 18 - 마크 게릴라",
       "normalizedTitle": "2026 07 18 마크 게릴라",
-      "durationMs": null,
+      "durationMs": 8259000,
       "publishedAt": "2026-07-18T15:35:05.000Z",
       "updatedAt": "2026-07-18T17:01:25.000Z",
       "watchUrl": "https://www.youtube.com/watch?v=VFCOVyDeWWk",
-      "state": "discovered",
-      "revision": 1,
-      "artifactIds": [],
+      "state": "transcript-ready",
+      "revision": 6,
+      "artifactIds": [
+        "youtube-caption-bundle:VFCOVyDeWWk:v1",
+        "youtube-storyboard-visual-fingerprint:VFCOVyDeWWk:v1"
+      ],
       "registeredLocalSampledFingerprints": [],
       "retry": null
     },
@@ -55,13 +67,16 @@
       "videoId": "vadCuMEo5PQ",
       "title": "2026 07 18 - 마크 릴레이 방송",
       "normalizedTitle": "2026 07 18 마크 릴레이 방송",
-      "durationMs": null,
+      "durationMs": 7231000,
       "publishedAt": "2026-07-18T05:42:21.000Z",
       "updatedAt": "2026-07-18T06:14:18.000Z",
       "watchUrl": "https://www.youtube.com/watch?v=vadCuMEo5PQ",
-      "state": "discovered",
-      "revision": 1,
-      "artifactIds": [],
+      "state": "transcript-ready",
+      "revision": 4,
+      "artifactIds": [
+        "youtube-caption-bundle:vadCuMEo5PQ:v1",
+        "youtube-storyboard-visual-fingerprint:vadCuMEo5PQ:v1"
+      ],
       "registeredLocalSampledFingerprints": [],
       "retry": null
     },
@@ -74,11 +89,12 @@
       "publishedAt": "2026-07-17T15:23:47.000Z",
       "updatedAt": "2026-07-19T06:46:05.000Z",
       "watchUrl": "https://www.youtube.com/watch?v=KzAW3yow80Q",
-      "state": "transcript-ready",
-      "revision": 5,
+      "state": "review-ready",
+      "revision": 16,
       "artifactIds": [
-        "youtube-caption-bundle:KzAW3yow80Q:v1",
-        "youtube-storyboard-visual-fingerprint:KzAW3yow80Q:v1"
+        "youtube-caption-bundle:KzAW3yow80Q:v2",
+        "youtube-storyboard-visual-fingerprint:KzAW3yow80Q:v1",
+        "review-bundle:KzAW3yow80Q:v16"
       ],
       "registeredLocalSampledFingerprints": [
         {
@@ -91,15 +107,18 @@
     {
       "channelId": "UCHycoTBFDhXz4XNz8jBP-_A",
       "videoId": "EZfCGS5ms_Q",
-      "title": "2026 07 16 - 실수로 구독을 열었다",
+      "title": "2026 07 16 - 실수로 구독을 열었다",
       "normalizedTitle": "2026 07 16 실수로 구독을 열었다",
-      "durationMs": null,
+      "durationMs": 11116000,
       "publishedAt": "2026-07-17T03:20:46.000Z",
       "updatedAt": "2026-07-17T04:13:32.000Z",
       "watchUrl": "https://www.youtube.com/watch?v=EZfCGS5ms_Q",
-      "state": "discovered",
-      "revision": 1,
-      "artifactIds": [],
+      "state": "transcript-ready",
+      "revision": 5,
+      "artifactIds": [
+        "youtube-caption-bundle:EZfCGS5ms_Q:v1",
+        "youtube-storyboard-visual-fingerprint:EZfCGS5ms_Q:v1"
+      ],
       "registeredLocalSampledFingerprints": [],
       "retry": null
     },
@@ -108,13 +127,16 @@
       "videoId": "CvnTApEN7Q4",
       "title": "2026 07 15 - 오리엔트 레프트 합방",
       "normalizedTitle": "2026 07 15 오리엔트 레프트 합방",
-      "durationMs": null,
+      "durationMs": 11117000,
       "publishedAt": "2026-07-16T14:52:43.000Z",
       "updatedAt": "2026-07-16T15:49:46.000Z",
       "watchUrl": "https://www.youtube.com/watch?v=CvnTApEN7Q4",
-      "state": "discovered",
-      "revision": 1,
-      "artifactIds": [],
+      "state": "transcript-ready",
+      "revision": 4,
+      "artifactIds": [
+        "youtube-caption-bundle:CvnTApEN7Q4:v1",
+        "youtube-storyboard-visual-fingerprint:CvnTApEN7Q4:v1"
+      ],
       "registeredLocalSampledFingerprints": [],
       "retry": null
     },
@@ -123,13 +145,16 @@
       "videoId": "Kv5QGhIPVXY",
       "title": "2026 07 14 - 노래책 만들면서 흥얼거리기",
       "normalizedTitle": "2026 07 14 노래책 만들면서 흥얼거리기",
-      "durationMs": null,
+      "durationMs": 10510000,
       "publishedAt": "2026-07-14T18:14:01.000Z",
       "updatedAt": "2026-07-14T18:48:33.000Z",
       "watchUrl": "https://www.youtube.com/watch?v=Kv5QGhIPVXY",
-      "state": "discovered",
-      "revision": 1,
-      "artifactIds": [],
+      "state": "transcript-ready",
+      "revision": 4,
+      "artifactIds": [
+        "youtube-caption-bundle:Kv5QGhIPVXY:v1",
+        "youtube-storyboard-visual-fingerprint:Kv5QGhIPVXY:v1"
+      ],
       "registeredLocalSampledFingerprints": [],
       "retry": null
     },
@@ -138,13 +163,16 @@
       "videoId": "IBNZkZw-T2g",
       "title": "2026 07 12 - 밈 배우기",
       "normalizedTitle": "2026 07 12 밈 배우기",
-      "durationMs": null,
+      "durationMs": 9972000,
       "publishedAt": "2026-07-14T13:20:12.000Z",
       "updatedAt": "2026-07-14T15:15:04.000Z",
       "watchUrl": "https://www.youtube.com/watch?v=IBNZkZw-T2g",
-      "state": "discovered",
-      "revision": 1,
-      "artifactIds": [],
+      "state": "transcript-ready",
+      "revision": 5,
+      "artifactIds": [
+        "youtube-caption-bundle:IBNZkZw-T2g:v1",
+        "youtube-storyboard-visual-fingerprint:IBNZkZw-T2g:v1"
+      ],
       "registeredLocalSampledFingerprints": [],
       "retry": null
     },
@@ -153,13 +181,16 @@
       "videoId": "LxfT_f_L7t4",
       "title": "2026 07 11 - 노래방송",
       "normalizedTitle": "2026 07 11 노래방송",
-      "durationMs": null,
+      "durationMs": 8303000,
       "publishedAt": "2026-07-12T05:20:43.000Z",
       "updatedAt": "2026-07-12T05:20:44.000Z",
       "watchUrl": "https://www.youtube.com/watch?v=LxfT_f_L7t4",
-      "state": "discovered",
-      "revision": 1,
-      "artifactIds": [],
+      "state": "transcript-ready",
+      "revision": 5,
+      "artifactIds": [
+        "youtube-caption-bundle:LxfT_f_L7t4:v1",
+        "youtube-storyboard-visual-fingerprint:LxfT_f_L7t4:v1"
+      ],
       "registeredLocalSampledFingerprints": [],
       "retry": null
     },
@@ -168,13 +199,16 @@
       "videoId": "-F5j70sytkw",
       "title": "2026 07 10 - 메이플 하다 롤체하는 방송",
       "normalizedTitle": "2026 07 10 메이플 하다 롤체하는 방송",
-      "durationMs": null,
+      "durationMs": 12986000,
       "publishedAt": "2026-07-10T14:52:28.000Z",
       "updatedAt": "2026-07-10T15:58:37.000Z",
       "watchUrl": "https://www.youtube.com/watch?v=-F5j70sytkw",
-      "state": "discovered",
-      "revision": 1,
-      "artifactIds": [],
+      "state": "transcript-ready",
+      "revision": 4,
+      "artifactIds": [
+        "youtube-caption-bundle:-F5j70sytkw:v1",
+        "youtube-storyboard-visual-fingerprint:-F5j70sytkw:v1"
+      ],
       "registeredLocalSampledFingerprints": [],
       "retry": null
     },
@@ -183,13 +217,16 @@
       "videoId": "8yKYLyYciGs",
       "title": "2026 07 09 - 메이플 실패해서 주식리딩방이 된 방송",
       "normalizedTitle": "2026 07 09 메이플 실패해서 주식리딩방이 된 방송",
-      "durationMs": null,
+      "durationMs": 11003000,
       "publishedAt": "2026-07-09T15:14:11.000Z",
       "updatedAt": "2026-07-09T16:08:17.000Z",
       "watchUrl": "https://www.youtube.com/watch?v=8yKYLyYciGs",
-      "state": "discovered",
-      "revision": 1,
-      "artifactIds": [],
+      "state": "transcript-ready",
+      "revision": 4,
+      "artifactIds": [
+        "youtube-caption-bundle:8yKYLyYciGs:v1",
+        "youtube-storyboard-visual-fingerprint:8yKYLyYciGs:v1"
+      ],
       "registeredLocalSampledFingerprints": [],
       "retry": null
     },
@@ -198,42 +235,271 @@
       "videoId": "eLo7hzvhg1c",
       "title": "2026 07 06 [잡담방송] lovely한 레또가 왔어요 !!",
       "normalizedTitle": "2026 07 06 잡담방송 lovely한 레또가 왔어요",
-      "durationMs": null,
+      "durationMs": 8060000,
       "publishedAt": "2026-07-06T17:28:17.000Z",
       "updatedAt": "2026-07-08T05:16:13.000Z",
       "watchUrl": "https://www.youtube.com/watch?v=eLo7hzvhg1c",
-      "state": "discovered",
-      "revision": 1,
+      "state": "retryable",
+      "revision": 6,
       "artifactIds": [],
       "registeredLocalSampledFingerprints": [],
-      "retry": null
+      "retry": {
+        "stage": "transcript",
+        "lastSuccessfulState": "metadata-ready",
+        "attemptCount": 4,
+        "nextAttemptAt": "2026-08-02T22:14:18.467Z",
+        "errorCode": "YT_DLP_FAILED"
+      }
     },
     {
       "channelId": "UCHycoTBFDhXz4XNz8jBP-_A",
       "videoId": "Prc5wRTE36A",
       "title": "2026-07-05 [데뷔방송] 앙뇽~ 러블리한 아모레또가 왔어요!",
       "normalizedTitle": "2026 07 05 데뷔방송 앙뇽 러블리한 아모레또가 왔어요",
-      "durationMs": null,
+      "durationMs": 5128000,
       "publishedAt": "2026-07-05T09:06:21.000Z",
       "updatedAt": "2026-07-08T05:17:06.000Z",
       "watchUrl": "https://www.youtube.com/watch?v=Prc5wRTE36A",
-      "state": "discovered",
-      "revision": 1,
-      "artifactIds": [],
+      "state": "transcript-ready",
+      "revision": 4,
+      "artifactIds": [
+        "youtube-caption-bundle:Prc5wRTE36A:v1",
+        "youtube-storyboard-visual-fingerprint:Prc5wRTE36A:v1"
+      ],
       "registeredLocalSampledFingerprints": [],
       "retry": null
     }
   ],
   "artifacts": [
     {
-      "artifactId": "youtube-caption-bundle:KzAW3yow80Q:v1",
-      "videoId": "KzAW3yow80Q",
+      "artifactId": "youtube-caption-bundle:Xns8EY3gae0:v1",
+      "videoId": "Xns8EY3gae0",
       "kind": "transcript",
       "revision": 1,
-      "storageKey": "amoretto-vods/videos/KzAW3yow80Q.json",
-      "contentDigest": "sha256:fa137b2c7ac2a504aca7ea730bc0d9be3751707153eecd632cc1d4a7df0251eb",
-      "byteLength": 442509,
-      "createdAt": "2026-07-29T18:43:41.736Z"
+      "storageKey": "amoretto-vods/videos/Xns8EY3gae0.v1.json",
+      "contentDigest": "sha256:0f797fd63ec0fb555383b4dbdb994a8720802747f5c35837bc4c654f8d767a50",
+      "byteLength": 256442,
+      "createdAt": "2026-07-30T13:09:33.714Z"
+    },
+    {
+      "artifactId": "youtube-storyboard-visual-fingerprint:Xns8EY3gae0:v1",
+      "videoId": "Xns8EY3gae0",
+      "kind": "fingerprint",
+      "revision": 1,
+      "storageKey": "amoretto-vods/videos/Xns8EY3gae0.visual-fingerprint.v1.json",
+      "contentDigest": "sha256:3e052b01e5febbeece8c294d52d27b595b5b67aa498d0034ebd499d362e1eaf6",
+      "byteLength": 2193,
+      "createdAt": "2026-07-24T20:47:12.000Z"
+    },
+    {
+      "artifactId": "youtube-caption-bundle:vadCuMEo5PQ:v1",
+      "videoId": "vadCuMEo5PQ",
+      "kind": "transcript",
+      "revision": 1,
+      "storageKey": "amoretto-vods/videos/vadCuMEo5PQ.v1.json",
+      "contentDigest": "sha256:b238779d98b293346a712f9e3836b4d619ee60868efb868b255edd534dc8f7cf",
+      "byteLength": 321706,
+      "createdAt": "2026-07-30T13:18:42.026Z"
+    },
+    {
+      "artifactId": "youtube-storyboard-visual-fingerprint:vadCuMEo5PQ:v1",
+      "videoId": "vadCuMEo5PQ",
+      "kind": "fingerprint",
+      "revision": 1,
+      "storageKey": "amoretto-vods/videos/vadCuMEo5PQ.visual-fingerprint.v1.json",
+      "contentDigest": "sha256:5fac97916430550c55e12ffcfe9ff9ac9ff7ca340d451526ba7566f1146a0767",
+      "byteLength": 2192,
+      "createdAt": "2026-07-18T06:14:18.000Z"
+    },
+    {
+      "artifactId": "youtube-caption-bundle:VFCOVyDeWWk:v1",
+      "videoId": "VFCOVyDeWWk",
+      "kind": "transcript",
+      "revision": 1,
+      "storageKey": "amoretto-vods/videos/VFCOVyDeWWk.v1.json",
+      "contentDigest": "sha256:24c993d3e04ee23ff6a4b228675fcb2b18a09756630a6a40f6bc7ac6f55a2533",
+      "byteLength": 479511,
+      "createdAt": "2026-07-30T13:34:21.195Z"
+    },
+    {
+      "artifactId": "youtube-storyboard-visual-fingerprint:VFCOVyDeWWk:v1",
+      "videoId": "VFCOVyDeWWk",
+      "kind": "fingerprint",
+      "revision": 1,
+      "storageKey": "amoretto-vods/videos/VFCOVyDeWWk.visual-fingerprint.v1.json",
+      "contentDigest": "sha256:712e6e2f23947708aa3aacdb233e60f39791d149fe7009d11db4840ef4e1e8cb",
+      "byteLength": 2193,
+      "createdAt": "2026-07-18T17:01:25.000Z"
+    },
+    {
+      "artifactId": "youtube-caption-bundle:EZfCGS5ms_Q:v1",
+      "videoId": "EZfCGS5ms_Q",
+      "kind": "transcript",
+      "revision": 1,
+      "storageKey": "amoretto-vods/videos/EZfCGS5ms_Q.v1.json",
+      "contentDigest": "sha256:370d5b53af159e0b58b8cf0691baea189a0ef8eb93b5fa37722e89444a82b56a",
+      "byteLength": 513295,
+      "createdAt": "2026-07-30T16:52:51.772Z"
+    },
+    {
+      "artifactId": "youtube-storyboard-visual-fingerprint:EZfCGS5ms_Q:v1",
+      "videoId": "EZfCGS5ms_Q",
+      "kind": "fingerprint",
+      "revision": 1,
+      "storageKey": "amoretto-vods/videos/EZfCGS5ms_Q.visual-fingerprint.v1.json",
+      "contentDigest": "sha256:416059985c87f8e44df548510896fcbaefc2e999101534858243be5b9b0fcf10",
+      "byteLength": 2199,
+      "createdAt": "2026-07-17T04:13:32.000Z"
+    },
+    {
+      "artifactId": "youtube-caption-bundle:CvnTApEN7Q4:v1",
+      "videoId": "CvnTApEN7Q4",
+      "kind": "transcript",
+      "revision": 1,
+      "storageKey": "amoretto-vods/videos/CvnTApEN7Q4.v1.json",
+      "contentDigest": "sha256:80259af53fa64d752b3c60f1c669311fa7bf8d0862ab49e295950cdd51481c76",
+      "byteLength": 732517,
+      "createdAt": "2026-07-30T19:56:01.518Z"
+    },
+    {
+      "artifactId": "youtube-storyboard-visual-fingerprint:CvnTApEN7Q4:v1",
+      "videoId": "CvnTApEN7Q4",
+      "kind": "fingerprint",
+      "revision": 1,
+      "storageKey": "amoretto-vods/videos/CvnTApEN7Q4.visual-fingerprint.v1.json",
+      "contentDigest": "sha256:1363c0516ce447b6a1e0991fa4d026018363361251e55ade0a4cf5a81b62029d",
+      "byteLength": 2198,
+      "createdAt": "2026-07-16T15:49:46.000Z"
+    },
+    {
+      "artifactId": "youtube-caption-bundle:Kv5QGhIPVXY:v1",
+      "videoId": "Kv5QGhIPVXY",
+      "kind": "transcript",
+      "revision": 1,
+      "storageKey": "amoretto-vods/videos/Kv5QGhIPVXY.v1.json",
+      "contentDigest": "sha256:0e5a61edf1687368c4fc1e0f1015777ef9d4fdf23871e6738cef1c759128bf68",
+      "byteLength": 437214,
+      "createdAt": "2026-07-30T19:56:06.805Z"
+    },
+    {
+      "artifactId": "youtube-storyboard-visual-fingerprint:Kv5QGhIPVXY:v1",
+      "videoId": "Kv5QGhIPVXY",
+      "kind": "fingerprint",
+      "revision": 1,
+      "storageKey": "amoretto-vods/videos/Kv5QGhIPVXY.visual-fingerprint.v1.json",
+      "contentDigest": "sha256:f7012178711650aa9bf90cc99df89263f04d0c18cffc6052a541c553ebb7456b",
+      "byteLength": 2192,
+      "createdAt": "2026-07-14T18:48:33.000Z"
+    },
+    {
+      "artifactId": "youtube-caption-bundle:IBNZkZw-T2g:v1",
+      "videoId": "IBNZkZw-T2g",
+      "kind": "transcript",
+      "revision": 1,
+      "storageKey": "amoretto-vods/videos/IBNZkZw-T2g.v1.json",
+      "contentDigest": "sha256:b352b3554a4493c67e8cc4cbbf29794b7a5360defebe08951e1266d9f1f004d1",
+      "byteLength": 443054,
+      "createdAt": "2026-07-31T09:20:37.897Z"
+    },
+    {
+      "artifactId": "youtube-storyboard-visual-fingerprint:IBNZkZw-T2g:v1",
+      "videoId": "IBNZkZw-T2g",
+      "kind": "fingerprint",
+      "revision": 1,
+      "storageKey": "amoretto-vods/videos/IBNZkZw-T2g.visual-fingerprint.v1.json",
+      "contentDigest": "sha256:93d75d31413b43f12fce4bd3a9b5113fd450d05326094dc3ec73d69134f24681",
+      "byteLength": 2195,
+      "createdAt": "2026-07-14T15:15:04.000Z"
+    },
+    {
+      "artifactId": "youtube-caption-bundle:LxfT_f_L7t4:v1",
+      "videoId": "LxfT_f_L7t4",
+      "kind": "transcript",
+      "revision": 1,
+      "storageKey": "amoretto-vods/videos/LxfT_f_L7t4.v1.json",
+      "contentDigest": "sha256:b5891e674a97e7794da053deea7f331f31c9b4b5821a2a7190e0faa7e738d400",
+      "byteLength": 343915,
+      "createdAt": "2026-07-31T09:20:43.516Z"
+    },
+    {
+      "artifactId": "youtube-storyboard-visual-fingerprint:LxfT_f_L7t4:v1",
+      "videoId": "LxfT_f_L7t4",
+      "kind": "fingerprint",
+      "revision": 1,
+      "storageKey": "amoretto-vods/videos/LxfT_f_L7t4.visual-fingerprint.v1.json",
+      "contentDigest": "sha256:414e708683fbdc78961ecf2d6a3e6de0a35030e3679e120c5683a222ae264b30",
+      "byteLength": 2199,
+      "createdAt": "2026-07-12T05:20:44.000Z"
+    },
+    {
+      "artifactId": "youtube-caption-bundle:-F5j70sytkw:v1",
+      "videoId": "-F5j70sytkw",
+      "kind": "transcript",
+      "revision": 1,
+      "storageKey": "amoretto-vods/videos/-F5j70sytkw.v1.json",
+      "contentDigest": "sha256:27050833580668e7b55f2d7e7efdf033361e388bd3e41b64f5597cafeb54091c",
+      "byteLength": 555231,
+      "createdAt": "2026-07-31T14:40:25.566Z"
+    },
+    {
+      "artifactId": "youtube-storyboard-visual-fingerprint:-F5j70sytkw:v1",
+      "videoId": "-F5j70sytkw",
+      "kind": "fingerprint",
+      "revision": 1,
+      "storageKey": "amoretto-vods/videos/-F5j70sytkw.visual-fingerprint.v1.json",
+      "contentDigest": "sha256:2427a449365c94d65c04e85c7ed6d934501a5c66625e0ed0bd5605bc3f47a68b",
+      "byteLength": 2198,
+      "createdAt": "2026-07-10T15:58:37.000Z"
+    },
+    {
+      "artifactId": "youtube-caption-bundle:8yKYLyYciGs:v1",
+      "videoId": "8yKYLyYciGs",
+      "kind": "transcript",
+      "revision": 1,
+      "storageKey": "amoretto-vods/videos/8yKYLyYciGs.v1.json",
+      "contentDigest": "sha256:7f8f76eedae01b352f0a787913c554665c8eca4147cfcbc4c8c9f3160e9af9cc",
+      "byteLength": 514564,
+      "createdAt": "2026-07-31T14:40:31.961Z"
+    },
+    {
+      "artifactId": "youtube-storyboard-visual-fingerprint:8yKYLyYciGs:v1",
+      "videoId": "8yKYLyYciGs",
+      "kind": "fingerprint",
+      "revision": 1,
+      "storageKey": "amoretto-vods/videos/8yKYLyYciGs.visual-fingerprint.v1.json",
+      "contentDigest": "sha256:ae88e01e56dbb4756bf970042af54ba6a9a172f268cc2c1f1f34a106e8db6915",
+      "byteLength": 2194,
+      "createdAt": "2026-07-09T16:08:17.000Z"
+    },
+    {
+      "artifactId": "youtube-caption-bundle:Prc5wRTE36A:v1",
+      "videoId": "Prc5wRTE36A",
+      "kind": "transcript",
+      "revision": 1,
+      "storageKey": "amoretto-vods/videos/Prc5wRTE36A.v1.json",
+      "contentDigest": "sha256:5162377d94ffc78c7e6c38db883cd557f2c6e4bf91d1981d3b726cbed9a1f910",
+      "byteLength": 304562,
+      "createdAt": "2026-07-31T16:59:55.646Z"
+    },
+    {
+      "artifactId": "youtube-storyboard-visual-fingerprint:Prc5wRTE36A:v1",
+      "videoId": "Prc5wRTE36A",
+      "kind": "fingerprint",
+      "revision": 1,
+      "storageKey": "amoretto-vods/videos/Prc5wRTE36A.visual-fingerprint.v1.json",
+      "contentDigest": "sha256:51f994da46d2ef6f4dcfc3821357c7dab0c04625786a39fc84e9006992a0e711",
+      "byteLength": 2197,
+      "createdAt": "2026-07-08T05:17:06.000Z"
+    },
+    {
+      "artifactId": "youtube-caption-bundle:KzAW3yow80Q:v2",
+      "videoId": "KzAW3yow80Q",
+      "kind": "transcript",
+      "revision": 2,
+      "storageKey": "amoretto-vods/videos/KzAW3yow80Q.v2.json",
+      "contentDigest": "sha256:76d1a8dbe8c9def1bb65f59bfdb9357c18d4ffa22588467a1feba70080c96bf2",
+      "byteLength": 469489,
+      "createdAt": "2026-08-02T17:30:51.577Z"
     },
     {
       "artifactId": "youtube-storyboard-visual-fingerprint:KzAW3yow80Q:v1",
@@ -244,6 +510,16 @@
       "contentDigest": "sha256:9544dd215e6d9626f8ce7f1fe201ae649790bc00554f24e41c5588c363a0a2cd",
       "byteLength": 2199,
       "createdAt": "2026-07-19T06:46:05.000Z"
+    },
+    {
+      "artifactId": "review-bundle:KzAW3yow80Q:v16",
+      "videoId": "KzAW3yow80Q",
+      "kind": "review",
+      "revision": 16,
+      "storageKey": "amoretto-vods/videos/KzAW3yow80Q.review.v16.json",
+      "contentDigest": "sha256:ee4942ea18638e8f8ba3c3f4952c25087816675fe26197a13c3ec1b01aecd8fa",
+      "byteLength": 1948122,
+      "createdAt": "2026-08-02T18:21:50.115Z"
     }
   ]
 }

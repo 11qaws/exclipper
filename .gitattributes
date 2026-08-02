@@ -1,0 +1,2 @@
+# Preanalysis receipts bind exact UTF-8 JSON bytes by SHA-256.
+public/preanalysis/**/*.json text eol=lf
