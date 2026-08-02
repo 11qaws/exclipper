@@ -15,6 +15,10 @@ export const CANDIDATE_RESOLVE_CONTENT_TYPE =
 
 const QUOTA_SCHEMA_VERSION = "1.0.0";
 const MEDIA_SCHEMA_VERSION = "1.0.0";
+// `/healthz.providers` covers every AI role and advances independently from
+// the transcript-only route version that is pinned into the route fingerprint.
+const HEALTH_PROVIDER_CATALOG_SCHEMA_VERSION = "1.4.0";
+const TRANSCRIPT_PROVIDER_CONFIGURATION_VERSION = "1.3.0";
 const MAX_RATE_LIMIT_RETRIES = 5;
 const MAX_CONTEXT_SMOKE_GENERATIONS = 3;
 const MAX_CANDIDATE_SMOKE_GENERATIONS = 3;
@@ -276,7 +280,7 @@ function normalizeTranscriptFallback(value, provider, transportMode) {
     !isRecord(value) ||
     !exactKeys(value, ["mode", "provider", "modelId", "modelRevision"]) ||
     value.mode !== "bounded" ||
-    !Object.hasOwn(TRANSCRIPT_MODEL_IDENTITIES, value.provider) ||
+    !["qwen", "gemini"].includes(value.provider) ||
     value.provider === provider
   ) {
     throw new Error("Health returned an invalid transcript fallback route.");
@@ -315,7 +319,7 @@ export function currentTranscriptRouteManifest(health) {
     health.quota.coordinatorReady !== true ||
     health.quota.maximumActiveParticipants !== 5 ||
     !isRecord(health.providers) ||
-    health.providers.schemaVersion !== "1.3.0" ||
+    health.providers.schemaVersion !== HEALTH_PROVIDER_CATALOG_SCHEMA_VERSION ||
     !isRecord(health.providers.broadcastTranscript)
   ) {
     throw new Error("Health does not advertise the current transcript contract.");
@@ -341,7 +345,7 @@ export function currentTranscriptRouteManifest(health) {
     schemaVersion: "1.1.0",
     serviceVersion: 6,
     routingPolicyVersion: "1.11.0",
-    providerConfigurationVersion: "1.3.0",
+    providerConfigurationVersion: TRANSCRIPT_PROVIDER_CONFIGURATION_VERSION,
     transportVersion: 3,
     transportMode: health.transcriptTransport.mode,
     maximumChunkDurationMs: 90_000,

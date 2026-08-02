@@ -5,6 +5,7 @@ import {
   CANDIDATE_BUNDLE_CONTENT_TYPE,
   CANDIDATE_RESOLVE_CONTENT_TYPE,
   createCurrentContextRequest,
+  currentTranscriptRouteManifest,
   PRODUCTION_ORIGIN,
   runCandidateSmoke,
   runContextSmoke,
@@ -58,7 +59,32 @@ function capacityFullQuota() {
   );
 }
 
-function currentHealth() {
+function currentHealth({
+  provider = "groq",
+  mode = "free-r2",
+  effectiveFallback = { mode: "disabled" },
+  providerSchemaVersion = "1.4.0",
+  modelId,
+  modelRevision,
+} = {}) {
+  const identities = {
+    qwen: {
+      modelId: "qwen3.5-omni-flash",
+      modelRevision:
+        "qwen3.5-omni-flash-audio-transcript-90s-reviewed-2026-07-22",
+    },
+    gemini: {
+      modelId: "gemini-3.6-flash",
+      modelRevision:
+        "gemini-3.6-flash-audio-transcript-reviewed-2026-07-22",
+    },
+    groq: {
+      modelId: "whisper-large-v3-turbo",
+      modelRevision:
+        "groq-whisper-large-v3-turbo-ko-segment-v2-2026-08-02",
+    },
+  };
+  const identity = identities[provider];
   return {
     ok: true,
     service: "rettohighlight-gemini",
@@ -66,11 +92,11 @@ function currentHealth() {
     routingPolicyVersion: "1.11.0",
     transcriptTransport: {
       version: 3,
-      mode: "free-r2",
+      mode,
       configured: true,
       primaryMediaType: "audio/wav",
       maximumChunkDurationMs: 90_000,
-      effectiveFallback: { mode: "disabled" },
+      effectiveFallback,
       stagedSchemaVersion: "1.0.0",
     },
     quota: {
@@ -79,19 +105,123 @@ function currentHealth() {
       maximumActiveParticipants: 5,
     },
     providers: {
-      schemaVersion: "1.3.0",
+      schemaVersion: providerSchemaVersion,
       broadcastTranscript: {
-        selectedProvider: "groq",
+        selectedProvider: provider,
         implementationStatus: "active",
         configured: true,
         active: true,
-        modelId: "whisper-large-v3-turbo",
-        modelRevision:
-          "groq-whisper-large-v3-turbo-ko-segment-v2-2026-08-02",
+        modelId: modelId ?? identity.modelId,
+        modelRevision: modelRevision ?? identity.modelRevision,
       },
     },
   };
 }
+
+test("transcript smoke distinguishes health catalog 1.4.0 from route configuration 1.3.0", () => {
+  const route = currentTranscriptRouteManifest(currentHealth({ provider: "qwen" }));
+  assert.equal(route.provider, "qwen");
+  assert.equal(route.providerConfigurationVersion, "1.3.0");
+  assert.throws(
+    () =>
+      currentTranscriptRouteManifest(
+        currentHealth({ providerSchemaVersion: "1.3.0" }),
+      ),
+    /current transcript contract/u,
+  );
+});
+
+test("transcript smoke pins every current primary provider identity", () => {
+  for (const [provider, mode] of [
+    ["qwen", "free-r2"],
+    ["groq", "free-r2"],
+    ["gemini", "paid-direct"],
+  ]) {
+    const route = currentTranscriptRouteManifest(
+      currentHealth({ provider, mode }),
+    );
+    assert.equal(route.provider, provider);
+    assert.equal(route.transportMode, mode);
+    assert.throws(
+      () =>
+        currentTranscriptRouteManifest(
+          currentHealth({ provider, mode, modelId: "stale-model" }),
+        ),
+      /identity is not current/u,
+    );
+    assert.throws(
+      () =>
+        currentTranscriptRouteManifest(
+          currentHealth({ provider, mode, modelRevision: "stale-revision" }),
+        ),
+      /identity is not current/u,
+    );
+  }
+});
+
+test("transcript smoke accepts only a bounded Qwen or Gemini paid fallback", () => {
+  const geminiFallback = {
+    mode: "bounded",
+    provider: "gemini",
+    modelId: "gemini-3.6-flash",
+    modelRevision:
+      "gemini-3.6-flash-audio-transcript-reviewed-2026-07-22",
+  };
+  assert.deepEqual(
+    currentTranscriptRouteManifest(
+      currentHealth({
+        provider: "qwen",
+        mode: "paid-direct",
+        effectiveFallback: geminiFallback,
+      }),
+    ).effectiveFallback,
+    geminiFallback,
+  );
+  const qwenFallback = {
+    mode: "bounded",
+    provider: "qwen",
+    modelId: "qwen3.5-omni-flash",
+    modelRevision:
+      "qwen3.5-omni-flash-audio-transcript-90s-reviewed-2026-07-22",
+  };
+  assert.deepEqual(
+    currentTranscriptRouteManifest(
+      currentHealth({
+        provider: "groq",
+        mode: "paid-direct",
+        effectiveFallback: qwenFallback,
+      }),
+    ).effectiveFallback,
+    qwenFallback,
+  );
+  assert.throws(
+    () =>
+      currentTranscriptRouteManifest(
+        currentHealth({
+          provider: "groq",
+          effectiveFallback: qwenFallback,
+        }),
+      ),
+    /fallback route/u,
+  );
+  assert.throws(
+    () =>
+      currentTranscriptRouteManifest(
+        currentHealth({
+          provider: "qwen",
+          mode: "paid-direct",
+          effectiveFallback: {
+            mode: "bounded",
+            provider: "groq",
+            modelId: "whisper-large-v3-turbo",
+            modelRevision:
+              "groq-whisper-large-v3-turbo-ko-segment-v2-2026-08-02",
+          },
+        }),
+      ),
+    /fallback route/u,
+  );
+});
 
 function urlString(input) {
   return input instanceof URL ? input.toString() : String(input);

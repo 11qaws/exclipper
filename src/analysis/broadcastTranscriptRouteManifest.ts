@@ -13,10 +13,19 @@ import {
   type BroadcastTranscriptQwenResult,
 } from "./broadcastTranscriptQwen";
 import { createContentFingerprint } from "../security/contentFingerprint";
+import { AI_PROVIDER_CONFIGURATION_VERSION } from "../cloudflare/aiProviderConfiguration";
 
 export const BROADCAST_TRANSCRIPT_ROUTE_MANIFEST_SCHEMA_VERSION =
   "1.1.0" as const;
 export const BROADCAST_TRANSCRIPT_HEALTH_SERVICE_VERSION = 6 as const;
+/**
+ * Schema of the complete public `/healthz.providers` catalog. This can advance
+ * when a non-transcript provider changes and is intentionally distinct from
+ * the transcript route configuration version embedded in its fingerprint.
+ */
+export const BROADCAST_TRANSCRIPT_HEALTH_PROVIDER_CATALOG_SCHEMA_VERSION =
+  AI_PROVIDER_CONFIGURATION_VERSION;
+/** Version of transcript-specific provider routing semantics. */
 export const BROADCAST_TRANSCRIPT_PROVIDER_CONFIGURATION_VERSION =
   "1.3.0" as const;
 export const BROADCAST_TRANSCRIPT_TRANSPORT_VERSION = 3 as const;
@@ -221,7 +230,7 @@ function parseHealthManifest(
       MAX_BROADCAST_TRANSCRIPT_QWEN_DURATION_MS ||
     !isRecord(value.providers) ||
     value.providers.schemaVersion !==
-      BROADCAST_TRANSCRIPT_PROVIDER_CONFIGURATION_VERSION ||
+      BROADCAST_TRANSCRIPT_HEALTH_PROVIDER_CATALOG_SCHEMA_VERSION ||
     !isRecord(value.providers.broadcastTranscript)
   ) {
     throw new BroadcastTranscriptRouteManifestError(

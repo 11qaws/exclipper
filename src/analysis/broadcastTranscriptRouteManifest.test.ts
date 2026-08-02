@@ -2,10 +2,14 @@ import { describe, expect, it, vi } from "vitest";
 import {
   BROADCAST_TRANSCRIPT_GEMINI_MODEL_ID,
   BROADCAST_TRANSCRIPT_GEMINI_MODEL_REVISION,
+  BROADCAST_TRANSCRIPT_GROQ_MODEL_ID,
+  BROADCAST_TRANSCRIPT_GROQ_MODEL_REVISION,
   BROADCAST_TRANSCRIPT_QWEN_OMNI_MODEL_ID,
   BROADCAST_TRANSCRIPT_QWEN_OMNI_MODEL_REVISION,
 } from "./broadcastTranscriptQwen";
 import {
+  BROADCAST_TRANSCRIPT_HEALTH_PROVIDER_CATALOG_SCHEMA_VERSION,
+  BROADCAST_TRANSCRIPT_PROVIDER_CONFIGURATION_VERSION,
   createBroadcastTranscriptProviderReceipt,
   createBroadcastTranscriptRouteSelection,
   requestBroadcastTranscriptRouteSelection,
@@ -20,6 +24,7 @@ function healthBody(
     readonly modelRevision?: string;
     readonly mode?: "free-r2" | "paid-direct";
     readonly active?: boolean;
+    readonly healthProviderCatalogSchemaVersion?: string;
   } = {},
 ): unknown {
   const provider = overrides.provider ?? "qwen";
@@ -34,9 +39,8 @@ function healthBody(
       modelRevision: BROADCAST_TRANSCRIPT_GEMINI_MODEL_REVISION,
     },
     groq: {
-      modelId: "whisper-large-v3-turbo",
-      modelRevision:
-        "groq-whisper-large-v3-turbo-ko-segment-v2-2026-08-02",
+      modelId: BROADCAST_TRANSCRIPT_GROQ_MODEL_ID,
+      modelRevision: BROADCAST_TRANSCRIPT_GROQ_MODEL_REVISION,
     },
   } as const;
   const identity = identities[provider];
@@ -70,7 +74,9 @@ function healthBody(
           : { mode: "disabled" },
     },
     providers: {
-      schemaVersion: "1.3.0",
+      schemaVersion:
+        overrides.healthProviderCatalogSchemaVersion ??
+        BROADCAST_TRANSCRIPT_HEALTH_PROVIDER_CATALOG_SCHEMA_VERSION,
       broadcastTranscript: {
         selectedProvider: provider,
         modelId: overrides.modelId ?? identity.modelId,
@@ -135,12 +141,38 @@ describe("broadcastTranscriptRouteManifest", () => {
     );
     expect(route).toMatchObject({
       manifest: {
+        providerConfigurationVersion:
+          BROADCAST_TRANSCRIPT_PROVIDER_CONFIGURATION_VERSION,
         provider: "qwen",
         modelId: BROADCAST_TRANSCRIPT_QWEN_OMNI_MODEL_ID,
         transportMode: "free-r2",
       },
     });
     expect(route.fingerprint).toMatch(/^sha256:[a-f0-9]{64}$/u);
+  });
+
+  it("distinguishes the full health provider catalog schema from the transcript route version", async () => {
+    expect(BROADCAST_TRANSCRIPT_HEALTH_PROVIDER_CATALOG_SCHEMA_VERSION).toBe(
+      "1.4.0",
+    );
+    expect(BROADCAST_TRANSCRIPT_PROVIDER_CONFIGURATION_VERSION).toBe("1.3.0");
+
+    await expect(
+      requestBroadcastTranscriptRouteSelection(
+        "https://example.test/v1/broadcast-transcript",
+        {
+          fetchImplementation: () =>
+            Promise.resolve(
+              new Response(
+                JSON.stringify(
+                  healthBody({ healthProviderCatalogSchemaVersion: "1.3.0" }),
+                ),
+                { status: 200 },
+              ),
+            ),
+        },
+      ),
+    ).rejects.toMatchObject({ code: "HEALTH_INVALID_RESPONSE" });
   });
 
   it("rejects a health manifest that labels one provider as another model", async () => {
@@ -155,6 +187,49 @@ describe("broadcastTranscriptRouteManifest", () => {
                   healthBody({
                     modelId: BROADCAST_TRANSCRIPT_GEMINI_MODEL_ID,
                   }),
+                ),
+                { status: 200 },
+              ),
+            ),
+        },
+      ),
+    ).rejects.toMatchObject({ code: "HEALTH_INVALID_RESPONSE" });
+  });
+
+  it.each([
+    ["groq", "free-r2"],
+    ["gemini", "paid-direct"],
+  ] as const)(
+    "pins the current %s identity on the %s transport",
+    async (provider, mode) => {
+      const route = await requestBroadcastTranscriptRouteSelection(
+        "https://example.test/v1/broadcast-transcript",
+        {
+          fetchImplementation: () =>
+            Promise.resolve(
+              new Response(
+                JSON.stringify(healthBody({ provider, mode })),
+                { status: 200 },
+              ),
+            ),
+        },
+      );
+
+      expect(route.manifest.provider).toBe(provider);
+      expect(route.manifest.transportMode).toBe(mode);
+    },
+  );
+
+  it("rejects a stale provider revision even when the provider and model ID match", async () => {
+    await expect(
+      requestBroadcastTranscriptRouteSelection(
+        "https://example.test/v1/broadcast-transcript",
+        {
+          fetchImplementation: () =>
+            Promise.resolve(
+              new Response(
+                JSON.stringify(
+                  healthBody({ modelRevision: "stale-revision" }),
                 ),
                 { status: 200 },
               ),

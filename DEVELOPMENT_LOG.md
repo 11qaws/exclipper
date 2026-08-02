@@ -3203,3 +3203,16 @@ PassB가 정상 동작해도 `context-missing` 6개는 남는다. 대사 텍스�
 - **검증:** 예약 pipeline Node 계약 156개, 전체 Vitest 2,191개, 음성 등록 도구 9개,
   TypeScript, 변경 파일 ESLint, production build, 실제 Coco metadata/JSON3 단일 호출 smoke가
   모두 통과했다.
+
+### 운영 전사 경로 계약 동기화 · 2026-08-03
+
+- **원인:** Worker의 `/healthz.providers.schemaVersion`은 전체 AI 공급자 카탈로그 계약 `1.4.0`인데,
+  브라우저 전사 경로 선택기와 운영 smoke는 이를 전사 경로 지문용 버전 `1.3.0`과 같은 값으로
+  검증하고 있었다. 따라서 배포된 Qwen 경로와 키가 정상이더라도 전사 요청 전에 health 응답을
+  거부할 수 있었다.
+- **수정:** 전체 health 공급자 카탈로그 버전 `1.4.0`과 전사 경로 지문에 포함되는 전사 전용
+  설정 버전 `1.3.0`을 별도 계약으로 분리했다. paid-direct fallback도 Worker와 동일하게 Qwen 또는
+  Gemini만 허용하고 Groq fallback을 잘못 허용하던 smoke 검증을 닫았다.
+- **운영 검증:** Qwen `qwen3.5-omni-flash` free-r2 경로 지문을 운영 health에서 생성한 뒤 실제
+  5초 한국어 음성을 전사해 HTTP 200과 임시 R2 미디어 삭제까지 확인했다. 관련 smoke 9개,
+  브라우저 route manifest 10개, TypeScript와 ESLint가 모두 통과했다.
