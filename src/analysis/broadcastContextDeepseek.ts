@@ -1,5 +1,6 @@
 import {
   BROADCAST_CONTEXT_SCHEMA_VERSION,
+  MAX_BROADCAST_CONTEXT_DISCOVERED_LEADS,
   type BroadcastContextCandidateAnnotation,
   type BroadcastContextCandidateCategory,
   type BroadcastContextClipDecision,
@@ -602,7 +603,7 @@ export function extractBroadcastContextQwenOverviewResponse(
     parsed.chapters.length > 16 ||
     !Array.isArray(parsed.candidates) ||
     !Array.isArray(parsed.leads) ||
-    parsed.leads.length > 12
+    parsed.leads.length > MAX_BROADCAST_CONTEXT_DISCOVERED_LEADS
   ) {
     return { ok: false, reason: "top-level" };
   }
@@ -616,7 +617,13 @@ export function extractBroadcastContextQwenOverviewResponse(
     parsedHostStreamerProfile,
     request,
   );
-  const rawCandidates = parsed.candidates;
+  // The whole-broadcast scheduled overview intentionally has no preselected
+  // candidates. Some otherwise valid models still volunteer candidate-like
+  // rows; they are not grounded to an input ID and must not invalidate the
+  // paid summary, chapters, or discovered leads.
+  const rawCandidates = request.candidates.length === 0
+    ? []
+    : parsed.candidates;
   const verdicts = new Map<string, BroadcastContextCandidateAnnotation>();
   const requestedIds = new Set(request.candidates.map((candidate) => candidate.candidateId));
   for (const value of rawCandidates) {
@@ -706,7 +713,7 @@ export function extractBroadcastContextQwenOverviewResponse(
       typeof value.event !== "string" ||
       typeof value.cue !== "string"
     ) {
-      return { ok: false, reason: "lead-item" };
+      continue;
     }
     if (
       isRoutineGameplayEvidence(broadcastSummaryKo, [value.event, value.cue])
@@ -730,9 +737,16 @@ export function extractBroadcastContextQwenOverviewResponse(
     try {
       discoveredLeads.push(...normalizeDiscoveredLeads([lead], request.chapters));
     } catch {
-      return { ok: false, reason: "lead-range" };
+      continue;
     }
   }
+  discoveredLeads.sort(
+    (left, right) =>
+      right.confidence - left.confidence ||
+      left.startMs - right.startMs ||
+      left.leadId.localeCompare(right.leadId),
+  );
+  discoveredLeads.splice(12);
   discoveredLeads.sort(
     (left, right) =>
       left.startMs - right.startMs ||

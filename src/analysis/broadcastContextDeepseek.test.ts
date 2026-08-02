@@ -630,6 +630,70 @@ describe("broadcastContextDeepseek", () => {
       }
     });
 
+    it("preserves a scheduled overview while isolating ungrounded candidates and malformed leads", () => {
+      const scheduledRequest: BroadcastContextRequest = {
+        ...dummyRequest,
+        candidates: [],
+      };
+      const payload = {
+        choices: [{ message: { content: JSON.stringify({
+          summary: "음식 이름을 맞히며 채팅과 의견을 주고받고, 오답을 확인한 뒤 반응을 정리했다.",
+          host: {
+            name: null,
+            profile: "음식 취향을 설명하고 채팅의 반박에 응수하며 결과를 확인한 뒤 판단을 정리한다.",
+            evidence: ["음식 퀴즈 진행", "채팅 반응에 응수"],
+            uncertainty: ["화면·목소리 인물 식별 근거 없음"],
+          },
+          themes: ["음식 퀴즈"],
+          chapters: [{
+            s: "c1",
+            e: "c2",
+            title: "음식 이름 맞히기",
+            desc: "여러 음식을 구별하며 채팅과 답을 비교한다.",
+            kind: "main-event",
+            sal: "primary",
+          }],
+          // There were no input candidate IDs, so this volunteered verdict is
+          // deliberately ignored instead of discarding the paid overview.
+          candidates: [{
+            id: "invented",
+            d: "select",
+            c: "reaction",
+            p: 0.9,
+            reason: "입력에 없는 후보",
+          }],
+          leads: [{
+            s: "c1",
+            e: "c1",
+            c: "reaction",
+            p: 0.4,
+            event: "신뢰도 미달 항목",
+            cue: "개별 격리 대상",
+          }, {
+            s: "c2",
+            e: "c2",
+            c: "reaction",
+            p: 0.92,
+            event: "오답을 확인하고 크게 반응한다.",
+            cue: "정답 확인 뒤 반응",
+          }],
+        }) } }],
+      };
+
+      const parsed = extractBroadcastContextQwenOverviewResponse(
+        payload,
+        scheduledRequest,
+      );
+      expect(parsed.ok).toBe(true);
+      if (parsed.ok) {
+        expect(parsed.result.annotations).toEqual([]);
+        expect(parsed.result.discoveredLeads).toHaveLength(1);
+        expect(parsed.result.discoveredLeads[0]?.eventSummaryKo).toContain(
+          "오답을 확인",
+        );
+      }
+    });
+
     it("keeps a paid overview when a narrative field contains stray Han text", () => {
       const payload = {
         choices: [{
