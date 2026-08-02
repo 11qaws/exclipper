@@ -5,6 +5,9 @@ import {
   AMORETTO_CHANNEL_PREANALYSIS_SOURCE,
 } from "../src/analysis/channelPreanalysisSources.ts";
 import {
+  CHANNEL_PREANALYSIS_REVIEW_PIPELINE_REVISION,
+} from "./lib/channel-preanalysis-review-job.mjs";
+import {
   deriveChannelPreanalysisCandidateEndpoint,
   parseChannelPreanalysisReviewArguments,
   runScheduledChannelPreanalysisReviews,
@@ -267,7 +270,7 @@ test("an exact video cannot report success before its context enters the review 
   }]);
 });
 
-test("an exact video already closed in the verified catalog succeeds without reprocessing", async () => {
+test("an exact video already closed in the verified catalog cannot bypass the current run", async () => {
   const result = await runScheduledChannelPreanalysisReviews(
     {
       source: AMORETTO_CHANNEL_PREANALYSIS_SOURCE,
@@ -300,8 +303,62 @@ test("an exact video already closed in the verified catalog succeeds without rep
     },
   );
 
-  assert.equal(result.status, "complete");
+  assert.equal(result.status, "partial");
   assert.equal(result.selectedVideoCount, 0);
+  assert.deepEqual(result.reviewErrors, [{
+    sourceId: "amoretto-vods",
+    videoId: "KzAW3yow80Q",
+    state: "retryable",
+    errorCode: "REQUESTED_VIDEO_NOT_REVIEW_READY",
+  }]);
+});
+
+test("an exact video succeeds only with a selected current-pipeline outcome and verified closure", async () => {
+  const result = await runScheduledChannelPreanalysisReviews(
+    {
+      source: AMORETTO_CHANNEL_PREANALYSIS_SOURCE,
+      videoId: "KzAW3yow80Q",
+      maxVideos: 1,
+      catalogRoot: "D:/catalog",
+      workRoot: "D:/work",
+      ytDlpPath: "yt-dlp-test",
+      ffmpegPath: "ffmpeg-test",
+      ffprobePath: "ffprobe-test",
+      candidateEndpoint:
+        "https://exclipper-preanalysis.example.workers.dev/v1/candidate-insights",
+      authorizationToken: TOKEN,
+    },
+    {
+      nowMs: Date.parse("2026-08-02T05:00:00.000Z"),
+      environment: { PATH: "bounded-path" },
+      verifySnapshot: async () => ({
+        videos: [{
+          videoId: "KzAW3yow80Q",
+          state: "review-ready",
+          artifactIds: ["review-KzAW3yow80Q-current"],
+        }],
+        artifacts: [{
+          artifactId: "review-KzAW3yow80Q-current",
+          kind: "review",
+        }],
+      }),
+      runQueue: async () => ({
+        selectedVideoIds: ["KzAW3yow80Q"],
+        outcomes: [{
+          state: "review-ready",
+          video: { videoId: "KzAW3yow80Q" },
+          reviewBundle: {
+            certificate: {
+              pipelineRevision: CHANNEL_PREANALYSIS_REVIEW_PIPELINE_REVISION,
+            },
+          },
+        }],
+      }),
+    },
+  );
+
+  assert.equal(result.status, "complete");
+  assert.equal(result.selectedVideoCount, 1);
   assert.deepEqual(result.reviewErrors, []);
 });
 

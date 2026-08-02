@@ -3137,3 +3137,26 @@ PassB가 정상 동작해도 `context-missing` 6개는 남는다. 대사 텍스�
 - **Verification:** runner/job/checkpoint/sync contracts pass (43 tests), including input
   order determinism, 12 semantic candidates reaching detailed analysis, four reserve
   candidates receiving the same media/AI closure, and a final 12-card review bundle.
+
+### 명시 영상의 최신 review 강제 재검증 · 2026-08-02
+
+- **원인:** `--video-id`로 정확한 영상을 지정해도 review queue는 `context-ready`와
+  review retry만 선택했다. 이미 `review-ready`인 영상은 선택되지 않았고, wrapper는
+  과거 review artifact가 하나 있다는 사실만 보고 이번 pipeline 실행까지 성공한 것으로
+  보고했다. 그 결과 report의 `pipelineRevision`은 최신인데 실제 review certificate는
+  이전 revision인 거짓 완료가 가능했다.
+- **변경:** 명시 영상만 `review-ready`를 queue에 다시 넣고 `forceRefresh`로 다음 immutable
+  artifact revision을 만든다. 새 review가 readback되기 전에는 기존 공개 review를 그대로
+  보존하며, 성공 commit에서는 이전 review pointer를 새 pointer로 원자 교체한다. 일반 예약
+  queue는 닫힌 영상을 다시 선택하지 않는다.
+- **완료 계약:** 명시 실행은 해당 video ID가 이번 queue의 `selectedVideoIds`에 실제로
+  포함되고, 실행 뒤 검증한 catalog에도 정확히 하나의 닫힌 review가 있어야만 complete다.
+  과거 artifact만 남아 있고 이번 실행이 0건인 경우는 더 이상 성공으로 보고하지 않는다.
+- **복구 계약:** 같은 pipeline certificate면 명시 재실행도 provider를 다시 호출하지 않는다.
+  다른 pipeline의 crash orphan은 일반 예약·명시 실행 모두 채택하지 않으며, 현재 pipeline의
+  orphan만 manifest에 연결한다. orphan publication 뒤에도 exact run identity로 checkpoint
+  store를 재구성해 publisher 성공을 검증한 다음 남은 checkpoint를 지운다.
+- **검증:** runner·checkpoint·publisher·job·coordinator 집중 계약 55개, 전체 Vitest
+  2,190개, 음성 등록 도구 9개, TypeScript, 변경 파일 및 generated Worker 제외 전체 ESLint,
+  production build가 통과했다. 작업공간의 별도 untracked `.wrangler-dry-run-2` 번들은
+  전체 기본 lint 대상에 들어가므로 보존한 채 검증 명령에서만 제외했다.

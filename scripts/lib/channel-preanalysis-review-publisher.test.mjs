@@ -156,7 +156,11 @@ async function createContextBundle() {
   });
 }
 
-async function verifiedEmptyReview(contextBundle, revision) {
+async function verifiedEmptyReview(
+  contextBundle,
+  revision,
+  pipelineRevision = "scheduled-review-test-v1",
+) {
   const source = {
     sourceId: AMORETTO_CHANNEL_PREANALYSIS_SOURCE.sourceId,
     channelId: AMORETTO_CHANNEL_PREANALYSIS_SOURCE.channelId,
@@ -207,12 +211,12 @@ async function verifiedEmptyReview(contextBundle, revision) {
       schemaVersion: CHANNEL_PREANALYSIS_PARTICIPANT_PROVENANCE_SCHEMA_VERSION,
       checkpointDigest: digests.participantGroundingDigest,
       generatedAt: REVIEW_AT,
-      pipelineRevision: "scheduled-review-test-v1",
+      pipelineRevision,
     },
     candidates: [],
     certificate: {
       schemaVersion: CHANNEL_PREANALYSIS_REVIEW_CERTIFICATE_SCHEMA_VERSION,
-      pipelineRevision: "scheduled-review-test-v1",
+      pipelineRevision,
       outcome: "verified-empty",
       sourceIdentityDigest: digests.sourceIdentityDigest,
       transcriptDigest: contextBundle.transcriptDigest,
@@ -443,6 +447,24 @@ test("a review retry reuses the attempted revision so candidate checkpoints rema
   assert.equal(resumed.video.revision, 2);
 });
 
+test("a normal publication rejects a bundle from another pipeline revision", async (t) => {
+  const fixture = await createFixture(t);
+  const result = await publishChannelPreanalysisReview(
+    publishInput(fixture),
+    {
+      requiredPipelineRevision: "scheduled-review-test-v2",
+      prepareReview: ({ artifactRevision }) =>
+        verifiedEmptyReview(fixture.contextBundle, artifactRevision),
+      nowIso: () => COMMIT_AT,
+    },
+  );
+
+  assert.equal(result.state, "retryable");
+  assert.equal(result.errorCode, "REVIEW_PIPELINE_REVISION_MISMATCH");
+  assert.equal(result.video.state, "retryable");
+  assert.equal(result.manifest.artifacts.some(({ kind }) => kind === "review"), false);
+});
+
 test("publishes one verified-empty bundle only after immutable readback", async (t) => {
   const fixture = await createFixture(t);
   let prepareCalls = 0;
@@ -476,6 +498,137 @@ test("publishes one verified-empty bundle only after immutable readback", async 
   await verifyChannelPreanalysisReviewBundleIntegrity(persisted);
   assert.equal(sha256(Buffer.from(reviewText, "utf8")), result.artifact.contentDigest);
   assert.equal(Buffer.byteLength(reviewText), result.artifact.byteLength);
+  await assertInputsRemain(fixture);
+});
+
+test("an explicit refresh atomically replaces a closed review with the next revision", async (t) => {
+  const fixture = await createFixture(t);
+  const first = await publishChannelPreanalysisReview(
+    publishInput(fixture),
+    {
+      prepareReview: ({ artifactRevision }) =>
+        verifiedEmptyReview(fixture.contextBundle, artifactRevision),
+      nowIso: () => COMMIT_AT,
+    },
+  );
+  let refreshedRevision = null;
+
+  const refreshed = await publishChannelPreanalysisReview(
+    {
+      ...publishInput(fixture),
+      video: first.video,
+    },
+    {
+      forceRefresh: true,
+      requiredPipelineRevision: "scheduled-review-test-v2",
+      prepareReview: ({ artifactRevision }) => {
+        refreshedRevision = artifactRevision;
+        return verifiedEmptyReview(
+          fixture.contextBundle,
+          artifactRevision,
+          "scheduled-review-test-v2",
+        );
+      },
+      nowIso: () => "2026-08-02T04:00:00.000Z",
+    },
+  );
+
+  assert.equal(refreshedRevision, 3);
+  assert.equal(refreshed.state, "review-ready");
+  assert.equal(refreshed.video.revision, 3);
+  assert.equal(refreshed.reviewBundle.artifactRevision, 3);
+  assert.equal(
+    refreshed.manifest.artifacts.filter(({ kind }) => kind === "review").length,
+    1,
+  );
+  const currentReviewArtifact = refreshed.manifest.artifacts.find(
+    ({ kind }) => kind === "review",
+  );
+  assert.equal(
+    currentReviewArtifact?.artifactId,
+    channelPreanalysisReviewBundleArtifactId(VIDEO_ID, 3),
+  );
+  assert.equal(
+    refreshed.video.artifactIds.includes(currentReviewArtifact.artifactId),
+    true,
+  );
+  await assertInputsRemain(fixture);
+});
+
+test("an explicit refresh reuses a closed review from the required pipeline", async (t) => {
+  const fixture = await createFixture(t);
+  const first = await publishChannelPreanalysisReview(
+    publishInput(fixture),
+    {
+      prepareReview: ({ artifactRevision }) =>
+        verifiedEmptyReview(fixture.contextBundle, artifactRevision),
+      nowIso: () => COMMIT_AT,
+    },
+  );
+  let prepareCalls = 0;
+
+  const repeated = await publishChannelPreanalysisReview(
+    {
+      ...publishInput(fixture),
+      video: first.video,
+    },
+    {
+      forceRefresh: true,
+      requiredPipelineRevision: "scheduled-review-test-v1",
+      prepareReview: async () => {
+        prepareCalls += 1;
+        throw new Error("a current review must not be paid for twice");
+      },
+      nowIso: () => "2026-08-02T04:00:00.000Z",
+    },
+  );
+
+  assert.equal(repeated.state, "review-ready");
+  assert.equal(repeated.recovered, true);
+  assert.equal(repeated.video.revision, 2);
+  assert.equal(prepareCalls, 0);
+});
+
+test("a failed explicit refresh preserves the previously published review closure", async (t) => {
+  const fixture = await createFixture(t);
+  const first = await publishChannelPreanalysisReview(
+    publishInput(fixture),
+    {
+      prepareReview: ({ artifactRevision }) =>
+        verifiedEmptyReview(fixture.contextBundle, artifactRevision),
+      nowIso: () => COMMIT_AT,
+    },
+  );
+
+  const failed = await publishChannelPreanalysisReview(
+    {
+      ...publishInput(fixture),
+      video: first.video,
+    },
+    {
+      forceRefresh: true,
+      requiredPipelineRevision: "scheduled-review-test-v2",
+      prepareReview: async () => {
+        throw Object.assign(new Error("temporary provider outage"), {
+          code: "PROVIDER_UNAVAILABLE",
+        });
+      },
+      nowIso: () => "2026-08-02T04:00:00.000Z",
+    },
+  );
+
+  assert.equal(failed.state, "retryable");
+  assert.equal(failed.errorCode, "PROVIDER_UNAVAILABLE");
+  assert.equal(failed.preservedReview, true);
+  assert.equal(failed.video.state, "review-ready");
+  assert.equal(failed.video.revision, 2);
+  const persisted = parseChannelPreanalysisManifest(
+    await readFile(join(fixture.catalogDir, "catalog.json"), "utf8"),
+    AMORETTO_CHANNEL_PREANALYSIS_SOURCE,
+  );
+  assert.equal(persisted.videos[0].state, "review-ready");
+  assert.equal(persisted.videos[0].revision, 2);
+  assert.equal(persisted.artifacts.filter(({ kind }) => kind === "review").length, 1);
   await assertInputsRemain(fixture);
 });
 

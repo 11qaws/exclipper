@@ -36,7 +36,7 @@ import {
 } from "./channel-preanalysis-review-runner.mjs";
 
 export const CHANNEL_PREANALYSIS_REVIEW_PIPELINE_REVISION =
-  "scheduled-review-ready-v7";
+  "scheduled-review-ready-v8";
 export const CHANNEL_PREANALYSIS_REVIEW_JOB_MAX_VIDEOS = 2;
 
 const MANIFEST_MAX_BYTES = 4 * 1_024 * 1_024;
@@ -112,7 +112,7 @@ export function selectChannelPreanalysisReviewQueue(
           video.state === "retryable" &&
           video.retry?.stage === "review" &&
           video.retry.lastSuccessfulState === "context-ready"
-        )
+        ) || video.state === "review-ready"
       ),
     );
     return exact === undefined ? [] : [exact];
@@ -296,6 +296,7 @@ export async function prepareChannelPreanalysisReviewVideo(
     ffprobePath = "ffprobe",
     candidateConcurrency = CHANNEL_PREANALYSIS_REVIEW_DEFAULT_CONCURRENCY,
     pipelineRevision = CHANNEL_PREANALYSIS_REVIEW_PIPELINE_REVISION,
+    forceRefresh = false,
   },
   dependencies = {},
 ) {
@@ -319,6 +320,31 @@ export async function prepareChannelPreanalysisReviewVideo(
   const createCheckpointStore =
     dependencies.createCheckpointStore ?? createChannelPreanalysisReviewCheckpointStore;
   const nowIso = dependencies.nowIso ?? (() => new Date().toISOString());
+  const grounding = participantGrounding(loaded.contextBundle);
+  const { broadcastContextDigest } =
+    await createChannelPreanalysisReviewContentDigests({
+      source: {
+        sourceId: source.sourceId,
+        channelId: source.channelId,
+        videoId: loaded.video.videoId,
+      },
+      broadcastContext: loaded.contextBundle.broadcastContext,
+      participantGrounding: grounding,
+      candidates: [],
+    });
+  const checkpointStoreForRevision = (artifactRevision) => createCheckpointStore({
+    catalogDir,
+    runIdentity: {
+      sourceId: source.sourceId,
+      channelId: source.channelId,
+      videoId: loaded.video.videoId,
+      contextArtifactDigest: loaded.artifact.contentDigest,
+      broadcastContextDigest,
+      artifactRevision,
+      pipelineRevision,
+    },
+    nowIso,
+  });
   let checkpointStore = null;
   let downloaded = null;
   const outputRoot = resolve(workRoot);
@@ -333,6 +359,8 @@ export async function prepareChannelPreanalysisReviewVideo(
       },
       {
         nowIso,
+        forceRefresh,
+        requiredPipelineRevision: pipelineRevision,
         prepareReview: async ({ artifactRevision }) => {
           downloaded = await downloadMedia(
             {
@@ -376,31 +404,7 @@ export async function prepareChannelPreanalysisReviewVideo(
           if (visualResult.status === "rejected") throw visualResult.reason;
           const audioFeatures = audioResult.value;
           const visualAnalysis = visualResult.value;
-          const grounding = participantGrounding(loaded.contextBundle);
-          const { broadcastContextDigest } =
-            await createChannelPreanalysisReviewContentDigests({
-              source: {
-                sourceId: source.sourceId,
-                channelId: source.channelId,
-                videoId: loaded.video.videoId,
-              },
-              broadcastContext: loaded.contextBundle.broadcastContext,
-              participantGrounding: grounding,
-              candidates: [],
-            });
-          checkpointStore = createCheckpointStore({
-            catalogDir,
-            runIdentity: {
-              sourceId: source.sourceId,
-              channelId: source.channelId,
-              videoId: loaded.video.videoId,
-              contextArtifactDigest: loaded.artifact.contentDigest,
-              broadcastContextDigest,
-              artifactRevision,
-              pipelineRevision,
-            },
-            nowIso,
-          });
+          checkpointStore = checkpointStoreForRevision(artifactRevision);
           const checkpoint = await checkpointStore.load();
           const extractCandidateMedia = createMediaExtractor({
             sourcePath: downloaded.sourcePath,
@@ -449,6 +453,11 @@ export async function prepareChannelPreanalysisReviewVideo(
         },
       },
     );
+    if (publication.state === "review-ready" && checkpointStore === null) {
+      checkpointStore = checkpointStoreForRevision(
+        publication.reviewBundle.artifactRevision,
+      );
+    }
     if (publication.state === "review-ready" && checkpointStore !== null) {
       await checkpointStore.finalizeAfterPublisherSuccess(publication);
     }
@@ -493,6 +502,7 @@ export async function runChannelPreanalysisReviewQueue(
           catalogDir,
           source,
           video: selectedVideo,
+          forceRefresh: videoId !== null,
           ...videoOptions,
         },
         dependencies,

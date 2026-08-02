@@ -280,6 +280,30 @@ test("an exact manual review bypasses only the retry time backoff", () => {
   );
 });
 
+test("an exact manual review selects an already closed video for current-pipeline refresh", () => {
+  const exact = {
+    videoId: VIDEO_ID,
+    state: "review-ready",
+    publishedAt: "2026-08-01T00:00:00.000Z",
+    retry: null,
+  };
+
+  assert.deepEqual(
+    selectChannelPreanalysisReviewQueue(
+      { videos: [exact] },
+      { nowMs: Date.parse("2026-08-02T03:00:00.000Z"), videoId: VIDEO_ID },
+    ),
+    [exact],
+  );
+  assert.deepEqual(
+    selectChannelPreanalysisReviewQueue(
+      { videos: [exact] },
+      { nowMs: Date.parse("2026-08-02T03:00:00.000Z") },
+    ),
+    [],
+  );
+});
+
 test("an exact manual review cannot bypass an incomplete upstream state", () => {
   const video = {
     videoId: VIDEO_ID,
@@ -406,8 +430,16 @@ test("one scheduled video reaches the publisher only after download, full featur
           retryCandidateIds: [],
         };
       },
-      publishReview: async (_input, { prepareReview }) => {
+      publishReview: async (
+        _input,
+        { prepareReview, forceRefresh, requiredPipelineRevision },
+      ) => {
         calls.push("publisher");
+        assert.equal(forceRefresh, false);
+        assert.equal(
+          requiredPipelineRevision,
+          "scheduled-review-ready-v8",
+        );
         const prepared = await prepareReview({ artifactRevision: 2 });
         assert.equal(prepared, reviewBundle);
         return { state: "review-ready", reviewBundle, video: { revision: 2 } };
@@ -429,6 +461,50 @@ test("one scheduled video reaches the publisher only after download, full featur
     "checkpoint-finalize",
   ]);
   assert.equal(await stat(downloadedDirectory).catch(() => null), null);
+});
+
+test("an orphan publication reconstructs and finalizes its exact checkpoint store", async (t) => {
+  const data = await fixture(t);
+  const calls = [];
+  const publication = await prepareChannelPreanalysisReviewVideo(
+    {
+      catalogDir: data.catalogDir,
+      source: AMORETTO_CHANNEL_PREANALYSIS_SOURCE,
+      video: data.video,
+      createCandidateAnalyzer: async () =>
+        assert.fail("orphan recovery must not create an analyzer"),
+      workRoot: join(data.root, "orphan-work"),
+    },
+    {
+      createCheckpointStore: ({ runIdentity }) => {
+        calls.push(["checkpoint-store", runIdentity]);
+        return {
+          load: async () => assert.fail("orphan recovery must not load candidates"),
+          onCandidateCheckpoint: async () => {},
+          finalizeAfterPublisherSuccess: async (value) => {
+            calls.push(["checkpoint-finalize", value.video.revision]);
+          },
+        };
+      },
+      downloadMedia: async () => assert.fail("orphan recovery must not download media"),
+      publishReview: async (_input, options) => {
+        assert.equal(options.forceRefresh, false);
+        assert.equal(options.requiredPipelineRevision, "scheduled-review-ready-v8");
+        return {
+          state: "review-ready",
+          reviewBundle: { artifactRevision: 2 },
+          video: { videoId: VIDEO_ID, state: "review-ready", revision: 2 },
+        };
+      },
+    },
+  );
+
+  assert.equal(publication.state, "review-ready");
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0][0], "checkpoint-store");
+  assert.equal(calls[0][1].artifactRevision, 2);
+  assert.equal(calls[0][1].pipelineRevision, "scheduled-review-ready-v8");
+  assert.deepEqual(calls[1], ["checkpoint-finalize", 2]);
 });
 
 test("parallel media scans both stop before a failed job removes their shared download", async (t) => {

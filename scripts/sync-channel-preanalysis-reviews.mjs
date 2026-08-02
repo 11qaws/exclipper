@@ -262,8 +262,25 @@ export async function runScheduledChannelPreanalysisReviews(
         errorCode: outcome.errorCode ?? "REVIEW_NOT_READY",
       })),
   );
+  const requestedVideoSelected = options.videoId === null || outcomes.some(
+    ({ sourceId, selectedVideoIds }) =>
+      sourceId === options.source?.sourceId &&
+      selectedVideoIds.includes(options.videoId),
+  );
+  const requestedVideoCurrentOutcome = options.videoId === null || outcomes.some(
+    ({ sourceId, outcomes: sourceOutcomes }) =>
+      sourceId === options.source?.sourceId &&
+      sourceOutcomes.some((outcome) =>
+        outcome.video?.videoId === options.videoId &&
+        outcome.state === "review-ready" &&
+        outcome.reviewBundle?.certificate?.pipelineRevision ===
+          CHANNEL_PREANALYSIS_REVIEW_PIPELINE_REVISION
+      ),
+  );
   const requestedVideoReady =
     options.videoId === null || (
+      requestedVideoSelected &&
+      requestedVideoCurrentOutcome &&
       options.source !== null &&
       manifestHasClosedReview(
         verifiedManifests.get(options.source.sourceId),

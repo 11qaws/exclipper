@@ -209,8 +209,9 @@ function findCurrentVideo(manifest, selectedVideo) {
   return current;
 }
 
-function assertReviewEligible(video) {
+function assertReviewEligible(video, { allowReviewReady = false } = {}) {
   if (video.state === "context-ready") return;
+  if (allowReviewReady && video.state === "review-ready") return;
   if (
     video.state === "retryable" &&
     video.retry?.stage === "review" &&
@@ -408,6 +409,7 @@ async function findRecoverableOrphan(
   contextBundle,
   source,
   fingerprintArtifact,
+  requiredPipelineRevision,
 ) {
   const minimumRevision = video.state === "retryable"
     ? video.revision
@@ -422,14 +424,21 @@ async function findRecoverableOrphan(
       revision,
     );
     try {
+      const persisted = await verifyReviewFile(
+        artifactPath(catalogDir, source, storageKey),
+        contextBundle,
+        source,
+        revision,
+        fingerprintArtifact,
+      );
+      if (
+        requiredPipelineRevision !== null &&
+        persisted.review.certificate.pipelineRevision !== requiredPipelineRevision
+      ) {
+        continue;
+      }
       return {
-        ...(await verifyReviewFile(
-          artifactPath(catalogDir, source, storageKey),
-          contextBundle,
-          source,
-          revision,
-          fingerprintArtifact,
-        )),
+        ...persisted,
         recovered: true,
       };
     } catch (error) {
@@ -459,6 +468,7 @@ async function prepareAndPersistReview(
   source,
   fingerprintArtifact,
   prepareReview,
+  requiredPipelineRevision = null,
 ) {
   const orphan = await findRecoverableOrphan(
     catalogDir,
@@ -466,6 +476,7 @@ async function prepareAndPersistReview(
     contextBundle,
     source,
     fingerprintArtifact,
+    requiredPipelineRevision,
   );
   if (orphan.recovered) return orphan;
 
@@ -491,6 +502,15 @@ async function prepareAndPersistReview(
     orphan.revision,
     fingerprintArtifact,
   );
+  if (
+    requiredPipelineRevision !== null &&
+    review.certificate.pipelineRevision !== requiredPipelineRevision
+  ) {
+    throw publisherError(
+      "REVIEW_PIPELINE_REVISION_MISMATCH",
+      "The prepared review does not use the required pipeline revision.",
+    );
+  }
   const text = serialize(review);
   const bytes = Buffer.from(text, "utf8");
   if (bytes.byteLength > CHANNEL_PREANALYSIS_REVIEW_BUNDLE_MAX_BYTES) {
@@ -523,11 +543,21 @@ async function prepareAndPersistReview(
 }
 
 function manifestWithReview(manifest, video, artifact, nowIso, source) {
+  const replacedReviewArtifactIds = new Set(
+    manifest.artifacts
+      .filter((entry) => entry.videoId === video.videoId && entry.kind === "review")
+      .map((entry) => entry.artifactId),
+  );
   const nextVideo = {
     ...video,
     state: "review-ready",
     revision: artifact.revision,
-    artifactIds: [...video.artifactIds, artifact.artifactId],
+    artifactIds: [
+      ...video.artifactIds.filter(
+        (artifactId) => !replacedReviewArtifactIds.has(artifactId),
+      ),
+      artifact.artifactId,
+    ],
     retry: null,
   };
   const nextManifest = {
@@ -537,7 +567,13 @@ function manifestWithReview(manifest, video, artifact, nowIso, source) {
     videos: manifest.videos.map((entry) =>
       entry.videoId === video.videoId ? nextVideo : entry
     ),
-    artifacts: [...manifest.artifacts, artifact],
+    artifacts: [
+      ...manifest.artifacts.filter(
+        (entry) =>
+          entry.videoId !== video.videoId || entry.kind !== "review",
+      ),
+      artifact,
+    ],
   };
   return {
     manifest: parseChannelPreanalysisManifest(serialize(nextManifest), source),
@@ -633,13 +669,35 @@ async function verifyPublishedReview(
  */
 export async function publishChannelPreanalysisReview(
   { catalogDir, source: sourceInput, video: selectedVideo, contextBundle: input },
-  { prepareReview, nowIso = () => new Date().toISOString() } = {},
+  {
+    prepareReview,
+    nowIso = () => new Date().toISOString(),
+    forceRefresh = false,
+    requiredPipelineRevision = null,
+  } = {},
 ) {
   if (typeof catalogDir !== "string" || catalogDir.trim().length === 0) {
     throw publisherError("INVALID_INPUT", "catalogDir is required.");
   }
   if (typeof prepareReview !== "function") {
     throw publisherError("INVALID_INPUT", "prepareReview must be injected.");
+  }
+  if (
+    requiredPipelineRevision !== null && (
+      typeof requiredPipelineRevision !== "string" ||
+      requiredPipelineRevision.trim().length === 0
+    )
+  ) {
+    throw publisherError(
+      "INVALID_INPUT",
+      "A required review pipeline revision must be a non-empty string.",
+    );
+  }
+  if (forceRefresh && requiredPipelineRevision === null) {
+    throw publisherError(
+      "INVALID_INPUT",
+      "A forced review refresh requires its exact pipeline revision.",
+    );
   }
   const source = requireSource(sourceInput);
   const loaded = await readCatalog(catalogDir, source);
@@ -665,16 +723,21 @@ export async function publishChannelPreanalysisReview(
       source,
       fingerprintArtifact,
     );
-    return {
-      state: "review-ready",
-      manifest: loaded.manifest,
-      video,
-      artifact: persisted.artifact,
-      reviewBundle: persisted.review,
-      recovered: true,
-    };
+    if (
+      !forceRefresh ||
+      persisted.review.certificate.pipelineRevision === requiredPipelineRevision
+    ) {
+      return {
+        state: "review-ready",
+        manifest: loaded.manifest,
+        video,
+        artifact: persisted.artifact,
+        reviewBundle: persisted.review,
+        recovered: true,
+      };
+    }
   }
-  assertReviewEligible(video);
+  assertReviewEligible(video, { allowReviewReady: forceRefresh });
 
   let attemptedRevision = null;
   try {
@@ -688,6 +751,7 @@ export async function publishChannelPreanalysisReview(
         attemptedRevision = request.artifactRevision;
         return prepareReview(request);
       },
+      requiredPipelineRevision,
     );
     attemptedRevision = prepared.artifact.revision;
     const committedAt = assertIsoDate(nowIso(), "review commit time");
@@ -722,6 +786,15 @@ export async function publishChannelPreanalysisReview(
       recovered: prepared.recovered,
     };
   } catch (cause) {
+    if (forceRefresh && video.state === "review-ready") {
+      return {
+        state: "retryable",
+        manifest: loaded.manifest,
+        video,
+        errorCode: errorCodeOf(cause),
+        preservedReview: true,
+      };
+    }
     const checkpointAt = assertIsoDate(nowIso(), "review retry time");
     const errorCode = errorCodeOf(cause);
     const retry = manifestWithReviewRetry(
