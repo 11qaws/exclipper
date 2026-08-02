@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "channelId": "UCgq07mhOmrjVeZeJYXiAClw",
   "channelHandle": "@kokotorori",
-  "revision": 17,
-  "generatedAt": "2026-08-02T21:30:58.873Z",
+  "revision": 21,
+  "generatedAt": "2026-08-02T22:14:05.582Z",
   "videos": [
     {
       "channelId": "UCgq07mhOmrjVeZeJYXiAClw",
@@ -95,15 +95,23 @@
       "videoId": "H4szOHmYCOI",
       "title": "Hello~! 🍮🎐",
       "normalizedTitle": "hello",
-      "durationMs": null,
+      "durationMs": 4609000,
       "publishedAt": "2026-02-14T15:35:25.000Z",
       "updatedAt": "2026-05-05T11:32:15.000Z",
       "watchUrl": "https://www.youtube.com/watch?v=H4szOHmYCOI",
-      "state": "discovered",
-      "revision": 1,
-      "artifactIds": [],
+      "state": "retryable",
+      "revision": 5,
+      "artifactIds": [
+        "youtube-caption-bundle:H4szOHmYCOI:v2"
+      ],
       "registeredLocalSampledFingerprints": [],
-      "retry": null
+      "retry": {
+        "stage": "fingerprint",
+        "lastSuccessfulState": "context-ready",
+        "attemptCount": 1,
+        "nextAttemptAt": "2026-08-03T01:14:05.582Z",
+        "errorCode": "FINGERPRINT_STORYBOARD_UNAVAILABLE"
+      }
     },
     {
       "channelId": "UCgq07mhOmrjVeZeJYXiAClw",
@@ -306,6 +314,16 @@
       "contentDigest": "sha256:16290df81058d16283d03a769c3c92b318f70ff8413513c26726a2205f11d47a",
       "byteLength": 2200,
       "createdAt": "2026-07-12T20:13:52.000Z"
+    },
+    {
+      "artifactId": "youtube-caption-bundle:H4szOHmYCOI:v2",
+      "videoId": "H4szOHmYCOI",
+      "kind": "transcript",
+      "revision": 2,
+      "storageKey": "coco-replay/videos/H4szOHmYCOI.v2.json",
+      "contentDigest": "sha256:0c7c09ab4dffa09cc7f53ef816b5ed5e5666f859ea79836318a71169069bd26f",
+      "byteLength": 161221,
+      "createdAt": "2026-08-02T22:14:05.509Z"
     }
   ]
 }

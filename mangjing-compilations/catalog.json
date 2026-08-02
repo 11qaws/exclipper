@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "channelId": "UC_hftLL-ydsJd1YpcBZ_09g",
   "channelHandle": "@망징-b1t",
-  "revision": 6,
-  "generatedAt": "2026-08-02T21:14:30.968Z",
+  "revision": 11,
+  "generatedAt": "2026-08-02T22:33:19.453Z",
   "videos": [
     {
       "channelId": "UC_hftLL-ydsJd1YpcBZ_09g",
@@ -33,13 +33,17 @@
       "videoId": "7ElMO7FuL6s",
       "title": "{림버스 컴퍼니} 괴물같이 등장한 문학소녀의 3장 몰아보기",
       "normalizedTitle": "림버스 컴퍼니 괴물같이 등장한 문학소녀의 3장 몰아보기",
-      "durationMs": null,
+      "durationMs": 28323000,
       "publishedAt": "2026-07-22T08:47:36.000Z",
       "updatedAt": "2026-07-22T08:47:37.000Z",
       "watchUrl": "https://www.youtube.com/watch?v=7ElMO7FuL6s",
-      "state": "discovered",
-      "revision": 1,
-      "artifactIds": [],
+      "state": "review-ready",
+      "revision": 6,
+      "artifactIds": [
+        "youtube-caption-bundle:7ElMO7FuL6s:v2",
+        "youtube-storyboard-visual-fingerprint:7ElMO7FuL6s:v1",
+        "review-bundle:7ElMO7FuL6s:v6"
+      ],
       "registeredLocalSampledFingerprints": [],
       "retry": null
     },
@@ -249,6 +253,36 @@
       "contentDigest": "sha256:708880507e548f22c8870ac86bd555fa6754c683734899e5c3b62a278a46c83f",
       "byteLength": 1098770,
       "createdAt": "2026-08-02T21:14:30.546Z"
+    },
+    {
+      "artifactId": "youtube-caption-bundle:7ElMO7FuL6s:v2",
+      "videoId": "7ElMO7FuL6s",
+      "kind": "transcript",
+      "revision": 2,
+      "storageKey": "mangjing-compilations/videos/7ElMO7FuL6s.v2.json",
+      "contentDigest": "sha256:aadc9a6f0a10f693face2457d76b2034c25c66d2367ab043d787ea5b0877eaaf",
+      "byteLength": 1560163,
+      "createdAt": "2026-08-02T22:15:24.278Z"
+    },
+    {
+      "artifactId": "youtube-storyboard-visual-fingerprint:7ElMO7FuL6s:v1",
+      "videoId": "7ElMO7FuL6s",
+      "kind": "fingerprint",
+      "revision": 1,
+      "storageKey": "mangjing-compilations/videos/7ElMO7FuL6s.visual-fingerprint.v1.json",
+      "contentDigest": "sha256:c9b148d3a3bac5b8879aa4b706e2182936cef2cfc5e2d770d53b1927c05c059d",
+      "byteLength": 2201,
+      "createdAt": "2026-07-22T08:47:37.000Z"
+    },
+    {
+      "artifactId": "review-bundle:7ElMO7FuL6s:v6",
+      "videoId": "7ElMO7FuL6s",
+      "kind": "review",
+      "revision": 6,
+      "storageKey": "mangjing-compilations/videos/7ElMO7FuL6s.review.v6.json",
+      "contentDigest": "sha256:6c53a4bf9858338f2b6df9bbb8aad8849075f5b9ee61069fca21458e3e2f10ba",
+      "byteLength": 1582756,
+      "createdAt": "2026-08-02T22:32:04.102Z"
     }
   ]
 }
