@@ -994,7 +994,7 @@ test("candidate evidence and transcript context keep captions nearest the focus"
   assert.equal(observed.evidence.quality.receivedChunkCount, 29);
 });
 
-test("the final reservoir deterministically follows a semantic-semantic-audio-visual balance", async () => {
+test("whole-context semantic leads take priority while audio and visual remain analyzed reserves", async () => {
   const durationMs = 2_000_000;
   const sourceChapters = Array.from({ length: 20 }, (_, index) => ({
     chapterId: `chapter-${index + 1}`,
@@ -1004,7 +1004,7 @@ test("the final reservoir deterministically follows a semantic-semantic-audio-vi
     evidenceCoverageRatio: 1,
     summaryKo: `${index + 1}번째 방송 주제 구간입니다.`,
   }));
-  const discoveredLeads = Array.from({ length: 9 }, (_, index) => ({
+  const discoveredLeads = Array.from({ length: 14 }, (_, index) => ({
     leadId: `semantic-lead-${index + 1}`,
     startChapterId: sourceChapters[index].chapterId,
     endChapterId: sourceChapters[index].chapterId,
@@ -1052,21 +1052,31 @@ test("the final reservoir deterministically follows a semantic-semantic-audio-vi
       },
     }));
     assert.equal(result.status, "complete");
-    return seen;
+    return { seen, result };
   };
 
   const first = await run(discoveredLeads);
   const second = await run([...discoveredLeads].reverse());
-  assert.equal(first.length, 12);
-  assert.deepEqual(
-    Object.fromEntries(["semantic", "audio", "visual"].map((kind) => [
-      kind,
-      first.filter(({ sourceKinds }) => sourceKinds.length === 1 && sourceKinds[0] === kind).length,
-    ])),
-    { semantic: 6, audio: 3, visual: 3 },
+  assert.equal(first.seen.length, 16);
+  assert.equal(
+    first.seen.filter(({ sourceKinds }) => sourceKinds.includes("semantic")).length,
+    12,
+  );
+  assert.equal(
+    first.seen.filter(({ sourceKinds }) => !sourceKinds.includes("semantic")).length,
+    4,
   );
   assert.deepEqual(
-    first.map(({ candidateId }) => candidateId),
-    second.map(({ candidateId }) => candidateId),
+    first.seen.map(({ candidateId }) => candidateId),
+    second.seen.map(({ candidateId }) => candidateId),
   );
+  assert.equal(first.result.reviewBundle.candidates.length, 12);
+  assert.ok(first.result.reviewBundle.candidates.every(({ candidateId }) => {
+    const analyzed = first.seen.find((candidate) => candidate.candidateId === candidateId);
+    return analyzed?.sourceKinds.includes("semantic") === true;
+  }));
+  assert.ok(first.result.reviewBundle.candidates.some(({ candidateId }) =>
+    first.seen.find(({ candidateId: analyzedId }) => analyzedId === candidateId)
+      ?.originIds.includes("semantic-lead-12")
+  ));
 });

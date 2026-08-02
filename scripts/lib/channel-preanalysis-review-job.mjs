@@ -36,7 +36,7 @@ import {
 } from "./channel-preanalysis-review-runner.mjs";
 
 export const CHANNEL_PREANALYSIS_REVIEW_PIPELINE_REVISION =
-  "scheduled-review-ready-v6";
+  "scheduled-review-ready-v7";
 export const CHANNEL_PREANALYSIS_REVIEW_JOB_MAX_VIDEOS = 2;
 
 const MANIFEST_MAX_BYTES = 4 * 1_024 * 1_024;

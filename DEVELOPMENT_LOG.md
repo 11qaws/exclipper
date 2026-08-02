@@ -3119,3 +3119,21 @@ PassB가 정상 동작해도 `context-missing` 6개는 남는다. 대사 텍스�
   `strict-paid`는 중복 과금 위험이 표시된 재호출만 차단한다.
 - **검증:** 전체 Vitest 177파일 2,188개, 실제 Actions와 같은 Node 계약 138개, 음성 등록
   도구 9개, TypeScript, ESLint, production build, Worker dry-run이 모두 통과했다.
+
+### Scheduled review semantic-priority reserve · 2026-08-02
+
+- **Observed failure:** the food-talk E2E context artifact correctly discovered the kalguksu,
+  pork-skin, and Dubai-chocolate events, but the fixed `semantic, semantic, audio, visual`
+  detail budget discarded two of them before frame extraction. Only six of 26
+  whole-broadcast semantic leads reached multimodal review.
+- **Selection contract:** scheduled review now analyzes up to 16 candidates: 12
+  whole-context semantic candidates plus four bounded audio/visual exploration reserves.
+  The published editor list remains capped at 12. Verified semantic candidates take
+  publication priority; reserves fill slots only when multimodal verification excludes a
+  semantic candidate.
+- **Recovery:** checkpoint capacity follows the 16-candidate analysis budget and retains
+  the four-MiB size fence. Runner, checkpoint, and pipeline revisions were advanced so
+  stale twelve-entry checkpoints cannot be reused.
+- **Verification:** runner/job/checkpoint/sync contracts pass (43 tests), including input
+  order determinism, 12 semantic candidates reaching detailed analysis, four reserve
+  candidates receiving the same media/AI closure, and a final 12-card review bundle.

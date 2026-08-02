@@ -28,12 +28,14 @@ import {
 } from "../../src/analysis/channelPreanalysisSources.ts";
 import { YOUTUBE_VIDEO_ID_PATTERN } from "../../src/analysis/youtubeCaptionTrack.ts";
 import {
+  CHANNEL_PREANALYSIS_REVIEW_MAX_ANALYSIS_CANDIDATES,
   CHANNEL_PREANALYSIS_REVIEW_RUNNER_SCHEMA_VERSION,
 } from "./channel-preanalysis-review-runner.mjs";
 
-export const CHANNEL_PREANALYSIS_REVIEW_CHECKPOINT_SCHEMA_VERSION = "1.2.0";
+export const CHANNEL_PREANALYSIS_REVIEW_CHECKPOINT_SCHEMA_VERSION = "1.3.0";
 export const CHANNEL_PREANALYSIS_REVIEW_CHECKPOINT_MAX_BYTES = 4 * 1024 * 1024;
-export const CHANNEL_PREANALYSIS_REVIEW_CHECKPOINT_MAX_ENTRIES = 12;
+export const CHANNEL_PREANALYSIS_REVIEW_CHECKPOINT_MAX_ENTRIES =
+  CHANNEL_PREANALYSIS_REVIEW_MAX_ANALYSIS_CANDIDATES;
 
 const CHECKPOINT_DIRECTORY = ".review-checkpoints";
 const SHA256_PATTERN = /^sha256:[0-9a-f]{64}$/u;
@@ -704,7 +706,10 @@ export function createChannelPreanalysisReviewCheckpointStore(options) {
     );
     if (index < 0) {
       if (entries.length >= CHANNEL_PREANALYSIS_REVIEW_CHECKPOINT_MAX_ENTRIES) {
-        throw checkpointError("ENTRY_LIMIT", "A review run cannot checkpoint more than 12 candidates.");
+        throw checkpointError(
+          "ENTRY_LIMIT",
+          `A review run cannot checkpoint more than ${CHANNEL_PREANALYSIS_REVIEW_CHECKPOINT_MAX_ENTRIES} candidates.`,
+        );
       }
       entries.push(entry);
     } else {

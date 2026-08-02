@@ -47,8 +47,9 @@ import {
   verifyChannelPreanalysisReviewBundleIntegrity,
 } from "../../src/analysis/channelPreanalysisReviewBundle.ts";
 
-export const CHANNEL_PREANALYSIS_REVIEW_RUNNER_SCHEMA_VERSION = "4.2.0";
+export const CHANNEL_PREANALYSIS_REVIEW_RUNNER_SCHEMA_VERSION = "4.3.0";
 export const CHANNEL_PREANALYSIS_REVIEW_MAX_CANDIDATES = 12;
+export const CHANNEL_PREANALYSIS_REVIEW_MAX_ANALYSIS_CANDIDATES = 16;
 export const CHANNEL_PREANALYSIS_REVIEW_DEFAULT_CONCURRENCY = 2;
 export const CHANNEL_PREANALYSIS_REVIEW_MAX_SEMANTIC_RECOVERIES = 2;
 
@@ -61,7 +62,17 @@ const MIN_CANDIDATE_DURATION_MS = 30_000;
 const MAX_CANDIDATE_DURATION_MS = 60_000;
 const DEFAULT_CANDIDATE_DURATION_MS = 45_000;
 const MAX_CANDIDATE_CONTEXT_TEXT_LENGTH = 4_000;
-const SOURCE_SELECTION_CYCLE = ["semantic", "semantic", "audio", "visual"];
+// Whole-broadcast semantic discovery is the primary editorial source. Audio and
+// visual-only points remain bounded exploration reserves: they are analyzed and
+// can fill a final slot when a semantic candidate is excluded by multimodal AI.
+const SOURCE_SELECTION_CYCLE = [
+  "semantic",
+  "semantic",
+  "semantic",
+  "semantic",
+  "audio",
+  "visual",
+];
 // Only coherent, context-consistent negative judgements may close a candidate.
 // Abstentions, contradictions and unclear material must be retried.
 const TERMINAL_EXCLUSION_GAPS = new Set([
@@ -313,7 +324,7 @@ function sourceBalancedSelection(candidates) {
   const selected = [];
   const selectedCandidates = new Set();
 
-  while (selected.length < CHANNEL_PREANALYSIS_REVIEW_MAX_CANDIDATES) {
+  while (selected.length < CHANNEL_PREANALYSIS_REVIEW_MAX_ANALYSIS_CANDIDATES) {
     let addedThisCycle = 0;
     for (const kind of SOURCE_SELECTION_CYCLE) {
       const queue = queues[kind];
@@ -325,7 +336,7 @@ function sourceBalancedSelection(candidates) {
       selected.push(candidate);
       selectedCandidates.add(candidate);
       addedThisCycle += 1;
-      if (selected.length >= CHANNEL_PREANALYSIS_REVIEW_MAX_CANDIDATES) break;
+      if (selected.length >= CHANNEL_PREANALYSIS_REVIEW_MAX_ANALYSIS_CANDIDATES) break;
     }
     if (addedThisCycle === 0) break;
   }
@@ -374,6 +385,11 @@ function fuseCandidates(rawCandidates) {
         candidate.originIds,
       ])).slice(0, 20)}`,
     }));
+}
+
+function publicationCandidateOrder(left, right) {
+  return Number(right.sourceKinds.includes("semantic")) -
+      Number(left.sourceKinds.includes("semantic")) || candidateOrder(left, right);
 }
 
 function annotationForCandidate(bundle, candidate) {
@@ -1118,8 +1134,16 @@ export async function runChannelPreanalysisReview(input) {
       );
     }
   }
+  const candidateById = new Map(
+    candidates.map((candidate) => [candidate.candidateId, candidate]),
+  );
   const finalRecords = analyzed
     .filter(({ resolution }) => resolution !== "terminal-excluded")
+    .sort((left, right) => publicationCandidateOrder(
+      candidateById.get(left.candidateId),
+      candidateById.get(right.candidateId),
+    ))
+    .slice(0, CHANNEL_PREANALYSIS_REVIEW_MAX_CANDIDATES)
     .map(({ record }) => record);
   const participantGrounding = mediaConfirmedParticipantGrounding(
     bundle,

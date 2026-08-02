@@ -500,7 +500,7 @@ test("isolates checkpoints by pipeline revision so a new runner can rebuild safe
   });
 });
 
-test("enforces the twelve-entry and four-MiB recovery bounds", async (t) => {
+test("enforces the analysis-entry and four-MiB recovery bounds", async (t) => {
   const catalogDir = await fixture(t);
   const store = createChannelPreanalysisReviewCheckpointStore({
     catalogDir,
