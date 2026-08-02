@@ -188,7 +188,9 @@ const MAX_TERMINAL_BODY_BYTES = Math.max(
 );
 const REQUEST_BODY_TIMEOUT_MS = 30_000;
 const UPSTREAM_TIMEOUT_MS = 90_000;
-const RUNNING_STALE_AFTER_MS = 2 * 60_000;
+const CONTEXT_UPSTREAM_TIMEOUT_MS = 135_000;
+const CONTEXT_FALLBACK_TIMEOUT_MS = 30_000;
+const RUNNING_STALE_AFTER_MS = 4 * 60_000;
 const RETRY_BACKOFF_BASE_MS = 30_000;
 const RETRY_BACKOFF_MAX_MS = 3 * 60 * 60_000;
 const CONTEXT_OPERATION_ID_PATTERN = new RegExp(
@@ -1381,7 +1383,7 @@ async function attemptProvider(
     QWEN_CONTEXT_OVERVIEW_FALLBACK_MODEL_ID,
     QWEN_CONTEXT_OVERVIEW_FALLBACK_MODEL_REVISION,
     fetchImplementation,
-    upstreamTimeoutMs,
+    Math.min(upstreamTimeoutMs, CONTEXT_FALLBACK_TIMEOUT_MS),
   );
   if (fallback.kind === "failure" && primary.kind === "failure") {
     return {
@@ -2737,7 +2739,7 @@ export class PreanalysisContextOperation {
             >,
             scheduledRequest.request,
             this.dependencies.fetchImplementation ?? fetch,
-            this.dependencies.upstreamTimeoutMs ?? UPSTREAM_TIMEOUT_MS,
+            this.dependencies.upstreamTimeoutMs ?? CONTEXT_UPSTREAM_TIMEOUT_MS,
           )
         : scheduledRequest.kind === "candidate"
           ? await attemptCandidateProvider(

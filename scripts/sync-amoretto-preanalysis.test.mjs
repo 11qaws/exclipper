@@ -36,6 +36,9 @@ import {
   serializeChannelPreanalysisVisualFingerprint,
 } from "../src/analysis/channelPreanalysisVisualFingerprint.ts";
 import {
+  AMORETTO_CHANNEL_PREANALYSIS_SOURCE,
+} from "../src/analysis/channelPreanalysisSources.ts";
+import {
   CHANNEL_PREANALYSIS_MANIFEST_MAX_BYTES,
   MAX_CAPTION_JSON3_BYTES,
   PINNED_YT_DLP_VERSION,
@@ -70,6 +73,7 @@ import {
   synchronizeAmorettoCatalog,
   requestScheduledBroadcastContext,
   validateYtDlpMetadata,
+  verifyPersistedChannelCatalogSnapshot,
 } from "./sync-amoretto-preanalysis.mjs";
 
 const FOOD_TALK_ID = "KzAW3yow80Q";
@@ -2210,6 +2214,15 @@ test("a failed context call checkpoints only context and resumes from the preser
     assert.equal(
       await readFile(fixture.bundlePath, "utf8"),
       fixture.serialized,
+    );
+    const verifiedRetry = await verifyPersistedChannelCatalogSnapshot(
+      catalogDir,
+      AMORETTO_CHANNEL_PREANALYSIS_SOURCE,
+    );
+    assert.equal(verifiedRetry.videos[0]?.state, "retryable");
+    assert.equal(
+      verifiedRetry.videos[0]?.retry?.lastSuccessfulState,
+      "transcript-ready",
     );
 
     const resumedAt = "2026-07-30T03:01:00.000Z";

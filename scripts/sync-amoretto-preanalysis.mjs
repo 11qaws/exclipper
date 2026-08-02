@@ -134,7 +134,7 @@ const MAX_COMMAND_STDOUT_BYTES = 8 * 1024 * 1024;
 const MAX_COMMAND_STDERR_BYTES = 256 * 1024;
 const YT_DLP_TIMEOUT_MS = 5 * 60_000;
 const FEED_TIMEOUT_MS = 30_000;
-const CONTEXT_REQUEST_TIMEOUT_MS = 3 * 60_000;
+const CONTEXT_REQUEST_TIMEOUT_MS = 210_000;
 const MAX_VIDEO_DURATION_MS = 12 * 60 * 60_000;
 const SHARED_FOREGROUND_WORKER_HOST =
   "rettohighlight-gemini.11qaws.workers.dev";
@@ -1532,15 +1532,16 @@ async function verifyReadyVideoArtifactClosure(
   }
   const bundle = parseChannelPreanalysisBundle(transcriptText);
   await verifyChannelPreanalysisTranscriptDigest(bundle);
+  const durableRetryState = video.state === "retryable"
+    ? video.retry?.lastSuccessfulState ?? null
+    : null;
   const expectedBundleState =
-    video.state === "review-ready" ||
-    (video.state === "retryable" &&
-      ["review", "fingerprint"].includes(video.retry?.stage ?? "") &&
-      ["context-ready", "review-ready"].includes(
-        video.retry?.lastSuccessfulState ?? "",
-      ))
+    video.state === "review-ready" || durableRetryState === "review-ready"
       ? "context-ready"
-      : video.state;
+      : durableRetryState === "transcript-ready" ||
+          durableRetryState === "context-ready"
+        ? durableRetryState
+        : video.state;
   assertChannelPreanalysisBundleMatchesCatalogVideo(
     bundle,
     expectedBundleState === video.state

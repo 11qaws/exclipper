@@ -987,6 +987,7 @@ describe("preanalysisContextProxy.worker", () => {
       model: "qwen3.7-plus",
       enable_thinking: true,
     });
+    expect(providerBody).toHaveProperty("thinking_budget", 768);
 
     harness.namespace.restart(await operationIdForBody(scheduledRequestBody()));
     const replay = await handlePreanalysisContextProxyRequest(
@@ -1664,7 +1665,7 @@ describe("preanalysisContextProxy.worker", () => {
   });
 
   it("recovers a stale running checkpoint instead of making it a permanent gap", async () => {
-    let nowMs = 119_999;
+    let nowMs = 239_999;
     const harness = createHarness(
       vi.fn(() => Promise.resolve(qwenSuccessResponse())),
       { now: () => nowMs },
@@ -1694,7 +1695,7 @@ describe("preanalysisContextProxy.worker", () => {
     );
     expect(harness.upstreamFetch).not.toHaveBeenCalled();
 
-    nowMs = 120_000;
+    nowMs = 240_000;
     const recovered = await handlePreanalysisContextProxyRequest(
       await createScheduledRequest(body),
       harness.environment,
