@@ -105,6 +105,18 @@ export function selectChannelPreanalysisReviewQueue(
   ) {
     throw jobError("INVALID_QUEUE_OPTIONS", "The review queue bounds are invalid.");
   }
+  if (videoId !== null) {
+    const exact = manifest.videos.find((video) =>
+      video.videoId === videoId && (
+        video.state === "context-ready" || (
+          video.state === "retryable" &&
+          video.retry?.stage === "review" &&
+          video.retry.lastSuccessfulState === "context-ready"
+        )
+      ),
+    );
+    return exact === undefined ? [] : [exact];
+  }
   const pending = manifest.videos
     .filter((video) => video.state === "context-ready")
     .sort((left, right) =>
@@ -122,11 +134,6 @@ export function selectChannelPreanalysisReviewQueue(
       Date.parse(left.retry.nextAttemptAt) - Date.parse(right.retry.nextAttemptAt) ||
       left.videoId.localeCompare(right.videoId),
     );
-  if (videoId !== null) {
-    const exact = [...pending, ...retries].find((video) => video.videoId === videoId);
-    return exact === undefined ? [] : [exact];
-  }
-
   const selected = [];
   if (pending[0] !== undefined) selected.push(pending.shift());
   if (selected.length < maxVideos && retries[0] !== undefined) {

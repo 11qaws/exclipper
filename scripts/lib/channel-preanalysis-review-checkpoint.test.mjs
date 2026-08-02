@@ -470,6 +470,36 @@ test("keeps checkpoints until a matching publisher success removes them", async 
   );
 });
 
+test("isolates checkpoints by pipeline revision so a new runner can rebuild safely", async (t) => {
+  const catalogDir = await fixture(t);
+  const legacyPath = join(
+    catalogDir,
+    ".review-checkpoints",
+    `${VIDEO_ID}.review.v${String(runIdentity.artifactRevision)}.checkpoint.json`,
+  );
+  await mkdir(join(catalogDir, ".review-checkpoints"));
+  await writeFile(legacyPath, "preserved legacy checkpoint\n", "utf8");
+  const previous = createChannelPreanalysisReviewCheckpointStore({
+    catalogDir,
+    runIdentity: { ...runIdentity, pipelineRevision: "scheduled-review-v4" },
+  });
+  await previous.onCandidateCheckpoint(contextExcludedCheckpoint());
+
+  const current = createChannelPreanalysisReviewCheckpointStore({
+    catalogDir,
+    runIdentity: { ...runIdentity, pipelineRevision: "scheduled-review-v5" },
+  });
+
+  assert.notEqual(current.checkpointPath, previous.checkpointPath);
+  assert.equal((await stat(previous.checkpointPath)).isFile(), true);
+  assert.equal(await readFile(legacyPath, "utf8"), "preserved legacy checkpoint\n");
+  assert.deepEqual(await current.load(), {
+    previousCandidateResults: [],
+    retryableDiagnostics: [],
+    entryCount: 0,
+  });
+});
+
 test("enforces the twelve-entry and four-MiB recovery bounds", async (t) => {
   const catalogDir = await fixture(t);
   const store = createChannelPreanalysisReviewCheckpointStore({

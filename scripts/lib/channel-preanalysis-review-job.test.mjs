@@ -255,6 +255,52 @@ test("review queue gives one new upload and one due recovery a fair bounded slot
   );
 });
 
+test("an exact manual review bypasses only the retry time backoff", () => {
+  const futureRetry = {
+    stage: "review",
+    lastSuccessfulState: "context-ready",
+    nextAttemptAt: "2026-08-03T00:00:00.000Z",
+  };
+  const exact = {
+    videoId: VIDEO_ID,
+    state: "retryable",
+    publishedAt: "2026-08-01T00:00:00.000Z",
+    retry: futureRetry,
+  };
+  const manifest = { videos: [exact] };
+  const nowMs = Date.parse("2026-08-02T03:00:00.000Z");
+
+  assert.deepEqual(
+    selectChannelPreanalysisReviewQueue(manifest, { nowMs, videoId: VIDEO_ID }),
+    [exact],
+  );
+  assert.deepEqual(
+    selectChannelPreanalysisReviewQueue(manifest, { nowMs }),
+    [],
+  );
+});
+
+test("an exact manual review cannot bypass an incomplete upstream state", () => {
+  const video = {
+    videoId: VIDEO_ID,
+    state: "retryable",
+    publishedAt: "2026-08-01T00:00:00.000Z",
+    retry: {
+      stage: "context",
+      lastSuccessfulState: "transcript-ready",
+      nextAttemptAt: "2026-08-03T00:00:00.000Z",
+    },
+  };
+
+  assert.deepEqual(
+    selectChannelPreanalysisReviewQueue(
+      { videos: [video] },
+      { nowMs: Date.parse("2026-08-02T03:00:00.000Z"), videoId: VIDEO_ID },
+    ),
+    [],
+  );
+});
+
 test("loads the exact durable context artifact and rejects a changed byte", async (t) => {
   const data = await fixture(t);
   const loaded = await loadChannelPreanalysisReviewInput({

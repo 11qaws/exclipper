@@ -514,7 +514,7 @@ function resolveStorePaths(catalogDir, identity) {
   const directory = resolve(root, CHECKPOINT_DIRECTORY);
   const path = resolve(
     directory,
-    `${identity.videoId}.review.v${String(identity.artifactRevision)}.checkpoint.json`,
+    `${identity.videoId}.review.v${String(identity.artifactRevision)}.${identity.pipelineRevision}.checkpoint.json`,
   );
   if (
     directory === root ||
