@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "channelId": "UC_hftLL-ydsJd1YpcBZ_09g",
   "channelHandle": "@망징-b1t",
-  "revision": 11,
-  "generatedAt": "2026-08-02T22:33:19.453Z",
+  "revision": 14,
+  "generatedAt": "2026-08-02T23:27:12.105Z",
   "videos": [
     {
       "channelId": "UC_hftLL-ydsJd1YpcBZ_09g",
@@ -52,15 +52,23 @@
       "videoId": "iUv_GnEXHIk",
       "title": "{림버스 컴퍼니} 괴물같이 등장한 문학소녀의 2장 몰아보기",
       "normalizedTitle": "림버스 컴퍼니 괴물같이 등장한 문학소녀의 2장 몰아보기",
-      "durationMs": null,
+      "durationMs": 24469000,
       "publishedAt": "2026-07-08T13:11:06.000Z",
       "updatedAt": "2026-07-10T07:38:26.000Z",
       "watchUrl": "https://www.youtube.com/watch?v=iUv_GnEXHIk",
-      "state": "discovered",
-      "revision": 1,
-      "artifactIds": [],
+      "state": "retryable",
+      "revision": 4,
+      "artifactIds": [
+        "youtube-caption-bundle:iUv_GnEXHIk:v1"
+      ],
       "registeredLocalSampledFingerprints": [],
-      "retry": null
+      "retry": {
+        "stage": "context",
+        "lastSuccessfulState": "transcript-ready",
+        "attemptCount": 1,
+        "nextAttemptAt": "2026-08-03T02:27:12.105Z",
+        "errorCode": "UPSTREAM_UNAVAILABLE"
+      }
     },
     {
       "channelId": "UC_hftLL-ydsJd1YpcBZ_09g",
@@ -283,6 +291,16 @@
       "contentDigest": "sha256:6c53a4bf9858338f2b6df9bbb8aad8849075f5b9ee61069fca21458e3e2f10ba",
       "byteLength": 1582756,
       "createdAt": "2026-08-02T22:32:04.102Z"
+    },
+    {
+      "artifactId": "youtube-caption-bundle:iUv_GnEXHIk:v1",
+      "videoId": "iUv_GnEXHIk",
+      "kind": "transcript",
+      "revision": 1,
+      "storageKey": "mangjing-compilations/videos/iUv_GnEXHIk.v1.json",
+      "contentDigest": "sha256:ce5610c34b83d699d835c011304082dce3f3fc9ce41040b8fea2d186b822e554",
+      "byteLength": 1441609,
+      "createdAt": "2026-08-02T23:15:09.607Z"
     }
   ]
 }
