@@ -9,6 +9,7 @@ import {
   createChannelPreanalysisContextSeed,
   type ChannelPreanalysisContextSeed,
 } from "../analysis/channelPreanalysisContextSeed";
+import { AMORETTO_CHANNEL_PREANALYSIS_SOURCE } from "../analysis/channelPreanalysisSources";
 import {
   parseBroadcastContextPhaseLedgerJson,
   reduceBroadcastContextPhaseLedger,
@@ -185,6 +186,8 @@ async function precomputedSeed(
       castRosterId: contextInput.castRosterId,
       outputLanguage: contextInput.outputLanguage,
       sourceIdentity: {
+        sourceId: AMORETTO_CHANNEL_PREANALYSIS_SOURCE.sourceId,
+        channelId: AMORETTO_CHANNEL_PREANALYSIS_SOURCE.channelId,
         videoId: "KzAW3yow80Q",
         transcriptDigest: `sha256:${"a".repeat(64)}`,
         artifactDigest: `sha256:${"b".repeat(64)}`,

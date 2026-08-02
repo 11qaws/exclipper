@@ -150,13 +150,14 @@ describe("pinned Amoretto channel contract", () => {
       "https://www.youtube.com/@AmorettoVODs",
     );
     expect(AMORETTO_YOUTUBE_CHANNEL_FEED_URL).toBe(
-      "https://www.youtube.com/feeds/videos.xml?channel_id=UCHycoTBFDhXz4XNz8jBP-_A",
+      "https://www.youtube.com/feeds/videos.xml?playlist_id=UULFHycoTBFDhXz4XNz8jBP-_A",
     );
     expect(CHANNEL_PREANALYSIS_STATES).toEqual([
       "discovered",
       "metadata-ready",
       "transcript-ready",
       "context-ready",
+      "review-ready",
       "published",
       "retryable",
     ]);

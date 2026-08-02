@@ -97,6 +97,8 @@ export interface ReviewSurfaceProps {
   readonly streamerImageUrl?: string;
   /** 재생용. 없으면 포스터 자리표시자만 보여준다. */
   readonly videoSrc?: string;
+  /** 검증된 사전 분석본을 링크만으로 검토할 때 쓰는 정확한 YouTube ID. */
+  readonly youtubeVideoId?: string;
   readonly onSelectIndex: (index: number) => void;
   readonly onPageChange: (page: ReviewPage) => void;
   readonly onDecide: (id: string, decision: ReviewDecision) => void;
@@ -117,6 +119,7 @@ export interface ReviewSurfaceProps {
   readonly onResetCancel: () => void;
   /** 컨테이너가 키맵에 연결할 수 있도록, 항목 이동 함수를 넘겨준다. */
   readonly onItemFocusMover?: (move: (delta: 1 | -1) => void) => void;
+  readonly onPlaybackToggler?: (toggle: () => void) => void;
 }
 
 function formatTime(ms: number): string {
@@ -145,6 +148,7 @@ export function ReviewSurface({
   streamerName,
   streamerImageUrl,
   videoSrc,
+  youtubeVideoId,
   onSelectIndex,
   onPageChange,
   onDecide,
@@ -162,6 +166,7 @@ export function ReviewSurface({
   onResetConfirm,
   onResetCancel,
   onItemFocusMover,
+  onPlaybackToggler,
 }: ReviewSurfaceProps): ReactElement {
   const active = candidates[activeIndex];
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -196,6 +201,18 @@ export function ReviewSurface({
     setCardOrigin(null);
   }
 
+  const activeCandidateId = active?.id;
+  const activeCandidateStartMs = active?.startMs;
+  useEffect(() => {
+    const video = videoRef.current;
+    if (video === null || activeCandidateStartMs === undefined) return;
+
+    // 후보 전환은 표시 상태뿐 아니라 실제 디코더도 함께 멈추고 이동해야 한다.
+    // 그렇지 않으면 새 후보를 열었는데 이전 후보의 소리가 이어질 수 있다.
+    video.pause();
+    video.currentTime = activeCandidateStartMs / 1_000;
+  }, [activeCandidateId, activeCandidateStartMs, videoSrc]);
+
   /**
    * 재생은 후보 구간 안으로 묶는다(§7.6). 구간 밖으로 흘러가면 검토 대상이
    * 아닌 장면을 보고 판단하게 된다. 트림 확인을 위해 **드래그로는** 경계 밖으로
@@ -215,14 +232,19 @@ export function ReviewSurface({
       setPositionMs(next);
       const video = videoRef.current;
       if (video !== null) video.currentTime = next / 1000;
+      if (video === null && youtubeVideoId !== undefined) {
+        setPlaying(false);
+      }
     },
-    [clampToClip],
+    [clampToClip, youtubeVideoId],
   );
 
   const togglePlay = useCallback(() => {
     const video = videoRef.current;
     if (video === null) {
-      setPlaying((current) => !current);
+      if (youtubeVideoId !== undefined) {
+        setPlaying((current) => !current);
+      }
       return;
     }
     if (video.paused) {
@@ -234,7 +256,7 @@ export function ReviewSurface({
       video.pause();
       setPlaying(false);
     }
-  }, [active]);
+  }, [active, youtubeVideoId]);
 
   /**
    * 근거의 모든 표기는 재생 진입점이다(§7.5).
@@ -295,6 +317,10 @@ export function ReviewSurface({
     onItemFocusMover?.(moveItemFocus);
   }, [moveItemFocus, onItemFocusMover]);
 
+  useEffect(() => {
+    onPlaybackToggler?.(togglePlay);
+  }, [onPlaybackToggler, togglePlay]);
+
   const cardRef = useRef<HTMLElement | null>(null);
   const onCardKeyDown = (event: React.KeyboardEvent<HTMLElement>): void => {
     if (event.key !== "Tab") return;
@@ -339,6 +365,12 @@ export function ReviewSurface({
   const playedRatio = Math.min(1, Math.max(0, (positionMs - active.startMs) / durationMs));
   const ratioOf = (atMs: number): number =>
     Math.min(1, Math.max(0, (atMs - active.startMs) / durationMs));
+  const youtubeEmbedUrl = youtubeVideoId === undefined
+    ? null
+    : `https://www.youtube-nocookie.com/embed/${youtubeVideoId}` +
+      `?start=${Math.max(0, Math.floor(positionMs / 1_000))}` +
+      `&end=${Math.max(1, Math.ceil(active.endMs / 1_000))}` +
+      `&autoplay=${playing ? "1" : "0"}&playsinline=1&rel=0`;
 
   /** 진행 바 드래그 seek. 트림 확인을 위해 경계 밖도 허용한다(§7.6). */
   const seekFromPointer = (clientX: number): void => {
@@ -483,6 +515,12 @@ export function ReviewSurface({
                     <video
                       ref={videoRef}
                       src={videoSrc}
+                      onLoadedMetadata={(event) => {
+                        event.currentTarget.pause();
+                        event.currentTarget.currentTime = active.startMs / 1_000;
+                        setPositionMs(active.startMs);
+                        setPlaying(false);
+                      }}
                       onTimeUpdate={(event) => {
                         const ms = event.currentTarget.currentTime * 1000;
                         setPositionMs(ms);
@@ -494,6 +532,16 @@ export function ReviewSurface({
                       }}
                       onPlay={() => setPlaying(true)}
                       onPause={() => setPlaying(false)}
+                    />
+                  ) : youtubeEmbedUrl !== null ? (
+                    <iframe
+                      key={youtubeEmbedUrl}
+                      className="rvw-youtube"
+                      src={youtubeEmbedUrl}
+                      title={`${active.title} YouTube 재생`}
+                      allow="autoplay; encrypted-media; picture-in-picture"
+                      allowFullScreen
+                      referrerPolicy="strict-origin-when-cross-origin"
                     />
                   ) : (
                     <div className="rvw-poster">재생할 원본이 없습니다</div>
@@ -807,7 +855,19 @@ export function ReviewSurface({
             } as CSSProperties}
           >
             <div className="scr">
-              {videoSrc !== undefined ? <video src={videoSrc} controls={false} /> : "원본 없음"}
+              {videoSrc !== undefined ? (
+                <video src={videoSrc} controls={false} />
+              ) : youtubeEmbedUrl !== null ? (
+                <iframe
+                  key={`card-${youtubeEmbedUrl}`}
+                  className="rvw-youtube"
+                  src={youtubeEmbedUrl}
+                  title={`${active.title} 선택 지점 YouTube 재생`}
+                  allow="autoplay; encrypted-media; picture-in-picture"
+                  allowFullScreen
+                  referrerPolicy="strict-origin-when-cross-origin"
+                />
+              ) : "원본 없음"}
             </div>
             <div className="bar">
               <button className="rvw-play" type="button" onClick={togglePlay} aria-label={playing ? "일시정지" : "재생"}>

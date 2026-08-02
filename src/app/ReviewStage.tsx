@@ -27,12 +27,14 @@ export interface ReviewStageProps {
   readonly streamerName: string;
   readonly streamerImageUrl?: string;
   readonly videoSrc?: string;
+  /** Prepared YouTube review when the editor has not connected a local file. */
+  readonly youtubeVideoId?: string;
   /** 판단 → 다음 미검토 후보로 이동까지 포함한 앱의 기존 경로. */
   readonly onDecide: (candidateId: string, decision: ReviewDecision) => void;
   readonly onTrim: (candidateId: string, edge: "start" | "end", deltaMs: number) => void;
   readonly onUndo: () => void;
   readonly canUndo: boolean;
-  readonly onHelp: () => void;
+  readonly onHelp?: () => void;
   readonly onToggleTheme?: () => void;
   readonly themeLabel?: string;
   /** 페이지와 두 겹의 오버레이는 키맵(Esc 체인)이 알아야 해서 App 이 소유한다. */
@@ -47,6 +49,8 @@ export interface ReviewStageProps {
   readonly onResetCancel: () => void;
   /** 키맵이 근거 항목 이동을 호출할 수 있도록 App 이 받아 간다. */
   readonly onItemFocusMover?: (move: (delta: 1 | -1) => void) => void;
+  /** 키맵이 화면 내부의 실제 플레이어를 제어할 수 있도록 노출한다. */
+  readonly onPlaybackToggler?: (toggle: () => void) => void;
 }
 
 export function ReviewStage({
@@ -58,6 +62,7 @@ export function ReviewStage({
   streamerName,
   streamerImageUrl,
   videoSrc,
+  youtubeVideoId,
   onDecide,
   onTrim,
   onUndo,
@@ -75,6 +80,7 @@ export function ReviewStage({
   onResetConfirm,
   onResetCancel,
   onItemFocusMover,
+  onPlaybackToggler,
 }: ReviewStageProps): ReactElement {
   const activeIndex = useMemo(() => {
     const found = candidates.findIndex(({ id }) => id === focusedCandidateId);
@@ -111,13 +117,14 @@ export function ReviewStage({
       streamerName={streamerName}
       {...(streamerImageUrl === undefined ? {} : { streamerImageUrl })}
       {...(videoSrc === undefined ? {} : { videoSrc })}
+      {...(youtubeVideoId === undefined ? {} : { youtubeVideoId })}
       onSelectIndex={selectIndex}
       onPageChange={onPageChange}
       onDecide={onDecide}
       onTrim={onTrim}
       onUndo={onUndo}
       canUndo={canUndo}
-      onHelp={onHelp}
+      {...(onHelp === undefined ? {} : { onHelp })}
       {...(onToggleTheme === undefined ? {} : { onToggleTheme })}
       {...(themeLabel === undefined ? {} : { themeLabel })}
       playerCardOpen={playerCardOpen}
@@ -128,6 +135,7 @@ export function ReviewStage({
       onResetConfirm={onResetConfirm}
       onResetCancel={onResetCancel}
       {...(onItemFocusMover === undefined ? {} : { onItemFocusMover })}
+      {...(onPlaybackToggler === undefined ? {} : { onPlaybackToggler })}
     />
   );
 }

@@ -420,6 +420,9 @@ export function createBroadcastParticipantGrounding(
   const hasObservedMedia = evidence.some(({ kind }) =>
     OBSERVED_EVIDENCE_KINDS.has(kind),
   );
+  const hasCompletedMediaReview = [visualOutput, voiceOutput].some(
+    ({ receipt }) => receipt.status === "completed",
+  );
   const hasTranscriptMention = evidence.some(
     ({ kind }) => kind === "transcript-name-mention",
   );
@@ -428,7 +431,7 @@ export function createBroadcastParticipantGrounding(
     status: "sealed",
     resolutionStatus: hasObservedIdentity
       ? "observed-identities"
-      : hasObservedMedia
+      : hasObservedMedia || hasCompletedMediaReview
         ? "media-reviewed"
         : hasTranscriptMention
           ? "transcript-mentions"

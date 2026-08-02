@@ -87,7 +87,7 @@ function currentHealth() {
         active: true,
         modelId: "whisper-large-v3-turbo",
         modelRevision:
-          "groq-whisper-large-v3-turbo-ko-segment-v1-2026-07-29",
+          "groq-whisper-large-v3-turbo-ko-segment-v2-2026-08-02",
       },
     },
   };
@@ -136,7 +136,7 @@ test("transcript smoke pins health, stages raw WAV once, resolves, and verifies 
         schemaVersion: "1.0.0",
         modelId: "whisper-large-v3-turbo",
         modelRevision:
-          "groq-whisper-large-v3-turbo-ko-segment-v1-2026-07-29",
+          "groq-whisper-large-v3-turbo-ko-segment-v2-2026-08-02",
         sourceStartMs: 12_000,
         sourceEndMs: 13_000,
         textKo: "테스트 전사",

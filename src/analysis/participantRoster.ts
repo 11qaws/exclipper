@@ -2,9 +2,12 @@ import type {
   CandidatePassBParticipantRole,
 } from "./candidatePassBWorkerProtocol";
 import {
-  AMORETTO_YOUTUBE_CHANNEL_HANDLE,
-  AMORETTO_YOUTUBE_CHANNEL_ID,
-} from "./channelPreanalysisCatalog";
+  AMORETTO_CHANNEL_PREANALYSIS_SOURCE,
+  COCO_CHANNEL_PREANALYSIS_SOURCE,
+  EUREKA_CHANNEL_PREANALYSIS_SOURCE,
+  MANGJING_CHANNEL_PREANALYSIS_SOURCE,
+  SENA_CHANNEL_PREANALYSIS_SOURCE,
+} from "./channelPreanalysisSources";
 
 export const CANDIDATE_PASS_B_CAST_ROSTER_VERSION = "1.3.0" as const;
 export const DEFAULT_CANDIDATE_PASS_B_CAST_ROSTER_ID =
@@ -114,32 +117,43 @@ const EXCHANGE_STUDENT_CAST = Object.freeze([
 const PERSONAL_CHANNEL_ROSTERS = Object.freeze([
   {
     rosterId: AMORETTO_CHANNEL_CAST_ROSTER_ID,
-    channelId: "33bc7a29b771728cf9378604973b620b",
+    chzzkChannelId: "33bc7a29b771728cf9378604973b620b",
+    youtubeSource: AMORETTO_CHANNEL_PREANALYSIS_SOURCE,
     ownerName: "아모레또",
   },
   {
     rosterId: EUREKA_CHANNEL_CAST_ROSTER_ID,
-    channelId: "3d5546fc8d0dcb478c973a9bc1328980",
+    chzzkChannelId: "3d5546fc8d0dcb478c973a9bc1328980",
+    youtubeSource: EUREKA_CHANNEL_PREANALYSIS_SOURCE,
     ownerName: "유레카",
   },
   {
     rosterId: SENA_ARBEL_CHANNEL_CAST_ROSTER_ID,
-    channelId: "8b7ccc2a6e05dd1468fb3eb6efd5b3d0",
+    chzzkChannelId: "8b7ccc2a6e05dd1468fb3eb6efd5b3d0",
+    youtubeSource: SENA_CHANNEL_PREANALYSIS_SOURCE,
     ownerName: "세나 아르벨",
   },
   {
     rosterId: TORORI_COCO_CHANNEL_CAST_ROSTER_ID,
-    channelId: "bda7676a8ca63a4acc64167610b5bf53",
+    chzzkChannelId: "bda7676a8ca63a4acc64167610b5bf53",
+    youtubeSource: COCO_CHANNEL_PREANALYSIS_SOURCE,
     ownerName: "토로리 코코",
   },
   {
     rosterId: MANGJING_CHANNEL_CAST_ROSTER_ID,
-    channelId: "5b1edd3b95c1513cb502ca2cdd391670",
+    chzzkChannelId: "5b1edd3b95c1513cb502ca2cdd391670",
+    youtubeSource: MANGJING_CHANNEL_PREANALYSIS_SOURCE,
     ownerName: "망징이",
   },
 ] satisfies readonly {
   readonly rosterId: CandidatePassBCastRosterId;
-  readonly channelId: string;
+  readonly chzzkChannelId: string;
+  readonly youtubeSource:
+    | typeof AMORETTO_CHANNEL_PREANALYSIS_SOURCE
+    | typeof EUREKA_CHANNEL_PREANALYSIS_SOURCE
+    | typeof SENA_CHANNEL_PREANALYSIS_SOURCE
+    | typeof COCO_CHANNEL_PREANALYSIS_SOURCE
+    | typeof MANGJING_CHANNEL_PREANALYSIS_SOURCE;
   readonly ownerName: string;
 }[]);
 
@@ -201,6 +215,17 @@ export function candidatePassBSourceHostReference(
   );
 }
 
+export function candidatePassBCastRosterIdForYouTubeChannelId(
+  channelId: string | null,
+): CandidatePassBCastRosterId | null {
+  if (channelId === null) return null;
+  return (
+    PERSONAL_CHANNEL_ROSTERS.find(
+      ({ youtubeSource }) => youtubeSource.channelId === channelId,
+    )?.rosterId ?? null
+  );
+}
+
 /** Resolves only a server-known canonical name or one of its fixed aliases. */
 export function candidatePassBCastReferenceForName(
   rosterId: CandidatePassBCastRosterId | null,
@@ -245,14 +270,6 @@ export function candidatePassBCastRosterIdForSourceName(
 ): CandidatePassBCastRosterId | null {
   if (typeof sourceName !== "string") return null;
   const normalized = sourceName.normalize("NFC").toLocaleLowerCase("ko-KR");
-  const hasAmorettoYouTubeChannel =
-    normalized.includes(AMORETTO_YOUTUBE_CHANNEL_ID.toLocaleLowerCase("en-US")) ||
-    normalized.includes(
-      AMORETTO_YOUTUBE_CHANNEL_HANDLE.toLocaleLowerCase("en-US"),
-    );
-  if (hasAmorettoYouTubeChannel) {
-    return AMORETTO_CHANNEL_CAST_ROSTER_ID;
-  }
   const hasReplayNumber = /(?:^|\D)13996057(?:\D|$)/u.test(normalized);
   const hasExchangeStudentChannel = normalized.includes(
     EXCHANGE_STUDENT_MAIN_CHANNEL_ID,
@@ -265,7 +282,17 @@ export function candidatePassBCastRosterIdForSourceName(
     return DEFAULT_CANDIDATE_PASS_B_CAST_ROSTER_ID;
   }
   for (const personal of PERSONAL_CHANNEL_ROSTERS) {
-    if (normalized.includes(personal.channelId)) return personal.rosterId;
+    if (
+      normalized.includes(personal.chzzkChannelId) ||
+      normalized.includes(
+        personal.youtubeSource.channelId.toLocaleLowerCase("en-US"),
+      ) ||
+      normalized.includes(
+        personal.youtubeSource.channelHandle.toLocaleLowerCase("ko-KR"),
+      )
+    ) {
+      return personal.rosterId;
+    }
     const normalizedOwnerName = normalizeCastName(personal.ownerName);
     const ownerTokenPattern = new RegExp(
       `(?:^|[\\s_\\-[({])${normalizedOwnerName.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")}(?:$|[\\s_\\-\\])}])`,

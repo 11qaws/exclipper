@@ -17,10 +17,14 @@ import { createContentFingerprint } from "../security/contentFingerprint";
 import { createBroadcastParticipantGrounding } from "./broadcastParticipantGrounding";
 import { CHANNEL_PREANALYSIS_TITLE_DURATION_TOLERANCE_MS } from "./channelPreanalysisCatalog";
 import { AI_BROADCAST_CONTEXT_ROUTING_REVISION } from "./aiModelRoutingPolicy";
+import {
+  channelPreanalysisSourceById,
+  type ConfiguredChannelPreanalysisSource,
+} from "./channelPreanalysisSources";
 
-export const CHANNEL_PREANALYSIS_CONTEXT_SEED_SCHEMA_VERSION = "1.0.0";
+export const CHANNEL_PREANALYSIS_CONTEXT_SEED_SCHEMA_VERSION = "2.0.0";
 export const CHANNEL_PREANALYSIS_CONTEXT_SEED_FINGERPRINT_DOMAIN =
-  "exclipper.channel-preanalysis-context-seed.v1";
+  "exclipper.channel-preanalysis-context-seed.v2";
 
 type ContextSeedFingerprint = typeof createContentFingerprint;
 const SHA256_DIGEST_PATTERN = /^sha256:[a-f0-9]{64}$/u;
@@ -40,19 +44,13 @@ export interface ChannelPreanalysisContextSeed {
   readonly chapters: readonly BroadcastContextChapterInput[];
   readonly castRosterId: CandidatePassBCastRosterId | null;
   readonly outputLanguage: AnalysisLanguage;
-  readonly sourceIdentity: {
-    /**
-     * Supplied only after the editor upload has passed the catalog's trusted
-     * video-identity gate. It is persisted in the inner fingerprint/ledger.
-     */
-    readonly videoId: string;
-    readonly transcriptDigest: string;
-    readonly artifactDigest: string;
-  };
+  readonly sourceIdentity: ChannelPreanalysisTrustedSourceIdentity;
   readonly provenance: {
     readonly generatedAt: string;
     readonly modelRoutingRevision: typeof AI_BROADCAST_CONTEXT_ROUTING_REVISION;
-    readonly evidenceScope: "youtube-caption-transcript-only";
+    readonly evidenceScope:
+      | "youtube-caption-transcript-only"
+      | "scheduled-asr-transcript-only";
     readonly localVisualVerificationRequired: true;
   };
   /**
@@ -68,8 +66,31 @@ export interface ChannelPreanalysisContextSeed {
   readonly seedFingerprint: string;
 }
 
+/**
+ * Identifies the catalog artifact that supplied the reusable context seed.
+ * `sourceId` and `channelId` are routing provenance only: they must never be
+ * treated as evidence that the channel owner appeared or spoke in the video.
+ */
+type ChannelPreanalysisConfiguredSourcePair<
+  TSource extends ConfiguredChannelPreanalysisSource =
+    ConfiguredChannelPreanalysisSource,
+> = TSource extends ConfiguredChannelPreanalysisSource
+  ? {
+      readonly sourceId: TSource["sourceId"];
+      readonly channelId: TSource["channelId"];
+    }
+  : never;
+
 export type ChannelPreanalysisTrustedSourceIdentity =
-  ChannelPreanalysisContextSeed["sourceIdentity"];
+  ChannelPreanalysisConfiguredSourcePair & {
+  /**
+   * Supplied only after the editor upload has passed the catalog's trusted
+   * video-identity gate. It is persisted in the inner fingerprint/ledger.
+   */
+  readonly videoId: string;
+  readonly transcriptDigest: string;
+    readonly artifactDigest: string;
+  };
 
 export interface CreateChannelPreanalysisContextSeedInput {
   readonly sourceDurationMs: number;
@@ -79,6 +100,27 @@ export interface CreateChannelPreanalysisContextSeedInput {
   readonly sourceIdentity: ChannelPreanalysisContextSeed["sourceIdentity"];
   readonly provenance: ChannelPreanalysisContextSeed["provenance"];
   readonly result: BroadcastContextResult;
+}
+
+export function createChannelPreanalysisTrustedSourceIdentity(
+  source: ConfiguredChannelPreanalysisSource,
+  identity: Pick<
+    ChannelPreanalysisTrustedSourceIdentity,
+    "videoId" | "transcriptDigest" | "artifactDigest"
+  >,
+): ChannelPreanalysisTrustedSourceIdentity {
+  const configuredSource = channelPreanalysisSourceById(source.sourceId);
+  if (
+    configuredSource === null ||
+    configuredSource.channelId !== source.channelId
+  ) {
+    throw new TypeError("The channel preanalysis source pair is invalid.");
+  }
+  return {
+    sourceId: configuredSource.sourceId,
+    channelId: configuredSource.channelId,
+    ...identity,
+  } as ChannelPreanalysisTrustedSourceIdentity;
 }
 
 function seedFingerprintParts(
@@ -99,10 +141,25 @@ function seedFingerprintParts(
   ];
 }
 
+function hasConfiguredSourcePair(
+  identity: ChannelPreanalysisTrustedSourceIdentity,
+): boolean {
+  const configuredSource = channelPreanalysisSourceById(identity.sourceId);
+  return (
+    configuredSource !== null &&
+    configuredSource.channelId === identity.channelId
+  );
+}
+
 export async function createChannelPreanalysisContextSeed(
   input: CreateChannelPreanalysisContextSeedInput,
   fingerprint: ContextSeedFingerprint = createContentFingerprint,
 ): Promise<ChannelPreanalysisContextSeed> {
+  if (!hasConfiguredSourcePair(input.sourceIdentity)) {
+    throw new TypeError(
+      "Channel preanalysis context seed source identity is not configured.",
+    );
+  }
   const unsignedSeed = {
     schemaVersion: CHANNEL_PREANALYSIS_CONTEXT_SEED_SCHEMA_VERSION,
     sourceDurationMs: input.sourceDurationMs,
@@ -316,6 +373,7 @@ export async function validateChannelPreanalysisContextSeed(
     if (
       seed.schemaVersion !==
         CHANNEL_PREANALYSIS_CONTEXT_SEED_SCHEMA_VERSION ||
+      !hasConfiguredSourcePair(seed.sourceIdentity) ||
       !YOUTUBE_VIDEO_ID_PATTERN.test(seed.sourceIdentity.videoId) ||
       !SHA256_DIGEST_PATTERN.test(
         seed.sourceIdentity.transcriptDigest,
@@ -324,14 +382,19 @@ export async function validateChannelPreanalysisContextSeed(
       !isCanonicalIsoDate(seed.provenance.generatedAt) ||
       seed.provenance.modelRoutingRevision !==
         AI_BROADCAST_CONTEXT_ROUTING_REVISION ||
-      seed.provenance.evidenceScope !==
-        "youtube-caption-transcript-only" ||
+      ![
+        "youtube-caption-transcript-only",
+        "scheduled-asr-transcript-only",
+      ].includes(seed.provenance.evidenceScope) ||
       seed.provenance.localVisualVerificationRequired !== true
     ) {
       return null;
     }
     if (
       trustedSourceIdentity === null ||
+      !hasConfiguredSourcePair(trustedSourceIdentity) ||
+      trustedSourceIdentity.sourceId !== seed.sourceIdentity.sourceId ||
+      trustedSourceIdentity.channelId !== seed.sourceIdentity.channelId ||
       trustedSourceIdentity.videoId !== seed.sourceIdentity.videoId ||
       trustedSourceIdentity.transcriptDigest !==
         seed.sourceIdentity.transcriptDigest ||

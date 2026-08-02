@@ -298,7 +298,7 @@ describe("binary transcript ingress", () => {
       "whisper-large-v3-turbo",
     );
     expect(response.headers.get("X-ExClipper-Model-Revision")).toBe(
-      "groq-whisper-large-v3-turbo-ko-segment-v1-2026-07-29",
+      "groq-whisper-large-v3-turbo-ko-segment-v2-2026-08-02",
     );
     const payload: unknown = await response.json();
     expect(payload).toMatchObject({

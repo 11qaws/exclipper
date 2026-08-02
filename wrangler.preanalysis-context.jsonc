@@ -9,6 +9,10 @@
   },
   "vars": {
     "PREANALYSIS_CONTEXT_PROVIDER": "qwen",
+    "PREANALYSIS_CANDIDATE_PROVIDER": "qwen",
+    "PREANALYSIS_CANDIDATE_TRANSPORT_MODE": "free-r2",
+    "PREANALYSIS_TRANSCRIPT_TRANSPORT_MODE": "free-r2",
+    "PREANALYSIS_MEDIA_PUBLIC_BASE_URL": "https://exclipper-preanalysis-context.11qaws.workers.dev/",
     "PREANALYSIS_QWEN_REGION": "singapore"
   },
   "durable_objects": {
@@ -33,12 +37,28 @@
         "limit": 4,
         "period": 60
       }
+    },
+    {
+      "name": "PREANALYSIS_TRANSCRIPT_RATE_LIMITER",
+      "namespace_id": "20260802",
+      "simple": {
+        "limit": 20,
+        "period": 60
+      }
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "PREANALYSIS_MEDIA",
+      "bucket_name": "exclipper-transcript-media"
     }
   ],
   "secrets": {
     "required": [
       "PREANALYSIS_CONTEXT_TOKEN",
-      "PREANALYSIS_QWEN_API_KEY"
+      "PREANALYSIS_GROQ_API_KEY",
+      "PREANALYSIS_QWEN_API_KEY",
+      "PREANALYSIS_MEDIA_SIGNING_KEY"
     ]
   }
 }

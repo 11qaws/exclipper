@@ -6,11 +6,20 @@
 파생한 재사용 가능 artifact를 보관하는 별도 계층이며, 로컬 `AnalysisJob`은 매칭
 완료 뒤에도 자신의 source fence와 run 생애주기를 새로 만든다.
 
+- configured source는 `amoretto-vods`, `eureka-history`, `sena-replay`,
+  `coco-replay`, `mangjing-compilations`다. 각 source는 자신의 manifest·artifact
+  namespace만 쓸 수 있고 source ID·channel ID·handle의 registry 조합이 다르면
+  읽기와 게시를 모두 거부한다.
+- 예약 scheduler의 영상 처리 상한 2개는 source별이 아니라 run 전체에 적용한다.
+  다섯 feed reconciliation은 모두 수행하되 due 작업은 회전 순서로 한 개씩 먼저
+  배분하고 남은 슬롯만 두 번째 round에 사용한다. 한 source 발견 실패는 기존
+  snapshot을 유지하며 정상 sibling source의 checkpoint 진행을 취소하지 않는다.
+
 ### 원격 영상
 
 주 artifact 상태:
 
-`discovered -> metadata-ready -> transcript-ready -> (선택적 context-ready) -> published`
+`discovered -> metadata-ready -> transcript-ready -> context-ready -> review-ready`
 
 후행 시각 지문 lane:
 
@@ -29,35 +38,55 @@
   영구 skip하지 않는다.
 - `retryable`은 마지막 성공 단계, 누락 단계, attempt, 다음 시도 시각을 보존한다.
   다음 예약 실행은 마지막 성공 artifact를 버리지 않고 누락 단계만 다시 수행한다.
+- `retryable(review)`는 정확한 `context-ready` artifact와 후보별 checkpoint를 계속
+  가리킨다. 완료·맥락 제외 후보는 재사용하고 retryable 후보만 다시 추출·호출한다.
+  재시도는 이전에 시도한 빈 review revision을 그대로 사용하며, 같은 revision에 실제
+  orphan artifact가 있을 때만 다음 revision으로 전진한다.
 - 시각 지문은 transcript/context와 독립된 post lane이다. storyboard 생성·다운로드·
   schema·digest 검증 실패는 `retryable(fingerprint)`로 기록하고
   `lastSuccessfulState=transcript-ready | context-ready`를 유지한다. 지문 파일만
   누락되거나 같은 길이로 변조된 경우에도 그 파일과 pointer만 격리하며 자막·맥락
   artifact를 삭제하거나 provider를 다시 호출하지 않는다. 기존 ready 영상에 지문이
   없으면 새 영상보다 낮은 우선순위로 backfill한다.
-- context opt-in은 전용 proxy URL과 Bearer token이 모두 있을 때만 활성화된다.
-  둘 다 없는 기본 cron은 `transcript-ready`를 terminal target으로 삼는다. 하나만
-  있거나 대화형 5인용 Worker host를 지정하면 분석을 시작하지 않는다.
+- 예약 workflow는 전용 proxy URL과 Bearer token이 모두 있을 때만 시작한다. 이 실행의
+  terminal target은 `review-ready | verified-empty`이며, 둘 중 하나라도 없거나 대화형
+  5인용 Worker host를 지정하면 전사 전용 성공으로 낮추지 않고 분석을 시작하지 않는다.
 - `retryable(context)`는 exact v1 transcript artifact를 계속 가리킨다. transport
   outcome이 불명확해도 같은 run에서 새 billable operation을 만들지 않으며, 다음
   run이 transcript digest와 model routing revision으로 만든 같은 stable operation
   ID를 사용한다.
-- 예약 `context-ready`에는 `contextProvenance`가 필수다. 근거 범위는
-  `youtube-caption-transcript-only`이고 `localVisualVerificationRequired=true`이므로
+- 예약 `context-ready`에는 `contextProvenance`가 필수다. 근거 범위는 입력에 따라
+  `youtube-caption-transcript-only` 또는 `scheduled-asr-transcript-only`이고
+  `localVisualVerificationRequired=true`이므로
   로컬 화면·오디오·등장인물 또는 후보별 상세 검증 완료를 뜻하지 않는다.
   provenance의 exact-key `contextReceipt`에는 성공 응답에서 검증한
   `contractVersion`·`routingRevision`·`modelId`·`modelRevision`을 모두 bounded
   token으로 보존하며, receipt routing과 provenance routing이 다르면 bundle을
   `context-ready`로 읽지 않는다.
-- 검증된 원격 context seed를 로컬 run에 가져올 때는 exact video ID,
+- 자막이 없는 영상의 예약 ASR은 90초 source range마다 독립된 R2 media ticket과
+  Durable Object terminal을 사용한다. 성공 range는 숨김 catalog checkpoint에 즉시
+  write/readback되며 실패·중단 뒤에는 이미 성공한 range를 재요청하지 않는다. 전체
+  transcript bundle과 catalog pointer의 closure가 확인된 뒤 checkpoint를 제거한다.
+- 예약 ASR checkpoint v2와 Worker terminal은 Groq segment의 상대 시작·끝 시각,
+  본문, bounded `no_speech_prob`·`avg_logprob`를 보존한다. caption event는 90초
+  본문을 글자 수로 나누지 않고 이 상대 시각에 source range 시작을 더해 만든다.
+  확실한 no-speech만 대화 event에서 제외하고 애매한 신호는 보존한다. 모든 range가
+  무발화인 경우에도 range checkpoint는 완결되고, transcript는 `events=[]`와
+  `[대사 없음]` complete-coverage chapter로 정상 종료한다.
+- 검증된 원격 context seed를 로컬 run에 가져올 때는 exact source ID·channel ID·video ID,
   transcript digest, artifact digest와 호환 duration·roster·언어·routing을 다시
   확인한다. 주제·의미 lead는 현재 로컬 챕터 시간축에 재매핑하고, 범위가 coverage
   gap을 건너거나 변조된 seed는 기존 로컬 overview/discovery로 되돌린다.
-- seed import가 성공해도 원장의 완료 조건은
+- `context-ready` seed import만 성공해도 원장의 완료 조건은
   `precomputed overview receipt + current local selection jury receipt`다. 현재 후보와
   현재 participant grounding이 jury를 통과해야 하며, 후보별 화면 4장·오디오·대표
   썸네일 receipt는 이후 현재 run의 상세 검증에서 별도로 필요하다. seed 자체는
   최종 후보나 로컬 상세 검증을 완료시키지 않는다.
+- 반대로 exact URL 또는 검증된 로컬 identity가 `review-ready` artifact에 연결되고,
+  artifact SHA·내부 content digest·transcript/context·participant·candidate certificate가
+  모두 일치하면 브라우저는 새 AI run을 만들지 않고 저장된 후보를 검토 화면에 투영한다.
+  후보 0개도 `verified-empty` certificate가 있을 때만 정상 완료이며, partial artifact는
+  어떤 경우에도 이 경로로 들어오지 않는다.
 - 제목/설명 변경은 같은 `(channelId, videoId)`의 source revision을 올린다. 자막,
   지문, 맥락 입력 digest가 같으면 비싼 하위 단계를 다시 실행하지 않는다.
 - `published`는 원격 bundle의 내부 완결 상태일 뿐 로컬 편집 후보의 완료 상태가

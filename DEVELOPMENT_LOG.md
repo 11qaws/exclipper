@@ -1,5 +1,80 @@
 # Development Log
 
+## 2026-08-02 30분 업로드 감지와 due-gated heavy 선분석
+
+- 기존 3시간 cron 전체가 매번 yt-dlp 설치 검증·WARP 등록·AI 준비까지 수행하던 구조를
+  30분 lightweight RSS+catalog preflight와 조건부 heavy 준비로 분리했다. preflight는 기존
+  `synchronizeChannelPreanalysisCatalog(discoveryOnly)`·`selectDueCatalogVideos`·
+  `selectChannelPreanalysisReviewQueue`를 재사용하며 새 업로드를 먼저 `discovered`로 저장한다.
+- 신규 pipeline 작업, due context retry, due review retry, `context-ready` review 누락,
+  fingerprint 복구가 있을 때만 tests·yt-dlp·WARP·전사·맥락·review 단계를 연다. 수동
+  `workflow_dispatch`는 preflight 결과와 관계없이 항상 heavy로 실행한다.
+- preflight와 heavy 결과는 같은 catalog snapshot 위에 쓰고, preflight 전에 기록한 remote
+  base SHA를 publish job이 다시 확인한다. 따라서 빠른 발견을 추가해도 기존 non-force push와
+  stale base race fence를 우회하지 않는다.
+- `CHANNEL_PREANALYSIS_CONTEXT_PROXY_URL` 또는 token이 없을 때 `disabled` 보고서를 쓰고 green
+  success로 끝내던 경로를 제거했다. `review-ready` 운영 자격 증명이 하나라도 없으면 명시적
+  구성 오류로 실패한다. 숨김 ASR/review checkpoint 전달을 위한 `include-hidden-files: true`는
+  유지했다.
+- 새 preflight 단위·통합·workflow 계약 테스트 6개와 대상 ESLint를 통과했다. commit·push·
+  배포는 하지 않았다.
+
+## 2026-08-02 YouTube 사전 분석을 최종 검토 화면까지 완성
+
+- 예약 카탈로그의 terminal을 `review-ready`로 확장했다. 전체 오디오 특징과 전체 맥락의
+  의미 lead를 융합해 최대 12개 후보를 만들고, 후보마다 30~60초 WAV와 JPEG 4장이 모두
+  준비된 뒤에만 전용 candidate Worker가 화면·오디오·대사·방송 흐름을 함께 해석한다.
+- review artifact는 transcript/context digest, participant grounding, 후보별 context·근거·
+  AI insight·실제 model receipt·JPEG 4장·대표 thumbnail, 최종 후보 집합과
+  `review-ready | verified-empty` certificate를 4MiB 안에서 봉인한다. immutable write와
+  readback 뒤에만 manifest 상태를 바꾸므로 일부 후보 실패가 후보 0개로 게시되지 않는다.
+- 후보별 checkpoint를 source/video/context digest/review revision/pipeline revision에 묶어
+  저장한다. 완료·맥락 제외 후보만 재사용하고 실패 후보만 다음 예약 실행에서 다시 처리한다.
+  재시도 시 시도했던 빈 revision을 그대로 사용하도록 고쳐 checkpoint가 v2에서 v3으로
+  끊어지던 문제도 막았다.
+- 전용 Worker에 Bearer 인증 `/v1/candidate-insights`를 추가했다. 8MiB 이하의 pre-Base64
+  media를 디코드하지 않고 exact payload SHA와 Durable Object operation으로 처리하며,
+  Node client는 409·429·5xx/network 오류를 같은 body/operation으로 복구한다.
+- workflow가 bounded YouTube 분석 사본 다운로드, ffprobe, 전체 audio feature, 후보 media,
+  AI 검증, publisher를 실제로 호출하도록 연결했다. write credential은 publish job에만 있고
+  yt-dlp child에는 provider/token/GitHub secret이 전달되지 않는다. 숨김 후보 checkpoint도
+  artifact로 운반한다.
+- 브라우저는 exact YouTube ID 또는 검증된 로컬 identity에 대응하는 review artifact의
+  manifest SHA와 내부 closure를 다시 확인한 뒤 `PreparedReviewExperience`를 바로 연다.
+  이 경로에서는 긴 로컬 분석을 시작하지 않으며, 편집자의 선택과 경계 조정만 별도로 저장한다.
+- 신규·관련 runner/Worker/client/job/publisher/UI 테스트, TypeScript typecheck와 production
+  build를 검증한다. 이 항목의 변경은 아직 commit·배포하지 않았다.
+
+## 2026-08-02 다섯 YouTube 채널 자동 선분석 확장
+
+- 자동 발견 source를 아모레또에서 유레카·세나·토로리 코코·망징이까지 확장했다.
+  실제 공식 playlist Atom feed를 호출해 다섯 응답이 모두 HTTP 200이고 canonical
+  channel ID 및 최근 14~15개 entry가 strict parser를 통과함을 확인했다. 코코는
+  Shorts·커버가 섞인 uploads가 아니라 live-stream playlist만 사용하며 완료 replay의
+  `was_live` metadata를 허용한다.
+- catalog와 artifact는 다섯 namespace로 격리하고, scheduled runner는 모든 feed를
+  reconcile하면서도 한 run 전체에서 최대 2개만 처리한다. 3시간 단위 source 회전과
+  two-round 배분으로 backlog 독점을 막고, 영구 자막 부재 retry는 fresh/transient 뒤로
+  보내며 run당 하나만 허용한다. 한 source feed 장애는 기존 snapshot을 보존하고 sibling
+  source 진행을 유지한다.
+- 브라우저 lookup은 다섯 catalog를 함께 검색한다. exact ID는 unrelated catalog 장애에도
+  사용할 수 있지만 제목·길이·시각 지문의 유일성은 전체 catalog coverage가 있을 때만
+  인정한다. 로컬 binding, context seed, background Worker operation에는 source ID와
+  channel ID를 함께 봉인해 교차 채널 artifact 대체를 거부한다.
+- raw catalog 대신 bundled fallback을 읽은 source도 전체 coverage로 세지 않는다. 빈
+  또는 오래된 fallback이 다른 source의 제목·길이 후보를 거짓 단독 후보로 만들 수
+  있으므로 exact ID만 허용하고 probable·visual cohort는 명시적으로 보류한다.
+- 망징이는 여러 방송을 묶은 `combined-replay`로 기록했다. 전체 합본 exact 매칭은
+  가능하지만 로컬 단일 방송과 합본 내부 구간의 subsequence 매칭은 아직 구현하지 않아
+  자동 성공으로 표시하지 않고 기존 로컬 분석으로 fallback한다.
+- 단일 source 수동 실행도 all-source 실행과 같은 root-level run report를 남긴다. 기존
+  catalog branch에 새 namespace가 없으면 immutable application checkout의 검증된
+  fallback snapshot으로 빈 namespace를 먼저 만든다. 최초 feed 요청 자체가 실패해도
+  source-local 빈 checkpoint를 보존하고, 건강한 sibling 결과를 게시한 뒤 workflow를
+  `partial`로 명확히 표시한다.
+- 검증: 전체 Vitest 2,151개, runner 계약 43개, 음성 등록 도구 9개, TypeScript
+  typecheck, ESLint warning 0, production build를 통과했다. 배포·commit은 하지 않았다.
+
 ## 2026-07-30 첫 실제 배포와 예약 러너의 YouTube ingress 차단 확인
 
 ### 배포한 것
@@ -2957,3 +3032,54 @@ PassB가 정상 동작해도 `context-missing` 6개는 남는다. 대사 텍스�
 - **단조 병합:** 메인 전사와 보강 전사 모두 셀 단위로 CAS 재기반한다. 이미 성공하거나 무발화로 확정된 셀은 오래된 `in-flight`·실패 셀로 되돌아가지 않으며, 실패 셀끼리는 더 큰 시도 횟수와 더 안전한 결제 상태가 우선한다. 서로 다른 탭이 독립적으로 완료한 셀은 하나의 완결 체크포인트로 합쳐진다.
 - **직렬화 계약 수정:** 런타임 전사 셀의 `kind`가 영속 계획에 섞여 저장기는 쓰지만 파서는 읽지 못하던 자기 불일치를 제거했다. 영속 셀은 현재 스키마의 `{chunkId, sourceStartMs, sourceEndMs}`만 기록한다.
 - **검증:** 관련 7개 파일의 46개 테스트, 전체 TypeScript typecheck, production build가 통과했다. 빌드의 기존 대형 청크 경고 외 오류는 없다.
+### 입력·분석 앞단 A안 구현 + B안 디자인 라이브러리 보존 · 2026-08-02
+
+- **채택:** 태블릿 모양을 흉내 내는 장치 프레임이 아니라, 한 bounded surface가
+  Empty → Inspecting → Ready → Running/Recoverable로 바뀌는 A안을 실제 App 앞단에
+  연결했다. 입력·진행·복구가 아래로 누적되지 않고 같은 자리에서 교체된다.
+- **데이터 진실성:** source identity, 대사·챕터, 전체 맥락을 독립 lane으로
+  투영했다. transcript-ready를 context-ready로 표시하지 않으며, 최종 publication 전에는
+  후보 수·후보 위치·내부 점수를 `FrontSurface`에 전달하지 않는다.
+- **완료/복구:** publication 완료 증명이 `verified-empty`인 경우만 정상 후보 0개로
+  표시한다. `completedWithGaps`, 대사 조각 누락, 후보 상세 누락, 맥락 누락은 진행 중으로
+  위장하지 않고 마지막 durable checkpoint에서 해당 작업만 다시 시작한다. 원본 재검사는
+  같은 `File`을 유지한 채 preflight만 다시 실행한다.
+- **UI:** source ribbon, 단일 진행축, 전체 방송 주제 timeline, 현재 범위·등장인물
+  inspector, 자료 연결/이력/detail sheet를 `.frt-*`로 격리했다. 1024px에서는 inspector를
+  timeline 아래 3열로 내려 timeline 폭을 지키고, 680px 아래에서는 한 열과 bottom sheet로
+  전환한다. timeline은 읽을 수 있는 시간 간격과 30분 보조 격자, 충돌 회피 lane을 쓴다.
+- **접근성:** heading 직접 연결, progressbar 이름, 주제의 시작·끝 시각 포함 accessible
+  name, sheet focus trap/Esc/trigger 복귀, reduced-motion/forced-colors를 유지했다.
+- **B안 보존:** 고정 source dock 방식은 ExClipper의 12시간 timeline 폭과 Review handoff에
+  맞지 않아 채택하지 않았지만, 실제 화면·상태표·responsive/accessibility/motion/token
+  계약을 `docs/design-library/SOURCE_DOCK_ANALYSIS_DESK_PATTERN.md`에 일반화해 보존했다.
+- **검증:** 전체 `npm run check` 통과(173 files, 2,119 tests + 음성 등록 도구 9 tests),
+  production build 통과. 로컬 브라우저에서
+  1440×900, 1024×768, 390×844, 긴 한국어 파일명, 영문 UI, 연결 sheet를 확인했고 console
+  warning/error 및 수평 overflow가 없었다. 배포·커밋은 하지 않았다.
+
+### 자막 없는 예약 VOD의 ASR 선분석·복구 경로 · 2026-08-02
+
+- **실패 원인:** 예약 동기화가 한국어 YouTube JSON3 자막만 허용해 자막이 없는 VOD는
+  `KOREAN_CAPTION_NOT_FOUND` 영구 재시도에 머물렀다. 따라서 업로드를 미리 발견해도
+  `transcript-ready` 이후의 전체 맥락과 검토 후보를 만들 수 없었다.
+- **무료 fallback:** 자막이 없거나 비어 있으면 GitHub Actions가 오디오를 90초 PCM16 WAV
+  범위로 만들고 원문 SHA-256과 함께 전용 Worker의 R2 stage에 스트리밍한다. Worker는 큰
+  본문을 읽거나 해시하지 않고 R2 native checksum과 44-byte WAV header만 확인한다. 이후
+  작은 media ticket을 resolve해 Groq Whisper에 서명된 R2 URL을 전달하므로 무료 Worker의
+  CPU 제한과 provider secret 노출을 동시에 피한다.
+- **체크포인트·재개:** 성공한 범위는 catalog 내부 숨김 체크포인트에 원자적으로 저장한다.
+  다음 cron은 완성된 범위를 재다운로드·재전사하지 않고 누락된 범위부터 이어 간다. 모든
+  범위가 합쳐진 transcript bundle과 catalog pointer가 기록된 뒤에만 체크포인트를 지운다.
+- **실제 대사 시각:** checkpoint v2와 terminal은 Groq segment의 상대 시작·끝 시각과
+  bounded no-speech/log-probability를 보존한다. 90초 본문을 글자 길이로 균등 배치하지
+  않고 실제 segment 시각에 source 시작을 더해 caption event를 만든다.
+- **무발화:** `[대사 없음]`과 두 신뢰 지표가 모두 확실한 segment만 대화 event에서
+  제외한다. 애매하면 발화를 보존한다. 전 구간이 무발화여도 range checkpoint는 완결되고
+  `events=[]`와 `[대사 없음]` 완전 coverage chapter로 transcript-ready를 정상 게시한다.
+- **정확한 종료 순서:** Worker terminal 결과는 Durable Object에 먼저 저장하고 그 다음 R2
+  media를 지운다. 삭제 중 예외가 나도 성공 결과가 사라지지 않고, 재요청은 media 없이도
+  terminal cache를 그대로 재생한다.
+- **검증:** 자막 우선 경로, 자막 없는 영상의 ASR fallback, 중간 실패 후 범위 재개, 완성
+  체크포인트 재사용, R2 stage에서 request body 미버퍼링, Groq URL multipart, terminal 저장
+  후 media 삭제와 cache replay를 회귀 테스트로 고정했다.

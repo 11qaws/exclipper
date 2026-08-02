@@ -8,10 +8,11 @@ import {
   type BroadcastContextChapterInput,
   type BroadcastContextResult,
 } from "./broadcastContextProtocol";
+import type { ChannelPreanalysisCatalogVideo } from "./channelPreanalysisCatalog";
 import {
-  AMORETTO_YOUTUBE_CHANNEL_ID,
-  type ChannelPreanalysisCatalogVideo,
-} from "./channelPreanalysisCatalog";
+  isChannelPreanalysisYouTubeChannelId,
+  type ChannelPreanalysisYouTubeChannelId,
+} from "./channelPreanalysisSources";
 import {
   MAX_YOUTUBE_CAPTION_EVENTS,
   MAX_YOUTUBE_CAPTION_EVENT_TEXT_LENGTH,
@@ -37,7 +38,7 @@ export type ChannelPreanalysisBundleState =
   (typeof CHANNEL_PREANALYSIS_BUNDLE_STATES)[number];
 
 export interface ChannelPreanalysisBundleProvenance {
-  readonly sourceKind: "youtube-korean-caption";
+  readonly sourceKind: "youtube-korean-caption" | "scheduled-korean-asr";
   readonly sourceUrl: string;
   readonly extractedAt: string;
   readonly extractorRevision: string;
@@ -58,13 +59,15 @@ export interface ChannelPreanalysisContextProvenance {
   readonly generatedAt: string;
   readonly modelRoutingRevision: typeof AI_BROADCAST_CONTEXT_ROUTING_REVISION;
   readonly contextReceipt: ChannelPreanalysisContextReceipt;
-  readonly evidenceScope: "youtube-caption-transcript-only";
+  readonly evidenceScope:
+    | "youtube-caption-transcript-only"
+    | "scheduled-asr-transcript-only";
   readonly localVisualVerificationRequired: true;
 }
 
 export interface ChannelPreanalysisBundle {
   readonly schemaVersion: typeof CHANNEL_PREANALYSIS_BUNDLE_SCHEMA_VERSION;
-  readonly channelId: typeof AMORETTO_YOUTUBE_CHANNEL_ID;
+  readonly channelId: ChannelPreanalysisYouTubeChannelId;
   readonly videoId: string;
   readonly title: string;
   readonly durationMs: number;
@@ -80,6 +83,7 @@ export interface ChannelPreanalysisBundle {
 }
 
 export interface CreateChannelPreanalysisBundleInput {
+  readonly channelId: ChannelPreanalysisYouTubeChannelId;
   readonly videoId: string;
   readonly title: string;
   readonly durationMs: number;
@@ -153,7 +157,7 @@ export async function createChannelPreanalysisBundle(
   );
   const bundle = validateChannelPreanalysisBundle({
     schemaVersion: CHANNEL_PREANALYSIS_BUNDLE_SCHEMA_VERSION,
-    channelId: AMORETTO_YOUTUBE_CHANNEL_ID,
+    channelId: input.channelId,
     videoId: input.videoId,
     title: input.title,
     durationMs: input.durationMs,
@@ -224,7 +228,7 @@ export function validateChannelPreanalysisBundle(
   );
   if (
     bundle.schemaVersion !== CHANNEL_PREANALYSIS_BUNDLE_SCHEMA_VERSION ||
-    bundle.channelId !== AMORETTO_YOUTUBE_CHANNEL_ID
+    !isChannelPreanalysisYouTubeChannelId(bundle.channelId)
   ) {
     throw validationError("INVALID_SCHEMA", "Preanalysis bundle schema or channel is invalid.");
   }
@@ -250,8 +254,28 @@ export function validateChannelPreanalysisBundle(
     throw validationError("INVALID_METADATA", "Preanalysis bundle state is invalid.");
   }
 
-  const captionTrack = validateCaptionTrack(bundle.captionTrack, videoId, durationMs);
+  const provenance = validateProvenance(bundle.provenance, videoId);
+  const captionTrack = validateCaptionTrack(
+    bundle.captionTrack,
+    videoId,
+    durationMs,
+    provenance.sourceKind === "scheduled-korean-asr",
+  );
   const chapters = validateChapters(bundle.chapters, durationMs);
+  if (
+    captionTrack.events.length === 0 &&
+    chapters.some(
+      (chapter) =>
+        chapter.evidenceMode !== "complete-transcript" ||
+        chapter.evidenceCoverageRatio !== 1 ||
+        chapter.summaryKo !== "[대사 없음]",
+    )
+  ) {
+    throw validationError(
+      "INVALID_TRANSCRIPT",
+      "An empty scheduled ASR track requires complete no-speech coverage.",
+    );
+  }
   const broadcastContext =
     bundle.broadcastContext === null
       ? null
@@ -271,14 +295,13 @@ export function validateChannelPreanalysisBundle(
       "Preanalysis bundle state and broadcast context are inconsistent.",
     );
   }
-  const provenance = validateProvenance(bundle.provenance, videoId);
   if (typeof bundle.transcriptDigest !== "string" || !SHA256_PATTERN.test(bundle.transcriptDigest)) {
     throw validationError("INVALID_TRANSCRIPT", "Transcript digest is invalid.");
   }
 
   return {
     schemaVersion: CHANNEL_PREANALYSIS_BUNDLE_SCHEMA_VERSION,
-    channelId: AMORETTO_YOUTUBE_CHANNEL_ID,
+    channelId: bundle.channelId,
     videoId,
     title: bundle.title,
     durationMs,
@@ -342,6 +365,7 @@ export function assertChannelPreanalysisBundleMatchesCatalogVideo(
   manifestRevision: number,
 ): void {
   if (
+    bundle.channelId !== video.channelId ||
     bundle.videoId !== video.videoId ||
     bundle.title !== video.title ||
     bundle.durationMs !== video.durationMs ||
@@ -360,6 +384,7 @@ function validateCaptionTrack(
   value: unknown,
   videoId: string,
   sourceDurationMs: number,
+  allowEmpty: boolean,
 ): YouTubeCaptionTrackResult {
   const track = recordWithKeys(
     value,
@@ -373,7 +398,7 @@ function validateCaptionTrack(
     !/^ko(?:-[A-Za-z0-9]{1,16})?$/u.test(track.languageCode) ||
     typeof track.isAutoGenerated !== "boolean" ||
     !Array.isArray(track.events) ||
-    track.events.length < 1 ||
+    (!allowEmpty && track.events.length < 1) ||
     track.events.length > MAX_YOUTUBE_CAPTION_EVENTS
   ) {
     throw validationError("INVALID_TRANSCRIPT", "Caption track metadata is invalid.");
@@ -760,7 +785,10 @@ function validateContextProvenance(
   if (
     provenance.modelRoutingRevision !==
       AI_BROADCAST_CONTEXT_ROUTING_REVISION ||
-    provenance.evidenceScope !== "youtube-caption-transcript-only" ||
+    ![
+      "youtube-caption-transcript-only",
+      "scheduled-asr-transcript-only",
+    ].includes(provenance.evidenceScope as string) ||
     provenance.localVisualVerificationRequired !== true
   ) {
     throw validationError(
@@ -779,7 +807,9 @@ function validateContextProvenance(
     generatedAt: isoDate(provenance.generatedAt, "INVALID_CONTEXT"),
     modelRoutingRevision: AI_BROADCAST_CONTEXT_ROUTING_REVISION,
     contextReceipt,
-    evidenceScope: "youtube-caption-transcript-only",
+    evidenceScope: provenance.evidenceScope as
+      | "youtube-caption-transcript-only"
+      | "scheduled-asr-transcript-only",
     localVisualVerificationRequired: true,
   };
 }
@@ -829,7 +859,9 @@ function validateProvenance(
     "Preanalysis provenance is invalid.",
   );
   if (
-    provenance.sourceKind !== "youtube-korean-caption" ||
+    !["youtube-korean-caption", "scheduled-korean-asr"].includes(
+      provenance.sourceKind as string,
+    ) ||
     provenance.sourceUrl !== `https://www.youtube.com/watch?v=${videoId}` ||
     typeof provenance.extractorRevision !== "string" ||
     !EXTRACTOR_REVISION_PATTERN.test(provenance.extractorRevision)
@@ -837,7 +869,9 @@ function validateProvenance(
     throw validationError("INVALID_PROVENANCE", "Preanalysis provenance is invalid.");
   }
   return {
-    sourceKind: "youtube-korean-caption",
+    sourceKind: provenance.sourceKind as
+      | "youtube-korean-caption"
+      | "scheduled-korean-asr",
     sourceUrl: provenance.sourceUrl,
     extractedAt: isoDate(provenance.extractedAt, "INVALID_PROVENANCE"),
     extractorRevision: provenance.extractorRevision,
@@ -860,6 +894,18 @@ export function createDefaultChannelPreanalysisProvenance(
     },
     videoId,
   );
+}
+
+export function createScheduledAsrChannelPreanalysisProvenance(
+  videoId: string,
+  extractedAt: string,
+): ChannelPreanalysisBundleProvenance {
+  return validateProvenance({
+    sourceKind: "scheduled-korean-asr",
+    sourceUrl: `https://www.youtube.com/watch?v=${videoId}`,
+    extractedAt,
+    extractorRevision: "groq-whisper-large-v3-turbo-scheduled-v2-2026-08-02",
+  }, videoId);
 }
 
 function recordWithKeys(

@@ -9,7 +9,7 @@ export const BROADCAST_TRANSCRIPT_QWEN_OMNI_MODEL_ID =
 export const BROADCAST_TRANSCRIPT_GROQ_MODEL_ID =
   "whisper-large-v3-turbo" as const;
 export const BROADCAST_TRANSCRIPT_GROQ_MODEL_REVISION =
-  "groq-whisper-large-v3-turbo-ko-segment-v1-2026-07-29" as const;
+  "groq-whisper-large-v3-turbo-ko-segment-v2-2026-08-02" as const;
 export const BROADCAST_TRANSCRIPT_QWEN_MAX_OUTPUT_TOKENS = 1_024;
 export const BROADCAST_TRANSCRIPT_QWEN_OMNI_MODEL_REVISION =
   "qwen3.5-omni-flash-audio-transcript-90s-reviewed-2026-07-22" as const;
@@ -36,6 +36,15 @@ interface BroadcastTranscriptSourceRange {
   readonly durationMs: number;
 }
 
+export interface BroadcastTranscriptTimedSegment {
+  /** Milliseconds relative to the bounded provider request, not the source. */
+  readonly relativeStartMs: number;
+  readonly relativeEndMs: number;
+  readonly textKo: string;
+  readonly noSpeechProbability: number | null;
+  readonly averageLogProbability: number | null;
+}
+
 export interface BroadcastTranscriptQwenResult {
   readonly schemaVersion: typeof BROADCAST_TRANSCRIPT_QWEN_SCHEMA_VERSION;
   readonly modelId: BroadcastTranscriptLiveModelId;
@@ -47,6 +56,20 @@ export interface BroadcastTranscriptQwenResult {
   readonly detectedLanguage: string | null;
   readonly emotion: string | null;
   readonly billedSeconds: number | null;
+  /** Present for timestamped providers such as Groq Whisper. */
+  readonly segments?: readonly BroadcastTranscriptTimedSegment[];
+}
+
+export function isConfidentBroadcastTranscriptNoSpeechSegment(
+  segment: BroadcastTranscriptTimedSegment,
+): boolean {
+  if (segment.textKo === "[대사 없음]") return true;
+  return (
+    segment.noSpeechProbability !== null &&
+    segment.noSpeechProbability >= 0.98 &&
+    segment.averageLogProbability !== null &&
+    segment.averageLogProbability <= -1
+  );
 }
 
 export function isBroadcastTranscriptModelId(
@@ -427,7 +450,7 @@ export function extractBroadcastTranscriptGroqResponse(
     return null;
   }
 
-  const segmentTexts: string[] = [];
+  const segments: BroadcastTranscriptTimedSegment[] = [];
   let previousStartSeconds = -1;
   for (const segment of value.segments) {
     if (
@@ -438,29 +461,75 @@ export function extractBroadcastTranscriptGroqResponse(
       !Number.isFinite(segment.end) ||
       segment.start < 0 ||
       segment.start < previousStartSeconds ||
-      segment.end < segment.start ||
+      segment.end <= segment.start ||
       segment.end > request.durationMs / 1_000 + 1
     ) {
       return null;
     }
     const text = normalizedTranscript(segment.text);
     if (text === null) return null;
-    segmentTexts.push(text);
+    const noSpeechProbability =
+      segment.no_speech_prob === undefined
+        ? null
+        : typeof segment.no_speech_prob === "number" &&
+            Number.isFinite(segment.no_speech_prob) &&
+            segment.no_speech_prob >= 0 &&
+            segment.no_speech_prob <= 1
+          ? segment.no_speech_prob
+          : undefined;
+    const averageLogProbability =
+      segment.avg_logprob === undefined
+        ? null
+        : typeof segment.avg_logprob === "number" &&
+            Number.isFinite(segment.avg_logprob) &&
+            segment.avg_logprob >= -100 &&
+            segment.avg_logprob <= 0
+          ? segment.avg_logprob
+          : undefined;
+    if (
+      noSpeechProbability === undefined ||
+      averageLogProbability === undefined
+    ) {
+      return null;
+    }
+    segments.push({
+      relativeStartMs: Math.min(
+        request.durationMs,
+        Math.max(0, Math.round(segment.start * 1_000)),
+      ),
+      relativeEndMs: Math.min(
+        request.durationMs,
+        Math.max(0, Math.round(segment.end * 1_000)),
+      ),
+      textKo: text,
+      noSpeechProbability,
+      averageLogProbability,
+    });
     previousStartSeconds = segment.start;
+  }
+
+  if (
+    segments.some(
+      (segment) => segment.relativeEndMs <= segment.relativeStartMs,
+    )
+  ) {
+    return null;
   }
 
   const rawTopLevelText =
     typeof value.text === "string" ? value.text.trim() : null;
   const text =
     rawTopLevelText === ""
-      ? segmentTexts.length === 0
+      ? segments.length === 0
         ? "[대사 없음]"
-        : normalizedTranscript(segmentTexts.join(" "))
+        : normalizedTranscript(
+            segments.map((segment) => segment.textKo).join(" "),
+          )
       : normalizedTranscript(rawTopLevelText);
   if (
     text === null ||
     (text !== "[대사 없음]" && !/\p{Script=Hangul}/u.test(text)) ||
-    (text !== "[대사 없음]" && segmentTexts.length === 0)
+    (text !== "[대사 없음]" && segments.length === 0)
   ) {
     return null;
   }
@@ -474,6 +543,7 @@ export function extractBroadcastTranscriptGroqResponse(
     detectedLanguage: text === "[대사 없음]" ? null : "ko",
     emotion: null,
     billedSeconds: value.duration,
+    segments,
   };
 }
 

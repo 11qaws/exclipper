@@ -10,9 +10,16 @@ import {
   type BroadcastContextResult,
 } from "./broadcastContextProtocol";
 import {
+  CHANNEL_PREANALYSIS_CONTEXT_SEED_FINGERPRINT_DOMAIN,
   createChannelPreanalysisContextSeed,
+  createChannelPreanalysisTrustedSourceIdentity,
+  type ChannelPreanalysisContextSeed,
   validateChannelPreanalysisContextSeed,
 } from "./channelPreanalysisContextSeed";
+import {
+  AMORETTO_CHANNEL_PREANALYSIS_SOURCE,
+  EUREKA_CHANNEL_PREANALYSIS_SOURCE,
+} from "./channelPreanalysisSources";
 
 const scheduledDurationMs = 120_000;
 const localDurationMs = 119_817;
@@ -145,11 +152,14 @@ async function seed() {
       chapters: scheduledChapters,
       castRosterId: null,
       outputLanguage: "ko",
-      sourceIdentity: {
-        videoId: "KzAW3yow80Q",
-        transcriptDigest: `sha256:${"a".repeat(64)}`,
-        artifactDigest: `sha256:${"b".repeat(64)}`,
-      },
+      sourceIdentity: createChannelPreanalysisTrustedSourceIdentity(
+        AMORETTO_CHANNEL_PREANALYSIS_SOURCE,
+        {
+          videoId: "KzAW3yow80Q",
+          transcriptDigest: `sha256:${"a".repeat(64)}`,
+          artifactDigest: `sha256:${"b".repeat(64)}`,
+        },
+      ),
       provenance: {
         generatedAt: "2026-07-30T00:00:00.000Z",
         modelRoutingRevision: AI_BROADCAST_CONTEXT_ROUTING_REVISION,
@@ -160,6 +170,28 @@ async function seed() {
     },
     deterministicFingerprint(),
   );
+}
+
+async function resignSeed(
+  seedValue: Omit<ChannelPreanalysisContextSeed, "seedFingerprint">,
+): Promise<ChannelPreanalysisContextSeed> {
+  const seedFingerprint = await deterministicFingerprint()([
+    CHANNEL_PREANALYSIS_CONTEXT_SEED_FINGERPRINT_DOMAIN,
+    JSON.stringify({
+      schemaVersion: seedValue.schemaVersion,
+      sourceDurationMs: seedValue.sourceDurationMs,
+      chapters: seedValue.chapters,
+      castRosterId: seedValue.castRosterId,
+      outputLanguage: seedValue.outputLanguage,
+      sourceIdentity: seedValue.sourceIdentity,
+      provenance: seedValue.provenance,
+      result: seedValue.result,
+    }),
+  ]);
+  return {
+    ...seedValue,
+    seedFingerprint,
+  };
 }
 
 describe("channelPreanalysisContextSeed", () => {
@@ -194,6 +226,37 @@ describe("channelPreanalysisContextSeed", () => {
       "YouTube 자막으로 사전 추정한 내용이며, 주 진행자 신원과 설명은 로컬 화면·목소리로 확인해야 합니다.",
     );
     expect(validated?.annotations).toEqual([]);
+    expect(prepared.sourceIdentity).toMatchObject({
+      sourceId: "amoretto-vods",
+      channelId: "UCHycoTBFDhXz4XNz8jBP-_A",
+    });
+  });
+
+  it("accepts another configured source only when its source and channel provenance are the registered pair", async () => {
+    const original = await seed();
+    const prepared = await createChannelPreanalysisContextSeed(
+      {
+        ...original,
+        sourceIdentity: createChannelPreanalysisTrustedSourceIdentity(
+          EUREKA_CHANNEL_PREANALYSIS_SOURCE,
+          {
+            videoId: original.sourceIdentity.videoId,
+            transcriptDigest: original.sourceIdentity.transcriptDigest,
+            artifactDigest: original.sourceIdentity.artifactDigest,
+          },
+        ),
+      },
+      deterministicFingerprint(),
+    );
+
+    await expect(
+      validateChannelPreanalysisContextSeed(
+        prepared,
+        localInput(),
+        prepared.sourceIdentity,
+        deterministicFingerprint(),
+      ),
+    ).resolves.not.toBeNull();
   });
 
   it("rejects a source outside the inclusive two-second duration fence", async () => {
@@ -290,5 +353,79 @@ describe("channelPreanalysisContextSeed", () => {
         deterministicFingerprint(),
       ),
     ).resolves.toBeNull();
+  });
+
+  it("rejects a legacy current-only seed without source and channel provenance", async () => {
+    const prepared = await seed();
+    const legacySeed = {
+      ...prepared,
+      sourceIdentity: {
+        videoId: prepared.sourceIdentity.videoId,
+        transcriptDigest: prepared.sourceIdentity.transcriptDigest,
+        artifactDigest: prepared.sourceIdentity.artifactDigest,
+      },
+    } as unknown as ChannelPreanalysisContextSeed;
+
+    await expect(
+      validateChannelPreanalysisContextSeed(
+        legacySeed,
+        localInput(),
+        legacySeed.sourceIdentity,
+        deterministicFingerprint(),
+      ),
+    ).resolves.toBeNull();
+  });
+
+  it("rejects a configured source id paired with another channel even after the seed is re-signed", async () => {
+    const original = await seed();
+    const unsignedSeed: Omit<
+      ChannelPreanalysisContextSeed,
+      "seedFingerprint"
+    > = {
+      schemaVersion: original.schemaVersion,
+      sourceDurationMs: original.sourceDurationMs,
+      chapters: original.chapters,
+      castRosterId: original.castRosterId,
+      outputLanguage: original.outputLanguage,
+      sourceIdentity: original.sourceIdentity,
+      provenance: original.provenance,
+      result: original.result,
+    };
+    const mismatchedIdentity = {
+      ...original.sourceIdentity,
+      sourceId: AMORETTO_CHANNEL_PREANALYSIS_SOURCE.sourceId,
+      channelId: EUREKA_CHANNEL_PREANALYSIS_SOURCE.channelId,
+    } as unknown as ChannelPreanalysisContextSeed["sourceIdentity"];
+    const mismatchedSeed = await resignSeed({
+      ...unsignedSeed,
+      sourceIdentity: mismatchedIdentity,
+    });
+
+    await expect(
+      validateChannelPreanalysisContextSeed(
+        mismatchedSeed,
+        localInput(),
+        mismatchedIdentity,
+        deterministicFingerprint(),
+      ),
+    ).resolves.toBeNull();
+  });
+
+  it("refuses to create a seed for an unregistered source-channel pair", async () => {
+    const original = await seed();
+
+    await expect(
+      createChannelPreanalysisContextSeed(
+        {
+          ...original,
+          sourceIdentity: {
+            ...original.sourceIdentity,
+            sourceId: AMORETTO_CHANNEL_PREANALYSIS_SOURCE.sourceId,
+            channelId: EUREKA_CHANNEL_PREANALYSIS_SOURCE.channelId,
+          } as unknown as ChannelPreanalysisContextSeed["sourceIdentity"],
+        },
+        deterministicFingerprint(),
+      ),
+    ).rejects.toThrow(TypeError);
   });
 });

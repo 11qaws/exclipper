@@ -1,8 +1,12 @@
-import { AMORETTO_YOUTUBE_CHANNEL_ID } from "./channelPreanalysisCatalog";
+import {
+  channelPreanalysisSourceById,
+  type ChannelPreanalysisSourceId,
+  type ChannelPreanalysisYouTubeChannelId,
+} from "./channelPreanalysisSources";
 
-export const CHANNEL_PREANALYSIS_LOCAL_BINDING_SCHEMA_VERSION = 1 as const;
+export const CHANNEL_PREANALYSIS_LOCAL_BINDING_SCHEMA_VERSION = 2 as const;
 export const CHANNEL_PREANALYSIS_LOCAL_BINDING_STORAGE_KEY =
-  "exclipper.channel-preanalysis.local-bindings.v1" as const;
+  "exclipper.channel-preanalysis.local-bindings.v2" as const;
 export const CHANNEL_PREANALYSIS_LOCAL_BINDING_MAX_ENTRIES = 256;
 
 const CHANNEL_PREANALYSIS_LOCAL_BINDING_MAX_BYTES = 96 * 1024;
@@ -25,18 +29,21 @@ export interface ChannelPreanalysisLocalBindingStorage {
 
 export interface ChannelPreanalysisLocalBinding {
   readonly localSampledFingerprint: string;
+  readonly sourceId: ChannelPreanalysisSourceId;
+  readonly channelId: ChannelPreanalysisYouTubeChannelId;
   readonly videoId: string;
   readonly registeredAt: string;
 }
 
 export interface ChannelPreanalysisLocalBindingDocument {
   readonly schemaVersion: typeof CHANNEL_PREANALYSIS_LOCAL_BINDING_SCHEMA_VERSION;
-  readonly channelId: typeof AMORETTO_YOUTUBE_CHANNEL_ID;
   readonly bindings: readonly ChannelPreanalysisLocalBinding[];
 }
 
 export interface RegisterChannelPreanalysisLocalBindingInput {
   readonly localSampledFingerprint: string;
+  readonly sourceId: ChannelPreanalysisSourceId;
+  readonly channelId: ChannelPreanalysisYouTubeChannelId;
   readonly videoId: string;
   /**
    * Optional for deterministic imports and tests. It must already be a
@@ -47,7 +54,6 @@ export interface RegisterChannelPreanalysisLocalBindingInput {
 
 const EMPTY_DOCUMENT: ChannelPreanalysisLocalBindingDocument = Object.freeze({
   schemaVersion: CHANNEL_PREANALYSIS_LOCAL_BINDING_SCHEMA_VERSION,
-  channelId: AMORETTO_YOUTUBE_CHANNEL_ID,
   bindings: Object.freeze([]),
 });
 
@@ -128,8 +134,11 @@ export function registerChannelPreanalysisLocalBinding(
   storage: ChannelPreanalysisLocalBindingStorage | null = defaultStorage(),
 ): ChannelPreanalysisLocalBinding | null {
   const registeredAt = input.registeredAt ?? new Date().toISOString();
+  const configuredSource = channelPreanalysisSourceById(input.sourceId);
   if (
     storage === null ||
+    configuredSource === null ||
+    configuredSource.channelId !== input.channelId ||
     !isLocalSampledFingerprint(input.localSampledFingerprint) ||
     !YOUTUBE_VIDEO_ID_PATTERN.test(input.videoId) ||
     !isCanonicalIsoDate(registeredAt)
@@ -139,6 +148,8 @@ export function registerChannelPreanalysisLocalBinding(
 
   const binding: ChannelPreanalysisLocalBinding = {
     localSampledFingerprint: input.localSampledFingerprint,
+    sourceId: configuredSource.sourceId,
+    channelId: configuredSource.channelId,
     videoId: input.videoId,
     registeredAt,
   };
@@ -172,6 +183,8 @@ export function registerChannelPreanalysisLocalBinding(
         (candidate) =>
           candidate.localSampledFingerprint ===
             binding.localSampledFingerprint &&
+          candidate.sourceId === binding.sourceId &&
+          candidate.channelId === binding.channelId &&
           candidate.videoId === binding.videoId &&
           candidate.registeredAt === binding.registeredAt,
       )
@@ -188,7 +201,6 @@ function documentWithBinding(
 ): ChannelPreanalysisLocalBindingDocument {
   return {
     schemaVersion: CHANNEL_PREANALYSIS_LOCAL_BINDING_SCHEMA_VERSION,
-    channelId: AMORETTO_YOUTUBE_CHANNEL_ID,
     bindings: [...previous.bindings]
       .filter(
         (candidate) =>
@@ -215,10 +227,9 @@ function parseDocument(
   value: unknown,
 ): ChannelPreanalysisLocalBindingDocument | null {
   if (
-    !isExactObject(value, ["schemaVersion", "channelId", "bindings"]) ||
+    !isExactObject(value, ["schemaVersion", "bindings"]) ||
     value.schemaVersion !==
       CHANNEL_PREANALYSIS_LOCAL_BINDING_SCHEMA_VERSION ||
-    value.channelId !== AMORETTO_YOUTUBE_CHANNEL_ID ||
     !Array.isArray(value.bindings) ||
     value.bindings.length > CHANNEL_PREANALYSIS_LOCAL_BINDING_MAX_ENTRIES
   ) {
@@ -231,10 +242,14 @@ function parseDocument(
     if (
       !isExactObject(candidate, [
         "localSampledFingerprint",
+        "sourceId",
+        "channelId",
         "videoId",
         "registeredAt",
       ]) ||
       !isLocalSampledFingerprint(candidate.localSampledFingerprint) ||
+      typeof candidate.sourceId !== "string" ||
+      typeof candidate.channelId !== "string" ||
       typeof candidate.videoId !== "string" ||
       !YOUTUBE_VIDEO_ID_PATTERN.test(candidate.videoId) ||
       typeof candidate.registeredAt !== "string" ||
@@ -243,9 +258,20 @@ function parseDocument(
     ) {
       return null;
     }
+    const configuredSource = channelPreanalysisSourceById(
+      candidate.sourceId,
+    );
+    if (
+      configuredSource === null ||
+      configuredSource.channelId !== candidate.channelId
+    ) {
+      return null;
+    }
     seenFingerprints.add(candidate.localSampledFingerprint);
     bindings.push({
       localSampledFingerprint: candidate.localSampledFingerprint,
+      sourceId: configuredSource.sourceId,
+      channelId: configuredSource.channelId,
       videoId: candidate.videoId,
       registeredAt: candidate.registeredAt,
     });
@@ -254,7 +280,6 @@ function parseDocument(
   bindings.sort(compareNewestBindingFirst);
   return {
     schemaVersion: CHANNEL_PREANALYSIS_LOCAL_BINDING_SCHEMA_VERSION,
-    channelId: AMORETTO_YOUTUBE_CHANNEL_ID,
     bindings,
   };
 }

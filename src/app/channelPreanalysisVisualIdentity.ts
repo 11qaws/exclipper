@@ -3,14 +3,17 @@ import {
   fetchChannelPreanalysisVisualFingerprintForLookup,
   resolveChannelPreanalysisLookupByVisualFingerprintCohort,
   type ChannelPreanalysisLookupResult,
+  type ConfiguredChannelPreanalysisSearchResult,
   type ChannelPreanalysisVisualCohortResolution,
   type LoadedChannelPreanalysisVisualFingerprintCohort,
   type LoadedChannelPreanalysisVisualFingerprint,
 } from "../analysis/channelPreanalysisClient";
 import {
+  CHANNEL_PREANALYSIS_VISUAL_FINGERPRINT_MAX_COHORT,
   buildChannelPreanalysisLocalVisualCohortSamplingPlan,
   buildChannelPreanalysisLocalVisualSamplingPlan,
   matchChannelPreanalysisVisualFingerprint,
+  selectUniqueChannelPreanalysisVisualFingerprint,
   type ChannelPreanalysisVisualMatchResult,
 } from "../analysis/channelPreanalysisVisualFingerprint";
 import {
@@ -205,6 +208,147 @@ export async function verifyChannelPreanalysisLocalVisualIdentity(
     return NOT_VERIFIABLE;
   } finally {
     eraseLocalVideoLumaSamples(retainedSamples);
+  }
+}
+
+/**
+ * Runs one zero-offset decode pass against the duration-compatible candidates
+ * from every healthy configured catalog. Any missing/invalid source cohort is
+ * a normal abstention: cross-catalog uniqueness is never inferred from a
+ * partial view.
+ */
+export async function verifyConfiguredChannelPreanalysisLocalVisualIdentity(
+  file: File,
+  sourceDurationMs: number,
+  search: ConfiguredChannelPreanalysisSearchResult,
+  options: VerifyChannelPreanalysisLocalVisualIdentityOptions = {},
+): Promise<ChannelPreanalysisLocalVisualIdentityResult> {
+  if (
+    search.coverage !== "complete" ||
+    !["probable", "visual-cohort"].includes(search.selection) ||
+    !Number.isSafeInteger(sourceDurationMs) ||
+    sourceDurationMs <= 0
+  ) {
+    return NOT_VERIFIABLE;
+  }
+  const loadFingerprintCohort =
+    options.loadFingerprintCohort ??
+    (async (lookup, durationMs, signal) =>
+      fetchChannelPreanalysisVisualFingerprintCohortForLookup(
+        lookup,
+        durationMs,
+        signal === undefined ? {} : { signal },
+      ));
+  const resolveFingerprintCohort =
+    options.resolveFingerprintCohort ??
+    (async (lookup, cohort, input, signal) =>
+      resolveChannelPreanalysisLookupByVisualFingerprintCohort(
+        lookup,
+        cohort,
+        input,
+        signal === undefined ? {} : { signal },
+      ));
+  const sampleFrames =
+    options.sampleFrames ??
+    (async (sourceFile, timestampsMs, signal) =>
+      sampleLocalVideoLumaFrames(sourceFile, timestampsMs, {
+        ...(signal === undefined ? {} : { signal }),
+      }));
+
+  let cohorts: readonly LoadedChannelPreanalysisVisualFingerprintCohort[];
+  try {
+    cohorts = await Promise.all(
+      search.lookups.map((lookup) =>
+        loadFingerprintCohort(
+          lookup,
+          sourceDurationMs,
+          options.signal,
+        ),
+      ),
+    );
+  } catch {
+    return NOT_VERIFIABLE;
+  }
+  if (
+    cohorts.some(({ status }) => status === "partial" || status === "too-many")
+  ) {
+    return NOT_VERIFIABLE;
+  }
+  const fingerprints = cohorts.flatMap((cohort) =>
+    cohort.status === "ready" ? cohort.fingerprints : [],
+  );
+  if (
+    fingerprints.length === 0 ||
+    fingerprints.length > CHANNEL_PREANALYSIS_VISUAL_FINGERPRINT_MAX_COHORT ||
+    new Set(fingerprints.map(({ videoId }) => videoId)).size !==
+      fingerprints.length
+  ) {
+    return NOT_VERIFIABLE;
+  }
+
+  let sampling: LocalVideoLumaSamplingResult | null = null;
+  try {
+    const plan = boundedPlanForLocalDuration(
+      buildChannelPreanalysisLocalVisualCohortSamplingPlan(fingerprints),
+      sourceDurationMs,
+    );
+    if (plan.length === 0) return NOT_VERIFIABLE;
+    sampling = await sampleFrames(file, plan, options.signal);
+    if (sampling.sourceDurationMs !== sourceDurationMs) {
+      return NOT_VERIFIABLE;
+    }
+    const selection = selectUniqueChannelPreanalysisVisualFingerprint(
+      fingerprints,
+      {
+        durationMs: sourceDurationMs,
+        samples: sampling.samples,
+      },
+    );
+    if (
+      selection.status !== "verified" ||
+      selection.match === null ||
+      selection.result === null
+    ) {
+      return {
+        status: "not-matched",
+        videoId: null,
+        match: selection.result,
+        verifiedLookup: null,
+      };
+    }
+    const ownerIndex = cohorts.findIndex((cohort) =>
+      cohort.fingerprints.some(
+        ({ videoId }) => videoId === selection.match?.videoId,
+      ),
+    );
+    const ownerCohort = cohorts[ownerIndex];
+    const ownerLookup = search.lookups[ownerIndex];
+    if (ownerCohort === undefined || ownerLookup === undefined) {
+      return NOT_VERIFIABLE;
+    }
+    const resolution = await resolveFingerprintCohort(
+      ownerLookup,
+      ownerCohort,
+      {
+        durationMs: sourceDurationMs,
+        samples: sampling.samples,
+      },
+      options.signal,
+    );
+    if (
+      resolution.status !== "verified" ||
+      resolution.lookup.match.confidence !== "exact" ||
+      resolution.lookup.match.match?.videoId !== selection.match.videoId
+    ) {
+      return NOT_VERIFIABLE;
+    }
+    return verifiedResult(selection.result, resolution.lookup);
+  } catch {
+    return NOT_VERIFIABLE;
+  } finally {
+    if (sampling !== null) {
+      eraseLocalVideoLumaSamples(sampling.samples);
+    }
   }
 }
 

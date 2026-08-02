@@ -273,6 +273,9 @@ describe("candidate insight staged media", () => {
     );
     expect(frameResponse.status).toBe(200);
     expect(frameResponse.headers.get("Content-Type")).toBe("image/jpeg");
+    expect(frameResponse.headers.get("Content-Length")).toBe(
+      String(frames[2]!.byteLength),
+    );
     expect(new Uint8Array(await frameResponse.arrayBuffer())).toEqual(
       frames[2],
     );
@@ -289,6 +292,8 @@ describe("candidate insight staged media", () => {
       { bucket, signingKey: SIGNING_KEY, nowMs: NOW_MS + 1 },
     );
     expect(rangedAudio.status).toBe(206);
+    expect(rangedAudio.headers.get("Content-Type")).toBe("audio/wav");
+    expect(rangedAudio.headers.get("Content-Length")).toBe("4");
     expect(rangedAudio.headers.get("Content-Range")).toBe(
       `bytes 0-3/${binding.audioByteLength}`,
     );

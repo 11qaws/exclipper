@@ -3,6 +3,10 @@ import { describe, expect, it } from "vitest";
 import {
   AMORETTO_CHANNEL_CAST_ROSTER_ID,
   DEFAULT_CANDIDATE_PASS_B_CAST_ROSTER_ID,
+  EUREKA_CHANNEL_CAST_ROSTER_ID,
+  MANGJING_CHANNEL_CAST_ROSTER_ID,
+  SENA_ARBEL_CHANNEL_CAST_ROSTER_ID,
+  TORORI_COCO_CHANNEL_CAST_ROSTER_ID,
   candidatePassBCastReferenceForName,
   candidatePassBCastReferences,
   candidatePassBCastRosterIdForSourceName,
@@ -98,7 +102,7 @@ describe("participantRoster", () => {
     expect(references.some(({ displayName }) => displayName === "세라 교수님")).toBe(false);
   });
 
-  it("maps the pinned Amoretto YouTube archive channel to its personal roster", () => {
+  it("maps every configured YouTube archive channel to its personal roster", () => {
     expect(
       candidatePassBCastRosterIdForSourceName(
         "https://www.youtube.com/@AmorettoVODs",
@@ -109,5 +113,25 @@ describe("participantRoster", () => {
         "youtube-channel UCHycoTBFDhXz4XNz8jBP-_A KzAW3yow80Q",
       ),
     ).toBe(AMORETTO_CHANNEL_CAST_ROSTER_ID);
+    expect(
+      candidatePassBCastRosterIdForSourceName(
+        "https://www.youtube.com/@eureka_history",
+      ),
+    ).toBe(EUREKA_CHANNEL_CAST_ROSTER_ID);
+    expect(
+      candidatePassBCastRosterIdForSourceName(
+        "youtube-channel UCk0Mu5MpVzJ056e65XpAj0Q",
+      ),
+    ).toBe(SENA_ARBEL_CHANNEL_CAST_ROSTER_ID);
+    expect(
+      candidatePassBCastRosterIdForSourceName(
+        "https://www.youtube.com/@kokotorori",
+      ),
+    ).toBe(TORORI_COCO_CHANNEL_CAST_ROSTER_ID);
+    expect(
+      candidatePassBCastRosterIdForSourceName(
+        "youtube-channel UC_hftLL-ydsJd1YpcBZ_09g",
+      ),
+    ).toBe(MANGJING_CHANNEL_CAST_ROSTER_ID);
   });
 });

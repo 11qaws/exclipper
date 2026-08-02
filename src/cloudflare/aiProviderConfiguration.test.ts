@@ -230,7 +230,7 @@ describe("aiProviderConfiguration", () => {
         selectedProvider: "groq",
         modelId: "whisper-large-v3-turbo",
         modelRevision:
-          "groq-whisper-large-v3-turbo-ko-segment-v1-2026-07-29",
+          "groq-whisper-large-v3-turbo-ko-segment-v2-2026-08-02",
         implementationStatus: "active",
         configured: true,
         active: true,

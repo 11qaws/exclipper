@@ -185,12 +185,15 @@ import {
 } from "./analysis/youtubeCaptionTrack";
 import { requestYouTubeCaptionTrack } from "./analysis/youtubeCaptionClient";
 import {
-  requestChannelPreanalysisMatch,
+  fetchChannelPreanalysisReviewForLookup,
+  requestConfiguredChannelPreanalysisMatch,
+  type ConfiguredChannelPreanalysisSearchResult,
   type ChannelPreanalysisLookupResult,
+  type LoadedChannelPreanalysisReview,
 } from "./analysis/channelPreanalysisClient";
 import {
-  AMORETTO_YOUTUBE_CHANNEL_ID,
   CHANNEL_PREANALYSIS_TITLE_DURATION_TOLERANCE_MS,
+  channelPreanalysisSourceForManifest,
 } from "./analysis/channelPreanalysisCatalog";
 import type { ChannelPreanalysisBundle } from "./analysis/channelPreanalysisBundle";
 import {
@@ -200,6 +203,7 @@ import {
 } from "./analysis/channelPreanalysisBundleBinding";
 import {
   createChannelPreanalysisContextSeed,
+  createChannelPreanalysisTrustedSourceIdentity,
   type ChannelPreanalysisContextSeed,
 } from "./analysis/channelPreanalysisContextSeed";
 import {
@@ -214,7 +218,10 @@ import {
   getChannelPreanalysisLocalBinding,
   registerChannelPreanalysisLocalBinding,
 } from "./analysis/channelPreanalysisLocalBinding";
-import { verifyChannelPreanalysisLocalVisualIdentity } from "./app/channelPreanalysisVisualIdentity";
+import {
+  verifyChannelPreanalysisLocalVisualIdentity,
+  verifyConfiguredChannelPreanalysisLocalVisualIdentity,
+} from "./app/channelPreanalysisVisualIdentity";
 import {
   chzzkVideoNoFromSourceName,
   requestChzzkVideoChannel,
@@ -229,7 +236,7 @@ import {
   type CandidateVideoFrameBundleResult,
 } from "./analysis/candidateVideoFrames";
 import {
-  AMORETTO_CHANNEL_CAST_ROSTER_ID,
+  candidatePassBCastRosterIdForYouTubeChannelId,
   candidatePassBCastRosterIdForSourceName,
   canonicalCandidatePassBCastDisplayName,
   type CandidatePassBCastRosterId,
@@ -593,6 +600,22 @@ import {
   type ReviewPage,
 } from "./app/useReviewShortcuts";
 import { ReviewStage } from "./app/ReviewStage";
+import { PreparedReviewExperience } from "./app/PreparedReviewExperience";
+import {
+  FrontSurface,
+  type FrontEvidenceRange,
+  type FrontParticipantSummary,
+  type FrontScopeSummary,
+} from "./app/FrontSurface";
+import {
+  deriveFrontSurfaceModel,
+  type FrontPipelineInput,
+  type FrontPreanalysisInput,
+  type FrontRecoveryActionId,
+  type FrontRecoveryInput,
+  type FrontSourceInput,
+  type FrontTopicRangeInput,
+} from "./app/frontSurfaceModel";
 import {
   decisionForReviewState,
   reviewStateForDecision,
@@ -681,9 +704,26 @@ type ChannelPreanalysisConnectionState =
       readonly timelineStatus: ChannelPreanalysisTimelineStatus;
     };
 
+type PreparedChannelReviewState =
+  | { readonly status: "idle" | "checking" | "dismissed" }
+  | {
+      readonly status: "preparing" | "unavailable";
+      readonly videoId: string;
+      readonly title: string | null;
+    }
+  | {
+      readonly status: "ready";
+      readonly videoId: string;
+      readonly title: string;
+      readonly lookup: ChannelPreanalysisLookupResult;
+      readonly loaded: LoadedChannelPreanalysisReview;
+    };
+
+const PREPARED_CHANNEL_REVIEW_POLL_INTERVAL_MS = 30_000;
+
 interface ChannelPreanalysisContextSeedSource {
+  readonly sourceIdentity: ChannelPreanalysisContextSeed["sourceIdentity"];
   readonly bundle: ChannelPreanalysisBundle;
-  readonly artifactDigest: string;
 }
 
 function channelPreanalysisContextSeedSource(
@@ -711,16 +751,35 @@ function channelPreanalysisContextSeedSource(
     ) ||
     Math.abs(binding.bundle.durationMs - sourceDurationMs) >
       CHANNEL_PREANALYSIS_TITLE_DURATION_TOLERANCE_MS ||
-    sourceCastRosterId !== AMORETTO_CHANNEL_CAST_ROSTER_ID ||
+    sourceCastRosterId !==
+      candidatePassBCastRosterIdForYouTubeChannelId(
+        binding.bundle.channelId,
+      ) ||
     outputLanguage !== "ko" ||
     binding.bundle.broadcastContext === null ||
     binding.bundle.contextProvenance === null
   ) {
     return null;
   }
+  const configuredSource = channelPreanalysisSourceForManifest(
+    connection.lookup.manifest,
+  );
+  if (
+    configuredSource === null ||
+    configuredSource.channelId !== binding.bundle.channelId
+  ) {
+    return null;
+  }
   return {
+    sourceIdentity: createChannelPreanalysisTrustedSourceIdentity(
+      configuredSource,
+      {
+      videoId: binding.bundle.videoId,
+      transcriptDigest: binding.bundle.transcriptDigest,
+      artifactDigest: binding.artifactDigest,
+      },
+    ),
     bundle: binding.bundle,
-    artifactDigest: binding.artifactDigest,
   };
 }
 
@@ -828,8 +887,8 @@ async function requestChannelPreanalysisMatchForSource(
     readonly localSampledFingerprint: string;
   },
   parentSignal: AbortSignal,
-): Promise<ChannelPreanalysisLookupResult> {
-  return requestChannelPreanalysisMatch(input, {
+): Promise<ConfiguredChannelPreanalysisSearchResult> {
+  return requestConfiguredChannelPreanalysisMatch(input, {
     signal: parentSignal,
   });
 }
@@ -922,6 +981,12 @@ function App() {
   const channelPreanalysisManualLookupKeyRef = useRef<string | null>(null);
   const channelPreanalysisBundleBindingRef =
     useRef<ChannelPreanalysisVerifiedBundleBinding | null>(null);
+  const [preparedChannelReview, setPreparedChannelReview] =
+    useState<PreparedChannelReviewState>({ status: "idle" });
+  const [preparedChannelReviewRetryEpoch, setPreparedChannelReviewRetryEpoch] =
+    useState(0);
+  const preparedChannelReviewAbortController = useRef<AbortController | null>(null);
+  const dismissedPreparedChannelReviewKeyRef = useRef<string | null>(null);
   const registeredChannelPreanalysisVideoId = useMemo(() => {
     /*
      * The binding lives in localStorage rather than React state. Reading this
@@ -939,6 +1004,12 @@ function App() {
     channelPreanalysisConnection.status === "incompatible"
       ? channelPreanalysisConnection.lookup
       : null;
+  const currentChannelPreanalysisSource =
+    currentChannelPreanalysisLookup === null
+      ? null
+      : channelPreanalysisSourceForManifest(
+          currentChannelPreanalysisLookup.manifest,
+        );
   const currentChannelPreanalysisTimelineStatus =
     channelPreanalysisConnection.status === "connected" ||
     channelPreanalysisConnection.status === "probable" ||
@@ -1003,12 +1074,13 @@ function App() {
         `${sourceDescriptor} ${resolvedSourceChannelId ?? ""} ${
           resolvedChannelPreanalysisVideoId === null
             ? ""
-            : `${AMORETTO_YOUTUBE_CHANNEL_ID} ${resolvedChannelPreanalysisVideoId}`
+            : `${currentChannelPreanalysisLookup?.manifest.channelId ?? ""} ${resolvedChannelPreanalysisVideoId}`
         }`,
       ),
     [
       pendingFileName,
       resolvedChannelPreanalysisVideoId,
+      currentChannelPreanalysisLookup?.manifest.channelId,
       resolvedSourceChannelId,
       sourceDescriptor,
       sourceFile,
@@ -1510,6 +1582,8 @@ function App() {
         sourceAbortController.current = null;
         channelPreanalysisConfirmationAbortController.current?.abort();
         channelPreanalysisConfirmationAbortController.current = null;
+        preparedChannelReviewAbortController.current?.abort();
+        preparedChannelReviewAbortController.current = null;
         analysisAbortController.current?.abort();
         analysisAbortController.current = null;
         candidatePassBOperationEpoch.current += 1;
@@ -1691,9 +1765,11 @@ function App() {
       },
       controller.signal,
     )
-      .then((lookup) => {
+      .then((search) => {
         if (!operationIsCurrent()) return;
+        const lookup = search.primaryLookup;
         if (
+          search.selection !== "exact" ||
           lookup.match.confidence !== "exact" ||
           lookup.match.match?.videoId !== requestedVideoId
         ) {
@@ -1718,9 +1794,15 @@ function App() {
             ? "current-run"
             : "future-run-only";
         if (timelineStatus === "compatible") {
+          const bindingSource = channelPreanalysisSourceForManifest(
+            lookup.manifest,
+          );
           if (
+            bindingSource !== null &&
             registerChannelPreanalysisLocalBinding({
               localSampledFingerprint: sourceFingerprint,
+              sourceId: bindingSource.sourceId,
+              channelId: bindingSource.channelId,
               videoId: requestedVideoId,
             }) !== null
           ) {
@@ -1798,6 +1880,138 @@ function App() {
     analysisCommitPending,
     runStatus: analysisRun?.status ?? null,
   });
+  const preparedReviewLookupFromLocal =
+    sourceReady &&
+    channelPreanalysisConnection.status === "connected" &&
+    channelPreanalysisConnection.attachment === "current-run" &&
+    channelPreanalysisConnection.timelineStatus === "compatible" &&
+    channelPreanalysisIdentityBasisAuthorizesPreparedData(
+      channelPreanalysisConnection.basis,
+    )
+      ? channelPreanalysisConnection.lookup
+      : null;
+  const preparedReviewRequestedVideoId =
+    preparedReviewLookupFromLocal?.match.match?.videoId ??
+    (sourceFile === null && pendingFileName === null
+      ? youtubeVideoIdFromUserInput(manualVodInput)
+      : null);
+  const preparedReviewRequestKey =
+    preparedReviewRequestedVideoId === null
+      ? null
+      : preparedReviewLookupFromLocal === null
+        ? `youtube:${preparedReviewRequestedVideoId}`
+        : [
+            "local",
+            sourceContentFingerprint ?? "unknown",
+            preparedReviewLookupFromLocal.manifest.channelId,
+            preparedReviewLookupFromLocal.manifest.revision,
+            preparedReviewRequestedVideoId,
+          ].join(":");
+
+  useEffect(() => {
+    const mayOpenPreparedReview =
+      preparedReviewRequestKey !== null &&
+      preparedReviewRequestedVideoId !== null &&
+      openedRecoveredResult === null &&
+      analysisRun === null &&
+      !analysisBusy &&
+      analysisStartOperation.current === null;
+    if (!mayOpenPreparedReview) {
+      preparedChannelReviewAbortController.current?.abort();
+      preparedChannelReviewAbortController.current = null;
+      setPreparedChannelReview({ status: "idle" });
+      return;
+    }
+    if (
+      dismissedPreparedChannelReviewKeyRef.current ===
+      preparedReviewRequestKey
+    ) {
+      setPreparedChannelReview({ status: "dismissed" });
+      return;
+    }
+
+    preparedChannelReviewAbortController.current?.abort();
+    const controller = new AbortController();
+    preparedChannelReviewAbortController.current = controller;
+    setPreparedChannelReview({ status: "checking" });
+
+    void (async () => {
+      const lookup =
+        preparedReviewLookupFromLocal ??
+        (
+          await requestConfiguredChannelPreanalysisMatch(
+            { videoId: preparedReviewRequestedVideoId },
+            { signal: controller.signal },
+          )
+        ).primaryLookup;
+      if (
+        lookup.match.confidence !== "exact" ||
+        lookup.match.match?.videoId !== preparedReviewRequestedVideoId
+      ) {
+        if (!controller.signal.aborted) {
+          setPreparedChannelReview({
+            status: "preparing",
+            videoId: preparedReviewRequestedVideoId,
+            title: lookup.match.match?.title ?? null,
+          });
+        }
+        return;
+      }
+      const loaded = await fetchChannelPreanalysisReviewForLookup(lookup, {
+        signal: controller.signal,
+      });
+      if (controller.signal.aborted) return;
+      if (loaded === null) {
+        setPreparedChannelReview({
+          status: "preparing",
+          videoId: preparedReviewRequestedVideoId,
+          title: lookup.match.match.title,
+        });
+        return;
+      }
+      setPreparedChannelReview({
+        status: "ready",
+        videoId: preparedReviewRequestedVideoId,
+        title: lookup.match.match.title,
+        lookup,
+        loaded,
+      });
+    })().catch(() => {
+      if (!controller.signal.aborted) {
+        setPreparedChannelReview({
+          status: "unavailable",
+          videoId: preparedReviewRequestedVideoId,
+          title: preparedReviewLookupFromLocal?.match.match?.title ?? null,
+        });
+      }
+    }).finally(() => {
+      if (preparedChannelReviewAbortController.current === controller) {
+        preparedChannelReviewAbortController.current = null;
+      }
+    });
+
+    return () => controller.abort();
+  }, [
+    analysisBusy,
+    analysisRun,
+    openedRecoveredResult,
+    preparedChannelReviewRetryEpoch,
+    preparedReviewLookupFromLocal,
+    preparedReviewRequestKey,
+    preparedReviewRequestedVideoId,
+  ]);
+  useEffect(() => {
+    if (
+      preparedReviewRequestKey === null ||
+      !["preparing", "unavailable"].includes(preparedChannelReview.status)
+    ) {
+      return;
+    }
+    const timer = globalThis.setTimeout(() => {
+      setPreparedChannelReviewRetryEpoch((current) => current + 1);
+    }, PREPARED_CHANNEL_REVIEW_POLL_INTERVAL_MS);
+    return () => globalThis.clearTimeout(timer);
+  }, [preparedChannelReview.status, preparedReviewRequestKey]);
   useEffect(() => {
     if (!analysisBusy) {
       analysisStartedAtMsRef.current = null;
@@ -4319,7 +4533,7 @@ function App() {
         try {
           const requestLookup = (
             videoId: string | null,
-          ): Promise<ChannelPreanalysisLookupResult> =>
+          ): Promise<ConfiguredChannelPreanalysisSearchResult> =>
             requestChannelPreanalysisMatchForSource(
               {
                 videoId,
@@ -4329,13 +4543,13 @@ function App() {
               },
               controller.signal,
             );
-          let lookup: ChannelPreanalysisLookupResult;
+          let catalogSearch: ConfiguredChannelPreanalysisSearchResult;
           if (
             trustedLookupVideoId !== null ||
             recoveryTarget !== null ||
             filenameCaptionVideoId === null
           ) {
-            lookup = await requestLookup(trustedLookupVideoId);
+            catalogSearch = await requestLookup(trustedLookupVideoId);
           } else {
             /*
              * A filename `[videoId]` is a hint, never the first identity lane.
@@ -4344,76 +4558,95 @@ function App() {
              * ID. Only a catalog-exact, duration-compatible filename is
              * allowed to outrank a merely probable title+duration match.
              */
-            let metadataLookup: ChannelPreanalysisLookupResult | null = null;
+            let metadataSearch: ConfiguredChannelPreanalysisSearchResult | null =
+              null;
             let metadataLookupError: unknown = null;
             try {
-              metadataLookup = await requestLookup(null);
+              metadataSearch = await requestLookup(null);
             } catch (error) {
               metadataLookupError = error;
             }
             if (!isCurrentSelection()) {
               return;
             }
-            if (metadataLookup?.match.confidence === "exact") {
-              lookup = metadataLookup;
+            if (metadataSearch?.selection === "exact") {
+              catalogSearch = metadataSearch;
             } else {
-              let filenameLookup: ChannelPreanalysisLookupResult | null = null;
+              let filenameSearch: ConfiguredChannelPreanalysisSearchResult | null =
+                null;
               try {
-                filenameLookup = await requestLookup(filenameCaptionVideoId);
+                filenameSearch = await requestLookup(filenameCaptionVideoId);
               } catch (error) {
-                if (metadataLookup === null) throw error;
+                if (metadataSearch === null) throw error;
               }
-              if (filenameLookup === null) {
-                if (metadataLookup === null) {
+              if (filenameSearch === null) {
+                if (metadataSearch === null) {
                   throw metadataLookupError instanceof Error
                     ? metadataLookupError
                     : new Error("Channel preanalysis catalog lookup failed.");
                 }
-                lookup = metadataLookup;
-              } else if (metadataLookup === null) {
-                lookup = filenameLookup;
+                catalogSearch = metadataSearch;
+              } else if (metadataSearch === null) {
+                catalogSearch = filenameSearch;
               } else {
                 const selectedLane = selectChannelPreanalysisLookupLane(
                   {
-                    confidence: metadataLookup.match.confidence,
+                    confidence:
+                      metadataSearch.selection === "probable"
+                        ? metadataSearch.primaryLookup.match.confidence
+                        : "none",
                     timelineStatus: classifyChannelPreanalysisTimeline(
-                      metadataLookup.match.match?.durationMs,
+                      metadataSearch.primaryLookup.match.match?.durationMs,
                       result.metadata.durationMs,
                     ),
                   },
                   {
-                    confidence: filenameLookup.match.confidence,
+                    confidence:
+                      filenameSearch.selection === "exact" ||
+                      filenameSearch.selection === "probable"
+                        ? filenameSearch.primaryLookup.match.confidence
+                        : "none",
                     timelineStatus: classifyChannelPreanalysisTimeline(
-                      filenameLookup.match.match?.durationMs,
+                      filenameSearch.primaryLookup.match.match?.durationMs,
                       result.metadata.durationMs,
                     ),
                   },
                 );
-                lookup =
+                catalogSearch =
                   selectedLane === "metadata"
-                    ? metadataLookup
-                    : filenameLookup;
+                    ? metadataSearch
+                    : filenameSearch;
               }
             }
           }
+          let lookup = catalogSearch.primaryLookup;
           const lookupMatchBeforeVisualVerification = lookup.match.match;
           const shouldVerifyVisualIdentity =
             recoveryTarget === null &&
             manualCaptionVideoId === null &&
             locallyRegisteredVideoId === null &&
-            (lookupMatchBeforeVisualVerification === null ||
-              lookup.match.confidence === "probable" ||
-              (lookup.match.reason === "explicit-video-id" &&
+            (catalogSearch.selection === "visual-cohort" ||
+              catalogSearch.selection === "probable" ||
+              (catalogSearch.selection === "exact" &&
+                lookupMatchBeforeVisualVerification !== null &&
+                lookup.match.reason === "explicit-video-id" &&
                 filenameCaptionVideoId ===
                   lookupMatchBeforeVisualVerification.videoId));
           if (shouldVerifyVisualIdentity) {
             const visualIdentity =
-              await verifyChannelPreanalysisLocalVisualIdentity(
-                file,
-                result.metadata.durationMs,
-                lookup,
-                { signal: controller.signal },
-              );
+              catalogSearch.selection === "exact"
+                ? await verifyChannelPreanalysisLocalVisualIdentity(
+                    file,
+                    result.metadata.durationMs,
+                    lookup,
+                    { signal: controller.signal },
+                  )
+                : await verifyConfiguredChannelPreanalysisLocalVisualIdentity(
+                    file,
+                    result.metadata.durationMs,
+                    catalogSearch,
+                    { signal: controller.signal },
+                  );
             if (!isCurrentSelection()) {
               return;
             }
@@ -4425,7 +4658,7 @@ function App() {
             ) {
               const exactLookup =
                 visualIdentity.verifiedLookup ??
-                (await requestLookup(visualIdentity.videoId));
+                (await requestLookup(visualIdentity.videoId)).primaryLookup;
               if (!isCurrentSelection()) {
                 return;
               }
@@ -4434,11 +4667,20 @@ function App() {
                 exactLookup.match.match?.videoId === visualIdentity.videoId
               ) {
                 lookup = exactLookup;
+                catalogSearch = {
+                  ...catalogSearch,
+                  selection: "exact",
+                  primaryLookup: exactLookup,
+                };
                 visuallyVerifiedVideoId = visualIdentity.videoId;
               }
             }
           }
-          if (lookup.match.confidence === "exact" && lookup.match.match !== null) {
+          if (
+            catalogSearch.selection === "exact" &&
+            lookup.match.confidence === "exact" &&
+            lookup.match.match !== null
+          ) {
             const timelineStatus = classifyChannelPreanalysisTimeline(
               lookup.match.match.durationMs,
               result.metadata.durationMs,
@@ -4510,6 +4752,7 @@ function App() {
               }
             }
           } else if (
+            catalogSearch.selection === "probable" &&
             lookup.match.confidence === "probable" &&
             lookup.match.match !== null
           ) {
@@ -4619,9 +4862,15 @@ function App() {
           ) &&
           catalogConnection.lookup.match.match !== null
         ) {
+          const bindingSource = channelPreanalysisSourceForManifest(
+            catalogConnection.lookup.manifest,
+          );
           if (
+            bindingSource !== null &&
             registerChannelPreanalysisLocalBinding({
               localSampledFingerprint: fingerprint.value,
+              sourceId: bindingSource.sourceId,
+              channelId: bindingSource.channelId,
               videoId: catalogConnection.lookup.match.match.videoId,
             }) !== null
           ) {
@@ -4822,9 +5071,15 @@ function App() {
       attachment,
       timelineStatus,
     });
+    const bindingSource = channelPreanalysisSourceForManifest(
+      probableLookup.manifest,
+    );
     if (
+      bindingSource !== null &&
       registerChannelPreanalysisLocalBinding({
         localSampledFingerprint: sourceContentFingerprint,
+        sourceId: bindingSource.sourceId,
+        channelId: bindingSource.channelId,
         videoId: match.videoId,
       }) !== null
     ) {
@@ -4835,7 +5090,7 @@ function App() {
     channelPreanalysisConfirmationAbortController.current = controller;
     setChannelPreanalysisConfirmationPending(true);
     try {
-      const lookup = await requestChannelPreanalysisMatchForSource(
+      const search = await requestChannelPreanalysisMatchForSource(
         {
           videoId: match.videoId,
           title: sourceFile.name,
@@ -4844,11 +5099,13 @@ function App() {
         },
         controller.signal,
       );
+      const lookup = search.primaryLookup;
       if (
         controller.signal.aborted ||
         sourceSelectionEpoch.current !== selectionEpoch ||
         analysisOperationEpoch.current !== analysisEpoch ||
         analysisStartOperation.current !== null ||
+        search.selection !== "exact" ||
         lookup.match.confidence !== "exact" ||
         lookup.match.match?.videoId !== match.videoId
       ) {
@@ -4904,6 +5161,10 @@ function App() {
   };
 
   const updateManualVodInput = (value: string): void => {
+    dismissedPreparedChannelReviewKeyRef.current = null;
+    preparedChannelReviewAbortController.current?.abort();
+    preparedChannelReviewAbortController.current = null;
+    setPreparedChannelReview({ status: "idle" });
     setManualVodInput(value);
     manualVodInputRef.current = value;
     const requestedVideoId = youtubeVideoIdFromUserInput(value);
@@ -5036,6 +5297,7 @@ function App() {
       sourceContentFingerprint === null ||
       analysisComplete ||
       analysisStartOperation.current !== null ||
+      preparedChannelReview.status === "checking" ||
       channelPreanalysisConfirmationPending ||
       chatImportStatus === "reading"
     ) {
@@ -10494,7 +10756,7 @@ function App() {
         : JSON.stringify([
             preanalysisContextSeedSource.bundle.videoId,
             preanalysisContextSeedSource.bundle.transcriptDigest,
-            preanalysisContextSeedSource.artifactDigest,
+            preanalysisContextSeedSource.sourceIdentity,
             preanalysisContextSeedSource.bundle.contextProvenance,
             preanalysisContextSeedSource.bundle.broadcastContext,
           ]);
@@ -10634,13 +10896,7 @@ function App() {
       const trustedPrecomputedSourceIdentity =
         preanalysisContextSeedSource === null
           ? null
-          : {
-              videoId: preanalysisContextSeedSource.bundle.videoId,
-              transcriptDigest:
-                preanalysisContextSeedSource.bundle.transcriptDigest,
-              artifactDigest:
-                preanalysisContextSeedSource.artifactDigest,
-            };
+          : preanalysisContextSeedSource.sourceIdentity;
       let precomputedGlobalContextSeed: ChannelPreanalysisContextSeed | null =
         null;
       if (preanalysisContextSeedSource !== null) {
@@ -10655,7 +10911,7 @@ function App() {
               await createChannelPreanalysisContextSeed({
                 sourceDurationMs: bundle.durationMs,
                 chapters: compactBroadcastContextChapters(bundle.chapters),
-                castRosterId: AMORETTO_CHANNEL_CAST_ROSTER_ID,
+                castRosterId: sourceCastRosterId,
                 outputLanguage: "ko",
                 sourceIdentity:
                   trustedPrecomputedSourceIdentity!,
@@ -13469,6 +13725,869 @@ function App() {
     [candidateRankingProposal],
   );
 
+  /*
+   * Input/analysis presentation adapter.
+   *
+   * This is intentionally downstream of every durable pipeline projection.
+   * FrontSurface never receives candidates, candidate scores, or discovered
+   * leads: those remain private until the publication certificate opens
+   * ReviewStage. A connected replay is also kept separate from transcript and
+   * whole-context readiness so a transcript-ready bundle cannot be presented
+   * as if the broadcast context had already been analysed.
+   */
+  const frontSourceTitle = sourceFile?.name ?? pendingFileName;
+  const frontSourceStatus: FrontSourceInput["status"] = (() => {
+    if (sourceCheck === null) return "selected";
+    if (sourceCheck.status === "created") return "selected";
+    if (sourceCheck.status === "checking") return "checking";
+    if (sourceCheck.status === "committing") return "committing";
+    if (sourceCheck.status === "completed") return sourceCheck.resultKind;
+    if (sourceCheck.status === "failed") return "failed";
+    return "interrupted";
+  })();
+  const frontSourceInput: FrontSourceInput | null =
+    frontSourceTitle === null
+      ? null
+      : {
+          title: frontSourceTitle,
+          durationMs: preflight?.metadata.durationMs ?? null,
+          sizeBytes: preflight?.metadata.sizeBytes ?? sourceFile?.size ?? null,
+          status: frontSourceStatus,
+        };
+
+  const currentPreparedBundle =
+    channelPreanalysisConnection.status === "connected" &&
+    channelPreanalysisConnection.attachment === "current-run"
+      ? channelPreanalysisConnection.lookup.bundle
+      : null;
+  const localTranscriptReady =
+    broadcastTranscriptStatus === "completed" &&
+    broadcastTranscriptChapters.length > 0;
+  const preparedTranscriptReady =
+    preparedChannelTranscriptIsCompatible && currentPreparedBundle !== null;
+  const transcriptEventCount = preparedTranscriptReady
+    ? currentPreparedBundle.captionTrack.events.length
+    : youtubeCaptionTrack?.events.length ?? null;
+  const transcriptChapterCount = localTranscriptReady
+    ? broadcastTranscriptChapters.length
+    : preparedTranscriptReady
+      ? currentPreparedBundle.chapters.length
+      : null;
+
+  const frontIdentityDetail = sourceError !== null
+    ? ui(
+        "원본 확인을 끝내지 못했어요. 같은 파일을 다시 확인할 수 있어요",
+        "Source inspection did not finish. The same file can be checked again",
+      )
+    : !sourceReady
+      ? ui("선택한 원본을 확인하고 있어요", "Inspecting the selected source")
+    : channelPreanalysisConnection.status === "connected" &&
+        channelPreanalysisConnection.attachment === "current-run"
+      ? ui(
+          `영상 식별 완료${channelPreanalysisConnection.lookup.match.match?.title === undefined ? "" : ` · ${channelPreanalysisConnection.lookup.match.match.title}`}`,
+          `Video identity verified${channelPreanalysisConnection.lookup.match.match?.title === undefined ? "" : ` · ${channelPreanalysisConnection.lookup.match.match.title}`}`,
+        )
+      : channelPreanalysisConnection.status === "probable"
+        ? ui(
+            "원본 검사 완료 · 저장된 다시보기는 확인이 필요해요",
+            "Source inspected · the prepared replay needs confirmation",
+          )
+        : ui(
+            "로컬 원본 검사와 지문 저장을 완료했어요",
+            "Local source inspection and fingerprint storage complete",
+          );
+
+  const frontTranscriptLane: FrontPreanalysisInput["transcriptChapters"] =
+    localTranscriptReady || preparedTranscriptReady
+      ? {
+          status: "ready",
+          ...(transcriptEventCount === null
+            ? {}
+            : { transcriptCount: transcriptEventCount }),
+          ...(transcriptChapterCount === null
+            ? {}
+            : { chapterCount: transcriptChapterCount }),
+          detail: localTranscriptReady
+            ? ui(
+                `대사·챕터 확인 완료 · 챕터 ${broadcastTranscriptChapters.length.toLocaleString("ko-KR")}개`,
+                `Transcript and chapters complete · ${broadcastTranscriptChapters.length.toLocaleString("en-US")} chapters`,
+              )
+            : null,
+        }
+      : broadcastTranscriptStatus === "running" ||
+          broadcastTranscriptStatus === "completedWithGaps" ||
+          channelPreanalysisConnection.status === "checking" ||
+          channelPreanalysisConnection.status === "probable"
+        ? {
+            status: "checking",
+            detail:
+              channelPreanalysisConnection.status === "probable"
+                ? ui(
+                    "저장된 다시보기를 확인하면 시간 대사를 연결할 수 있어요",
+                    "Confirm the prepared replay to attach its timed transcript",
+                  )
+                : ui(
+                    "저장 대사를 찾고 비어 있는 구간을 확인하고 있어요",
+                    "Checking prepared transcript data and uncovered ranges",
+                  ),
+          }
+        : broadcastTranscriptStatus === "failed"
+          ? {
+              status: "failed",
+              detail: ui(
+                "대사 조각을 모두 확정하지 못했어요",
+                "Not every transcript fragment was verified",
+              ),
+            }
+          : channelPreanalysisConnection.status === "incompatible"
+            ? {
+                status: "incompatible",
+                detail: ui(
+                  "저장 영상의 시간축이 달라 대사를 연결하지 않았어요",
+                  "The prepared transcript was not attached because its timeline differs",
+                ),
+              }
+            : {
+                status: sourceReady ? "unavailable" : "idle",
+                detail: sourceReady
+                  ? ui(
+                      "저장 대사가 없으면 분석 중 영상 음성에서 새로 확인해요",
+                      "If no prepared transcript exists, dialogue is read from the video during analysis",
+                    )
+                  : null,
+              };
+
+  const preparedWholeContextReady =
+    preparedTranscriptReady &&
+    currentPreparedBundle.broadcastContext !== null &&
+    currentPreparedBundle.contextProvenance !== null;
+  const frontWholeContextLane: FrontPreanalysisInput["wholeContext"] =
+    broadcastContextStatus === "completed" && broadcastContextResult !== null
+      ? {
+          status: "ready",
+          count: broadcastContextResult.semanticChapters.length,
+          detail: ui(
+            `전체 맥락 확인 완료 · 주제 ${broadcastContextResult.semanticChapters.length.toLocaleString("ko-KR")}개`,
+            `Whole context complete · ${broadcastContextResult.semanticChapters.length.toLocaleString("en-US")} topics`,
+          ),
+        }
+      : broadcastContextStatus === "running" ||
+          broadcastContextStatus === "restoring"
+        ? {
+            status: "checking",
+            detail: ui(
+              "대사·화면과 등장인물 근거를 방송 흐름에 연결하고 있어요",
+              "Connecting dialogue, visuals, and participant evidence to the broadcast flow",
+            ),
+          }
+        : broadcastContextStatus === "failed"
+          ? {
+              status: "failed",
+              detail: ui(
+                "전체 흐름을 끝까지 확정하지 못했어요",
+                "The whole-broadcast flow was not fully verified",
+              ),
+            }
+          : preparedWholeContextReady
+            ? {
+                status: "ready",
+                count: currentPreparedBundle.broadcastContext.semanticChapters.length,
+                detail: ui(
+                  "저장된 전체 맥락 결과를 현재 원본에 연결할 수 있어요",
+                  "Prepared whole-context results can be attached to this source",
+                ),
+              }
+            : {
+                status: "idle",
+                detail: sourceReady
+                  ? ui(
+                      "빠른 탐색 뒤 이 영상의 전체 흐름을 분석해요",
+                      "Whole-broadcast context starts after the fast scan",
+                    )
+                  : null,
+              };
+
+  const frontPreanalysisInput: FrontPreanalysisInput | null =
+    frontSourceInput === null
+      ? null
+      : {
+          videoIdentity: {
+            status: sourceReady
+              ? "ready"
+              : sourceCheckBusy
+                ? "checking"
+                : sourceError === null
+                  ? "idle"
+                  : "failed",
+            detail: frontIdentityDetail,
+          },
+          transcriptChapters: frontTranscriptLane,
+          wholeContext: frontWholeContextLane,
+        };
+
+  const frontAnalysisPhase: FrontPipelineInput["phase"] = !analysisComplete
+    ? "fast-pass"
+    : !wholeContextPhaseComplete
+      ? "broadcast-context"
+      : "candidate-detail";
+  const frontCandidateAudioNeedsRetry =
+    candidateAudioEventRun?.status === "failed" ||
+    candidateAudioEventRun?.status === "cancelled" ||
+    candidateAudioEventError !== null;
+  const frontRecoveryInput: FrontRecoveryInput | null = (() => {
+    if (!sourceReady && sourceError !== null) {
+      return {
+        actionId: sourceFile === null ? "choose-source" : "retry-source-check",
+        safeDetail:
+          sourceFile === null
+            ? ui(
+                "원본 파일을 다시 연결하면 재생 가능 여부와 길이를 확인합니다.",
+                "Reconnect the source file to check playback and duration.",
+              )
+            : ui(
+                "선택한 원본을 유지하고 파일 확인 단계만 다시 실행합니다.",
+                "The selected source is kept while only file inspection is retried.",
+              ),
+      };
+    }
+    if (
+      broadcastTranscriptStatus === "failed" ||
+      broadcastTranscriptStatus === "completedWithGaps"
+    ) {
+      return {
+        actionId: "retry-transcript",
+        safeDetail: ui(
+          "완료된 대사는 유지하고 실패한 조각만 다시 확인합니다.",
+          "Completed transcript fragments are kept and only failed fragments are retried.",
+        ),
+      };
+    }
+    if (broadcastContextStatus === "failed") {
+      return {
+        actionId: "retry-context",
+        safeDetail: ui(
+          "확정된 대사와 주제 자료는 유지하고 멈춘 맥락 작업부터 이어갑니다.",
+          "Verified transcript and topic data are kept while context work resumes.",
+        ),
+      };
+    }
+    if (
+      !candidateRefinementBusy &&
+      (candidatePassBNeedsRecovery ||
+        frontCandidateAudioNeedsRetry ||
+        (candidatePassBRun?.status === "completedWithGaps" &&
+          candidatePassBActionIds.length > 0) ||
+        (blockedByCandidateDetailGap &&
+          contextualCandidatePublicationReady &&
+          (candidatePassBActionIds.length > 0 ||
+            automaticCandidateDetailIds.length > 0)) ||
+        semanticLeadRefinementStatus === "failed" ||
+        broadcastVisualInspectionStatus === "failed" ||
+        broadcastVisualInspectionStatus === "blocked")
+    ) {
+      return {
+        actionId: "retry-candidate-detail",
+        safeDetail: ui(
+          "완료된 후보 근거는 보존하고 화면·오디오·대사가 덜 갖춰진 구간만 다시 확인합니다.",
+          "Completed evidence is preserved while only incomplete visual, audio, and dialogue ranges are retried.",
+        ),
+      };
+    }
+    if (currentPipelineCertificationFailure !== null) {
+      return {
+        actionId: "retry-save",
+        safeDetail: ui(
+          "AI를 다시 호출하기 전에 저장된 결과와 완료 증명부터 다시 확인합니다.",
+          "Saved results and completion receipts are checked before any AI work is repeated.",
+        ),
+      };
+    }
+    if (
+      blockedByPipelineGap &&
+      contextualCandidatePublicationReady &&
+      !blockedByCandidateDetailGap
+    ) {
+      return {
+        actionId: "retry-context",
+        safeDetail: ui(
+          "완료된 후보 근거는 유지하고 방송 흐름에 연결되지 않은 맥락 구간만 다시 확인합니다.",
+          "Completed candidate evidence is kept while only context ranges missing from the broadcast flow are retried.",
+        ),
+      };
+    }
+    if (analysisRun?.status === "completedWithGaps") {
+      return broadcastContextStatus === "completed"
+        ? {
+            actionId: "retry-candidate-detail",
+            safeDetail: ui(
+              "완료된 분석은 유지하고 최종 검증에 필요한 후보 근거만 다시 확인합니다.",
+              "Completed analysis is kept while candidate evidence required for final verification is retried.",
+            ),
+          }
+        : {
+            actionId: "retry-context",
+            safeDetail: ui(
+              "완료된 대사와 빠른 탐색 결과는 유지하고 끝나지 않은 방송 맥락부터 이어갑니다.",
+              "Completed transcript and fast-scan results are kept while unfinished broadcast context resumes.",
+            ),
+          };
+    }
+    if (
+      analysisRun?.status === "paused" ||
+      analysisRun?.status === "cancelled" ||
+      analysisRun?.status === "failed" ||
+      analysisRun?.status === "interrupted" ||
+      (analysisError !== null && !analysisBusy)
+    ) {
+      return {
+        actionId: "resume-analysis",
+        safeDetail: ui(
+          "확정된 저장 지점은 유지하고 남은 작업부터 다시 시작합니다.",
+          "The durable checkpoint is kept and analysis resumes from remaining work.",
+        ),
+      };
+    }
+    return null;
+  })();
+
+  const frontAnalysisStarted =
+    analysisStartPending ||
+    analysisRun !== null ||
+    selectionResult !== null ||
+    openedRecoveredResult !== null;
+  const frontVerifiedZero =
+    contextualCandidatePublicationReady &&
+    orderedCandidates.length === 0 &&
+    emptyResultReason === "no-verified-candidates";
+  const frontCheckpointAxis = computeProgressAxis({
+    lastCommittedStage: committedAnalysisStage,
+    currentStageRatio: null,
+    previousRatio: null,
+  });
+  const frontPipelineStatus: FrontPipelineInput["status"] = frontVerifiedZero
+    ? "completed"
+    : frontRecoveryInput !== null
+      ? "failed"
+      : analysisStartPending || analysisRun?.status === "starting"
+        ? "starting"
+        : analysisRun?.status === "pausing" ||
+            analysisRun?.status === "cancelling" ||
+            analysisCancelPending
+          ? "pausing"
+          : analysisRun?.status === "resuming"
+            ? "resuming"
+            : analysisRun?.status === "finalizing"
+              ? "finalizing"
+              : analysisRun?.status === "completing"
+                ? "completing"
+                : "running";
+  const frontPipelineInput: FrontPipelineInput | null =
+    !frontAnalysisStarted && !frontVerifiedZero
+      ? null
+      : {
+          status: frontPipelineStatus,
+          phase: frontAnalysisPhase,
+          terminalOutcome: frontVerifiedZero ? "verified-empty" : null,
+          progress: {
+            ratio: frontVerifiedZero ? 1 : progressAxis.ratio,
+            indeterminate: frontVerifiedZero ? false : progressAxis.indeterminate,
+            remainingMs: frontVerifiedZero ? 0 : progressRemaining.remainingMs,
+            activityLabel: liveAnalysisStageTitle,
+            checkpoint: {
+              status:
+                analysisCommitPending || currentPipelineCertificationChecking
+                  ? "saving"
+                  : committedAnalysisStage !== null ||
+                      openedRecoveredResult !== null ||
+                      frontVerifiedZero
+                    ? "saved"
+                    : "none",
+              ratio: frontVerifiedZero ? 1 : frontCheckpointAxis.ratio,
+            },
+            tracks: progressDetailTracks.map((track) => ({
+              id: track.id,
+              label: track.label,
+              status: track.status,
+              ratio: track.ratio,
+            })),
+          },
+        };
+
+  const frontTopics: readonly FrontTopicRangeInput[] =
+    visibleTimelineSemanticChapters.map((chapter) => ({
+      id: chapter.semanticChapterId,
+      title: chapter.titleKo,
+      summary: chapter.summaryKo,
+      startMs: chapter.startMs,
+      endMs: chapter.endMs,
+      family: semanticChapterFamily(chapter.kind),
+    }));
+  const frontEvidenceRanges: readonly FrontEvidenceRange[] =
+    broadcastVisualInspectionStatus !== "completed"
+      ? []
+      : broadcastTranscriptExplorationCells
+          .filter(({ state }) => state === "complete")
+          .map((cell) => ({
+            id: cell.chunkId,
+            startMs: cell.sourceStartMs,
+            endMs: cell.sourceEndMs,
+            label: ui("대사·화면 확인 완료", "Dialogue and visuals verified"),
+          }));
+  const frontActiveExploration =
+    broadcastTranscriptExplorationCells.find(({ state }) => state === "active") ??
+    null;
+  const frontScope: FrontScopeSummary | null =
+    frontActiveExploration === null
+      ? null
+      : {
+          startMs: frontActiveExploration.sourceStartMs,
+          endMs: frontActiveExploration.sourceEndMs,
+          summary:
+            broadcastTranscriptChapters
+              .filter(
+                (chapter) =>
+                  chapter.startMs < frontActiveExploration.sourceEndMs &&
+                  chapter.endMs > frontActiveExploration.sourceStartMs,
+              )
+              .map(({ summaryKo }) => summaryKo)
+              .join(" ") ||
+            ui(
+              "이 범위의 대사와 화면 자료를 확인하고 있어요.",
+              "Dialogue and visual evidence for this range is being checked.",
+            ),
+        };
+  const frontParticipants: readonly FrontParticipantSummary[] =
+    broadcastParticipantPreContext !== null
+      ? broadcastParticipantPreContext.grounding.participants.map((participant) => {
+          const observedEvidence =
+            broadcastParticipantPreContext.grounding.evidence.filter(
+              (evidence) =>
+                "participantId" in evidence &&
+                evidence.participantId === participant.participantId &&
+                (evidence.kind === "visual-reference-match" ||
+                  evidence.kind === "voice-reference-match" ||
+                  evidence.kind === "on-screen-name" ||
+                  evidence.kind === "spoken-self-identification"),
+            );
+          const profile =
+            broadcastContextResult?.hostStreamerProfile?.displayNameKo ===
+            participant.displayNameKo
+              ? broadcastContextResult.hostStreamerProfile
+              : null;
+          const participantImageUrl =
+            STREAMER_PROFILE_IMAGE_BY_NAME[participant.displayNameKo];
+          return {
+            id: participant.participantId,
+            name: participant.displayNameKo,
+            role:
+              participant.sourceRolePrior === "likely-host"
+                ? ui("주 진행 후보", "Likely host")
+                : ui("출연 후보", "Possible participant"),
+            detail:
+              profile?.profileSummaryKo ??
+              (observedEvidence.length > 0
+                ? ui(
+                    `화면·음성 근거 ${observedEvidence.length}개`,
+                    `${observedEvidence.length} visual or voice identity cues`,
+                  )
+                : ui(
+                    `대사 이름 언급 ${participant.mentionedChapterCount}개 · 화면·음성 확인 전`,
+                    `${participant.mentionedChapterCount} transcript name mentions · visual/voice not yet confirmed`,
+                  )),
+            ...(participantImageUrl === undefined
+              ? {}
+              : { imageUrl: participantImageUrl }),
+          };
+        })
+      : broadcastContextResult?.hostStreamerProfile === null ||
+          broadcastContextResult?.hostStreamerProfile === undefined
+        ? []
+        : [
+            {
+              id: "context-host",
+              ...(broadcastContextResult.hostStreamerProfile.displayNameKo === null
+                ? {}
+                : {
+                    name:
+                      broadcastContextResult.hostStreamerProfile.displayNameKo,
+                  }),
+              role: ui("주 진행 추정", "Inferred host"),
+              detail:
+                broadcastContextResult.hostStreamerProfile.profileSummaryKo,
+            },
+          ];
+  const frontSurfaceModel = deriveFrontSurfaceModel({
+    language: analysisLanguage,
+    source: frontSourceInput,
+    pipeline: frontPipelineInput,
+    preanalysis: frontPreanalysisInput,
+    topics: frontTopics,
+    recovery: frontRecoveryInput,
+  });
+  const frontStartBlocker = preparedChannelReview.status === "checking"
+    ? ui(
+        "검토까지 끝난 저장 결과를 먼저 찾고 있어요.",
+        "Checking for a saved review-ready result first.",
+      )
+    : channelPreanalysisConfirmationPending
+    ? ui(
+        "저장된 다시보기가 같은 영상인지 확인한 뒤 시작할 수 있어요.",
+        "Analysis can start after the prepared replay match is verified.",
+      )
+    : chatImportStatus === "reading"
+      ? ui(
+          "채팅 파일을 다 읽은 뒤 반응 신호와 함께 시작해요.",
+          "Analysis starts after the chat file is ready so its reaction signals are included.",
+        )
+      : undefined;
+
+  const handleFrontSourceFile = (file: File): void => {
+    if (
+      !sourceInputLocked &&
+      (openedRecoveredResult !== null || confirmDiscardCurrentWork())
+    ) {
+      dismissedPreparedChannelReviewKeyRef.current = null;
+      setPreparedChannelReview({ status: "idle" });
+      void inspectSelectedFile(file);
+    }
+  };
+  const handleFrontRecoveryAction = (actionId: FrontRecoveryActionId): void => {
+    if (actionId === "choose-source") {
+      startFreshAnalysis();
+      return;
+    }
+    if (actionId === "retry-source-check") {
+      if (sourceFile !== null) {
+        void inspectSelectedFile(sourceFile);
+      }
+      return;
+    }
+    if (actionId === "retry-transcript") {
+      retryWholeContextPhase("transcript");
+      return;
+    }
+    if (actionId === "retry-context") {
+      retryWholeContextPhase("context");
+      return;
+    }
+    if (actionId === "retry-save") {
+      setPipelineCertificationRetryEpoch((epoch) => epoch + 1);
+      return;
+    }
+    if (actionId === "retry-candidate-detail") {
+      if (frontCandidateAudioNeedsRetry && !candidateAudioEventBusy) {
+        void runCandidateAudioEvent();
+        return;
+      }
+      if (candidatePassBPersistenceRetryNeeded) {
+        void retryCandidatePassBInsightPersistence();
+        return;
+      }
+      const retryCandidateIds =
+        candidatePassBActionIds.length > 0
+          ? candidatePassBActionIds
+          : automaticCandidateDetailIds;
+      if (!candidatePassBBusy && retryCandidateIds.length > 0) {
+        void runCandidatePassB(retryCandidateIds, undefined, true);
+        return;
+      }
+      retryWholeContextPhase();
+      return;
+    }
+    if (!analysisComplete) {
+      void runSignalAnalysis();
+    } else {
+      retryWholeContextPhase();
+    }
+  };
+
+  const frontConnectionsPanel = (
+    <div className="frt-panel-stack">
+      <section className="frt-panel-section" aria-labelledby="frt-youtube-title">
+        <div className="frt-panel-heading">
+          <div>
+            <h3 id="frt-youtube-title">{ui("YouTube 다시보기", "YouTube replay")}</h3>
+            <p>
+              {ui(
+                "같은 방송 주소를 알 때만 붙여 넣으세요. 저장된 대사와 챕터를 먼저 찾습니다.",
+                "Paste the matching replay URL only when known. Prepared transcript and chapters are checked first.",
+              )}
+            </p>
+          </div>
+        </div>
+        <label className="frt-field">
+          <span>{ui("다시보기 주소", "Replay URL")}</span>
+          <input
+            type="text"
+            inputMode="url"
+            placeholder="https://youtu.be/…"
+            value={manualVodInput}
+            disabled={analysisBusy}
+            onChange={(event) => updateManualVodInput(event.currentTarget.value)}
+          />
+        </label>
+        <p className="frt-field-note" aria-live="polite">
+          {manualVodInput.trim().length === 0
+            ? ui(
+                "주소 없이도 분석할 수 있습니다.",
+                "Analysis can continue without a replay URL.",
+              )
+            : youtubeVideoIdFromUserInput(manualVodInput) === null
+              ? ui(
+                  "영상 주소를 확인하지 못했어요. 전체 YouTube 주소를 붙여 넣어 주세요.",
+                  "No video ID was found. Paste the full YouTube URL.",
+                )
+              : channelPreanalysisConfirmationPending ||
+                  channelPreanalysisConnection.status === "checking" ||
+                  preparedChannelReview.status === "checking"
+                ? ui(
+                    "검토까지 끝난 저장 결과를 찾고 있어요.",
+                    "Looking for a saved review-ready result.",
+                  )
+                : preparedChannelReview.status === "preparing"
+                  ? ui(
+                      "이 영상은 백그라운드 분석 중이에요. 완료 여부를 자동으로 확인하고 바로 검토 화면을 열게요.",
+                      "This replay is being analyzed in the background. It will be checked automatically and open directly in review when ready.",
+                    )
+                  : preparedChannelReview.status === "unavailable"
+                    ? ui(
+                        "저장된 검토 결과에 잠시 연결하지 못했어요. 다시 확인할 수 있어요.",
+                        "The saved review result is temporarily unavailable. You can check again.",
+                      )
+                : preparedTranscriptReady
+                  ? ui(
+                      "이 원본과 맞는 대사·챕터를 연결했어요.",
+                      "Matching transcript and chapters are connected.",
+                    )
+                  : ui(
+                      "주소를 기억했습니다. 저장 자료가 없으면 일반 자막과 음성 인식을 사용해요.",
+                      "The URL is saved. Normal captions and speech recognition are used when prepared data is absent.",
+                    )}
+        </p>
+        {youtubeVideoIdFromUserInput(manualVodInput) !== null &&
+          (preparedChannelReview.status === "preparing" ||
+            preparedChannelReview.status === "unavailable") && (
+            <button
+              className="frt-secondary-button"
+              type="button"
+              onClick={() => {
+                dismissedPreparedChannelReviewKeyRef.current = null;
+                setPreparedChannelReviewRetryEpoch((epoch) => epoch + 1);
+              }}
+            >
+              {ui("완료 여부 다시 확인", "Check again")}
+            </button>
+          )}
+        {channelPreanalysisConnection.status === "probable" && (
+          <button
+            className="frt-secondary-button"
+            type="button"
+            disabled={channelPreanalysisConfirmationPending || analysisBusy}
+            onClick={() => void confirmProbableChannelPreanalysisMatch()}
+          >
+            {channelPreanalysisConfirmationPending
+              ? ui("같은 영상인지 확인 중…", "Verifying replay…")
+              : ui("이 다시보기가 맞아요", "This is the matching replay")}
+          </button>
+        )}
+      </section>
+
+      <section className="frt-panel-section" aria-labelledby="frt-chat-title">
+        <div className="frt-panel-heading">
+          <div>
+            <h3 id="frt-chat-title">{ui("CHZZK 라이브 채팅", "CHZZK live chat")}</h3>
+            <p>
+              {ui(
+                "선택 사항입니다. 있으면 시청자 반응이 몰린 시점을 함께 확인합니다.",
+                "Optional. When available, it helps locate concentrated viewer reactions.",
+              )}
+            </p>
+          </div>
+          <label className="frt-secondary-button" aria-disabled={chatInputLocked}>
+            {chatFileName === null
+              ? ui("채팅 파일 고르기", "Choose chat file")
+              : ui("다른 채팅 고르기", "Choose another chat file")}
+            <input
+              className="frt-visually-hidden"
+              type="file"
+              accept=".json,.jsonl,.csv,application/json,text/csv,text/plain"
+              disabled={chatInputLocked}
+              onChange={handleChatInput}
+            />
+          </label>
+        </div>
+        {chatImportStatus === "reading" && (
+          <p className="frt-field-note" role="status">
+            {ui("채팅 파일을 읽고 있어요.", "Reading the chat file.")}
+          </p>
+        )}
+        {chatImport !== null && (
+          <div className="frt-chat-summary">
+            <strong>{chatFileName}</strong>
+            <span>
+              {ui(
+                `메시지 ${chatImport.messages.length.toLocaleString("ko-KR")}개`,
+                `${chatImport.messages.length.toLocaleString("en-US")} messages`,
+              )}
+            </span>
+            <label className="frt-field frt-offset-field">
+              <span>{ui("채팅 시간 보정", "Chat time offset")}</span>
+              <span>
+                <input
+                  type="number"
+                  step="0.5"
+                  value={chatOffsetSeconds}
+                  disabled={chatOffsetLocked}
+                  onChange={(event) => {
+                    const value = Number(event.currentTarget.value);
+                    setChatOffsetSeconds(Number.isFinite(value) ? value : 0);
+                  }}
+                />
+                {ui("초", "sec")}
+              </span>
+            </label>
+            {firstChatWarning !== null && <small>{firstChatWarning}</small>}
+          </div>
+        )}
+        {chatError !== null && (
+          <p className="frt-panel-error" role="alert">{chatError}</p>
+        )}
+      </section>
+    </div>
+  );
+
+  const frontHistoryPanel = (
+    <div className="frt-panel-stack">
+      {recoveryCatalog.status === "loading" && (
+        <p className="frt-field-note" role="status">
+          {ui("저장된 분석을 확인하고 있어요.", "Loading saved analyses.")}
+        </p>
+      )}
+      {recoveryCatalog.status === "failed" && (
+        <div className="frt-panel-error" role="alert">
+          <p>{ui("저장된 분석 목록을 열지 못했어요.", "Saved analyses could not be opened.")}</p>
+          <button className="frt-secondary-button" type="button" onClick={() => void refreshRecoveryCatalog()}>
+            {ui("다시 확인", "Try again")}
+          </button>
+        </div>
+      )}
+      {recoveryCatalog.status === "ready" &&
+        recoveryCatalog.audit.results.length === 0 && (
+          <p className="frt-field-note">
+            {ui("이 브라우저에 저장된 분석이 없습니다.", "No saved analyses are available in this browser.")}
+          </p>
+        )}
+      {recoveryCatalog.status === "ready" &&
+        recoveryCatalog.audit.results.map((recovered) => (
+          <article className="frt-history-item" key={recovered.terminal.runId}>
+            <div>
+              <strong>{ui("저장된 분석 결과", "Saved analysis result")}</strong>
+              <span>
+                {formatDuration(recovered.finalResult.result.input.source.durationMs)} · {new Date(recovered.terminal.recordedAt).toLocaleString(analysisLanguage === "ko" ? "ko-KR" : "en-US")}
+              </span>
+            </div>
+            <button
+              className="frt-secondary-button"
+              type="button"
+              disabled={analysisBusy || candidateRefinementBusy}
+              onClick={() => openRecoveredAnalysis(recovered)}
+            >
+              {ui("이 결과 열기", "Open result")}
+            </button>
+          </article>
+        ))}
+    </div>
+  );
+
+  if (preparedChannelReview.status === "ready") {
+    return (
+      <div className="rh-app">
+        <PreparedReviewExperience
+          key={preparedChannelReview.loaded.artifact.contentDigest}
+          bundle={preparedChannelReview.loaded.review}
+          artifactDigest={preparedChannelReview.loaded.artifact.contentDigest}
+          sourceTitle={preparedChannelReview.title}
+          analysisLanguage={analysisLanguage}
+          {...(sourcePreviewUrl === null
+            ? {}
+            : { videoSrc: sourcePreviewUrl })}
+          youtubeVideoId={preparedChannelReview.videoId}
+          onLanguageChange={setAnalysisLanguage}
+          onToggleTheme={() =>
+            setTheme((current) => (current === "light" ? "dark" : "light"))}
+          themeLabel={
+            theme === "light"
+              ? ui("어두운 화면으로 바꾸기", "Use dark theme")
+              : ui("밝은 화면으로 바꾸기", "Use light theme")
+          }
+          onExit={() => {
+            dismissedPreparedChannelReviewKeyRef.current =
+              preparedReviewRequestKey;
+            preparedChannelReviewAbortController.current?.abort();
+            preparedChannelReviewAbortController.current = null;
+            setPreparedChannelReview({ status: "dismissed" });
+            startFreshAnalysis();
+          }}
+        />
+      </div>
+    );
+  }
+
+  if (!contextualCandidatePublicationReady || orderedCandidates.length === 0) {
+    return (
+      <div className="rh-app">
+        <FrontSurface
+          model={frontSurfaceModel}
+          evidenceRanges={frontEvidenceRanges}
+          selectedTopicId={
+            timelineInspectionTarget?.kind === "chapter"
+              ? timelineInspectionTarget.id
+              : null
+          }
+          scope={frontScope}
+          participants={frontParticipants}
+          panels={{
+            connections: frontConnectionsPanel,
+            history: frontHistoryPanel,
+          }}
+          languageLocked={
+            sourceFile !== null ||
+            pendingFileName !== null ||
+            analysisRun !== null
+          }
+          themeLabel={
+            theme === "light"
+              ? ui("어두운 화면으로 바꾸기", "Use dark theme")
+              : ui("밝은 화면으로 바꾸기", "Use light theme")
+          }
+          accept="video/*,.mp4,.webm,.mkv,.mov,.m4v"
+          onSelectSourceFile={handleFrontSourceFile}
+          onChangeSource={startFreshAnalysis}
+          {...(frontStartBlocker === undefined
+            ? {}
+            : { startBlocker: frontStartBlocker })}
+          {...(!sourceInputLocked &&
+          sourceReady &&
+          !analysisBusy &&
+          !analysisComplete &&
+          preparedChannelReview.status !== "checking" &&
+          !channelPreanalysisConfirmationPending &&
+          chatImportStatus !== "reading"
+            ? { onStartAnalysis: () => void runSignalAnalysis() }
+            : {})}
+          {...(analysisCanBeCancelled ? { onStopAnalysis: cancelAnalysis } : {})}
+          onRecoveryAction={handleFrontRecoveryAction}
+          onSelectTopic={(topicId) =>
+            setTimelineInspectionTarget({ kind: "chapter", id: topicId })}
+          onLanguageChange={setAnalysisLanguage}
+          onToggleTheme={() =>
+            setTheme((current) => (current === "light" ? "dark" : "light"))}
+          onHistoryRequest={() => void refreshRecoveryCatalog()}
+        />
+      </div>
+    );
+  }
+
   return (
     <div className="rh-app">
       {/* The body. Below the device breakpoint these two wrappers collapse to
@@ -14165,6 +15284,7 @@ function App() {
                     !sourceReady ||
                     analysisBusy ||
                     analysisComplete ||
+                    preparedChannelReview.status === "checking" ||
                     channelPreanalysisConfirmationPending ||
                     chatImportStatus === "reading"
                   }
@@ -14247,10 +15367,10 @@ function App() {
                               "다시보기 연결을 확인했어요",
                               "Replay identity confirmed",
                             )
-                          : ui(
-                              "아모레또 다시보기를 연결했어요",
-                              "Amoretto replay connected",
-                            )}
+                           : ui(
+                               `${currentChannelPreanalysisSource?.displayNameKo ?? "채널"} 다시보기를 연결했어요`,
+                               `${currentChannelPreanalysisSource?.channelHandle.slice(1) ?? "Channel"} replay connected`,
+                             )}
                   </strong>
                   <p>
                     {channelPreanalysisConnection.lookup.match.match?.title}

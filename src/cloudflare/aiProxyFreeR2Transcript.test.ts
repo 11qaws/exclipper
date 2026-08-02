@@ -943,7 +943,7 @@ describe("free R2 transcript Worker integration", () => {
       "whisper-large-v3-turbo",
     );
     expect(response.headers.get("X-ExClipper-Model-Revision")).toBe(
-      "groq-whisper-large-v3-turbo-ko-segment-v1-2026-07-29",
+      "groq-whisper-large-v3-turbo-ko-segment-v2-2026-08-02",
     );
     expect(await response.json()).toMatchObject({
       modelId: "whisper-large-v3-turbo",

@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { AMORETTO_YOUTUBE_CHANNEL_ID } from "./channelPreanalysisCatalog";
+import {
+  AMORETTO_CHANNEL_PREANALYSIS_SOURCE,
+  CHANNEL_PREANALYSIS_SOURCES,
+  EUREKA_CHANNEL_PREANALYSIS_SOURCE,
+  type ConfiguredChannelPreanalysisSource,
+} from "./channelPreanalysisSources";
 import {
   CHANNEL_PREANALYSIS_LOCAL_BINDING_MAX_ENTRIES,
   CHANNEL_PREANALYSIS_LOCAL_BINDING_SCHEMA_VERSION,
@@ -13,6 +18,16 @@ import {
 const VIDEO_ID = "KzAW3yow80Q";
 const SECOND_VIDEO_ID = "EZfCGS5ms_Q";
 const REGISTERED_AT = "2026-07-30T01:02:03.004Z";
+
+function provenance(
+  source: ConfiguredChannelPreanalysisSource =
+    AMORETTO_CHANNEL_PREANALYSIS_SOURCE,
+) {
+  return {
+    sourceId: source.sourceId,
+    channelId: source.channelId,
+  };
+}
 
 function fingerprint(index: number): string {
   return `local-file-sampled-sha256-v1:${index
@@ -49,11 +64,11 @@ class FirstWriteCollisionStorage extends MemoryStorage {
     super.setItem(
       key,
       JSON.stringify({
-        schemaVersion: 1,
-        channelId: AMORETTO_YOUTUBE_CHANNEL_ID,
+        schemaVersion: CHANNEL_PREANALYSIS_LOCAL_BINDING_SCHEMA_VERSION,
         bindings: [
           {
             localSampledFingerprint: fingerprint(99),
+            ...provenance(EUREKA_CHANNEL_PREANALYSIS_SOURCE),
             videoId: SECOND_VIDEO_ID,
             registeredAt: "2026-07-30T01:02:03.005Z",
           },
@@ -71,60 +86,67 @@ function setRaw(storage: MemoryStorage, value: unknown): void {
 }
 
 describe("channel preanalysis local binding", () => {
-  it("loads an empty pinned v1 document when no cache exists", () => {
+  it("loads an empty current-schema document when no cache exists", () => {
     expect(loadChannelPreanalysisLocalBindings(new MemoryStorage())).toEqual({
       schemaVersion: CHANNEL_PREANALYSIS_LOCAL_BINDING_SCHEMA_VERSION,
-      channelId: AMORETTO_YOUTUBE_CHANNEL_ID,
       bindings: [],
     });
   });
 
-  it("persists an exact sampled-file association across new callers", () => {
-    const storage = new MemoryStorage();
-    const localSampledFingerprint = fingerprint(1);
+  it.each(CHANNEL_PREANALYSIS_SOURCES)(
+    "persists an exact sampled-file association for $sourceId",
+    (source) => {
+      const storage = new MemoryStorage();
+      const localSampledFingerprint = fingerprint(
+        CHANNEL_PREANALYSIS_SOURCES.indexOf(source) + 1,
+      );
 
-    expect(
-      registerChannelPreanalysisLocalBinding(
-        {
-          localSampledFingerprint,
-          videoId: VIDEO_ID,
-          registeredAt: REGISTERED_AT,
-        },
-        storage,
-      ),
-    ).toEqual({
-      localSampledFingerprint,
-      videoId: VIDEO_ID,
-      registeredAt: REGISTERED_AT,
-    });
-    expect(
-      getChannelPreanalysisLocalBinding(
+      expect(
+        registerChannelPreanalysisLocalBinding(
+          {
+            localSampledFingerprint,
+            ...provenance(source),
+            videoId: VIDEO_ID,
+            registeredAt: REGISTERED_AT,
+          },
+          storage,
+        ),
+      ).toEqual({
         localSampledFingerprint,
-        storage,
-      ),
-    ).toEqual({
-      localSampledFingerprint,
-      videoId: VIDEO_ID,
-      registeredAt: REGISTERED_AT,
-    });
-    expect(
-      JSON.parse(
-        storage.values.get(
-          CHANNEL_PREANALYSIS_LOCAL_BINDING_STORAGE_KEY,
-        ) ?? "",
-      ),
-    ).toEqual({
-      schemaVersion: 1,
-      channelId: AMORETTO_YOUTUBE_CHANNEL_ID,
-      bindings: [
-        {
+        ...provenance(source),
+        videoId: VIDEO_ID,
+        registeredAt: REGISTERED_AT,
+      });
+      expect(
+        getChannelPreanalysisLocalBinding(
           localSampledFingerprint,
-          videoId: VIDEO_ID,
-          registeredAt: REGISTERED_AT,
-        },
-      ],
-    });
-  });
+          storage,
+        ),
+      ).toEqual({
+        localSampledFingerprint,
+        ...provenance(source),
+        videoId: VIDEO_ID,
+        registeredAt: REGISTERED_AT,
+      });
+      expect(
+        JSON.parse(
+          storage.values.get(
+            CHANNEL_PREANALYSIS_LOCAL_BINDING_STORAGE_KEY,
+          ) ?? "",
+        ),
+      ).toEqual({
+        schemaVersion: CHANNEL_PREANALYSIS_LOCAL_BINDING_SCHEMA_VERSION,
+        bindings: [
+          {
+            localSampledFingerprint,
+            ...provenance(source),
+            videoId: VIDEO_ID,
+            registeredAt: REGISTERED_AT,
+          },
+        ],
+      });
+    },
+  );
 
   it("upserts one fingerprint and refreshes its recency", () => {
     const storage = new MemoryStorage();
@@ -132,6 +154,7 @@ describe("channel preanalysis local binding", () => {
     registerChannelPreanalysisLocalBinding(
       {
         localSampledFingerprint,
+        ...provenance(),
         videoId: VIDEO_ID,
         registeredAt: "2026-07-29T00:00:00.000Z",
       },
@@ -141,6 +164,7 @@ describe("channel preanalysis local binding", () => {
     registerChannelPreanalysisLocalBinding(
       {
         localSampledFingerprint,
+        ...provenance(EUREKA_CHANNEL_PREANALYSIS_SOURCE),
         videoId: SECOND_VIDEO_ID,
         registeredAt: REGISTERED_AT,
       },
@@ -150,6 +174,7 @@ describe("channel preanalysis local binding", () => {
     expect(loadChannelPreanalysisLocalBindings(storage).bindings).toEqual([
       {
         localSampledFingerprint,
+        ...provenance(EUREKA_CHANNEL_PREANALYSIS_SOURCE),
         videoId: SECOND_VIDEO_ID,
         registeredAt: REGISTERED_AT,
       },
@@ -164,6 +189,7 @@ describe("channel preanalysis local binding", () => {
       registerChannelPreanalysisLocalBinding(
         {
           localSampledFingerprint,
+          ...provenance(),
           videoId: VIDEO_ID,
           registeredAt: REGISTERED_AT,
         },
@@ -175,11 +201,13 @@ describe("channel preanalysis local binding", () => {
     expect(loadChannelPreanalysisLocalBindings(storage).bindings).toEqual([
       {
         localSampledFingerprint: fingerprint(99),
+        ...provenance(EUREKA_CHANNEL_PREANALYSIS_SOURCE),
         videoId: SECOND_VIDEO_ID,
         registeredAt: "2026-07-30T01:02:03.005Z",
       },
       {
         localSampledFingerprint,
+        ...provenance(),
         videoId: VIDEO_ID,
         registeredAt: REGISTERED_AT,
       },
@@ -196,6 +224,7 @@ describe("channel preanalysis local binding", () => {
       registerChannelPreanalysisLocalBinding(
         {
           localSampledFingerprint: fingerprint(index),
+          ...provenance(),
           videoId: VIDEO_ID,
           registeredAt: new Date(
             Date.UTC(2026, 0, 1, 0, 0, index),
@@ -223,30 +252,59 @@ describe("channel preanalysis local binding", () => {
   it.each([
     ["invalid JSON", "{"],
     [
-      "an unpinned channel",
+      "a legacy channel-scoped v1 document",
       {
         schemaVersion: 1,
-        channelId: "UC0000000000000000000000",
+        channelId: AMORETTO_CHANNEL_PREANALYSIS_SOURCE.channelId,
         bindings: [],
       },
     ],
     [
       "an extra document property",
       {
-        schemaVersion: 1,
-        channelId: AMORETTO_YOUTUBE_CHANNEL_ID,
+        schemaVersion: CHANNEL_PREANALYSIS_LOCAL_BINDING_SCHEMA_VERSION,
         bindings: [],
         future: true,
       },
     ],
     [
+      "an unknown binding source",
+      {
+        schemaVersion: CHANNEL_PREANALYSIS_LOCAL_BINDING_SCHEMA_VERSION,
+        bindings: [
+          {
+            localSampledFingerprint: fingerprint(2),
+            sourceId: "unknown-source",
+            channelId: AMORETTO_CHANNEL_PREANALYSIS_SOURCE.channelId,
+            videoId: VIDEO_ID,
+            registeredAt: REGISTERED_AT,
+          },
+        ],
+      },
+    ],
+    [
+      "a mismatched configured source and channel",
+      {
+        schemaVersion: CHANNEL_PREANALYSIS_LOCAL_BINDING_SCHEMA_VERSION,
+        bindings: [
+          {
+            localSampledFingerprint: fingerprint(2),
+            sourceId: AMORETTO_CHANNEL_PREANALYSIS_SOURCE.sourceId,
+            channelId: EUREKA_CHANNEL_PREANALYSIS_SOURCE.channelId,
+            videoId: VIDEO_ID,
+            registeredAt: REGISTERED_AT,
+          },
+        ],
+      },
+    ],
+    [
       "an invalid fingerprint",
       {
-        schemaVersion: 1,
-        channelId: AMORETTO_YOUTUBE_CHANNEL_ID,
+        schemaVersion: CHANNEL_PREANALYSIS_LOCAL_BINDING_SCHEMA_VERSION,
         bindings: [
           {
             localSampledFingerprint: `sha256:${"a".repeat(64)}`,
+            ...provenance(),
             videoId: VIDEO_ID,
             registeredAt: REGISTERED_AT,
           },
@@ -256,11 +314,11 @@ describe("channel preanalysis local binding", () => {
     [
       "a non-canonical date",
       {
-        schemaVersion: 1,
-        channelId: AMORETTO_YOUTUBE_CHANNEL_ID,
+        schemaVersion: CHANNEL_PREANALYSIS_LOCAL_BINDING_SCHEMA_VERSION,
         bindings: [
           {
             localSampledFingerprint: fingerprint(3),
+            ...provenance(),
             videoId: VIDEO_ID,
             registeredAt: "2026-07-30T01:02:03Z",
           },
@@ -270,16 +328,17 @@ describe("channel preanalysis local binding", () => {
     [
       "a duplicate fingerprint",
       {
-        schemaVersion: 1,
-        channelId: AMORETTO_YOUTUBE_CHANNEL_ID,
+        schemaVersion: CHANNEL_PREANALYSIS_LOCAL_BINDING_SCHEMA_VERSION,
         bindings: [
           {
             localSampledFingerprint: fingerprint(4),
+            ...provenance(),
             videoId: VIDEO_ID,
             registeredAt: REGISTERED_AT,
           },
           {
             localSampledFingerprint: fingerprint(4),
+            ...provenance(EUREKA_CHANNEL_PREANALYSIS_SOURCE),
             videoId: SECOND_VIDEO_ID,
             registeredAt: "2026-07-30T02:02:03.004Z",
           },
@@ -301,11 +360,28 @@ describe("channel preanalysis local binding", () => {
     ).toBe(false);
   });
 
+  it("rejects registration when a configured source and channel do not match", () => {
+    const storage = new MemoryStorage();
+
+    expect(
+      registerChannelPreanalysisLocalBinding(
+        {
+          localSampledFingerprint: fingerprint(8),
+          sourceId: AMORETTO_CHANNEL_PREANALYSIS_SOURCE.sourceId,
+          channelId: EUREKA_CHANNEL_PREANALYSIS_SOURCE.channelId,
+          videoId: VIDEO_ID,
+          registeredAt: REGISTERED_AT,
+        },
+        storage,
+      ),
+    ).toBeNull();
+    expect(storage.values.size).toBe(0);
+  });
+
   it("rejects over-limit documents rather than silently truncating them", () => {
     const storage = new MemoryStorage();
     setRaw(storage, {
-      schemaVersion: 1,
-      channelId: AMORETTO_YOUTUBE_CHANNEL_ID,
+      schemaVersion: CHANNEL_PREANALYSIS_LOCAL_BINDING_SCHEMA_VERSION,
       bindings: Array.from(
         {
           length:
@@ -313,6 +389,7 @@ describe("channel preanalysis local binding", () => {
         },
         (_, index) => ({
           localSampledFingerprint: fingerprint(index),
+          ...provenance(),
           videoId: VIDEO_ID,
           registeredAt: REGISTERED_AT,
         }),
@@ -339,8 +416,7 @@ describe("channel preanalysis local binding", () => {
     };
 
     expect(loadChannelPreanalysisLocalBindings(deniedStorage)).toEqual({
-      schemaVersion: 1,
-      channelId: AMORETTO_YOUTUBE_CHANNEL_ID,
+      schemaVersion: CHANNEL_PREANALYSIS_LOCAL_BINDING_SCHEMA_VERSION,
       bindings: [],
     });
     expect(
@@ -350,6 +426,7 @@ describe("channel preanalysis local binding", () => {
       registerChannelPreanalysisLocalBinding(
         {
           localSampledFingerprint: fingerprint(5),
+          ...provenance(),
           videoId: VIDEO_ID,
           registeredAt: REGISTERED_AT,
         },
@@ -367,6 +444,7 @@ describe("channel preanalysis local binding", () => {
       registerChannelPreanalysisLocalBinding(
         {
           localSampledFingerprint: `sha256:${"a".repeat(64)}`,
+          ...provenance(),
           videoId: VIDEO_ID,
           registeredAt: REGISTERED_AT,
         },
@@ -377,6 +455,7 @@ describe("channel preanalysis local binding", () => {
       registerChannelPreanalysisLocalBinding(
         {
           localSampledFingerprint: uppercaseFingerprint,
+          ...provenance(),
           videoId: VIDEO_ID,
           registeredAt: REGISTERED_AT,
         },
@@ -387,6 +466,7 @@ describe("channel preanalysis local binding", () => {
       registerChannelPreanalysisLocalBinding(
         {
           localSampledFingerprint: fingerprint(6),
+          ...provenance(),
           videoId: "too-short",
           registeredAt: REGISTERED_AT,
         },
@@ -397,6 +477,7 @@ describe("channel preanalysis local binding", () => {
       registerChannelPreanalysisLocalBinding(
         {
           localSampledFingerprint: fingerprint(6),
+          ...provenance(),
           videoId: VIDEO_ID,
           registeredAt: "not-a-date",
         },

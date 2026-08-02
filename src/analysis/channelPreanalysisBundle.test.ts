@@ -14,6 +14,7 @@ import {
   type ChannelPreanalysisBundleValidationError,
 } from "./channelPreanalysisBundle";
 import { AI_BROADCAST_CONTEXT_ROUTING_REVISION } from "./aiModelRoutingPolicy";
+import { AMORETTO_CHANNEL_PREANALYSIS_SOURCE } from "./channelPreanalysisSources";
 
 const VIDEO_ID = "KzAW3yow80Q";
 const DURATION_MS = 120_000;
@@ -33,6 +34,7 @@ const CONTEXT_PROVENANCE = {
 
 async function validBundle(): Promise<ChannelPreanalysisBundle> {
   return createChannelPreanalysisBundle({
+    channelId: AMORETTO_CHANNEL_PREANALYSIS_SOURCE.channelId,
     videoId: VIDEO_ID,
     title: "2026 07 17 - 음식 토크",
     durationMs: DURATION_MS,
@@ -357,6 +359,7 @@ describe("channelPreanalysisBundle", () => {
       }));
       await expect(
         createChannelPreanalysisBundle({
+          channelId: AMORETTO_CHANNEL_PREANALYSIS_SOURCE.channelId,
           videoId: VIDEO_ID,
           title: "큰 자막 묶음",
           durationMs: DURATION_MS,

@@ -53,6 +53,7 @@ import {
   classifyYtDlpFailure,
   createExpectedScheduledContextReceipt,
   createRetryCheckpoint,
+  createScheduledAsrTranscriptReadyBundle,
   createScheduledContextRequest,
   createTranscriptReadyBundle,
   createYtDlpChildEnvironment,
@@ -354,8 +355,9 @@ test("CLI defaults are bounded and every override is explicit", () => {
   assert.equal(defaults.contextAuthorizationToken, null);
   assert.match(
     defaults.catalogDir.replaceAll("\\", "/"),
-    /\/work\/preanalysis-catalog\/amoretto-vods$/u,
+    /\/work\/preanalysis-catalog$/u,
   );
+  assert.equal(defaults.configuredSource, null);
 
   const selected = parseSyncArguments(
     [
@@ -365,6 +367,8 @@ test("CLI defaults are bounded and every override is explicit", () => {
       "--catalog-dir=branch/amoretto-vods",
       "--yt-dlp",
       "./pinned-yt-dlp",
+      "--source",
+      "amoretto-vods",
       "--context-proxy",
       "https://worker.example/v1/broadcast-context",
     ],
@@ -375,6 +379,7 @@ test("CLI defaults are bounded and every override is explicit", () => {
   );
   assert.equal(selected.videoId, FOOD_TALK_ID);
   assert.equal(selected.maxVideos, 1);
+  assert.equal(selected.configuredSource?.sourceId, "amoretto-vods");
   assert.equal(selected.ytDlpPath, "./pinned-yt-dlp");
   assert.equal(
     selected.contextProxyUrl,
@@ -392,6 +397,10 @@ test("CLI defaults are bounded and every override is explicit", () => {
   assert.throws(
     () => parseSyncArguments(["--video-id", "not-an-id"]),
     /11 characters/u,
+  );
+  assert.throws(
+    () => parseSyncArguments(["--video-id", FOOD_TALK_ID]),
+    /requires an explicit --source/u,
   );
   assert.throws(
     () => parseSyncArguments(["--feed-url", "https://example.test/"]),
@@ -451,6 +460,20 @@ test("scheduled and manual runs checkout the immutable workflow event revision t
   assert.match(checkout, /ref:\s+\$\{\{\s*github\.sha\s*\}\}/u);
   assert.doesNotMatch(checkout, /ref:\s+main(?:\s|$)/u);
   assert.match(checkout, /persist-credentials:\s+false/u);
+  for (const sourceId of [
+    "amoretto-vods",
+    "eureka-history",
+    "sena-replay",
+    "coco-replay",
+    "mangjing-compilations",
+  ]) {
+    assert.match(workflow, new RegExp(`\\b${sourceId}\\b`, "u"));
+  }
+  assert.match(workflow, /channel-preanalysis-run-report\.json/u);
+  assert.match(workflow, /Bootstrap missing configured catalog namespaces/u);
+  assert.match(workflow, /source\/public\/preanalysis\/\$\{namespace\}/u);
+  assert.match(workflow, /Surface partial source failures/u);
+  assert.match(workflow, /report\.status !== "complete"/u);
 });
 
 test("yt-dlp receives only bounded compatibility variables and never runner secrets", async () => {
@@ -765,7 +788,7 @@ test("feed edits never rewrite identity fields sealed into an immutable bundle",
   assert.equal(result.updatedAt, "2026-07-30T03:00:00.000Z");
 });
 
-test("due selection prioritizes retry checkpoints and never exceeds two videos", () => {
+test("due selection protects fresh discoveries from retry starvation and never exceeds two videos", () => {
   const dueRetry = video({
     videoId: SUBSCRIPTION_ID,
     state: "retryable",
@@ -815,7 +838,7 @@ test("due selection prioritizes retry checkpoints and never exceeds two videos",
   );
   assert.deepEqual(
     selected.map(({ videoId }) => videoId),
-    [SUBSCRIPTION_ID, FOOD_TALK_ID],
+    [FOOD_TALK_ID, OLD_VIDEO_ID],
   );
 
   const forced = selectDueCatalogVideos(
@@ -847,6 +870,25 @@ test("due selection prioritizes retry checkpoints and never exceeds two videos",
       includeTranscriptReady: true,
     })[0]?.videoId,
     transcriptReady.videoId,
+  );
+
+  const missingCaptionRetry = video({
+    state: "retryable",
+    retry: {
+      stage: "transcript",
+      lastSuccessfulState: "metadata-ready",
+      attemptCount: 1,
+      nextAttemptAt: "2026-07-29T00:00:00.000Z",
+      errorCode: "KOREAN_CAPTION_NOT_FOUND",
+    },
+  });
+  assert.deepEqual(
+    selectDueCatalogVideos(manifest([missingCaptionRetry]), {
+      nowIso: BASE_TIME,
+      maxVideos: 1,
+      includePermanentCaptionRetries: false,
+    }),
+    [],
   );
 });
 
@@ -890,6 +932,15 @@ test("retry checkpoints keep the last durable stage and bounded backoff", () => 
       BASE_TIME,
     ).lastSuccessfulState,
     "transcript-ready",
+  );
+  assert.equal(
+    createRetryCheckpoint(
+      video(),
+      "transcript",
+      "KOREAN_CAPTION_NOT_FOUND",
+      BASE_TIME,
+    ).nextAttemptAt,
+    "2026-07-31T00:00:00.000Z",
   );
 });
 
@@ -1629,6 +1680,143 @@ test("scheduled extraction prefers manual ko over automatic ko-orig", async () =
   }
 });
 
+test("captionless uploads fall back to checkpointed scheduled ASR and reach context-ready", async () => {
+  const catalogDir = await mkdtemp(
+    join(tmpdir(), "exclipper-scheduled-asr-fallback-"),
+  );
+  try {
+    const source = video({ durationMs: 240_000, state: "metadata-ready" });
+    await mkdir(join(catalogDir, "videos"), { recursive: true });
+    await writeFile(
+      join(catalogDir, "catalog.json"),
+      `${JSON.stringify(manifest([source]), null, 2)}\n`,
+      "utf8",
+    );
+    const checkpointPath = join(
+      catalogDir,
+      ".transcript-checkpoints",
+      `${source.videoId}.asr.v2.json`,
+    );
+    await mkdir(join(catalogDir, ".transcript-checkpoints"), {
+      recursive: true,
+    });
+    await writeFile(checkpointPath, "checkpoint", "utf8");
+    let asrCalls = 0;
+    let contextCalls = 0;
+
+    const result = await synchronizeAmorettoCatalog(
+      {
+        catalogDir,
+        ytDlpPath: "test-path-yt-dlp",
+        maxVideos: 1,
+        videoId: null,
+        contextProxyUrl: "https://worker.example/v1/broadcast-context",
+        contextAuthorizationToken: TEST_CONTEXT_TOKEN,
+      },
+      {
+        now: () => new Date(BASE_TIME),
+        fetch: async (input) => {
+          const url = new URL(String(input));
+          if (url.href === AMORETTO_YOUTUBE_CHANNEL_FEED_URL) {
+            return new Response(atomFeedFor(source), { status: 200 });
+          }
+          if (url.pathname === "/v1/broadcast-context") {
+            contextCalls += 1;
+            return contextSuccessResponse(
+              completeContextResult(source.durationMs),
+            );
+          }
+          throw new Error(`Unexpected fetch: ${url.href}`);
+        },
+        commandRunner: async (_command, arguments_) => {
+          if (arguments_.length === 1 && arguments_[0] === "--version") {
+            return { stdout: `${PINNED_YT_DLP_VERSION}\n`, stderr: "" };
+          }
+          assert.notEqual(arguments_.indexOf("--write-auto-subs"), -1);
+          return { stdout: "", stderr: "" };
+        },
+        scheduledAsrProvider: async (input) => {
+          asrCalls += 1;
+          assert.equal(input.sourceId, "amoretto-vods");
+          assert.equal(input.videoId, source.videoId);
+          assert.equal(input.durationMs, source.durationMs);
+          return {
+            checkpointPath,
+            track: {
+              videoId: source.videoId,
+              languageCode: "ko-asr",
+              isAutoGenerated: true,
+              events: [
+                { startMs: 0, durationMs: 90_000, text: "첫 구간 전사" },
+                {
+                  startMs: 90_000,
+                  durationMs: 90_000,
+                  text: "두 번째 구간 전사",
+                },
+                {
+                  startMs: 180_000,
+                  durationMs: 60_000,
+                  text: "마지막 구간 전사",
+                },
+              ],
+            },
+          };
+        },
+        visualFingerprintProvider: async ({ video: currentVideo }) =>
+          testVisualFingerprintForVideo(currentVideo),
+        log: { info() {}, warn() {} },
+      },
+    );
+
+    assert.equal(asrCalls, 1);
+    assert.equal(contextCalls, 1);
+    assert.equal(result.outcomes[0]?.state, "context-ready");
+    const bundle = JSON.parse(
+      await readFile(
+        join(catalogDir, "videos", `${source.videoId}.v2.json`),
+        "utf8",
+      ),
+    );
+    assert.equal(bundle.provenance.sourceKind, "scheduled-korean-asr");
+    assert.equal(
+      bundle.contextProvenance.evidenceScope,
+      "scheduled-asr-transcript-only",
+    );
+    await assert.rejects(readFile(checkpointPath), { code: "ENOENT" });
+  } finally {
+    await rm(catalogDir, { recursive: true, force: true });
+  }
+});
+
+test("a fully covered no-speech ASR track closes transcript-ready without fake caption events", async () => {
+  const source = video({ durationMs: 240_000, state: "metadata-ready" });
+  const bundle = await createScheduledAsrTranscriptReadyBundle({
+    video: source,
+    captionTrack: {
+      videoId: source.videoId,
+      languageCode: "ko-asr",
+      isAutoGenerated: true,
+      events: [],
+    },
+    catalogRevision: 4,
+    extractedAt: BASE_TIME,
+  });
+
+  assert.equal(bundle.state, "transcript-ready");
+  assert.deepEqual(bundle.captionTrack.events, []);
+  assert.deepEqual(
+    bundle.chapters.map(({ startMs, endMs, summaryKo }) => ({
+      startMs,
+      endMs,
+      summaryKo,
+    })),
+    [
+      { startMs: 0, endMs: 120_000, summaryKo: "[대사 없음]" },
+      { startMs: 120_000, endMs: 240_000, summaryKo: "[대사 없음]" },
+    ],
+  );
+});
+
 test("a dedicated opt-in context endpoint promotes a durable transcript to revisioned context-ready", async () => {
   const catalogDir = await mkdtemp(
     join(tmpdir(), "exclipper-context-promotion-"),
@@ -1650,6 +1838,8 @@ test("a dedicated opt-in context endpoint promotes a durable transcript to revis
       if (url.pathname === "/v1/broadcast-context") {
         contextCalls += 1;
         const request = JSON.parse(init.body);
+        assert.equal(request.sourceId, "amoretto-vods");
+        assert.equal(request.sourceChannelId, AMORETTO_YOUTUBE_CHANNEL_ID);
         assert.equal(request.candidates.length, 0);
         assert.equal(request.participantGrounding.status, "sealed");
         assert.equal(
@@ -1676,7 +1866,7 @@ test("a dedicated opt-in context endpoint promotes a durable transcript to revis
         );
         assert.match(
           init.headers[PREANALYSIS_CONTEXT_OPERATION_HEADER],
-          /^amoretto-context-[0-9a-f]{64}$/u,
+          /^channel-context-amoretto-vods-[0-9a-f]{64}$/u,
         );
         assert.match(
           init.headers[PREANALYSIS_CONTEXT_PAYLOAD_DIGEST_HEADER],

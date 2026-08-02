@@ -17,24 +17,31 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 import {
-  AMORETTO_YOUTUBE_CHANNEL_FEED_URL,
-  AMORETTO_YOUTUBE_CHANNEL_HANDLE,
-  AMORETTO_YOUTUBE_CHANNEL_ID,
   CHANNEL_PREANALYSIS_CATALOG_SCHEMA_VERSION,
   YOUTUBE_CHANNEL_ATOM_FEED_MAX_BYTES,
+  channelPreanalysisSourceForManifest,
   isChannelPreanalysisState,
   normalizeChannelVideoTitle,
-  parseAmorettoYouTubeAtomFeed,
+  parseYouTubeChannelAtomFeed,
 } from "../src/analysis/channelPreanalysisCatalog.ts";
+import {
+  AMORETTO_CHANNEL_PREANALYSIS_SOURCE,
+  CHANNEL_PREANALYSIS_SOURCES,
+  channelPreanalysisSourceByChannelId,
+  channelPreanalysisSourceById,
+  channelPreanalysisStoragePrefix,
+} from "../src/analysis/channelPreanalysisSources.ts";
 import {
   CHANNEL_PREANALYSIS_BUNDLE_MAX_BYTES,
   assertChannelPreanalysisBundleMatchesCatalogVideo,
   createChannelPreanalysisBundle,
   createDefaultChannelPreanalysisProvenance,
+  createScheduledAsrChannelPreanalysisProvenance,
   parseChannelPreanalysisBundle,
   verifyChannelPreanalysisTranscriptDigest,
 } from "../src/analysis/channelPreanalysisBundle.ts";
 import {
+  MAX_BROADCAST_CONTEXT_CHAPTERS,
   BROADCAST_CONTEXT_SCHEMA_VERSION,
   createBroadcastContextRequest,
 } from "../src/analysis/broadcastContextProtocol.ts";
@@ -45,7 +52,9 @@ import {
 } from "../src/analysis/broadcastContextDeepseek.ts";
 import { createBroadcastParticipantGrounding } from "../src/analysis/broadcastParticipantGrounding.ts";
 import { AI_BROADCAST_CONTEXT_ROUTING_REVISION } from "../src/analysis/aiModelRoutingPolicy.ts";
-import { AMORETTO_CHANNEL_CAST_ROSTER_ID } from "../src/analysis/participantRoster.ts";
+import {
+  candidatePassBCastRosterIdForYouTubeChannelId,
+} from "../src/analysis/participantRoster.ts";
 import {
   PREANALYSIS_CONTEXT_CONTRACT_HEADER,
   PREANALYSIS_CONTEXT_EXPECTED_MODEL_ID,
@@ -73,7 +82,18 @@ import {
   parseChannelPreanalysisVisualFingerprint,
   serializeChannelPreanalysisVisualFingerprint,
 } from "../src/analysis/channelPreanalysisVisualFingerprint.ts";
+import {
+  CHANNEL_PREANALYSIS_REVIEW_BUNDLE_MAX_BYTES,
+  channelPreanalysisReviewBundleArtifactId,
+  channelPreanalysisReviewBundleStorageKey,
+  parseChannelPreanalysisReviewBundle,
+  verifyChannelPreanalysisReviewBundleIntegrity,
+} from "../src/analysis/channelPreanalysisReviewBundle.ts";
 import { createVisualFingerprintFromYtDlpMetadata } from "./channel-preanalysis-visual-fingerprint.mjs";
+import {
+  prepareScheduledAsrCaptionTrack,
+  removeScheduledAsrCheckpoint,
+} from "./lib/channel-preanalysis-scheduled-asr.mjs";
 
 export const PINNED_YT_DLP_VERSION = "2026.07.04";
 export const PINNED_YT_DLP_SHA256 =
@@ -101,6 +121,10 @@ export const DEFAULT_CATALOG_DIRECTORY = join(
   "preanalysis-catalog",
   "amoretto-vods",
 );
+export const DEFAULT_CATALOG_ROOT_DIRECTORY = "preanalysis-catalog";
+export const ALL_CHANNEL_PREANALYSIS_SOURCES = "all";
+export const CHANNEL_PREANALYSIS_RUN_REPORT_FILE =
+  "channel-preanalysis-run-report.json";
 
 const MAX_COMMAND_STDOUT_BYTES = 8 * 1024 * 1024;
 const MAX_COMMAND_STDERR_BYTES = 256 * 1024;
@@ -181,11 +205,20 @@ const YT_DLP_ALLOWED_PROXY_PROTOCOLS = new Set([
 const SUCCESSFUL_STATES = new Set([
   "transcript-ready",
   "context-ready",
+  "review-ready",
   "published",
 ]);
 const RETRY_DELAYS_MS = [3, 6, 12, 24].map(
   (hours) => hours * 60 * 60_000,
 );
+const PERMANENT_CAPTION_RETRY_DELAYS_MS = [24, 72, 168, 336].map(
+  (hours) => hours * 60 * 60_000,
+);
+const PERMANENT_CAPTION_RETRY_CODES = new Set([
+  "KOREAN_CAPTION_NOT_FOUND",
+  "KOREAN_CAPTION_EMPTY",
+  "KOREAN_CAPTION_CHAPTERS_EMPTY",
+]);
 
 export class ChannelPreanalysisSyncError extends Error {
   constructor(code, message, options = {}) {
@@ -230,6 +263,7 @@ export function parseSyncArguments(
         "--catalog-dir",
         "--yt-dlp",
         "--context-proxy",
+        "--source",
       ].includes(key)
     ) {
       throw syncError("INVALID_ARGUMENT", `Unknown option: ${key}`);
@@ -281,11 +315,34 @@ export function parseSyncArguments(
     contextAuthorizationToken,
   );
 
+  const sourceValue = values.get("--source") ?? ALL_CHANNEL_PREANALYSIS_SOURCES;
+  const configuredSource =
+    sourceValue === ALL_CHANNEL_PREANALYSIS_SOURCES
+      ? null
+      : channelPreanalysisSourceById(sourceValue);
+  if (sourceValue !== ALL_CHANNEL_PREANALYSIS_SOURCES && configuredSource === null) {
+    throw syncError(
+      "INVALID_ARGUMENT",
+      `--source must be ${ALL_CHANNEL_PREANALYSIS_SOURCES} or one of ${CHANNEL_PREANALYSIS_SOURCES.map(({ sourceId }) => sourceId).join(", ")}.`,
+    );
+  }
+  if (videoId !== null && configuredSource === null) {
+    throw syncError(
+      "INVALID_ARGUMENT",
+      "--video-id requires an explicit --source so the retry cannot target the wrong catalog.",
+    );
+  }
+  const defaultCatalogDirectory =
+    configuredSource === null
+      ? DEFAULT_CATALOG_ROOT_DIRECTORY
+      : join(DEFAULT_CATALOG_ROOT_DIRECTORY, configuredSource.sourceId);
+
   return {
     help,
     videoId,
     maxVideos,
-    catalogDir: resolve(cwd, values.get("--catalog-dir") ?? DEFAULT_CATALOG_DIRECTORY),
+    configuredSource,
+    catalogDir: resolve(cwd, values.get("--catalog-dir") ?? defaultCatalogDirectory),
     ytDlpPath: values.get("--yt-dlp") ?? defaultYtDlp,
     contextProxyUrl,
     contextAuthorizationToken,
@@ -355,12 +412,16 @@ function assertSafeYtDlpProxyEnvironmentValue(key, value) {
   }
 }
 
-export function createEmptyCatalog(nowIso) {
+export function createEmptyCatalog(
+  nowIso,
+  configuredSource = AMORETTO_CHANNEL_PREANALYSIS_SOURCE,
+) {
   assertIsoDate(nowIso, "generatedAt");
+  assertConfiguredSource(configuredSource);
   return {
     schemaVersion: CHANNEL_PREANALYSIS_CATALOG_SCHEMA_VERSION,
-    channelId: AMORETTO_YOUTUBE_CHANNEL_ID,
-    channelHandle: AMORETTO_YOUTUBE_CHANNEL_HANDLE,
+    channelId: configuredSource.channelId,
+    channelHandle: configuredSource.channelHandle,
     revision: 1,
     generatedAt: nowIso,
     videos: [],
@@ -370,8 +431,9 @@ export function createEmptyCatalog(nowIso) {
 
 export function mergeFeedIntoCatalog(existing, feed, nowIso) {
   const catalog = normalizeCatalogManifest(existing);
+  const configuredSource = channelPreanalysisSourceForManifest(catalog);
   assertIsoDate(nowIso, "generatedAt");
-  if (feed.channelId !== AMORETTO_YOUTUBE_CHANNEL_ID) {
+  if (feed.channelId !== configuredSource.channelId) {
     throw syncError("WRONG_CHANNEL", "Feed channel does not match the catalog.");
   }
   const byId = new Map(catalog.videos.map((video) => [video.videoId, video]));
@@ -381,7 +443,7 @@ export function mergeFeedIntoCatalog(existing, feed, nowIso) {
     const current = byId.get(incoming.videoId);
     if (current === undefined) {
       byId.set(incoming.videoId, {
-        channelId: AMORETTO_YOUTUBE_CHANNEL_ID,
+        channelId: configuredSource.channelId,
         videoId: incoming.videoId,
         title: incoming.title,
         normalizedTitle: incoming.normalizedTitle,
@@ -455,6 +517,8 @@ export function selectDueCatalogVideos(
     maxVideos = DEFAULT_MAX_VIDEOS_PER_RUN,
     videoId = null,
     includeTranscriptReady = false,
+    includePermanentCaptionRetries = true,
+    recoverCaptionRetriesWithAsr = false,
   },
 ) {
   const catalog = normalizeCatalogManifest(manifest);
@@ -499,6 +563,18 @@ export function selectDueCatalogVideos(
         return false;
       }
       if (video.state !== "retryable") return true;
+      if (
+        !includePermanentCaptionRetries &&
+        PERMANENT_CAPTION_RETRY_CODES.has(video.retry?.errorCode)
+      ) {
+        return false;
+      }
+      if (
+        recoverCaptionRetriesWithAsr &&
+        PERMANENT_CAPTION_RETRY_CODES.has(video.retry?.errorCode)
+      ) {
+        return true;
+      }
       return (
         video.retry !== null &&
         Date.parse(video.retry.nextAttemptAt) <= nowMs
@@ -507,10 +583,13 @@ export function selectDueCatalogVideos(
     .sort((left, right) => {
       const queueRank = (video) =>
         video.state !== "retryable"
-          ? 1
-          : video.retry?.stage === "fingerprint"
-            ? 2
-            : 0;
+          ? 0
+          : PERMANENT_CAPTION_RETRY_CODES.has(video.retry?.errorCode) &&
+              !recoverCaptionRetriesWithAsr
+            ? 3
+            : video.retry?.stage === "fingerprint"
+              ? 2
+              : 1;
       return (
         queueRank(left) - queueRank(right) ||
         Date.parse(right.publishedAt) - Date.parse(left.publishedAt) ||
@@ -520,7 +599,12 @@ export function selectDueCatalogVideos(
     .slice(0, maxVideos);
 }
 
-export function validateYtDlpMetadata(value, expectedVideoId) {
+export function validateYtDlpMetadata(
+  value,
+  expectedVideoId,
+  configuredSource = AMORETTO_CHANNEL_PREANALYSIS_SOURCE,
+) {
+  assertConfiguredSource(configuredSource);
   if (!isRecord(value)) {
     throw syncError("INVALID_METADATA", "yt-dlp metadata must be an object.");
   }
@@ -530,13 +614,17 @@ export function validateYtDlpMetadata(value, expectedVideoId) {
   ) {
     throw syncError("WRONG_VIDEO", "yt-dlp returned a different video.");
   }
-  if (value.channel_id !== AMORETTO_YOUTUBE_CHANNEL_ID) {
+  if (value.channel_id !== configuredSource.channelId) {
     throw syncError("WRONG_CHANNEL", "yt-dlp returned a different channel.");
   }
   if (value.availability !== "public") {
     throw syncError("VIDEO_NOT_PUBLIC", "The video is not publicly available.");
   }
-  if (value.live_status !== "not_live") {
+  const acceptedLiveStatuses =
+    configuredSource.playlistKind === "live-streams"
+      ? new Set(["not_live", "was_live"])
+      : new Set(["not_live"]);
+  if (!acceptedLiveStatuses.has(value.live_status)) {
     throw syncError("VIDEO_IS_LIVE", "Only completed, non-live videos are allowed.");
   }
   if (
@@ -566,12 +654,12 @@ export function validateYtDlpMetadata(value, expectedVideoId) {
 
   return {
     videoId: expectedVideoId,
-    channelId: AMORETTO_YOUTUBE_CHANNEL_ID,
+    channelId: configuredSource.channelId,
     title: value.title,
     normalizedTitle: normalizeChannelVideoTitle(value.title),
     durationMs,
     availability: "public",
-    liveStatus: "not_live",
+    liveStatus: value.live_status,
     watchUrl: `https://www.youtube.com/watch?v=${expectedVideoId}`,
   };
 }
@@ -599,7 +687,7 @@ export function createRetryCheckpoint(
   errorCode,
   nowIso,
 ) {
-  if (!["metadata", "transcript", "context", "fingerprint"].includes(stage)) {
+  if (!["metadata", "transcript", "context", "review", "fingerprint"].includes(stage)) {
     throw syncError("INVALID_RETRY", "Retry stage is invalid.");
   }
   const nowMs = Date.parse(assertIsoDate(nowIso, "retry time"));
@@ -608,8 +696,11 @@ export function createRetryCheckpoint(
       ? video.retry.attemptCount
       : 0;
   const attemptCount = priorAttempt + 1;
+  const retryDelays = PERMANENT_CAPTION_RETRY_CODES.has(errorCode)
+    ? PERMANENT_CAPTION_RETRY_DELAYS_MS
+    : RETRY_DELAYS_MS;
   const delay =
-    RETRY_DELAYS_MS[Math.min(attemptCount - 1, RETRY_DELAYS_MS.length - 1)];
+    retryDelays[Math.min(attemptCount - 1, retryDelays.length - 1)];
   const lastSuccessfulState =
     stage === "metadata"
       ? "discovered"
@@ -617,6 +708,8 @@ export function createRetryCheckpoint(
         ? "metadata-ready"
         : stage === "context"
           ? "transcript-ready"
+          : stage === "review"
+            ? "context-ready"
           : fingerprintRetryBaseState(video);
   return {
     stage,
@@ -669,6 +762,7 @@ export async function createTranscriptReadyBundle({
     );
   }
   return createChannelPreanalysisBundle({
+    channelId: video.channelId,
     videoId: video.videoId,
     title: video.title,
     durationMs: video.durationMs,
@@ -683,6 +777,59 @@ export async function createTranscriptReadyBundle({
       extractedAt,
     ),
   });
+}
+
+export async function createScheduledAsrTranscriptReadyBundle({
+  video,
+  captionTrack,
+  catalogRevision,
+  extractedAt,
+}) {
+  const chapters =
+    captionTrack.events.length === 0
+      ? createScheduledNoSpeechCoverageChapters(video.durationMs)
+      : createYouTubeCaptionChapters(captionTrack, video.durationMs);
+  if (chapters.length === 0) {
+    throw syncError(
+      "SCHEDULED_ASR_CHAPTERS_EMPTY",
+      "The completed scheduled ASR track could not form broadcast chapters.",
+    );
+  }
+  return createChannelPreanalysisBundle({
+    channelId: video.channelId,
+    videoId: video.videoId,
+    title: video.title,
+    durationMs: video.durationMs,
+    publishedAt: video.publishedAt,
+    catalogRevision,
+    state: "transcript-ready",
+    captionTrack,
+    chapters,
+    broadcastContext: null,
+    provenance: createScheduledAsrChannelPreanalysisProvenance(
+      video.videoId,
+      extractedAt,
+    ),
+  });
+}
+
+function createScheduledNoSpeechCoverageChapters(durationMs) {
+  const chapterDurationMs = Math.max(
+    120_000,
+    Math.ceil(durationMs / MAX_BROADCAST_CONTEXT_CHAPTERS / 1_000) * 1_000,
+  );
+  const chapters = [];
+  for (let startMs = 0; startMs < durationMs; startMs += chapterDurationMs) {
+    chapters.push({
+      chapterId: `scheduled-asr-${String(chapters.length + 1).padStart(3, "0")}`,
+      startMs,
+      endMs: Math.min(durationMs, startMs + chapterDurationMs),
+      evidenceMode: "complete-transcript",
+      evidenceCoverageRatio: 1,
+      summaryKo: "[대사 없음]",
+    });
+  }
+  return chapters;
 }
 
 export async function createContextReadyBundle({
@@ -701,6 +848,7 @@ export async function createContextReadyBundle({
   const verifiedReceipt = verifyScheduledContextReceipt(contextReceipt);
   assertIsoDate(generatedAt, "context generatedAt");
   return createChannelPreanalysisBundle({
+    channelId: transcriptBundle.channelId,
     videoId: transcriptBundle.videoId,
     title: transcriptBundle.title,
     durationMs: transcriptBundle.durationMs,
@@ -714,7 +862,10 @@ export async function createContextReadyBundle({
       generatedAt,
       modelRoutingRevision: verifiedReceipt.routingRevision,
       contextReceipt: verifiedReceipt,
-      evidenceScope: "youtube-caption-transcript-only",
+      evidenceScope:
+        transcriptBundle.provenance.sourceKind === "scheduled-korean-asr"
+          ? "scheduled-asr-transcript-only"
+          : "youtube-caption-transcript-only",
       localVisualVerificationRequired: true,
     },
     provenance: transcriptBundle.provenance,
@@ -762,7 +913,9 @@ export function artifactForBundle(
   bytes,
   createdAt,
   revision = 1,
+  configuredSource = AMORETTO_CHANNEL_PREANALYSIS_SOURCE,
 ) {
+  assertConfiguredSource(configuredSource);
   if (
     !YOUTUBE_VIDEO_ID_PATTERN.test(videoId) ||
     !Number.isSafeInteger(revision) ||
@@ -779,7 +932,11 @@ export function artifactForBundle(
     videoId,
     kind: "transcript",
     revision,
-    storageKey: canonicalBundleStorageKey(videoId, revision),
+    storageKey: canonicalBundleStorageKey(
+      videoId,
+      revision,
+      configuredSource,
+    ),
     contentDigest,
     byteLength: Buffer.byteLength(bytes),
     createdAt,
@@ -790,7 +947,9 @@ export function artifactForVisualFingerprint(
   videoId,
   serializedFingerprint,
   createdAt,
+  configuredSource = AMORETTO_CHANNEL_PREANALYSIS_SOURCE,
 ) {
+  assertConfiguredSource(configuredSource);
   const fingerprint = parseChannelPreanalysisVisualFingerprint(
     serializedFingerprint,
   );
@@ -820,7 +979,10 @@ export function artifactForVisualFingerprint(
     kind: "fingerprint",
     revision: 1,
     storageKey:
-      canonicalChannelPreanalysisVisualFingerprintStorageKey(videoId),
+      canonicalChannelPreanalysisVisualFingerprintStorageKey(
+        videoId,
+        configuredSource.sourceId,
+      ),
     contentDigest: `sha256:${createHash("sha256").update(bytes).digest("hex")}`,
     byteLength: bytes.byteLength,
     createdAt,
@@ -834,17 +996,35 @@ export function createScheduledContextRequest(transcriptBundle) {
       "Scheduled context requires a transcript-ready bundle.",
     );
   }
+  const configuredSource = channelPreanalysisSourceByChannelId(
+    transcriptBundle.channelId,
+  );
+  if (configuredSource === null) {
+    throw syncError(
+      "CONTEXT_SOURCE_INVALID",
+      "Scheduled context bundle has an unsupported source channel.",
+    );
+  }
+  const castRosterId = candidatePassBCastRosterIdForYouTubeChannelId(
+    configuredSource.channelId,
+  );
+  if (castRosterId === null) {
+    throw syncError(
+      "CONTEXT_ROSTER_INVALID",
+      "Scheduled context source has no configured cast roster.",
+    );
+  }
   const chapters = compactBroadcastContextChapters(transcriptBundle.chapters);
   const participantGrounding = createBroadcastParticipantGrounding({
     sourceDurationMs: transcriptBundle.durationMs,
-    castRosterId: AMORETTO_CHANNEL_CAST_ROSTER_ID,
+    castRosterId,
     chapters,
   });
   return createBroadcastContextRequest({
     sourceDurationMs: transcriptBundle.durationMs,
     chapters,
     candidates: [],
-    castRosterId: AMORETTO_CHANNEL_CAST_ROSTER_ID,
+    castRosterId,
     participantGrounding,
     outputLanguage: "ko",
   });
@@ -875,7 +1055,18 @@ export async function requestScheduledBroadcastContext(
     );
   }
   const request = createScheduledContextRequest(transcriptBundle);
+  const configuredSource = channelPreanalysisSourceByChannelId(
+    transcriptBundle.channelId,
+  );
+  if (configuredSource === null) {
+    throw syncError(
+      "CONTEXT_SOURCE_INVALID",
+      "Scheduled context bundle has an unsupported source channel.",
+    );
+  }
   const requestBody = JSON.stringify({
+    sourceId: configuredSource.sourceId,
+    sourceChannelId: configuredSource.channelId,
     sourceDurationMs: request.sourceDurationMs,
     chapters: request.chapters,
     candidates: request.candidates,
@@ -886,7 +1077,10 @@ export async function requestScheduledBroadcastContext(
   const payloadDigest =
     `sha256:${createHash("sha256").update(requestBody).digest("hex")}`;
   const operationId =
-    await createPreanalysisContextOperationId(payloadDigest);
+    await createPreanalysisContextOperationId(
+      payloadDigest,
+      configuredSource.sourceId,
+    );
   const headers = {
     "Content-Type": "application/json",
     "Origin": PREANALYSIS_CONTEXT_ORIGIN,
@@ -1042,7 +1236,10 @@ export async function reconcileReadyCatalogArtifacts(
           {
             ...currentVideo,
             state: "retryable",
-            revision: currentVideo.revision + 1,
+            revision:
+              currentVideo.state === "review-ready"
+                ? currentVideo.revision
+                : currentVideo.revision + 1,
             artifactIds: currentVideo.artifactIds.filter(
               (artifactId) => !fingerprintArtifactIds.has(artifactId),
             ),
@@ -1058,6 +1255,54 @@ export async function reconcileReadyCatalogArtifacts(
         invalidatedVideoIds.push(currentVideo.videoId);
         log.warn(
           `Isolated invalid visual fingerprint for ${currentVideo.videoId}: ${retry.errorCode}.`,
+        );
+        continue;
+      }
+      if (
+        closureErrorCode.startsWith("REVIEW_") &&
+        currentVideo.state === "review-ready"
+      ) {
+        const reviewArtifacts = relatedArtifacts.filter(
+          ({ kind }) => kind === "review",
+        );
+        for (const artifact of reviewArtifacts) {
+          await rm(resolveCatalogArtifactPath(catalogDir, artifact), {
+            force: true,
+          });
+        }
+        const retry = {
+          ...createRetryCheckpoint(
+            currentVideo,
+            "review",
+            closureErrorCode,
+            nowIso,
+          ),
+          nextAttemptAt: nowIso,
+        };
+        const reviewArtifactIds = new Set(
+          reviewArtifacts.map(({ artifactId }) => artifactId),
+        );
+        manifest = mutateCatalog(
+          manifest,
+          {
+            ...currentVideo,
+            state: "retryable",
+            revision: currentVideo.revision + 1,
+            artifactIds: currentVideo.artifactIds.filter(
+              (artifactId) => !reviewArtifactIds.has(artifactId),
+            ),
+            retry,
+          },
+          manifest.artifacts.filter(
+            (artifact) =>
+              artifact.videoId !== currentVideo.videoId ||
+              artifact.kind !== "review",
+          ),
+          nowIso,
+        );
+        invalidatedVideoIds.push(currentVideo.videoId);
+        log.warn(
+          `Isolated invalid review artifact for ${currentVideo.videoId}: ${retry.errorCode}.`,
         );
         continue;
       }
@@ -1112,6 +1357,7 @@ async function verifyReadyVideoArtifactClosure(
   video,
   catalogDir,
 ) {
+  const configuredSource = channelPreanalysisSourceForManifest(manifest);
   const artifactById = new Map(
     manifest.artifacts.map((artifact) => [artifact.artifactId, artifact]),
   );
@@ -1140,16 +1386,33 @@ async function verifyReadyVideoArtifactClosure(
   const fingerprintArtifacts = referencedArtifacts.filter(
     ({ kind }) => kind === "fingerprint",
   );
+  const reviewArtifacts = referencedArtifacts.filter(
+    ({ kind }) => kind === "review",
+  );
+  const reviewArtifactRequired =
+    video.state === "review-ready" ||
+    (video.state === "retryable" &&
+      video.retry?.stage === "fingerprint" &&
+      video.retry.lastSuccessfulState === "review-ready");
   if (transcriptArtifacts.length !== 1) {
     throw syncError(
       "TRANSCRIPT_ARTIFACT_COUNT_INVALID",
       "A ready video requires exactly one transcript artifact.",
     );
   }
-  if (fingerprintArtifacts.length > 1) {
+  if (
+    fingerprintArtifacts.length > 1 ||
+    (reviewArtifactRequired && fingerprintArtifacts.length !== 1)
+  ) {
     throw syncError(
       "FINGERPRINT_ARTIFACT_COUNT_INVALID",
-      "A ready video may reference at most one visual fingerprint artifact.",
+      "A review-ready video requires exactly one visual fingerprint artifact.",
+    );
+  }
+  if (reviewArtifacts.length !== (reviewArtifactRequired ? 1 : 0)) {
+    throw syncError(
+      "REVIEW_ARTIFACT_COUNT_INVALID",
+      "A review-ready video requires exactly one review artifact.",
     );
   }
 
@@ -1182,6 +1445,8 @@ async function verifyReadyVideoArtifactClosure(
       file.size >
         (artifact.kind === "fingerprint"
           ? CHANNEL_PREANALYSIS_VISUAL_FINGERPRINT_MAX_BYTES
+          : artifact.kind === "review"
+            ? CHANNEL_PREANALYSIS_REVIEW_BUNDLE_MAX_BYTES
           : CHANNEL_PREANALYSIS_BUNDLE_MAX_BYTES)
     ) {
       throw syncError(
@@ -1224,6 +1489,7 @@ async function verifyReadyVideoArtifactClosure(
       video.videoId,
       transcriptArtifact.revision,
       transcriptArtifact.storageKey,
+      configuredSource,
     )
   ) {
     throw syncError(
@@ -1252,9 +1518,20 @@ async function verifyReadyVideoArtifactClosure(
   }
   const bundle = parseChannelPreanalysisBundle(transcriptText);
   await verifyChannelPreanalysisTranscriptDigest(bundle);
+  const expectedBundleState =
+    video.state === "review-ready" ||
+    (video.state === "retryable" &&
+      ["review", "fingerprint"].includes(video.retry?.stage ?? "") &&
+      ["context-ready", "review-ready"].includes(
+        video.retry?.lastSuccessfulState ?? "",
+      ))
+      ? "context-ready"
+      : video.state;
   assertChannelPreanalysisBundleMatchesCatalogVideo(
     bundle,
-    video,
+    expectedBundleState === video.state
+      ? video
+      : { ...video, state: expectedBundleState },
     manifest.revision,
   );
   if (transcriptArtifact.createdAt !== bundleArtifactCreatedAt(bundle)) {
@@ -1274,6 +1551,7 @@ async function verifyReadyVideoArtifactClosure(
       fingerprintArtifact.storageKey !==
         canonicalChannelPreanalysisVisualFingerprintStorageKey(
           video.videoId,
+          configuredSource.sourceId,
         )
     ) {
       throw syncError(
@@ -1324,10 +1602,57 @@ async function verifyReadyVideoArtifactClosure(
       );
     }
   }
+  const reviewArtifact = reviewArtifacts[0];
+  if (reviewArtifact !== undefined) {
+    const reviewBytes = bytesByArtifactId.get(reviewArtifact.artifactId);
+    if (reviewBytes === undefined) {
+      throw syncError(
+        "REVIEW_ARTIFACT_MISSING",
+        "The review artifact bytes are unavailable.",
+      );
+    }
+    let review;
+    try {
+      review = parseChannelPreanalysisReviewBundle(
+        new TextDecoder("utf-8", { fatal: true }).decode(reviewBytes),
+      );
+      await verifyChannelPreanalysisReviewBundleIntegrity(review);
+    } catch (cause) {
+      throw syncError(
+        "REVIEW_ARTIFACT_SCHEMA_INVALID",
+        "The review artifact failed strict validation.",
+        cause,
+      );
+    }
+    if (
+      review.artifactId !== reviewArtifact.artifactId ||
+      review.artifactRevision !== reviewArtifact.revision ||
+      review.createdAt !== reviewArtifact.createdAt ||
+      review.source.sourceId !== configuredSource.sourceId ||
+      review.source.channelId !== video.channelId ||
+      review.source.videoId !== video.videoId ||
+      review.sourceDurationMs !== video.durationMs ||
+      review.transcriptDigest !== bundle.transcriptDigest ||
+      fingerprintArtifact === undefined ||
+      review.visualCoverage.sourceFingerprintArtifactId !==
+        fingerprintArtifact.artifactId ||
+      review.visualCoverage.sourceFingerprintDigest !==
+        fingerprintArtifact.contentDigest ||
+      bundle.broadcastContext === null ||
+      JSON.stringify(review.broadcastContext) !==
+        JSON.stringify(bundle.broadcastContext)
+    ) {
+      throw syncError(
+        "REVIEW_ARTIFACT_PROVENANCE_INVALID",
+        "The review artifact does not match its catalog context.",
+      );
+    }
+  }
 }
 
 function resolveCatalogArtifactPath(catalogDir, artifact) {
-  const prefix = "amoretto-vods/";
+  const configuredSource = configuredSourceForStorageKey(artifact.storageKey);
+  const prefix = channelPreanalysisStoragePrefix(configuredSource);
   if (!artifact.storageKey.startsWith(prefix)) {
     throw syncError(
       "ARTIFACT_STORAGE_KEY_INVALID",
@@ -1345,21 +1670,35 @@ function resolveCatalogArtifactPath(catalogDir, artifact) {
   return target;
 }
 
-function bundlePathForRevision(catalogDir, videoId, revision) {
+function bundlePathForRevision(
+  catalogDir,
+  videoId,
+  revision,
+  configuredSource = AMORETTO_CHANNEL_PREANALYSIS_SOURCE,
+) {
   return resolveCatalogArtifactPath(catalogDir, {
-    storageKey: canonicalBundleStorageKey(videoId, revision),
+    storageKey: canonicalBundleStorageKey(
+      videoId,
+      revision,
+      configuredSource,
+    ),
   });
 }
 
-export async function synchronizeAmorettoCatalog(
+export async function synchronizeChannelPreanalysisCatalog(
   options,
   dependencies = {},
 ) {
+  const configuredSource = assertConfiguredSource(
+    options.configuredSource ?? AMORETTO_CHANNEL_PREANALYSIS_SOURCE,
+  );
   const now = dependencies.now ?? (() => new Date());
   const fetchImpl = dependencies.fetch ?? globalThis.fetch;
   const commandRunner = dependencies.commandRunner ?? runBoundedCommand;
   const visualFingerprintProvider =
     dependencies.visualFingerprintProvider ?? null;
+  const scheduledAsrProvider =
+    dependencies.scheduledAsrProvider ?? prepareScheduledAsrCaptionTrack;
   if (
     visualFingerprintProvider !== null &&
     typeof visualFingerprintProvider !== "function"
@@ -1367,6 +1706,12 @@ export async function synchronizeAmorettoCatalog(
     throw syncError(
       "INVALID_ARGUMENT",
       "Visual fingerprint provider must be a function.",
+    );
+  }
+  if (typeof scheduledAsrProvider !== "function") {
+    throw syncError(
+      "INVALID_ARGUMENT",
+      "Scheduled ASR provider must be a function.",
     );
   }
   const log = dependencies.log ?? console;
@@ -1385,9 +1730,9 @@ export async function synchronizeAmorettoCatalog(
   const contextEnabled =
     contextProxyUrl !== null && contextAuthorizationToken !== null;
 
-  await verifyPinnedYtDlp(options.ytDlpPath, commandRunner);
-  const feedText = await fetchOfficialFeed(fetchImpl);
-  const feed = parseAmorettoYouTubeAtomFeed(feedText);
+  if (dependencies.skipYtDlpVerification !== true) {
+    await verifyPinnedYtDlp(options.ytDlpPath, commandRunner);
+  }
   await mkdir(join(options.catalogDir, "videos"), { recursive: true });
 
   const catalogPath = join(options.catalogDir, "catalog.json");
@@ -1404,29 +1749,59 @@ export async function synchronizeAmorettoCatalog(
   }
   let manifest =
     existingText === null
-      ? createEmptyCatalog(nowIso())
+      ? createEmptyCatalog(nowIso(), configuredSource)
       : normalizeCatalogManifest(parseJson(existingText, "catalog"));
-  const merged = mergeFeedIntoCatalog(manifest, feed, nowIso());
-  manifest = merged.manifest;
-  if (existingText === null || merged.changed) {
+  if (manifest.channelId !== configuredSource.channelId) {
+    throw syncError(
+      "WRONG_CHANNEL",
+      "Existing catalog does not belong to the configured source.",
+    );
+  }
+  if (existingText === null) {
+    // Establish a valid empty checkpoint before network discovery. A first-run
+    // feed outage can then be reported as partial without making the five-
+    // namespace publication artifact structurally incomplete.
     await writeJsonAtomic(catalogPath, manifest);
   }
-  const closure = await reconcileReadyCatalogArtifacts(manifest, {
-    catalogDir: options.catalogDir,
-    nowIso: nowIso(),
-    log,
-  });
-  manifest = closure.manifest;
-  if (closure.changed) {
+  if (existingText !== null) {
+    const closure = await reconcileReadyCatalogArtifacts(manifest, {
+      catalogDir: options.catalogDir,
+      nowIso: nowIso(),
+      log,
+    });
+    manifest = closure.manifest;
+    if (closure.changed) {
+      await writeJsonAtomic(catalogPath, manifest);
+    }
+  }
+  let merged = { manifest, changed: false };
+  if (options.skipDiscovery !== true) {
+    const feedText = await fetchOfficialFeed(fetchImpl, configuredSource);
+    const feed = parseYouTubeChannelAtomFeed(feedText, configuredSource);
+    merged = mergeFeedIntoCatalog(manifest, feed, nowIso());
+    manifest = merged.manifest;
+  } else if (existingText === null) {
+    throw syncError(
+      "CATALOG_MISSING",
+      "A discovery-free pass requires an existing source catalog.",
+    );
+  }
+  if (merged.changed) {
     await writeJsonAtomic(catalogPath, manifest);
   }
 
-  const selected = selectDueCatalogVideos(manifest, {
-    nowIso: nowIso(),
-    maxVideos: options.maxVideos,
-    videoId: options.videoId,
-    includeTranscriptReady: contextEnabled,
-  });
+  const selected =
+    options.discoveryOnly === true
+      ? []
+      : selectDueCatalogVideos(manifest, {
+          nowIso: nowIso(),
+          maxVideos: options.maxVideos,
+          videoId: options.videoId,
+          includeTranscriptReady: contextEnabled,
+          includePermanentCaptionRetries:
+            options.includePermanentCaptionRetries !== false,
+          recoverCaptionRetriesWithAsr: contextEnabled,
+        });
   const outcomes = [];
 
   for (const selectedVideo of selected) {
@@ -1439,10 +1814,12 @@ export async function synchronizeAmorettoCatalog(
         ytDlpPath: options.ytDlpPath,
         commandRunner,
         visualFingerprintProvider,
+        scheduledAsrProvider,
         contextProxyUrl,
         contextAuthorizationToken,
         fetchImplementation: fetchImpl,
         nowIso,
+        configuredSource,
       });
       manifest = result.manifest;
       outcomes.push({ videoId: selectedVideo.videoId, state: result.state });
@@ -1473,7 +1850,13 @@ export async function synchronizeAmorettoCatalog(
         {
           ...current,
           state: "retryable",
-          revision: current.revision + 1,
+          revision:
+            current.state === "review-ready" ||
+            (current.state === "retryable" &&
+              current.retry?.stage === "fingerprint" &&
+              current.retry.lastSuccessfulState === "review-ready")
+              ? current.revision
+              : current.revision + 1,
           retry,
         },
         manifest.artifacts,
@@ -1500,7 +1883,319 @@ export async function synchronizeAmorettoCatalog(
     }
   }
 
-  return { manifest, selectedVideoIds: selected.map(({ videoId }) => videoId), outcomes };
+  return {
+    manifest,
+    selectedVideoIds: selected.map(({ videoId }) => videoId),
+    selectedVideos: selected,
+    outcomes,
+  };
+}
+
+export async function synchronizeAmorettoCatalog(options, dependencies = {}) {
+  return synchronizeChannelPreanalysisCatalog(
+    {
+      ...options,
+      configuredSource: AMORETTO_CHANNEL_PREANALYSIS_SOURCE,
+    },
+    dependencies,
+  );
+}
+
+/**
+ * Reconciles every configured source while sharing one global two-video
+ * budget. The rotating source order prevents a busy channel from permanently
+ * starving quieter channels, and a second round uses any capacity left by
+ * sources that had no due work.
+ */
+export async function synchronizeConfiguredChannelCatalogs(
+  options,
+  dependencies = {},
+) {
+  const now = dependencies.now ?? (() => new Date());
+  const commandRunner = dependencies.commandRunner ?? runBoundedCommand;
+  const sourceSynchronizer =
+    dependencies.sourceSynchronizer ?? synchronizeChannelPreanalysisCatalog;
+  const snapshotVerifier =
+    dependencies.snapshotVerifier ?? verifyPersistedChannelCatalogSnapshot;
+  if (typeof sourceSynchronizer !== "function") {
+    throw syncError(
+      "INVALID_ARGUMENT",
+      "Source synchronizer must be a function.",
+    );
+  }
+  if (typeof snapshotVerifier !== "function") {
+    throw syncError(
+      "INVALID_ARGUMENT",
+      "Catalog snapshot verifier must be a function.",
+    );
+  }
+  await verifyPinnedYtDlp(options.ytDlpPath, commandRunner);
+
+  const runStartedAt = now().toISOString();
+  const orderedSources = rotateConfiguredSourcesForFairness(runStartedAt);
+  const perSourceResults = new Map();
+  const sourceErrors = [];
+  const healthySourceIds = new Set();
+  let remaining = Math.min(options.maxVideos, MAX_VIDEOS_PER_RUN);
+  let usedPermanentCaptionRetry = false;
+
+  const runSource = async (
+    configuredSource,
+    pass,
+    includePermanentCaptionRetries,
+  ) => {
+    const result = await sourceSynchronizer(
+      {
+        ...options,
+        configuredSource,
+        catalogDir: join(options.catalogDir, configuredSource.sourceId),
+        maxVideos: 1,
+        videoId: null,
+        discoveryOnly: remaining === 0,
+        skipDiscovery: pass !== 1,
+        includePermanentCaptionRetries,
+      },
+      {
+        ...dependencies,
+        now,
+        commandRunner,
+        skipYtDlpVerification: true,
+      },
+    );
+    healthySourceIds.add(configuredSource.sourceId);
+    if (result.selectedVideoIds.length > 0) {
+      remaining -= result.selectedVideoIds.length;
+      if (
+        result.selectedVideos.some((video) =>
+          PERMANENT_CAPTION_RETRY_CODES.has(video.retry?.errorCode),
+        )
+      ) {
+        usedPermanentCaptionRetry = true;
+      }
+    }
+    const prior = perSourceResults.get(configuredSource.sourceId);
+    perSourceResults.set(configuredSource.sourceId, {
+      sourceId: configuredSource.sourceId,
+      manifest: result.manifest,
+      selectedVideoIds: [
+        ...(prior?.selectedVideoIds ?? []),
+        ...result.selectedVideoIds,
+      ],
+      outcomes: [...(prior?.outcomes ?? []), ...result.outcomes],
+    });
+  };
+
+  for (const configuredSource of orderedSources) {
+    try {
+      await runSource(configuredSource, 1, false);
+    } catch (error) {
+      sourceErrors.push({
+        sourceId: configuredSource.sourceId,
+        errorCode: errorCodeOf(error),
+        message: redactDiagnostic(
+          error instanceof Error ? error.message : String(error),
+        ),
+      });
+    }
+  }
+
+  if (remaining > 0) {
+    for (const configuredSource of orderedSources) {
+      if (remaining === 0) break;
+      if (!healthySourceIds.has(configuredSource.sourceId)) continue;
+      try {
+        await runSource(configuredSource, 2, false);
+      } catch (error) {
+        sourceErrors.push({
+          sourceId: configuredSource.sourceId,
+          errorCode: errorCodeOf(error),
+          message: redactDiagnostic(
+            error instanceof Error ? error.message : String(error),
+          ),
+        });
+      }
+    }
+  }
+
+  if (remaining > 0 && !usedPermanentCaptionRetry) {
+    for (const configuredSource of orderedSources) {
+      if (remaining === 0 || usedPermanentCaptionRetry) break;
+      if (!healthySourceIds.has(configuredSource.sourceId)) continue;
+      try {
+        await runSource(configuredSource, 3, true);
+      } catch (error) {
+        sourceErrors.push({
+          sourceId: configuredSource.sourceId,
+          errorCode: errorCodeOf(error),
+          message: redactDiagnostic(
+            error instanceof Error ? error.message : String(error),
+          ),
+        });
+      }
+    }
+  }
+
+  for (const configuredSource of CHANNEL_PREANALYSIS_SOURCES) {
+    const catalogDir = join(options.catalogDir, configuredSource.sourceId);
+    try {
+      const manifest = await snapshotVerifier(
+        catalogDir,
+        configuredSource,
+      );
+      const prior = perSourceResults.get(configuredSource.sourceId);
+      perSourceResults.set(configuredSource.sourceId, {
+        sourceId: configuredSource.sourceId,
+        manifest,
+        selectedVideoIds: prior?.selectedVideoIds ?? [],
+        outcomes: prior?.outcomes ?? [],
+      });
+    } catch (error) {
+      sourceErrors.push({
+        sourceId: configuredSource.sourceId,
+        errorCode: "CATALOG_SNAPSHOT_INVALID",
+        message: redactDiagnostic(
+          error instanceof Error ? error.message : String(error),
+        ),
+      });
+    }
+  }
+
+  if (healthySourceIds.size === 0) {
+    throw syncError(
+      "ALL_SOURCE_RECONCILIATION_FAILED",
+      "Every configured YouTube source failed reconciliation.",
+    );
+  }
+  return {
+    runStartedAt,
+    globalLimit: Math.min(options.maxVideos, MAX_VIDEOS_PER_RUN),
+    processedVideoCount:
+      Math.min(options.maxVideos, MAX_VIDEOS_PER_RUN) - remaining,
+    sources: CHANNEL_PREANALYSIS_SOURCES.map(
+      ({ sourceId }) =>
+        perSourceResults.get(sourceId) ?? {
+          sourceId,
+          manifest: null,
+          selectedVideoIds: [],
+          outcomes: [],
+        },
+    ),
+    sourceErrors: deduplicateSourceErrors(sourceErrors),
+  };
+}
+
+export async function verifyPersistedChannelCatalogSnapshot(
+  catalogDir,
+  configuredSource,
+) {
+  assertConfiguredSource(configuredSource);
+  const catalogPath = join(catalogDir, "catalog.json");
+  const text = await readTextIfPresent(catalogPath);
+  if (text === null) {
+    throw syncError(
+      "CATALOG_MISSING",
+      `Catalog snapshot is missing for ${configuredSource.sourceId}.`,
+    );
+  }
+  if (Buffer.byteLength(text) > CHANNEL_PREANALYSIS_MANIFEST_MAX_BYTES) {
+    throw syncError(
+      "CATALOG_TOO_LARGE",
+      `Catalog snapshot is too large for ${configuredSource.sourceId}.`,
+    );
+  }
+  const manifest = normalizeCatalogManifest(
+    parseJson(text, `${configuredSource.sourceId} catalog`),
+  );
+  if (manifest.channelId !== configuredSource.channelId) {
+    throw syncError(
+      "WRONG_CHANNEL",
+      `Catalog snapshot belongs to the wrong source for ${configuredSource.sourceId}.`,
+    );
+  }
+  for (const video of manifest.videos) {
+    if (video.artifactIds.length === 0) continue;
+    await verifyReadyVideoArtifactClosure(manifest, video, catalogDir);
+  }
+  return manifest;
+}
+
+function deduplicateSourceErrors(sourceErrors) {
+  const seen = new Set();
+  return sourceErrors.filter(({ sourceId, errorCode }) => {
+    const key = `${sourceId}:${errorCode}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+export function rotateConfiguredSourcesForFairness(nowIso) {
+  const nowMs = Date.parse(assertIsoDate(nowIso, "scheduler time"));
+  const rotation =
+    Math.floor(nowMs / (3 * 60 * 60_000)) % CHANNEL_PREANALYSIS_SOURCES.length;
+  return [
+    ...CHANNEL_PREANALYSIS_SOURCES.slice(rotation),
+    ...CHANNEL_PREANALYSIS_SOURCES.slice(0, rotation),
+  ];
+}
+
+export function createChannelPreanalysisRunReport(result, completedAt) {
+  assertIsoDate(completedAt, "run report completedAt");
+  return {
+    schemaVersion: 1,
+    mode: "all",
+    status: result.sourceErrors.length === 0 ? "complete" : "partial",
+    runStartedAt: result.runStartedAt,
+    completedAt,
+    globalLimit: result.globalLimit,
+    processedVideoCount: result.processedVideoCount,
+    sources: result.sources.map(
+      ({ sourceId, manifest, selectedVideoIds, outcomes }) => ({
+        sourceId,
+        catalogRevision: manifest?.revision ?? null,
+        selectedVideoIds,
+        outcomes,
+      }),
+    ),
+    sourceErrors: result.sourceErrors,
+  };
+}
+
+export function createSingleChannelPreanalysisRunReport(
+  result,
+  configuredSource,
+  globalLimit,
+  runStartedAt,
+  completedAt,
+) {
+  assertConfiguredSource(configuredSource);
+  if (
+    !Number.isSafeInteger(globalLimit) ||
+    globalLimit < 1 ||
+    globalLimit > MAX_VIDEOS_PER_RUN
+  ) {
+    throw syncError("INVALID_ARGUMENT", "Single-source report limit is invalid.");
+  }
+  assertIsoDate(runStartedAt, "single-source runStartedAt");
+  assertIsoDate(completedAt, "single-source completedAt");
+  return {
+    schemaVersion: 1,
+    mode: "single",
+    status: "complete",
+    runStartedAt,
+    completedAt,
+    globalLimit,
+    processedVideoCount: result.selectedVideoIds.length,
+    sources: [
+      {
+        sourceId: configuredSource.sourceId,
+        catalogRevision: result.manifest.revision,
+        selectedVideoIds: result.selectedVideoIds,
+        outcomes: result.outcomes,
+      },
+    ],
+    sourceErrors: [],
+  };
 }
 
 async function processCatalogVideo({
@@ -1511,10 +2206,12 @@ async function processCatalogVideo({
   ytDlpPath,
   commandRunner,
   visualFingerprintProvider,
+  scheduledAsrProvider,
   contextProxyUrl,
   contextAuthorizationToken,
   fetchImplementation,
   nowIso,
+  configuredSource,
 }) {
   let video =
     manifest.videos.find(({ videoId }) => videoId === selectedVideo.videoId) ??
@@ -1527,7 +2224,12 @@ async function processCatalogVideo({
   );
   let bundlePath =
     activeTranscriptArtifact === undefined
-      ? bundlePathForRevision(catalogDir, video.videoId, 1)
+      ? bundlePathForRevision(
+          catalogDir,
+          video.videoId,
+          1,
+          configuredSource,
+        )
       : resolveCatalogArtifactPath(catalogDir, activeTranscriptArtifact);
   let transcriptBundle = null;
   let transcriptBundleText = null;
@@ -1551,22 +2253,24 @@ async function processCatalogVideo({
 
       if (
         recoveredBundle.state === "context-ready" &&
-        video.state === "context-ready" &&
+        ["context-ready", "review-ready"].includes(video.state) &&
         hasVisualFingerprintArtifact(manifest, video.videoId)
       ) {
-        return { manifest, state: "context-ready" };
+        return { manifest, state: video.state };
       }
       if (
         (recoveredBundle.state === "transcript-ready" &&
           video.state === "transcript-ready") ||
         (recoveredBundle.state === "context-ready" &&
-          video.state === "context-ready")
+          ["context-ready", "review-ready"].includes(video.state))
       ) {
         transcriptBundle = recoveredBundle;
         transcriptBundleText = existingBundleText;
       } else if (
         (recoveredBundle.state === "transcript-ready" &&
           isContextRetryCheckpoint(video)) ||
+        (recoveredBundle.state === "context-ready" &&
+          isReviewRetryCheckpoint(video)) ||
         isFingerprintRetryCheckpoint(video, recoveredBundle.state)
       ) {
         verifyRetryableTranscriptCheckpoint(
@@ -1586,6 +2290,7 @@ async function processCatalogVideo({
           existingBundleText,
           bundleArtifactCreatedAt(recoveredBundle),
           artifactRevision,
+          configuredSource,
         );
         const attachedVideo = {
           ...video,
@@ -1691,7 +2396,11 @@ async function processCatalogVideo({
     );
     const metadataValue = parseJson(metadataOutput.stdout, "yt-dlp metadata");
     fingerprintMetadataValue = metadataValue;
-    const metadata = validateYtDlpMetadata(metadataValue, video.videoId);
+    const metadata = validateYtDlpMetadata(
+      metadataValue,
+      video.videoId,
+      configuredSource,
+    );
     video = {
       ...video,
       title: metadata.title,
@@ -1707,64 +2416,106 @@ async function processCatalogVideo({
   }
 
   if (transcriptBundle === null) {
-    bundlePath = bundlePathForRevision(catalogDir, video.videoId, 1);
+    bundlePath = bundlePathForRevision(
+      catalogDir,
+      video.videoId,
+      1,
+      configuredSource,
+    );
     const temporaryDirectory = await mkdtemp(
-      join(tmpdir(), "exclipper-amoretto-"),
+      join(tmpdir(), `exclipper-${configuredSource.sourceId}-`),
     );
     try {
-      await commandRunner(
-        ytDlpPath,
-        [
-          "--no-config",
-          "--no-playlist",
-          "--skip-download",
-          "--write-subs",
-          "--write-auto-subs",
-          "--sub-langs",
-          "ko,ko-orig",
-          "--sub-format",
-          "json3",
-          "--no-warnings",
-          "--no-progress",
-          "--no-mtime",
-          "--paths",
-          temporaryDirectory,
-          "--output",
-          "%(id)s.%(ext)s",
-          "--",
-          video.watchUrl,
-        ],
-        { timeoutMs: YT_DLP_TIMEOUT_MS },
-      );
-      const captionSource = await locateCaptionJson3(
-        temporaryDirectory,
-        video.videoId,
-      );
-      const captionJson = parseJson(
-        await readBoundedUtf8File(
-          captionSource.path,
-          MAX_CAPTION_JSON3_BYTES,
-          "CAPTION_FILE_TOO_LARGE",
-          "CAPTION_ENCODING_INVALID",
-        ),
-        "ko-orig JSON3",
-      );
       const extractedAt = nowIso();
       const prospectiveCatalogRevision = manifest.revision + 1;
-      const bundle = await createTranscriptReadyBundle({
-        video,
-        captionJson,
-        captionLanguageCode: captionSource.languageCode,
-        captionIsAutoGenerated: captionSource.isAutoGenerated,
-        catalogRevision: prospectiveCatalogRevision,
-        extractedAt,
-      });
+      let bundle;
+      let scheduledAsrCheckpoint = null;
+      try {
+        await commandRunner(
+          ytDlpPath,
+          [
+            "--no-config",
+            "--no-playlist",
+            "--skip-download",
+            "--write-subs",
+            "--write-auto-subs",
+            "--sub-langs",
+            "ko,ko-orig",
+            "--sub-format",
+            "json3",
+            "--no-warnings",
+            "--no-progress",
+            "--no-mtime",
+            "--paths",
+            temporaryDirectory,
+            "--output",
+            "%(id)s.%(ext)s",
+            "--",
+            video.watchUrl,
+          ],
+          { timeoutMs: YT_DLP_TIMEOUT_MS },
+        );
+        const captionSource = await locateCaptionJson3(
+          temporaryDirectory,
+          video.videoId,
+        );
+        const captionJson = parseJson(
+          await readBoundedUtf8File(
+            captionSource.path,
+            MAX_CAPTION_JSON3_BYTES,
+            "CAPTION_FILE_TOO_LARGE",
+            "CAPTION_ENCODING_INVALID",
+          ),
+          "ko-orig JSON3",
+        );
+        bundle = await createTranscriptReadyBundle({
+          video,
+          captionJson,
+          captionLanguageCode: captionSource.languageCode,
+          captionIsAutoGenerated: captionSource.isAutoGenerated,
+          catalogRevision: prospectiveCatalogRevision,
+          extractedAt,
+        });
+      } catch (cause) {
+        if (
+          !PERMANENT_CAPTION_RETRY_CODES.has(errorCodeOf(cause)) ||
+          contextProxyUrl === null ||
+          contextAuthorizationToken === null
+        ) {
+          throw cause;
+        }
+        const prepared = await scheduledAsrProvider(
+          {
+            sourceId: configuredSource.sourceId,
+            channelId: configuredSource.channelId,
+            videoId: video.videoId,
+            durationMs: video.durationMs,
+            watchUrl: video.watchUrl,
+            catalogDir,
+            proxyUrl: contextProxyUrl,
+            authorizationToken: contextAuthorizationToken,
+          },
+          {
+            ytDlpPath,
+            environment: createYtDlpChildEnvironment(process.env),
+          },
+        );
+        scheduledAsrCheckpoint = prepared.checkpointPath;
+        bundle = await createScheduledAsrTranscriptReadyBundle({
+          video,
+          captionTrack: prepared.track,
+          catalogRevision: prospectiveCatalogRevision,
+          extractedAt,
+        });
+      }
       const serializedBundle = serializeBundle(bundle);
       await writeImmutableAtomic(bundlePath, serializedBundle);
       const artifact = artifactForBundle(
         video.videoId,
         serializedBundle,
         extractedAt,
+        1,
+        configuredSource,
       );
       const transcriptReadyVideo = {
         ...video,
@@ -1807,6 +2558,11 @@ async function processCatalogVideo({
         throw error;
       }
       await writeJsonAtomic(catalogPath, nextManifest);
+      if (scheduledAsrCheckpoint !== null) {
+        await removeScheduledAsrCheckpoint(scheduledAsrCheckpoint).catch(
+          () => undefined,
+        );
+      }
       manifest = nextManifest;
       video = transcriptReadyVideo;
       transcriptBundle = bundle;
@@ -1818,7 +2574,11 @@ async function processCatalogVideo({
 
   let primaryResult;
   if (transcriptBundle.state === "context-ready") {
-    primaryResult = { manifest, state: "context-ready" };
+    primaryResult = {
+      manifest,
+      state:
+        video.state === "review-ready" ? "review-ready" : "context-ready",
+    };
   } else if (
     contextProxyUrl === null ||
     contextAuthorizationToken === null
@@ -1897,6 +2657,7 @@ async function processCatalogVideo({
       visualFingerprintProvider,
       fetchImplementation,
       nowIso,
+      configuredSource,
     });
     manifest = attached.manifest;
   }
@@ -1914,11 +2675,13 @@ async function attachVisualFingerprint({
   visualFingerprintProvider,
   fetchImplementation,
   nowIso,
+  configuredSource,
 }) {
   const fingerprintPath = resolveCatalogArtifactPath(catalogDir, {
     storageKey:
       canonicalChannelPreanalysisVisualFingerprintStorageKey(
         video.videoId,
+        configuredSource.sourceId,
       ),
   });
   let serializedFingerprint = await readTextIfPresent(fingerprintPath);
@@ -1974,6 +2737,7 @@ async function attachVisualFingerprint({
         const metadata = validateYtDlpMetadata(
           metadataValue,
           video.videoId,
+          configuredSource,
         );
         if (metadata.durationMs !== video.durationMs) {
           throw syncError(
@@ -2011,6 +2775,7 @@ async function attachVisualFingerprint({
       video.videoId,
       serializedFingerprint,
       fingerprint.createdAt,
+      configuredSource,
     );
     const restoredState = isFingerprintRetryCheckpoint(video)
       ? video.retry.lastSuccessfulState
@@ -2018,7 +2783,10 @@ async function attachVisualFingerprint({
     const attachedVideo = {
       ...video,
       state: restoredState,
-      revision: video.revision + 1,
+      revision:
+        restoredState === "review-ready"
+          ? video.revision
+          : video.revision + 1,
       artifactIds: [
         ...video.artifactIds.filter(
           (artifactId) =>
@@ -2068,6 +2836,7 @@ async function recoverOrphanContextBundle({
   catalogDir,
   nowIso,
 }) {
+  const configuredSource = channelPreanalysisSourceForManifest(manifest);
   const currentArtifactRevision = manifest.artifacts
     .filter(
       (artifact) =>
@@ -2083,6 +2852,7 @@ async function recoverOrphanContextBundle({
     catalogDir,
     video.videoId,
     contextArtifactRevision,
+    configuredSource,
   );
   const contextBundleText = await readTextIfPresent(contextBundlePath);
   if (contextBundleText === null) return null;
@@ -2108,6 +2878,7 @@ async function recoverOrphanContextBundle({
       contextBundleText,
       bundleArtifactCreatedAt(contextBundle),
       contextArtifactRevision,
+      configuredSource,
     );
     const contextReadyVideo = {
       ...video,
@@ -2162,6 +2933,7 @@ async function promoteTranscriptBundleToContext({
   fetchImplementation,
   nowIso,
 }) {
+  const configuredSource = channelPreanalysisSourceForManifest(manifest);
   if (
     transcriptBundleText === null ||
     (await readTextIfPresent(transcriptBundlePath)) !== transcriptBundleText
@@ -2205,11 +2977,13 @@ async function promoteTranscriptBundleToContext({
     serializedContextBundle,
     bundleArtifactCreatedAt(contextBundle),
     contextArtifactRevision,
+    configuredSource,
   );
   const contextBundlePath = bundlePathForRevision(
     catalogDir,
     video.videoId,
     contextArtifactRevision,
+    configuredSource,
   );
   const contextReadyVideo = {
     ...video,
@@ -2293,11 +3067,19 @@ function isContextRetryCheckpoint(video) {
   );
 }
 
+function isReviewRetryCheckpoint(video) {
+  return (
+    video.state === "retryable" &&
+    video.retry?.stage === "review" &&
+    video.retry.lastSuccessfulState === "context-ready"
+  );
+}
+
 function isFingerprintRetryCheckpoint(video, bundleState = null) {
   if (
     video.state !== "retryable" ||
     video.retry?.stage !== "fingerprint" ||
-    !["transcript-ready", "context-ready"].includes(
+    !["transcript-ready", "context-ready", "review-ready"].includes(
       video.retry.lastSuccessfulState,
     )
   ) {
@@ -2305,7 +3087,9 @@ function isFingerprintRetryCheckpoint(video, bundleState = null) {
   }
   return (
     bundleState === null ||
-    video.retry.lastSuccessfulState === bundleState
+    video.retry.lastSuccessfulState === bundleState ||
+    (video.retry.lastSuccessfulState === "review-ready" &&
+      bundleState === "context-ready")
   );
 }
 
@@ -2357,23 +3141,36 @@ async function verifyPinnedYtDlp(ytDlpPath, commandRunner) {
   }
 }
 
-async function fetchOfficialFeed(fetchImpl) {
+async function fetchOfficialFeed(
+  fetchImpl,
+  configuredSource = AMORETTO_CHANNEL_PREANALYSIS_SOURCE,
+) {
+  assertConfiguredSource(configuredSource);
   if (typeof fetchImpl !== "function") {
     throw syncError("FETCH_UNAVAILABLE", "Global fetch is unavailable.");
   }
-  const response = await fetchImpl(AMORETTO_YOUTUBE_CHANNEL_FEED_URL, {
-    method: "GET",
-    headers: {
-      accept: "application/atom+xml, application/xml;q=0.9",
-      "user-agent": "ExClipper-channel-preanalysis/1",
-    },
-    redirect: "follow",
-    signal: AbortSignal.timeout(FEED_TIMEOUT_MS),
-  });
+  let response;
+  try {
+    response = await fetchImpl(configuredSource.feedUrl, {
+      method: "GET",
+      headers: {
+        accept: "application/atom+xml, application/xml;q=0.9",
+        "user-agent": "ExClipper-channel-preanalysis/1",
+      },
+      redirect: "follow",
+      signal: AbortSignal.timeout(FEED_TIMEOUT_MS),
+    });
+  } catch (cause) {
+    throw syncError(
+      "FEED_FETCH_FAILED",
+      `YouTube feed request failed for ${configuredSource.sourceId}.`,
+      cause,
+    );
+  }
   if (!response.ok) {
     throw syncError("FEED_HTTP_ERROR", `YouTube feed returned HTTP ${response.status}.`);
   }
-  const finalUrl = new URL(response.url || AMORETTO_YOUTUBE_CHANNEL_FEED_URL);
+  const finalUrl = new URL(response.url || configuredSource.feedUrl);
   if (
     finalUrl.protocol !== "https:" ||
     !["www.youtube.com", "youtube.com"].includes(finalUrl.hostname)
@@ -2727,6 +3524,10 @@ function sortCatalogVideos(videos) {
 }
 
 function normalizeCatalogManifest(value) {
+  const configuredSource =
+    isRecord(value) && typeof value.channelId === "string"
+      ? channelPreanalysisSourceByChannelId(value.channelId)
+      : null;
   if (
     !isRecord(value) ||
     !hasExactKeys(value, [
@@ -2739,8 +3540,8 @@ function normalizeCatalogManifest(value) {
       "artifacts",
     ]) ||
     value.schemaVersion !== CHANNEL_PREANALYSIS_CATALOG_SCHEMA_VERSION ||
-    value.channelId !== AMORETTO_YOUTUBE_CHANNEL_ID ||
-    value.channelHandle !== AMORETTO_YOUTUBE_CHANNEL_HANDLE ||
+    configuredSource === null ||
+    value.channelHandle !== configuredSource.channelHandle ||
     !Number.isSafeInteger(value.revision) ||
     value.revision < 1 ||
     !Array.isArray(value.videos) ||
@@ -2771,7 +3572,7 @@ function normalizeCatalogManifest(value) {
         "registeredLocalSampledFingerprints",
         "retry",
       ]) ||
-      raw.channelId !== AMORETTO_YOUTUBE_CHANNEL_ID ||
+      raw.channelId !== configuredSource.channelId ||
       typeof raw.videoId !== "string" ||
       !YOUTUBE_VIDEO_ID_PATTERN.test(raw.videoId) ||
       videoIds.has(raw.videoId) ||
@@ -2835,7 +3636,7 @@ function normalizeCatalogManifest(value) {
       );
     }
     return {
-      channelId: AMORETTO_YOUTUBE_CHANNEL_ID,
+      channelId: configuredSource.channelId,
       videoId: raw.videoId,
       title: raw.title,
       normalizedTitle: raw.normalizedTitle,
@@ -2871,17 +3672,18 @@ function normalizeCatalogManifest(value) {
       typeof raw.videoId !== "string" ||
       !YOUTUBE_VIDEO_ID_PATTERN.test(raw.videoId) ||
       !videoIds.has(raw.videoId) ||
-      !["metadata", "transcript", "context", "fingerprint"].includes(
+      !["metadata", "transcript", "context", "review", "fingerprint"].includes(
         raw.kind,
       ) ||
       !Number.isSafeInteger(raw.revision) ||
       raw.revision < 1 ||
-      !isSafeCatalogStorageKey(raw.storageKey) ||
+      !isSafeCatalogStorageKey(raw.storageKey, configuredSource) ||
       (raw.kind === "transcript" &&
         !isCanonicalBundleStorageKey(
           raw.videoId,
           raw.revision,
           raw.storageKey,
+          configuredSource,
         )) ||
       (raw.kind === "fingerprint" &&
         (raw.revision !== 1 ||
@@ -2892,9 +3694,23 @@ function normalizeCatalogManifest(value) {
           raw.storageKey !==
             canonicalChannelPreanalysisVisualFingerprintStorageKey(
               raw.videoId,
+              configuredSource.sourceId,
             ) ||
           raw.byteLength >
             CHANNEL_PREANALYSIS_VISUAL_FINGERPRINT_MAX_BYTES)) ||
+      (raw.kind === "review" &&
+        (raw.artifactId !==
+          channelPreanalysisReviewBundleArtifactId(
+            raw.videoId,
+            raw.revision,
+          ) ||
+          raw.storageKey !==
+            channelPreanalysisReviewBundleStorageKey(
+              configuredSource.sourceId,
+              raw.videoId,
+              raw.revision,
+            ) ||
+          raw.byteLength > CHANNEL_PREANALYSIS_REVIEW_BUNDLE_MAX_BYTES)) ||
       typeof raw.contentDigest !== "string" ||
       !SHA256_PATTERN.test(raw.contentDigest) ||
       !Number.isSafeInteger(raw.byteLength) ||
@@ -2937,9 +3753,35 @@ function normalizeCatalogManifest(value) {
     const transcriptArtifacts = referencedArtifacts.filter(
       ({ kind }) => kind === "transcript",
     );
+    const fingerprintArtifacts = referencedArtifacts.filter(
+      ({ kind }) => kind === "fingerprint",
+    );
+    const reviewArtifacts = referencedArtifacts.filter(
+      ({ kind }) => kind === "review",
+    );
+    const reviewArtifactRequired =
+      video.state === "review-ready" ||
+      (video.state === "retryable" &&
+        video.retry?.stage === "fingerprint" &&
+        video.retry.lastSuccessfulState === "review-ready");
+    const transcriptArtifactRequired =
+      SUCCESSFUL_STATES.has(video.state) ||
+      (video.state === "retryable" &&
+        ["context", "review", "fingerprint"].includes(
+          video.retry?.stage ?? "",
+        ) &&
+        ["transcript-ready", "context-ready", "review-ready"].includes(
+          video.retry?.lastSuccessfulState ?? "",
+        ));
     if (
-      (SUCCESSFUL_STATES.has(video.state) &&
+      (transcriptArtifactRequired &&
         transcriptArtifacts.length !== 1) ||
+      fingerprintArtifacts.length > 1 ||
+      reviewArtifacts.length !== (reviewArtifactRequired ? 1 : 0) ||
+      (reviewArtifactRequired && video.durationMs === null) ||
+      reviewArtifacts.some(
+        (artifact) => artifact.revision !== video.revision,
+      ) ||
       transcriptArtifacts.some((artifact) => artifact.revision > video.revision)
     ) {
       throw syncError(
@@ -2958,8 +3800,8 @@ function normalizeCatalogManifest(value) {
 
   const normalized = {
     schemaVersion: CHANNEL_PREANALYSIS_CATALOG_SCHEMA_VERSION,
-    channelId: AMORETTO_YOUTUBE_CHANNEL_ID,
-    channelHandle: AMORETTO_YOUTUBE_CHANNEL_HANDLE,
+    channelId: configuredSource.channelId,
+    channelHandle: configuredSource.channelHandle,
     revision: value.revision,
     generatedAt,
     videos: sortCatalogVideos(videos),
@@ -2980,7 +3822,7 @@ function normalizeRetry(value) {
       "nextAttemptAt",
       "errorCode",
     ]) ||
-    !["metadata", "transcript", "context", "fingerprint"].includes(
+    !["metadata", "transcript", "context", "review", "fingerprint"].includes(
       value.stage,
     ) ||
     ![
@@ -2988,6 +3830,7 @@ function normalizeRetry(value) {
       "metadata-ready",
       "transcript-ready",
       "context-ready",
+      "review-ready",
     ].includes(value.lastSuccessfulState) ||
     !Number.isSafeInteger(value.attemptCount) ||
     value.attemptCount < 1 ||
@@ -3004,12 +3847,15 @@ function normalizeRetry(value) {
       value.lastSuccessfulState !== "metadata-ready") ||
     (value.stage === "context" &&
       value.lastSuccessfulState !== "transcript-ready") ||
+    (value.stage === "review" &&
+      value.lastSuccessfulState !== "context-ready") ||
     (value.stage === "fingerprint" &&
       ![
         "discovered",
         "metadata-ready",
         "transcript-ready",
         "context-ready",
+        "review-ready",
       ].includes(value.lastSuccessfulState))
   ) {
     throw syncError("CATALOG_INVALID", "Catalog retry stage is inconsistent.");
@@ -3300,15 +4146,26 @@ function uniqueStrings(values) {
   return [...new Set(values)];
 }
 
-function canonicalBundleStorageKey(videoId, revision) {
-  return `amoretto-vods/videos/${videoId}.v${revision}.json`;
+function canonicalBundleStorageKey(
+  videoId,
+  revision,
+  configuredSource = AMORETTO_CHANNEL_PREANALYSIS_SOURCE,
+) {
+  assertConfiguredSource(configuredSource);
+  return `${configuredSource.sourceId}/videos/${videoId}.v${revision}.json`;
 }
 
-function isCanonicalBundleStorageKey(videoId, revision, storageKey) {
+function isCanonicalBundleStorageKey(
+  videoId,
+  revision,
+  storageKey,
+  configuredSource = AMORETTO_CHANNEL_PREANALYSIS_SOURCE,
+) {
   return (
-    storageKey === canonicalBundleStorageKey(videoId, revision) ||
+    storageKey ===
+      canonicalBundleStorageKey(videoId, revision, configuredSource) ||
     (revision === 1 &&
-      storageKey === `amoretto-vods/videos/${videoId}.json`)
+      storageKey === `${configuredSource.sourceId}/videos/${videoId}.json`)
   );
 }
 
@@ -3332,19 +4189,63 @@ function isBoundedText(value, maximum) {
   );
 }
 
-function isSafeCatalogStorageKey(value) {
+function isSafeCatalogStorageKey(
+  value,
+  configuredSource = AMORETTO_CHANNEL_PREANALYSIS_SOURCE,
+) {
+  assertConfiguredSource(configuredSource);
+  const prefix = channelPreanalysisStoragePrefix(configuredSource);
   return (
     typeof value === "string" &&
     value.length <= 512 &&
-    /^amoretto-vods\/[A-Za-z0-9_-]+(?:\/[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*)*$/u.test(
-      value,
-    ) &&
+    value.startsWith(prefix) &&
+    /^[A-Za-z0-9_-]+\/[A-Za-z0-9_-]+(?:\/[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*)*$/u.test(value) &&
     value.split("/").every((segment) => segment !== "." && segment !== "..")
   );
 }
 
 function isRecord(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function assertConfiguredSource(value) {
+  if (!isRecord(value) || typeof value.sourceId !== "string") {
+    throw syncError(
+      "SOURCE_INVALID",
+      "Channel preanalysis source is invalid.",
+    );
+  }
+  const canonical = channelPreanalysisSourceById(value.sourceId);
+  if (
+    canonical === null ||
+    value.channelId !== canonical.channelId ||
+    value.channelHandle !== canonical.channelHandle ||
+    value.playlistId !== canonical.playlistId
+  ) {
+    throw syncError(
+      "SOURCE_INVALID",
+      "Channel preanalysis source does not match the configured registry.",
+    );
+  }
+  return canonical;
+}
+
+function configuredSourceForStorageKey(storageKey) {
+  if (typeof storageKey !== "string") {
+    throw syncError(
+      "ARTIFACT_STORAGE_KEY_INVALID",
+      "Artifact storage key must be text.",
+    );
+  }
+  const sourceId = storageKey.split("/", 1)[0] ?? "";
+  const configuredSource = channelPreanalysisSourceById(sourceId);
+  if (configuredSource === null) {
+    throw syncError(
+      "ARTIFACT_STORAGE_KEY_INVALID",
+      "Artifact storage key has an unsupported source namespace.",
+    );
+  }
+  return configuredSource;
 }
 
 function fileURLSafeName(path) {
@@ -3418,9 +4319,10 @@ function printUsage() {
   npx tsx scripts/sync-amoretto-preanalysis.mjs [options]
 
 Options:
-  --video-id ID       Force one catalog video to retry.
-  --max-videos 1|2    Process at most this many due videos (default: 2).
-  --catalog-dir PATH  Catalog branch output directory.
+  --source ID|all     Reconcile all five sources (default) or one source.
+  --video-id ID       Force one catalog video to retry; requires --source.
+  --max-videos 1|2    Process at most this many videos globally (default: 2).
+  --catalog-dir PATH  Catalog root for all, or source directory for one source.
   --yt-dlp PATH       Pinned yt-dlp ${PINNED_YT_DLP_VERSION} executable.
   --context-proxy URL Opt in through a dedicated authenticated context endpoint.
   --help              Show this help.`);
@@ -3432,9 +4334,45 @@ async function main() {
     printUsage();
     return;
   }
-  const result = await synchronizeAmorettoCatalog(options);
+  if (options.configuredSource === null) {
+    const result = await synchronizeConfiguredChannelCatalogs(options);
+    const report = createChannelPreanalysisRunReport(
+      result,
+      new Date().toISOString(),
+    );
+    await writeJsonAtomic(
+      join(options.catalogDir, CHANNEL_PREANALYSIS_RUN_REPORT_FILE),
+      report,
+    );
+    const outcomes = result.sources.flatMap(({ outcomes }) => outcomes);
+    console.log(
+      `Sources ${result.sources.length}; selected ${result.processedVideoCount}/${result.globalLimit}; ` +
+        `context-ready ${outcomes.filter(({ state }) => state === "context-ready").length}; ` +
+        `retryable ${outcomes.filter(({ state }) => state === "retryable").length}; ` +
+        `source-errors ${result.sourceErrors.length}.`,
+    );
+    return;
+  }
+  const runStartedAt = new Date().toISOString();
+  const result = await synchronizeChannelPreanalysisCatalog(options);
+  const completedAt = new Date().toISOString();
+  const report = createSingleChannelPreanalysisRunReport(
+    result,
+    options.configuredSource,
+    options.maxVideos,
+    runStartedAt,
+    completedAt,
+  );
+  await writeJsonAtomic(
+    join(
+      dirname(options.catalogDir),
+      CHANNEL_PREANALYSIS_RUN_REPORT_FILE,
+    ),
+    report,
+  );
   console.log(
-    `Catalog revision ${result.manifest.revision}; selected ${result.selectedVideoIds.length}; ` +
+    `${options.configuredSource.sourceId} revision ${result.manifest.revision}; ` +
+      `selected ${result.selectedVideoIds.length}; ` +
       `transcript-ready ${result.outcomes.filter(({ state }) => state === "transcript-ready").length}; ` +
       `context-ready ${result.outcomes.filter(({ state }) => state === "context-ready").length}; ` +
       `retryable ${result.outcomes.filter(({ state }) => state === "retryable").length}.`,

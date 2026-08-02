@@ -1,12 +1,26 @@
-name: Refresh Amoretto preanalysis catalog
+name: Refresh channel preanalysis catalogs
 
 on:
   schedule:
-    - cron: "17 */3 * * *"
+    # RSS/catalog preflight runs every 30 minutes. Expensive media preparation
+    # remains gated by the preflight result below.
+    - cron: "17,47 * * * *"
   workflow_dispatch:
     inputs:
+      source:
+        description: "Source for an exact retry; leave all for normal refresh"
+        required: true
+        default: "all"
+        type: choice
+        options:
+          - all
+          - amoretto-vods
+          - eureka-history
+          - sena-replay
+          - coco-replay
+          - mangjing-compilations
       video_id:
-        description: "Optional exact YouTube video ID to retry"
+        description: "Optional exact YouTube video ID; requires a single source"
         required: false
         type: string
       max_videos:
@@ -28,7 +42,7 @@ concurrency:
 jobs:
   prepare:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 120
     outputs:
       catalog_base_sha: ${{ steps.catalog-base.outputs.sha }}
     steps:
@@ -67,6 +81,36 @@ jobs:
         shell: bash
         run: echo "sha=$(git rev-parse HEAD)" >> "${GITHUB_OUTPUT}"
 
+      - name: Bootstrap missing configured catalog namespaces
+        shell: bash
+        run: |
+          set -euo pipefail
+          namespaces=(
+            amoretto-vods
+            eureka-history
+            sena-replay
+            coco-replay
+            mangjing-compilations
+          )
+          for namespace in "${namespaces[@]}"; do
+            fallback="source/public/preanalysis/${namespace}"
+            target="catalog/${namespace}"
+            test -f "${fallback}/catalog.json"
+            if find "${fallback}" -type l -print -quit | grep -q .; then
+              echo "::error::Bundled fallback ${namespace} must not contain symbolic links."
+              exit 1
+            fi
+            if [[ -L "${target}" ]]; then
+              echo "::error::Catalog namespace ${namespace} must not be a symbolic link."
+              exit 1
+            fi
+            if [[ -e "${target}" ]]; then
+              test -f "${target}/catalog.json"
+              continue
+            fi
+            cp -R -- "${fallback}" "${target}"
+          done
+
       - name: Set up Node.js
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
         with:
@@ -78,15 +122,80 @@ jobs:
         working-directory: source
         run: npm ci --ignore-scripts
 
+      - name: Require review-ready Worker credentials
+        shell: bash
+        env:
+          CHANNEL_PREANALYSIS_CONTEXT_PROXY_URL: ${{ secrets.CHANNEL_PREANALYSIS_CONTEXT_PROXY_URL }}
+          CHANNEL_PREANALYSIS_CONTEXT_TOKEN: ${{ secrets.CHANNEL_PREANALYSIS_CONTEXT_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${CHANNEL_PREANALYSIS_CONTEXT_PROXY_URL}" || -z "${CHANNEL_PREANALYSIS_CONTEXT_TOKEN}" ]]; then
+            echo "::error::Review-ready preanalysis requires both CHANNEL_PREANALYSIS_CONTEXT_PROXY_URL and CHANNEL_PREANALYSIS_CONTEXT_TOKEN."
+            exit 1
+          fi
+
+      - name: Discover uploads and decide whether heavy preparation is due
+        id: upload-preflight
+        working-directory: source
+        shell: bash
+        env:
+          CATALOG_DIRECTORY: ${{ github.workspace }}/catalog
+          SOURCE_ID: ${{ inputs.source || 'all' }}
+          MAX_VIDEOS: ${{ inputs.max_videos || '2' }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          npx --no-install tsx scripts/channel-preanalysis-upload-preflight.mjs \
+            --catalog-dir "${CATALOG_DIRECTORY}" \
+            --source "${SOURCE_ID}" \
+            --max-videos "${MAX_VIDEOS}"
+          heavy_required="$(node --input-type=module - "${CATALOG_DIRECTORY}/channel-preanalysis-upload-preflight-report.json" <<'NODE'
+          import { readFile } from "node:fs/promises";
+
+          const report = JSON.parse(await readFile(process.argv[2], "utf8"));
+          if (
+            report.schemaVersion !== 1 ||
+            typeof report.heavyRequired !== "boolean" ||
+            !["complete", "partial"].includes(report.status)
+          ) {
+            console.error("Invalid channel upload preflight report.");
+            process.exit(1);
+          }
+          process.stdout.write(report.heavyRequired ? "true" : "false");
+          NODE
+          )"
+          if [[ "${EVENT_NAME}" == "workflow_dispatch" ]]; then
+            heavy_required="true"
+          fi
+          echo "heavy_required=${heavy_required}" >> "${GITHUB_OUTPUT}"
+          if [[ "${heavy_required}" == "true" ]]; then
+            echo "Heavy channel preparation is due."
+          else
+            echo "RSS and catalogs are current; skipping yt-dlp, WARP, and AI preparation."
+          fi
+
       - name: Verify channel sync and visual fingerprint contracts
+        if: steps.upload-preflight.outputs.heavy_required == 'true'
         working-directory: source
         run: >-
           npx --no-install tsx --test
+          scripts/channel-preanalysis-upload-preflight.test.mjs
           scripts/channel-preanalysis-visual-fingerprint.test.mjs
+          scripts/lib/channel-preanalysis-media.test.mjs
+          scripts/lib/channel-preanalysis-scheduled-asr.test.mjs
+          scripts/lib/channel-preanalysis-review-checkpoint.test.mjs
+          scripts/lib/channel-preanalysis-review-media-adapter.test.mjs
+          scripts/lib/channel-preanalysis-review-runner.test.mjs
+          scripts/lib/channel-preanalysis-review-publisher.test.mjs
+          scripts/lib/channel-preanalysis-review-candidate-client.test.mjs
+          scripts/lib/channel-preanalysis-review-job.test.mjs
+          scripts/sync-channel-preanalysis-reviews.test.mjs
+          scripts/sync-channel-preanalysis.test.mjs
           scripts/sync-amoretto-preanalysis-fingerprint.test.mjs
           scripts/sync-amoretto-preanalysis.test.mjs
 
       - name: Download and verify pinned yt-dlp
+        if: steps.upload-preflight.outputs.heavy_required == 'true'
         shell: bash
         env:
           YT_DLP_VERSION: "2026.07.04"
@@ -114,6 +223,7 @@ jobs:
       # feed already succeeds directly, and Node does not read proxy variables,
       # so the tunnel's blast radius stays limited to the refused path.
       - name: Route YouTube requests through Cloudflare WARP
+        if: steps.upload-preflight.outputs.heavy_required == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -145,26 +255,37 @@ jobs:
           exit 1
 
       - name: Reconcile feed and prepare due transcripts
+        if: steps.upload-preflight.outputs.heavy_required == 'true'
         working-directory: source
         shell: bash
         env:
-          CATALOG_DIRECTORY: ${{ github.workspace }}/catalog/amoretto-vods
+          CATALOG_DIRECTORY: ${{ github.workspace }}/catalog
           YT_DLP_PATH: ${{ runner.temp }}/yt-dlp
           # The child environment allowlist forwards this to yt-dlp and rejects
           # any proxy URL carrying credentials.
           ALL_PROXY: socks5://127.0.0.1:40000
           VIDEO_ID: ${{ inputs.video_id || '' }}
+          SOURCE_ID: ${{ inputs.source || 'all' }}
           MAX_VIDEOS: ${{ inputs.max_videos || '2' }}
           CHANNEL_PREANALYSIS_CONTEXT_PROXY_URL: ${{ secrets.CHANNEL_PREANALYSIS_CONTEXT_PROXY_URL }}
           CHANNEL_PREANALYSIS_CONTEXT_TOKEN: ${{ secrets.CHANNEL_PREANALYSIS_CONTEXT_TOKEN }}
         run: |
           set -euo pipefail
+          target_catalog_directory="${CATALOG_DIRECTORY}"
+          if [[ "${SOURCE_ID}" != "all" ]]; then
+            target_catalog_directory="${CATALOG_DIRECTORY}/${SOURCE_ID}"
+          fi
           arguments=(
-            --catalog-dir "${CATALOG_DIRECTORY}"
+            --catalog-dir "${target_catalog_directory}"
             --yt-dlp "${YT_DLP_PATH}"
             --max-videos "${MAX_VIDEOS}"
+            --source "${SOURCE_ID}"
           )
           if [[ -n "${VIDEO_ID}" ]]; then
+            if [[ "${SOURCE_ID}" == "all" ]]; then
+              echo "::error::An exact video retry requires a single source."
+              exit 1
+            fi
             arguments+=(--video-id "${VIDEO_ID}")
           fi
           if [[ -n "${CHANNEL_PREANALYSIS_CONTEXT_PROXY_URL}" || -n "${CHANNEL_PREANALYSIS_CONTEXT_TOKEN}" ]]; then
@@ -176,14 +297,57 @@ jobs:
           fi
           npx --no-install tsx scripts/sync-amoretto-preanalysis.mjs "${arguments[@]}"
 
+      - name: Prepare complete review-ready bundles
+        if: steps.upload-preflight.outputs.heavy_required == 'true'
+        working-directory: source
+        shell: bash
+        env:
+          CATALOG_DIRECTORY: ${{ github.workspace }}/catalog
+          REVIEW_WORK_DIRECTORY: ${{ runner.temp }}/exclipper-channel-reviews
+          YT_DLP_PATH: ${{ runner.temp }}/yt-dlp
+          ALL_PROXY: socks5://127.0.0.1:40000
+          VIDEO_ID: ${{ inputs.video_id || '' }}
+          SOURCE_ID: ${{ inputs.source || 'all' }}
+          MAX_VIDEOS: ${{ inputs.max_videos || '2' }}
+          CHANNEL_PREANALYSIS_CONTEXT_PROXY_URL: ${{ secrets.CHANNEL_PREANALYSIS_CONTEXT_PROXY_URL }}
+          CHANNEL_PREANALYSIS_CONTEXT_TOKEN: ${{ secrets.CHANNEL_PREANALYSIS_CONTEXT_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${CHANNEL_PREANALYSIS_CONTEXT_PROXY_URL}" || -z "${CHANNEL_PREANALYSIS_CONTEXT_TOKEN}" ]]; then
+            echo "::error::Review-ready analysis requires both dedicated proxy and token secrets."
+            exit 1
+          fi
+          ffmpeg -version >/dev/null
+          ffprobe -version >/dev/null
+          arguments=(
+            --catalog-dir "${CATALOG_DIRECTORY}"
+            --work-dir "${REVIEW_WORK_DIRECTORY}"
+            --yt-dlp "${YT_DLP_PATH}"
+            --max-videos "${MAX_VIDEOS}"
+            --source "${SOURCE_ID}"
+          )
+          if [[ -n "${VIDEO_ID}" ]]; then
+            arguments+=(--video-id "${VIDEO_ID}")
+          fi
+          npx --no-install tsx scripts/sync-channel-preanalysis-reviews.mjs "${arguments[@]}"
+
       - name: Upload the verified catalog snapshot
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
-          name: amoretto-preanalysis-${{ github.run_id }}-${{ github.run_attempt }}
-          path: catalog/amoretto-vods
+          name: channel-preanalysis-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            catalog/channel-preanalysis-upload-preflight-report.json
+            catalog/channel-preanalysis-run-report.json
+            catalog/channel-preanalysis-review-run-report.json
+            catalog/amoretto-vods
+            catalog/eureka-history
+            catalog/sena-replay
+            catalog/coco-replay
+            catalog/mangjing-compilations
           if-no-files-found: error
           retention-days: 1
           compression-level: 6
+          include-hidden-files: true
 
   publish:
     needs: prepare
@@ -203,8 +367,8 @@ jobs:
       - name: Download the prepared catalog snapshot
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
-          name: amoretto-preanalysis-${{ github.run_id }}-${{ github.run_attempt }}
-          path: prepared/amoretto-vods
+          name: channel-preanalysis-${{ github.run_id }}-${{ github.run_attempt }}
+          path: prepared
 
       - name: Require the unchanged catalog base
         working-directory: catalog
@@ -215,19 +379,30 @@ jobs:
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "${EXPECTED_BASE_SHA}"
 
-      - name: Replace only the catalog namespace
+      - name: Replace only the five configured catalog namespaces
         shell: bash
         run: |
           set -euo pipefail
-          test -f prepared/amoretto-vods/catalog.json
-          if find prepared/amoretto-vods -type l -print -quit | grep -q .; then
+          namespaces=(
+            amoretto-vods
+            eureka-history
+            sena-replay
+            coco-replay
+            mangjing-compilations
+          )
+          for namespace in "${namespaces[@]}"; do
+            test -f "prepared/${namespace}/catalog.json"
+          done
+          if find prepared -type l -print -quit | grep -q .; then
             echo "::error::Prepared catalog must not contain symbolic links."
             exit 1
           fi
-          mkdir -p catalog/amoretto-vods
-          rsync --archive --delete \
-            prepared/amoretto-vods/ \
-            catalog/amoretto-vods/
+          for namespace in "${namespaces[@]}"; do
+            mkdir -p "catalog/${namespace}"
+            rsync --archive --delete \
+              "prepared/${namespace}/" \
+              "catalog/${namespace}/"
+          done
 
       - name: Commit and push catalog changes
         working-directory: catalog
@@ -238,14 +413,84 @@ jobs:
           REPOSITORY: ${{ github.repository }}
         run: |
           set -euo pipefail
-          git add --all -- amoretto-vods
+          git add --all -- \
+            amoretto-vods \
+            eureka-history \
+            sena-replay \
+            coco-replay \
+            mangjing-compilations
           if git diff --cached --quiet; then
             echo "Catalog is already current."
             exit 0
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git commit -m "chore(catalog): refresh Amoretto preanalysis (${RUN_ID})"
+          git commit -m "chore(catalog): refresh channel preanalysis (${RUN_ID})"
           git push \
             "https://x-access-token:${GITHUB_TOKEN}@github.com/${REPOSITORY}.git" \
             HEAD:preanalysis-catalog
+
+      - name: Surface partial source failures after preserving healthy updates
+        shell: bash
+        run: |
+          set -euo pipefail
+          report="prepared/channel-preanalysis-run-report.json"
+          review_report="prepared/channel-preanalysis-review-run-report.json"
+          test -f "${report}"
+          test -f "${review_report}"
+          node --input-type=module - "${report}" "${review_report}" <<'NODE'
+          import { readFile } from "node:fs/promises";
+
+          const reportPath = process.argv[2];
+          const reviewReportPath = process.argv[3];
+          const report = JSON.parse(await readFile(reportPath, "utf8"));
+          const reviewReport = JSON.parse(await readFile(reviewReportPath, "utf8"));
+          if (
+            report.schemaVersion !== 1 ||
+            !["complete", "partial"].includes(report.status) ||
+            !Array.isArray(report.sourceErrors)
+          ) {
+            console.error("::error::Channel preanalysis run report is invalid.");
+            process.exit(1);
+          }
+          for (const error of report.sourceErrors) {
+            console.error(
+              `::error title=Channel preanalysis source failed::${error.sourceId}: ${error.errorCode} ${error.message}`,
+            );
+          }
+          if (report.sourceErrors.length > 0 || report.status !== "complete") {
+            console.error(
+              "Healthy source updates were preserved and published, but this run is partial.",
+            );
+            process.exit(1);
+          }
+          if (
+            reviewReport.schemaVersion !== 1 ||
+            !["complete", "partial"].includes(reviewReport.status) ||
+            !Array.isArray(reviewReport.sourceErrors) ||
+            !Array.isArray(reviewReport.reviewErrors)
+          ) {
+            console.error("::error::Channel review preparation report is invalid.");
+            process.exit(1);
+          }
+          for (const error of reviewReport.sourceErrors) {
+            console.error(
+              `::error title=Channel review source failed::${error.sourceId}: ${error.errorCode}`,
+            );
+          }
+          for (const error of reviewReport.reviewErrors) {
+            console.error(
+              `::error title=Channel review preparation incomplete::${error.sourceId}/${error.videoId ?? "unknown"}: ${error.errorCode}`,
+            );
+          }
+          if (
+            reviewReport.status === "partial" ||
+            reviewReport.sourceErrors.length > 0 ||
+            reviewReport.reviewErrors.length > 0
+          ) {
+            console.error(
+              "Review checkpoints were preserved and published, but at least one selected video is not review-ready yet.",
+            );
+            process.exit(1);
+          }
+          NODE

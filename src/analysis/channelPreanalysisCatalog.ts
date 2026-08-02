@@ -1,10 +1,19 @@
+import {
+  AMORETTO_CHANNEL_PREANALYSIS_SOURCE,
+  channelPreanalysisSourceByChannelId,
+  type ChannelPreanalysisYouTubeChannelHandle,
+  type ChannelPreanalysisYouTubeChannelId,
+  type ConfiguredChannelPreanalysisSource,
+} from "./channelPreanalysisSources";
+
 export const AMORETTO_YOUTUBE_CHANNEL_ID =
-  "UCHycoTBFDhXz4XNz8jBP-_A" as const;
-export const AMORETTO_YOUTUBE_CHANNEL_HANDLE = "@AmorettoVODs" as const;
+  AMORETTO_CHANNEL_PREANALYSIS_SOURCE.channelId;
+export const AMORETTO_YOUTUBE_CHANNEL_HANDLE =
+  AMORETTO_CHANNEL_PREANALYSIS_SOURCE.channelHandle;
 export const AMORETTO_YOUTUBE_CHANNEL_URL =
-  "https://www.youtube.com/@AmorettoVODs" as const;
+  AMORETTO_CHANNEL_PREANALYSIS_SOURCE.channelUrl;
 export const AMORETTO_YOUTUBE_CHANNEL_FEED_URL =
-  `https://www.youtube.com/feeds/videos.xml?channel_id=${AMORETTO_YOUTUBE_CHANNEL_ID}` as const;
+  AMORETTO_CHANNEL_PREANALYSIS_SOURCE.feedUrl;
 
 export const YOUTUBE_CHANNEL_ATOM_FEED_MAX_BYTES = 512 * 1024;
 export const YOUTUBE_CHANNEL_ATOM_FEED_MAX_ENTRIES = 64;
@@ -16,6 +25,7 @@ export const CHANNEL_PREANALYSIS_STATES = [
   "metadata-ready",
   "transcript-ready",
   "context-ready",
+  "review-ready",
   "published",
   "retryable",
 ] as const;
@@ -27,12 +37,14 @@ export type ChannelPreanalysisArtifactKind =
   | "metadata"
   | "transcript"
   | "context"
+  | "review"
   | "fingerprint";
 
 export type ChannelPreanalysisRetryStage =
   | "metadata"
   | "transcript"
   | "context"
+  | "review"
   | "fingerprint";
 
 export type ChannelPreanalysisSuccessfulState = Exclude<
@@ -77,7 +89,7 @@ export interface ChannelVideoIdentityDescriptor {
 }
 
 export interface ChannelPreanalysisCatalogVideo {
-  readonly channelId: typeof AMORETTO_YOUTUBE_CHANNEL_ID;
+  readonly channelId: ChannelPreanalysisYouTubeChannelId;
   readonly videoId: string;
   readonly title: string;
   readonly normalizedTitle: string;
@@ -94,8 +106,8 @@ export interface ChannelPreanalysisCatalogVideo {
 
 export interface ChannelPreanalysisCatalogManifest {
   readonly schemaVersion: typeof CHANNEL_PREANALYSIS_CATALOG_SCHEMA_VERSION;
-  readonly channelId: typeof AMORETTO_YOUTUBE_CHANNEL_ID;
-  readonly channelHandle: typeof AMORETTO_YOUTUBE_CHANNEL_HANDLE;
+  readonly channelId: ChannelPreanalysisYouTubeChannelId;
+  readonly channelHandle: ChannelPreanalysisYouTubeChannelHandle;
   readonly revision: number;
   readonly generatedAt: string;
   readonly videos: readonly ChannelPreanalysisCatalogVideo[];
@@ -103,7 +115,7 @@ export interface ChannelPreanalysisCatalogManifest {
 }
 
 export interface YouTubeChannelAtomVideo {
-  readonly channelId: typeof AMORETTO_YOUTUBE_CHANNEL_ID;
+  readonly channelId: ChannelPreanalysisYouTubeChannelId;
   readonly videoId: string;
   readonly title: string;
   readonly normalizedTitle: string;
@@ -114,9 +126,9 @@ export interface YouTubeChannelAtomVideo {
 }
 
 export interface YouTubeChannelAtomFeed {
-  readonly channelId: typeof AMORETTO_YOUTUBE_CHANNEL_ID;
+  readonly channelId: ChannelPreanalysisYouTubeChannelId;
   readonly channelTitle: string;
-  readonly feedUrl: typeof AMORETTO_YOUTUBE_CHANNEL_FEED_URL;
+  readonly feedUrl: string;
   readonly videos: readonly YouTubeChannelAtomVideo[];
 }
 
@@ -181,12 +193,14 @@ const ISO_DATE_TIME_PATTERN =
   /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/u;
 
 /**
- * Parses only the pinned official Amoretto uploads feed. The parser is
+ * Parses only one configured official replay playlist feed. The parser is
  * deliberately bounded and rejects DTD/entity declarations before examining
  * any entry. Every entry must repeat the complete pinned channel ID.
  */
-export function parseAmorettoYouTubeAtomFeed(
+export function parseYouTubeChannelAtomFeed(
   input: string,
+  source: ConfiguredChannelPreanalysisSource =
+    AMORETTO_CHANNEL_PREANALYSIS_SOURCE,
 ): YouTubeChannelAtomFeed {
   if (typeof input !== "string" || input.trim().length === 0) {
     throw feedError("INVALID_INPUT", "YouTube channel feed must be text.");
@@ -254,10 +268,11 @@ export function parseAmorettoYouTubeAtomFeed(
    * only that exact, pinned legacy representation; it is never used as the
    * authority for an entry.
    */
-  const legacyRootChannelId = AMORETTO_YOUTUBE_CHANNEL_ID.slice(2);
+  const legacyRootChannelId = source.channelId.slice(2);
   const rootIdentityIsPinned =
-    (rootChannelId === AMORETTO_YOUTUBE_CHANNEL_ID &&
-      rootId === `yt:channel:${AMORETTO_YOUTUBE_CHANNEL_ID}`) ||
+    (rootChannelId === source.channelId &&
+      (rootId === `yt:channel:${source.channelId}` ||
+        rootId === `yt:playlist:${source.playlistId}`)) ||
     (rootChannelId === legacyRootChannelId &&
       rootId === `yt:channel:${legacyRootChannelId}`);
   if (
@@ -288,7 +303,7 @@ export function parseAmorettoYouTubeAtomFeed(
     seenVideoIds.add(videoId);
 
     const entryChannelId = uniqueElementText(entry, "yt:channelId");
-    if (entryChannelId !== AMORETTO_YOUTUBE_CHANNEL_ID) {
+    if (entryChannelId !== source.channelId) {
       throw feedError(
         "WRONG_CHANNEL",
         "A YouTube channel entry belongs to a different channel.",
@@ -317,7 +332,7 @@ export function parseAmorettoYouTubeAtomFeed(
     const watchUrl = readCanonicalWatchUrl(entry, videoId);
 
     return {
-      channelId: AMORETTO_YOUTUBE_CHANNEL_ID,
+      channelId: source.channelId,
       videoId,
       title,
       normalizedTitle,
@@ -329,11 +344,28 @@ export function parseAmorettoYouTubeAtomFeed(
   });
 
   return {
-    channelId: AMORETTO_YOUTUBE_CHANNEL_ID,
+    channelId: source.channelId,
     channelTitle,
-    feedUrl: AMORETTO_YOUTUBE_CHANNEL_FEED_URL,
+    feedUrl: source.feedUrl,
     videos,
   };
+}
+
+/** Compatibility name for the original source-specific public API. */
+export function parseAmorettoYouTubeAtomFeed(
+  input: string,
+): YouTubeChannelAtomFeed {
+  return parseYouTubeChannelAtomFeed(
+    input,
+    AMORETTO_CHANNEL_PREANALYSIS_SOURCE,
+  );
+}
+
+export function channelPreanalysisSourceForManifest(
+  manifest: Pick<ChannelPreanalysisCatalogManifest, "channelId" | "channelHandle">,
+): ConfiguredChannelPreanalysisSource | null {
+  const source = channelPreanalysisSourceByChannelId(manifest.channelId);
+  return source?.channelHandle === manifest.channelHandle ? source : null;
 }
 
 /**

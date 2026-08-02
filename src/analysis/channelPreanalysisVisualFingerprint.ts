@@ -1,3 +1,9 @@
+import {
+  AMORETTO_CHANNEL_PREANALYSIS_SOURCE,
+  channelPreanalysisSourceById,
+  type ChannelPreanalysisSourceId,
+} from "./channelPreanalysisSources";
+
 export const CHANNEL_PREANALYSIS_VISUAL_FINGERPRINT_SCHEMA_VERSION =
   "1.0.0" as const;
 export const CHANNEL_PREANALYSIS_VISUAL_FINGERPRINT_ALGORITHM =
@@ -10,7 +16,7 @@ export const CHANNEL_PREANALYSIS_VISUAL_FINGERPRINT_MIN_ANCHORS = 8 as const;
 export const CHANNEL_PREANALYSIS_VISUAL_FINGERPRINT_MAX_ANCHORS = 16 as const;
 export const CHANNEL_PREANALYSIS_VISUAL_FINGERPRINT_MAX_LOCAL_SAMPLES =
   512 as const;
-export const CHANNEL_PREANALYSIS_VISUAL_FINGERPRINT_MAX_COHORT = 12 as const;
+export const CHANNEL_PREANALYSIS_VISUAL_FINGERPRINT_MAX_COHORT = 32 as const;
 export const CHANNEL_PREANALYSIS_VISUAL_FINGERPRINT_MAX_BYTES =
   64 * 1024;
 export const CHANNEL_PREANALYSIS_VISUAL_FINGERPRINT_MAX_OFFSET_MS =
@@ -227,11 +233,17 @@ export function serializeChannelPreanalysisVisualFingerprint(
 
 export function canonicalChannelPreanalysisVisualFingerprintStorageKey(
   videoId: string,
+  sourceId: ChannelPreanalysisSourceId =
+    AMORETTO_CHANNEL_PREANALYSIS_SOURCE.sourceId,
 ): string {
   if (!VIDEO_ID_PATTERN.test(videoId)) {
     throw fingerprintError("Visual fingerprint video ID is invalid.");
   }
-  return `amoretto-vods/videos/${videoId}.visual-fingerprint.v1.json`;
+  const source = channelPreanalysisSourceById(sourceId);
+  if (source === null) {
+    throw fingerprintError("Visual fingerprint source is invalid.");
+  }
+  return `${source.sourceId}/videos/${videoId}.visual-fingerprint.v1.json`;
 }
 
 export function canonicalChannelPreanalysisVisualFingerprintArtifactId(

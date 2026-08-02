@@ -3,6 +3,12 @@ import { createHash } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  BROADCAST_CONTEXT_SCHEMA_VERSION,
+  type BroadcastContextResult,
+} from "./broadcastContextProtocol";
+import { createBroadcastParticipantGrounding } from "./broadcastParticipantGrounding";
+import { AI_BROADCAST_CONTEXT_ROUTING_REVISION } from "./aiModelRoutingPolicy";
+import {
   AMORETTO_YOUTUBE_CHANNEL_HANDLE,
   AMORETTO_YOUTUBE_CHANNEL_ID,
   normalizeChannelVideoTitle,
@@ -12,6 +18,7 @@ import {
   CHANNEL_PREANALYSIS_BUNDLE_MAX_BYTES,
   createChannelPreanalysisBundle,
   createDefaultChannelPreanalysisProvenance,
+  type ChannelPreanalysisBundle,
 } from "./channelPreanalysisBundle";
 import {
   CHANNEL_PREANALYSIS_CATALOG_FILE,
@@ -19,17 +26,27 @@ import {
   fetchChannelPreanalysisVisualFingerprintCohortForLookup,
   fetchChannelPreanalysisBundle,
   fetchChannelPreanalysisManifest,
+  fetchChannelPreanalysisReviewForLookup,
   parseChannelPreanalysisManifest,
   requestChannelPreanalysisMatch,
   resolveChannelPreanalysisLookupByVisualFingerprintCohort,
   type ChannelPreanalysisLookupResult,
 } from "./channelPreanalysisClient";
 import {
+  CHANNEL_PREANALYSIS_PARTICIPANT_PROVENANCE_SCHEMA_VERSION,
+  CHANNEL_PREANALYSIS_REVIEW_BUNDLE_SCHEMA_VERSION,
+  CHANNEL_PREANALYSIS_REVIEW_CERTIFICATE_SCHEMA_VERSION,
+  channelPreanalysisReviewBundleArtifactId,
+  createChannelPreanalysisReviewContentDigests,
+  type ChannelPreanalysisReviewBundle,
+} from "./channelPreanalysisReviewBundle";
+import {
   buildChannelPreanalysisLocalVisualCohortSamplingPlan,
   createChannelPreanalysisVisualAnchorDescriptor,
   createChannelPreanalysisVisualFingerprint,
   serializeChannelPreanalysisVisualFingerprint,
 } from "./channelPreanalysisVisualFingerprint";
+import { createChannelPreanalysisVisualCoverageReceipt } from "./channelPreanalysisVisualCoverage";
 
 const VIDEO_ID = "KzAW3yow80Q";
 const TITLE = "2026 07 17 - 음식 토크";
@@ -37,6 +54,9 @@ const DURATION_MS = 120_000;
 const RAW_BASE = "https://catalog.test/amoretto/";
 const BUNDLED_BASE = "/exclipper/preanalysis/amoretto/";
 const ARTIFACT_ID = `youtube-caption-bundle:${VIDEO_ID}:v1`;
+const REVIEW_ARTIFACT_ID = `review-bundle:${VIDEO_ID}:v2`;
+const REVIEW_STORAGE_KEY =
+  `amoretto-vods/videos/${VIDEO_ID}.review.v2.json`;
 
 interface ManifestOptions {
   readonly videoOverrides?: Partial<
@@ -100,6 +120,7 @@ async function bundleJson(
   const videoId = overrides.videoId ?? VIDEO_ID;
   const title = overrides.title ?? TITLE;
   const bundle = await createChannelPreanalysisBundle({
+    channelId: AMORETTO_YOUTUBE_CHANNEL_ID,
     videoId,
     title,
     durationMs: DURATION_MS,
@@ -176,7 +197,463 @@ function visualFingerprintFixture(): {
   };
 }
 
+function reviewArtifactFixture(): ChannelPreanalysisCatalogManifest["artifacts"][number] {
+  return {
+    artifactId: REVIEW_ARTIFACT_ID,
+    videoId: VIDEO_ID,
+    kind: "review",
+    revision: 2,
+    storageKey: REVIEW_STORAGE_KEY,
+    contentDigest: `sha256:${"a".repeat(64)}`,
+    byteLength: 1_024,
+    createdAt: "2026-07-30T00:00:00.000Z",
+  };
+}
+
+function reviewContext(): BroadcastContextResult {
+  return {
+    schemaVersion: BROADCAST_CONTEXT_SCHEMA_VERSION,
+    broadcastSummaryKo: "방송 전체 맥락과 검토 결과를 모두 확인했습니다.",
+    hostStreamerProfile: null,
+    recurringThemesKo: [],
+    annotations: [],
+    semanticChaptersSupported: true,
+    semanticChapters: [],
+    discoveredLeadsSupported: true,
+    discoveredLeads: [],
+    coverage: {
+      status: "complete",
+      coveredMs: DURATION_MS,
+      coverageRatio: 1,
+      gaps: [],
+      partialChapterIds: [],
+    },
+  };
+}
+
+async function contextBundleJson(): Promise<string> {
+  const transcript = JSON.parse(await bundleJson()) as ChannelPreanalysisBundle;
+  return JSON.stringify({
+    ...transcript,
+    state: "context-ready",
+    broadcastContext: reviewContext(),
+    contextProvenance: {
+      generatedAt: "2026-07-30T00:01:00.000Z",
+      modelRoutingRevision: AI_BROADCAST_CONTEXT_ROUTING_REVISION,
+      contextReceipt: {
+        contractVersion: "2.0.0",
+        routingRevision: AI_BROADCAST_CONTEXT_ROUTING_REVISION,
+        modelId: "qwen3.7-plus",
+        modelRevision:
+          "qwen3.7-plus-context-editorial-jury-topic-balanced-2026-07-22",
+      },
+      evidenceScope: "youtube-caption-transcript-only",
+      localVisualVerificationRequired: true,
+    },
+  });
+}
+
+async function reviewBundleJson(
+  transcriptDigest: ChannelPreanalysisReviewBundle["transcriptDigest"],
+  sourceVideoId = VIDEO_ID,
+): Promise<string> {
+  const participantGrounding = createBroadcastParticipantGrounding({
+    sourceDurationMs: DURATION_MS,
+    castRosterId: null,
+    chapters: [],
+  }, {
+    visualIdentity: {
+      receipt: { adapter: "visual-identity", revision: "test-visual-v1", status: "completed", inputCount: 0, processedCount: 0, unavailableReason: null },
+      evidence: [],
+    },
+    voiceIdentity: {
+      receipt: { adapter: "voice-identity", revision: "test-voice-v1", status: "completed", inputCount: 0, processedCount: 0, unavailableReason: null },
+      evidence: [],
+    },
+  });
+  const artifactRevision = 2;
+  const source = {
+    sourceId: "amoretto-vods" as const,
+    channelId: AMORETTO_YOUTUBE_CHANNEL_ID,
+    videoId: sourceVideoId,
+  };
+  const visualCoverage = createChannelPreanalysisVisualCoverageReceipt({
+    sourceDurationMs: DURATION_MS,
+    videoId: sourceVideoId,
+    sourceFingerprintDigest: visualFingerprintFixture().artifact.contentDigest as
+      `sha256:${string}`,
+    visualSeedTimestampsMs: [],
+  });
+  const unsealed = {
+    source,
+    broadcastContext: reviewContext(),
+    visualCoverage,
+    participantGrounding,
+    candidates: [],
+  };
+  const digests = await createChannelPreanalysisReviewContentDigests(unsealed);
+  const bundle: ChannelPreanalysisReviewBundle = {
+    schemaVersion: CHANNEL_PREANALYSIS_REVIEW_BUNDLE_SCHEMA_VERSION,
+    artifactId: channelPreanalysisReviewBundleArtifactId(
+      sourceVideoId,
+      artifactRevision,
+    ),
+    artifactRevision,
+    createdAt: "2026-07-30T00:00:00.000Z",
+    source,
+    sourceDurationMs: DURATION_MS,
+    transcriptDigest,
+    broadcastContext: unsealed.broadcastContext,
+    broadcastContextDigest: digests.broadcastContextDigest,
+    visualCoverage,
+    participantGrounding,
+    participantGroundingProvenance: {
+      schemaVersion:
+        CHANNEL_PREANALYSIS_PARTICIPANT_PROVENANCE_SCHEMA_VERSION,
+      checkpointDigest: digests.participantGroundingDigest,
+      generatedAt: "2026-07-30T00:00:00.000Z",
+      pipelineRevision: "scheduled-review-v1",
+    },
+    candidates: [],
+    certificate: {
+      schemaVersion: CHANNEL_PREANALYSIS_REVIEW_CERTIFICATE_SCHEMA_VERSION,
+      pipelineRevision: "scheduled-review-v1",
+      outcome: "verified-empty",
+      sourceIdentityDigest: digests.sourceIdentityDigest,
+      transcriptDigest,
+      broadcastContextDigest: digests.broadcastContextDigest,
+      participantGroundingDigest: digests.participantGroundingDigest,
+      visualCoverageDigest: digests.visualCoverageDigest,
+      candidateSetDigest: digests.candidateSetDigest,
+      finalCandidateIds: [],
+    },
+  };
+  return JSON.stringify(bundle);
+}
+
+async function preparedReviewFixture(sourceVideoId = VIDEO_ID): Promise<{
+  readonly contextBundleText: string;
+  readonly reviewBundleText: string;
+  readonly manifest: ChannelPreanalysisCatalogManifest;
+}> {
+  const contextBundleText = await contextBundleJson();
+  const contextBundle = JSON.parse(
+    contextBundleText,
+  ) as ChannelPreanalysisBundle;
+  const reviewBundleText = await reviewBundleJson(
+    contextBundle.transcriptDigest as ChannelPreanalysisReviewBundle["transcriptDigest"],
+    sourceVideoId,
+  );
+  const reviewBytes = new TextEncoder().encode(reviewBundleText);
+  const reviewArtifact = {
+    ...reviewArtifactFixture(),
+    contentDigest:
+      `sha256:${createHash("sha256").update(reviewBytes).digest("hex")}` as const,
+    byteLength: reviewBytes.byteLength,
+  };
+  const fingerprintArtifact = visualFingerprintFixture().artifact;
+  const baseManifest = manifest(contextBundleText);
+  return {
+    contextBundleText,
+    reviewBundleText,
+    manifest: {
+      ...baseManifest,
+      videos: [
+        {
+          ...baseManifest.videos[0]!,
+          state: "review-ready",
+          revision: 2,
+          artifactIds: [
+            ARTIFACT_ID,
+            fingerprintArtifact.artifactId,
+            REVIEW_ARTIFACT_ID,
+          ],
+        },
+      ],
+      artifacts: [
+        ...baseManifest.artifacts,
+        fingerprintArtifact,
+        reviewArtifact,
+      ],
+    },
+  };
+}
+
 describe("channelPreanalysisClient", () => {
+  it("accepts only a closed review-ready catalog entry", async () => {
+    const preparedBundle = await bundleJson();
+    const baseManifest = manifest(preparedBundle);
+    const reviewArtifact = reviewArtifactFixture();
+    const reviewReadyManifest: ChannelPreanalysisCatalogManifest = {
+      ...baseManifest,
+      videos: [
+        {
+          ...baseManifest.videos[0]!,
+          state: "review-ready",
+          revision: 2,
+          artifactIds: [ARTIFACT_ID, REVIEW_ARTIFACT_ID],
+        },
+      ],
+      artifacts: [...baseManifest.artifacts, reviewArtifact],
+    };
+
+    expect(
+      parseChannelPreanalysisManifest(JSON.stringify(reviewReadyManifest)),
+    ).toMatchObject({
+      videos: [{ state: "review-ready" }],
+      artifacts: [
+        { kind: "transcript" },
+        {
+          artifactId: REVIEW_ARTIFACT_ID,
+          kind: "review",
+          storageKey: REVIEW_STORAGE_KEY,
+        },
+      ],
+    });
+
+    expect(() =>
+      parseChannelPreanalysisManifest(
+        JSON.stringify({
+          ...reviewReadyManifest,
+          videos: [
+            {
+              ...reviewReadyManifest.videos[0]!,
+              artifactIds: [ARTIFACT_ID],
+            },
+          ],
+          artifacts: baseManifest.artifacts,
+        }),
+      ),
+    ).toThrowError(expect.objectContaining({ code: "INVALID_MANIFEST" }));
+
+    for (const invalidReviewArtifact of [
+      { ...reviewArtifact, artifactId: `${REVIEW_ARTIFACT_ID}:wrong` },
+      {
+        ...reviewArtifact,
+        storageKey: `amoretto-vods/videos/${VIDEO_ID}.v2.json`,
+      },
+      { ...reviewArtifact, contentDigest: `sha256:${"A".repeat(64)}` },
+      { ...reviewArtifact, byteLength: 4 * 1024 * 1024 + 1 },
+    ]) {
+      expect(() =>
+        parseChannelPreanalysisManifest(
+          JSON.stringify({
+            ...reviewReadyManifest,
+            artifacts: [...baseManifest.artifacts, invalidReviewArtifact],
+          }),
+        ),
+      ).toThrowError(expect.objectContaining({ code: "INVALID_MANIFEST" }));
+    }
+
+    expect(() =>
+      parseChannelPreanalysisManifest(
+        JSON.stringify({
+          ...reviewReadyManifest,
+          videos: [
+            {
+              ...reviewReadyManifest.videos[0]!,
+              revision: 3,
+            },
+          ],
+        }),
+      ),
+    ).toThrowError(expect.objectContaining({ code: "INVALID_MANIFEST" }));
+  });
+
+  it("accepts a review retry only after context-ready", async () => {
+    const preparedBundle = await bundleJson();
+    const baseManifest = manifest(preparedBundle);
+    const retryManifest: ChannelPreanalysisCatalogManifest = {
+      ...baseManifest,
+      videos: [
+        {
+          ...baseManifest.videos[0]!,
+          state: "retryable",
+          retry: {
+            stage: "review",
+            lastSuccessfulState: "context-ready",
+            attemptCount: 1,
+            nextAttemptAt: "2026-07-30T01:00:00.000Z",
+            errorCode: "REVIEW_PROVIDER_UNAVAILABLE",
+          },
+        },
+      ],
+    };
+
+    expect(
+      parseChannelPreanalysisManifest(JSON.stringify(retryManifest)),
+    ).toMatchObject({
+      videos: [
+        {
+          state: "retryable",
+          retry: {
+            stage: "review",
+            lastSuccessfulState: "context-ready",
+          },
+        },
+      ],
+    });
+
+    expect(() =>
+      parseChannelPreanalysisManifest(
+        JSON.stringify({
+          ...retryManifest,
+          videos: [
+            {
+              ...retryManifest.videos[0]!,
+              retry: {
+                ...retryManifest.videos[0]!.retry!,
+                lastSuccessfulState: "transcript-ready",
+              },
+            },
+          ],
+        }),
+      ),
+    ).toThrowError(expect.objectContaining({ code: "INVALID_MANIFEST" }));
+  });
+
+  it("preserves a closed review snapshot across fingerprint retry", async () => {
+    const preparedBundle = await bundleJson();
+    const baseManifest = manifest(preparedBundle);
+    const reviewArtifact = reviewArtifactFixture();
+    const retryManifest: ChannelPreanalysisCatalogManifest = {
+      ...baseManifest,
+      videos: [
+        {
+          ...baseManifest.videos[0]!,
+          state: "retryable",
+          revision: 2,
+          artifactIds: [ARTIFACT_ID, REVIEW_ARTIFACT_ID],
+          retry: {
+            stage: "fingerprint",
+            lastSuccessfulState: "review-ready",
+            attemptCount: 1,
+            nextAttemptAt: "2026-07-30T01:00:00.000Z",
+            errorCode: "FINGERPRINT_UNAVAILABLE",
+          },
+        },
+      ],
+      artifacts: [...baseManifest.artifacts, reviewArtifact],
+    };
+
+    expect(
+      parseChannelPreanalysisManifest(JSON.stringify(retryManifest)),
+    ).toMatchObject({
+      videos: [
+        {
+          state: "retryable",
+          retry: {
+            stage: "fingerprint",
+            lastSuccessfulState: "review-ready",
+          },
+        },
+      ],
+    });
+
+    expect(() =>
+      parseChannelPreanalysisManifest(
+        JSON.stringify({
+          ...retryManifest,
+          videos: [
+            {
+              ...retryManifest.videos[0]!,
+              artifactIds: [ARTIFACT_ID],
+            },
+          ],
+          artifacts: baseManifest.artifacts,
+        }),
+      ),
+    ).toThrowError(expect.objectContaining({ code: "INVALID_MANIFEST" }));
+  });
+
+  it("loads a digest- and identity-verified review snapshot for an exact lookup", async () => {
+    const prepared = await preparedReviewFixture();
+    const fetchImplementation = vi.fn((input: RequestInfo | URL) => {
+      const url =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : input.url;
+      return Promise.resolve(
+        new Response(
+          url.endsWith("catalog.json")
+            ? JSON.stringify(prepared.manifest)
+            : url.endsWith(".review.v2.json")
+              ? prepared.reviewBundleText
+              : prepared.contextBundleText,
+          { status: 200 },
+        ),
+      );
+    });
+    const lookup = await requestChannelPreanalysisMatch(
+      { videoId: VIDEO_ID },
+      { fetchImplementation, rawBaseUrl: RAW_BASE, bundledBaseUrl: BUNDLED_BASE },
+    );
+
+    const loaded = await fetchChannelPreanalysisReviewForLookup(lookup, {
+      fetchImplementation,
+    });
+
+    expect(lookup.bundle?.state).toBe("context-ready");
+    expect(loaded).toMatchObject({
+      review: {
+        source: { videoId: VIDEO_ID },
+        certificate: { outcome: "verified-empty" },
+      },
+      artifact: { artifactId: REVIEW_ARTIFACT_ID, kind: "review" },
+    });
+    expect(fetchImplementation).toHaveBeenCalledTimes(3);
+  });
+
+  it("rejects review bytes with digest drift or a different source identity", async () => {
+    const exact = await preparedReviewFixture();
+    const tamperedReview = exact.reviewBundleText.replaceAll(
+      "scheduled-review-v1",
+      "scheduled-review-v2",
+    );
+    expect(tamperedReview.length).toBe(exact.reviewBundleText.length);
+
+    const wrongIdentity = await preparedReviewFixture("AbCdEfGhI12");
+    for (const [prepared, reviewText] of [
+      [exact, tamperedReview],
+      [wrongIdentity, wrongIdentity.reviewBundleText],
+    ] as const) {
+      const fetchImplementation = vi.fn((input: RequestInfo | URL) => {
+        const url =
+          typeof input === "string"
+            ? input
+            : input instanceof URL
+              ? input.toString()
+              : input.url;
+        return Promise.resolve(
+          new Response(
+            url.endsWith("catalog.json")
+              ? JSON.stringify(prepared.manifest)
+              : url.endsWith(".review.v2.json")
+                ? reviewText
+                : prepared.contextBundleText,
+            { status: 200 },
+          ),
+        );
+      });
+      const lookup = await requestChannelPreanalysisMatch(
+        { videoId: VIDEO_ID },
+        {
+          fetchImplementation,
+          rawBaseUrl: RAW_BASE,
+          bundledBaseUrl: BUNDLED_BASE,
+        },
+      );
+
+      await expect(
+        fetchChannelPreanalysisReviewForLookup(lookup, {
+          fetchImplementation,
+        }),
+      ).rejects.toMatchObject({ code: "INVALID_REVIEW" });
+    }
+  });
+
   it("falls back from the raw branch catalog to the bundled Pages copy", async () => {
     const preparedBundle = await bundleJson();
     const preparedManifest = manifest(preparedBundle);

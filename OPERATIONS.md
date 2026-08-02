@@ -1,5 +1,42 @@
 # ExClipper 개인용 운영·배포·복구 계획
 
+## 2026-08-02 YouTube 업로드 → 즉시 검토용 `review-ready`
+
+예약 실행의 성공 목표는 더 이상 `transcript-ready`나 `context-ready`가 아니다.
+편집자가 같은 YouTube URL을 넣었을 때 긴 분석 없이 검토 화면이 열리려면 catalog 영상이
+`review-ready`이고 다음 closure가 모두 맞아야 한다.
+
+1. 한국어 자막·연속 챕터·전체 방송 맥락의 immutable context artifact
+2. 전체 오디오 1초 특징의 완전 coverage
+3. 최대 12개 후보마다 30~60초 WAV와 서로 다른 JPEG 4장
+4. 후보별 화면·오디오·대사·전체 맥락 AI 해석과 실제 model receipt
+5. participant grounding, 대표 thumbnail, 최종 후보 집합 또는 `verified-empty`
+6. 4MiB 이하 review artifact의 전체 SHA와 내부 content digest readback
+
+workflow는 30분마다 `scripts/channel-preanalysis-upload-preflight.mjs`로 Atom RSS를
+catalog에 먼저 병합한다. 신규·due retry·context/review 누락이 있을 때만 WARP와 yt-dlp를
+준비한 뒤 기존 feed/context 준비와 `scripts/sync-channel-preanalysis-reviews.mjs`를 호출한다.
+수동 dispatch는 preflight 결과와 관계없이 항상 이 heavy 경로를 검증한다. 영상 사본은 runner temp에만 두고
+게시 여부와 무관하게 삭제한다. 후보별 checkpoint는
+`<source>/.review-checkpoints/<video>.review.vN.checkpoint.json`에 남아 다음 run이 완료
+후보를 재사용한다. `actions/upload-artifact`의 `include-hidden-files: true`를 제거하면 이
+복구 파일이 publish job으로 전달되지 않으므로 유지해야 한다.
+
+후보 하나는 최대 60초 16kHz mono PCM16 WAV 약 1.92MB와 JPEG 4장을 bounded binary
+bundle로 묶어 private R2에 streaming stage한다. Worker JavaScript는 이 본문을 Base64로
+디코드하거나 전체 버퍼로 해시하지 않는다. 짧은 resolve JSON만 별도로 보내며, 전용
+4회/분 limiter가 429를 내면 `Retry-After` 뒤 재개한다. 아직 유효한 media ticket은
+재사용하고 만료되면 새 ticket과 resolve body를 발급하되, media SHA·후보 범위·화면
+시각·canonical context로 만든 semantic operation ID는 바꾸지 않는다. Durable terminal
+replay가 같은 후보의 중복 provider 호출과 호출 누락이 최종 후보 0개로 바뀌는 일을 막는다.
+
+활성화에는 전용 Worker의 `PREANALYSIS_CONTEXT_TOKEN`·`PREANALYSIS_QWEN_API_KEY`·
+`PREANALYSIS_GROQ_API_KEY`와
+GitHub Actions의 `CHANNEL_PREANALYSIS_CONTEXT_PROXY_URL`·
+`CHANNEL_PREANALYSIS_CONTEXT_TOKEN`이 필요하다. provider key는 Actions나 브라우저에
+  두지 않는다. 두 Actions secret 중 하나라도 없으면 `review-ready` 자동화가 준비되지 않은
+  것이므로 workflow를 명시적으로 실패시킨다. secret 없는 실행을 정상 완료로 표시하지 않는다.
+
 ## 2026-07-30 예약 카탈로그 ingress: WARP 경유로 실제 작동 확인
 
 배포와 branch seed가 끝났고, 예약 카탈로그는 실제로 자막을 만든다. 다만 그 전에
@@ -33,11 +70,11 @@ Cloudflare WARP 출구의 평판이며, 그것은 한도가 아니라 상관 장
 - **연결 대상이 다르다.** `rekasong`의 Oracle VPS는 영속 등록 하나를 유지하고,
   이 저장소의 CI는 실행마다 ephemeral 러너에서 새로 등록한다. 같은 등록을 나눠
   쓰지 않는다.
-- **실측 부하(이 프로젝트):** cron은 3시간마다, 실행당 최대 2개 영상이므로 상한이
-  하루 16개다. 영상당 WARP를 지나는 것은 metadata 약 0.6MB와 JSON3 자막 약
-  1.4MB로 2MB 남짓이니 **상한에서도 하루 약 32MB**다. 14개 backlog가 소진되면
-  신규 업로드만 남아 하루 1개 수준, 즉 **2MB/일**로 떨어진다. storyboard와 Atom
-  feed는 tunnel을 지나지 않는다.
+- **실측 부하(이 프로젝트):** 30분 cron의 기본 동작은 다섯 Atom feed와 catalog만
+  확인하며 WARP를 등록하지 않는다. 신규·retry·review 누락이 확인된 heavy run만 최대
+  2개 영상을 처리한다. 영상당 WARP를 지나는 metadata와 JSON3 자막은 약 2MB이며,
+  backlog가 소진되면 신규 업로드가 없는 30분 run의 WARP 트래픽은 0이다. storyboard와
+  Atom feed도 tunnel을 지나지 않는다.
 - **`rekasong`과의 관계:** 그쪽 WARP 트래픽은 곡 준비 요청이 있을 때만 발생하고
   (`JOB_INTERVAL` 8초), 폴링과 SSH는 원래 IP를 쓴다. 수요 기반이라 순간 부하는
   이쪽보다 클 수 있으나, 두 부하가 합산되는 계량기는 존재하지 않는다.
@@ -45,8 +82,8 @@ Cloudflare WARP 출구의 평판이며, 그것은 한도가 아니라 상관 장
   동시에 막힌다. 한쪽의 실패가 다른 쪽 원인 파악을 흐릴 수 있으므로, 증상이
   보이면 두 프로젝트를 각각 확인한다. 이쪽 신호는 `retryable(metadata)` 증가와
   deferral 진단의 봇월 문구다.
-- **이쪽 고유의 취약점:** 러너가 실행마다 새로 등록하므로 하루 8회 등록이
-  발생한다. 영속 등록 하나를 쓰는 VPS보다 데이터센터 IP발 반복 등록이 제한될
+- **이쪽 고유의 취약점:** heavy run은 ephemeral 러너마다 새로 등록한다. 신규 영상이
+  없는 lightweight run에는 등록이 없다. 영속 등록 하나를 쓰는 VPS보다 데이터센터 IP발 반복 등록이 제한될
   가능성이 높다. 그 경우 WARP step이 `warp=on`을 얻지 못하고 fail-closed하므로
   막힌 주소로 조용히 되돌아가지 않고 즉시 드러난다. 등록을 영속화하려면 등록
   키를 CI secret으로 보관해야 하는데, 그 비용이 현재 이득보다 크다고 보아 하지
@@ -75,17 +112,26 @@ Cloudflare WARP 출구의 평판이며, 그것은 한도가 아니라 상관 장
 - **전용 context Worker 배포는 계속 보류한다.** 이제 transcript는 쌓이지만
   `context-ready` 승격은 별도 provider 예산과 과금 판단이 필요하다.
 
-## 2026-07-30 아모레또 VOD 선분석 운영 경계
+## 2026-08-02 다섯 YouTube source 선분석 운영 경계
 
-- 고정 source는 `https://www.youtube.com/@AmorettoVODs`, channel ID
-  `UCHycoTBFDhXz4XNz8jBP-_A`, Atom feed
-  `https://www.youtube.com/feeds/videos.xml?channel_id=UCHycoTBFDhXz4XNz8jBP-_A`다.
-  2026-07-30 실측 feed는 14개 entry를 반환했으며 음식 토크
-  `KzAW3yow80Q`, 구독 실수 `EZfCGS5ms_Q`, 마크 릴레이 `vadCuMEo5PQ`를 포함했다.
+- configured source와 playlist는 다음으로 고정한다.
+  - `amoretto-vods`: `@AmorettoVODs`, `UCHycoTBFDhXz4XNz8jBP-_A`, `UULFHycoTBFDhXz4XNz8jBP-_A`
+  - `eureka-history`: `@eureka_history`, `UCiFzBB8xsUjEBq8_h6Yl6tA`, `UULFiFzBB8xsUjEBq8_h6Yl6tA`
+  - `sena-replay`: `@SENAREPLAY`, `UCk0Mu5MpVzJ056e65XpAj0Q`, `UULFk0Mu5MpVzJ056e65XpAj0Q`
+  - `coco-replay`: `@kokotorori`, `UCgq07mhOmrjVeZeJYXiAClw`, `UULVgq07mhOmrjVeZeJYXiAClw`
+  - `mangjing-compilations`: `@망징-b1t`, `UC_hftLL-ydsJd1YpcBZ_09g`, `UULF_hftLL-ydsJd1YpcBZ_09g`
+- 2026-08-02 실제 playlist Atom feed 검증에서 다섯 endpoint가 모두 HTTP 200,
+  canonical channel ID, 최근 14~15개 entry로 strict parser를 통과했다. Atom은
+  증분 발견 창이며 전체 과거 영상 backfill 목록으로 해석하지 않는다.
+- 코코는 일반 uploads에 Shorts·커버가 섞이므로 live-stream playlist만 읽고 public
+  완료 영상의 `not_live | was_live`를 허용한다. 다른 네 source는 `not_live`만
+  허용한다. 망징이는 합본 업로드이므로 전체 파일 exact 일치만 연결하고 합본 내부
+  구간 정렬은 구현 전까지 로컬 분석으로 fallback한다.
 - Pages 브라우저에서 feed를 직접 polling하지 않는다. CORS가 없고 탭 종료 뒤
-  실행도 보장되지 않는다. 예약 GitHub Actions는 정각 혼잡을 피한 시각에
-  `schedule`과 수동 실행을 제공하고, 한 실행에서 bounded 수의 미완료 영상만
-  처리한다.
+  실행도 보장되지 않는다. 예약 GitHub Actions는 매시 17·47분에 lightweight
+  preflight를 실행하고, 실제 due 작업이 있을 때만 bounded heavy 경로를 연다. 처리 상한
+  2개는 source마다가 아니라 다섯 source를 합친 heavy run 전체 상한이다. 수동 실행은
+  preflight가 no-work여도 항상 heavy 경로를 점검한다.
 - public repository의 표준 GitHub-hosted runner는 현재 무료지만 schedule은 지연
   또는 누락될 수 있고 60일 repository activity가 없으면 비활성화될 수 있다.
   따라서 실행 누락은 영상 terminal 실패가 아니며 다음 feed reconciliation에서
@@ -129,9 +175,8 @@ Cloudflare WARP 출구의 평판이며, 그것은 한도가 아니라 상관 장
   저장한다. AI key, quota lease, 로컬 파일명·원본 bytes, 채팅 원문, 사용자
   IndexedDB 자료는 넣지 않는다.
 - 예약 분석은 대화형 최대 5인 quota의 여섯 번째 편집자로 경쟁하지 않는다.
-  기본 cron은 secret 없이 실행되어 `transcript-ready`에서 정직하게 멈춘다.
-  context 승격은 foreground와 분리된 전용 인증 proxy와 별도 provider budget이
-  준비된 경우에만 명시적으로 켠다.
+  `review-ready` 자동화에는 foreground와 분리된 전용 인증 proxy와 provider secret이
+  필수다. URL/token이 없으면 no-work cron도 성공으로 가장하지 않고 구성 오류로 실패한다.
 - 배포 전에는 live feed parser, food-talk JSON3 준비, manifest/bundle hash
   readback, 시각 지문 artifact closure, raw catalog CORS, exact ID 매칭,
   이름이 완전히 바뀐 duration cohort의 유일 화면 합의, ambiguous 합의의 비자동
@@ -147,15 +192,24 @@ Cloudflare WARP 출구의 평판이며, 그것은 한도가 아니라 상관 장
   coverage, offset 0, median distance 4.5, p90 10으로 합격했다. 같은 길이로
   강제한 다른 방송 `EZfCGS5ms_Q`는 0/12로 거부됐다. 이 실측은 현재 기준의
   회귀 fixture이며 특정 음식 장면의 의미를 학습한 규칙은 아니다.
-- 공개 한국어 수동/자동 자막이 둘 다 없는 VOD를 예약 runner가 ASR로 선분석하는
-  경로는 아직 없다. 이런 영상은 `retryable(transcript)`로 남고, 편집자가 로컬
-  원본을 열면 현재 VAD/ASR 파이프라인이 정상 fallback한다. 예약 ASR은 별도 비용·
-  media ingress·quota 정책을 정한 뒤 추가한다.
+- 공개 한국어 수동/자동 자막이 둘 다 없는 VOD는 예약 runner가 90초 단위 16kHz
+  mono PCM16 WAV로 추출해 선분석한다. raw WAV는 전용 Worker JavaScript가 읽거나
+  해시하지 않고 private R2에 stream upload되며, R2 native SHA-256과 44-byte header
+  range만 검증한 뒤 signed capability URL을 Groq Whisper Large V3 Turbo에 전달한다.
+  성공한 각 구간은 `<catalog>/.transcript-checkpoints/<videoId>.asr.v2.json`에 즉시
+  atomic write/readback하고 다음 cron은 누락 구간만 이어서 처리한다. 오디오 원문과
+  provider credential은 checkpoint·Actions artifact·브라우저에 저장하지 않는다.
+  checkpoint v2는 Groq의 검증된 segment 상대 시작·끝 시각과 제한된
+  `no_speech_prob`·`avg_logprob`도 보존한다. 최종 자막 event는 이 실제 시각에
+  source range 시작을 더해 만든다. `[대사 없음]`과 두 지표가 함께 확실한
+  no-speech segment는 coverage에는 남기되 대화 event에는 넣지 않고, 지표가
+  애매하면 발화를 버리지 않는다. 전 구간이 무발화여도 `events=[]`와 완전한
+  no-speech chapter coverage로 정상적인 transcript-ready 결과를 만든다.
 - `preanalysis-catalog` branch와 예약 workflow의 최초 활성화는 repository에
   지속적인 외부 쓰기를 만든다. 코드 검증 보고와 명시적 배포 승인 뒤 branch를
   seed하고 workflow를 활성화한다. branch는 자동 생성하지 않으며 최초 commit은
-  branch root의 `amoretto-vods/catalog.json`과 그 manifest가 참조하는
-  `amoretto-vods/videos/*.json`만 가진 orphan snapshot으로 만든다. branch가
+  branch root의 다섯 source `catalog.json`과 각 manifest가 참조하는
+  `<source-id>/videos/*.json`만 가진 orphan snapshot으로 만든다. branch가
   없으면 workflow는 쓰기 전에 명시적으로 실패한다.
 
 ### 예약 context Worker의 무료 한도 (2026-07-30 확인)
@@ -168,9 +222,9 @@ Cloudflare 공식 문서로 확인한 값이며 기억에 의존하지 않았다
   전용이므로 이 설정을 바꾸면 무료 범위를 벗어난다.
 - 무료 한도: 요청 100,000/일, 실행 13,000 GB-s/일, SQLite 행 읽기 500만/일,
   행 쓰기 100,000/일, 저장 5GB.
-- 예상 사용량은 cron 상한 기준 **하루 16 요청**(3시간마다 최대 2개 영상)이다.
-  100,000/일 대비 무시할 수준이며, backlog 소진 후에는 하루 1건 수준으로
-  떨어진다.
+- 30분 preflight는 Worker를 호출하지 않는다. Worker 요청은 실제 due heavy run에서만
+  발생하며, run당 영상은 최대 2개다. 따라서 cron 횟수를 Worker 요청 수로 환산하지 말고
+  실제 선택 영상·ASR 범위·후보 수를 run report에서 확인한다.
 - 한도를 넘기면 **과금이 아니라 해당 유형의 작업이 오류로 실패한다.** 즉
   Cloudflare 쪽에서 예기치 않은 청구가 발생하는 경로는 없다. 일 한도는 UTC
   00:00에 초기화된다.
@@ -204,6 +258,7 @@ provider와 Durable Object를 하나의 원자적 transaction으로 묶을 수 �
 
 - `PREANALYSIS_CONTEXT_TOKEN`: 예약 runner 전용 opaque Bearer token
 - `PREANALYSIS_QWEN_API_KEY`: 예약 맥락 분석 전용 provider key
+- `PREANALYSIS_GROQ_API_KEY`: 자막 없는 VOD의 예약 ASR 전용 provider key
 - 선택 `PREANALYSIS_QWEN_WORKSPACE_ID`: 전경 편집 요청과 upstream quota까지
   분리하려면 별도 Qwen project/workspace를 지정한다.
 
@@ -214,8 +269,9 @@ provider와 Durable Object를 하나의 원자적 transaction으로 묶을 수 �
 - `CHANNEL_PREANALYSIS_CONTEXT_TOKEN`: 로그나 CLI argument에 넣지 않는 opaque
   Bearer token
 
-하나만 있으면 workflow가 prepare 시작 전에 실패한다. 둘 다 없으면 오류가 아니라
-자막 전용 기본 모드다. 전용 proxy는 다음 계약을 구현한다.
+예약 workflow에서는 하나라도 없으면 prepare 시작 전에 실패한다. 이 workflow의 완료
+목표는 전사 저장이 아니라 `review-ready`이므로 둘 다 없는 자막 전용 성공 모드는 두지
+않는다. 전용 proxy는 다음 계약을 구현한다.
 
 - `Authorization: Bearer ...`를 timing-safe 방식으로 검증하고 허용되지 않은
   caller를 provider 실행 전에 거부한다.
@@ -230,9 +286,11 @@ provider와 Durable Object를 하나의 원자적 transaction으로 묶을 수 �
   v1 transcript pointer와 `retryable(context)`를 보존하고 다음 cron이 같은 stable
   operation ID로 proxy의 terminal 결과를 조회한다.
 
-`context-ready`가 되더라도 이 예약 결과는 YouTube 자막만 본 선분석이다.
+`context-ready`가 되더라도 이 예약 결과는 YouTube 자막 또는 예약 ASR 전사만 본
+선분석이다.
 `contextProvenance.evidenceScope`는
-`youtube-caption-transcript-only`, `localVisualVerificationRequired`는 `true`여야
+자막이면 `youtube-caption-transcript-only`, 예약 ASR이면
+`scheduled-asr-transcript-only`이고 `localVisualVerificationRequired`는 `true`여야
 한다. 같은 provenance의 bounded `contextReceipt`는 성공 응답에서 exact 검증한
 proxy `contractVersion`, `routingRevision`, 실제 `modelId`, `modelRevision`을
 빠짐없이 보존하고 routing 불일치는 artifact closure에서 거부한다. 이 receipt도
@@ -251,12 +309,23 @@ npx wrangler secret put PREANALYSIS_CONTEXT_TOKEN \
   --config wrangler.preanalysis-context.jsonc
 npx wrangler secret put PREANALYSIS_QWEN_API_KEY \
   --config wrangler.preanalysis-context.jsonc
+npx wrangler secret put PREANALYSIS_GROQ_API_KEY \
+  --config wrangler.preanalysis-context.jsonc
 npx wrangler deploy --config wrangler.preanalysis-context.jsonc
 ```
 
 ### 최초 branch seed 배포 차단점
 
-2026-07-30 현재 원격 `preanalysis-catalog` branch는 없다. 따라서 workflow 파일을
+원격 branch가 이미 아모레또 namespace만 가진 상태라면 orphan branch를 다시 만들거나
+기존 artifact를 지우지 않는다. 같은 commit의 workflow는 실행 시작 시 누락된 네
+namespace를 `public/preanalysis/<source-id>`의 검증된 빈 fallback snapshot으로 먼저
+채운다. 따라서 첫 수동 실행은 `source=all`로 수행하고, feed 하나가 실패하더라도 빈
+checkpoint와 건강한 source 결과가 branch에 보존되는지 확인한다. 이 경우 workflow는
+보존·게시 뒤 `partial`로 red 상태를 내므로 실패 source만 다시 실행할 수 있다. 단일
+source 수동 실행도 root-level run report를 생성하므로 마지막 quality gate가 보고서
+누락으로 실패하지 않는다.
+
+원격 `preanalysis-catalog` branch가 없다면 workflow 파일을
 main에 넣는 것만으로 예약 갱신이 켜진 것으로 간주하면 안 된다. 승인 뒤 **빈 임시
 clone 안에서만** 다음과 같이 현재 검증된 Pages fallback snapshot을 seed한다.
 
@@ -265,10 +334,22 @@ git clone --no-checkout https://github.com/11qaws/exclipper.git exclipper-catalo
 cd exclipper-catalog-seed
 git switch --orphan preanalysis-catalog
 git rm -rf --ignore-unmatch .
-mkdir -p amoretto-vods
-cp -R ../exclipper/public/preanalysis/amoretto-vods/. amoretto-vods/
-git add -- amoretto-vods
-git commit -m "chore(catalog): seed Amoretto preanalysis"
+for namespace in \
+  amoretto-vods \
+  eureka-history \
+  sena-replay \
+  coco-replay \
+  mangjing-compilations; do
+  mkdir -p "${namespace}"
+  cp -R "../exclipper/public/preanalysis/${namespace}/." "${namespace}/"
+done
+git add -- \
+  amoretto-vods \
+  eureka-history \
+  sena-replay \
+  coco-replay \
+  mangjing-compilations
+git commit -m "chore(catalog): seed channel preanalysis"
 git push origin HEAD:refs/heads/preanalysis-catalog
 ```
 
@@ -293,7 +374,7 @@ closure test로 다시 확인한다. seed 뒤 workflow를 수동으로 한 번 �
 - 키는 Pages, 브라우저 저장소, Git, `wrangler.jsonc`의 평문 변수, 오류 본문에 넣지 않는다. 등록 명령은 `npx wrangler secret put GROQ_API_KEY`이며 값은 대화·운영 기록에 다시 복사하지 않는다. `/healthz.providers.groqRoutes.broadcastTranscriptConfigured`와 선택 provider의 `configured/active`만 공개한다.
 - Groq 경로는 공식 `POST https://api.groq.com/openai/v1/audio/transcriptions`, 모델 `whisper-large-v3-turbo`, `language=ko`, `response_format=verbose_json`, segment timestamp, temperature 0으로 고정한다. 브라우저가 모델·언어·endpoint·credential을 정하지 않는다.
 - `free-r2`에서는 Worker가 WAV를 다시 읽거나 Base64로 만들지 않는다. 짧은 private R2 capability URL만 multipart `url` 필드로 Groq에 넘긴다. 별도 `paid-direct` 전환 경로만 검증된 WAV를 multipart `file`로 전송한다. 현재 canonical 90초·16kHz·mono·PCM16 WAV 상한은 2,880,044 bytes로 Groq 무료 계정의 공식 25MB file 제한보다 작다.
-- 응답은 최대 128KiB, transcript 20,000자, segment 512개로 제한한다. 한국어 언어 표식, source chunk 길이 안의 유한·정방향 segment timestamp, 한국어 본문을 모두 검증하고 빈 segment 응답만 기존 `[대사 없음]`으로 정규화한다. provider의 request ID, 원문 오류 메시지, credential은 브라우저에 전달하지 않는다.
+- 응답은 최대 128KiB, transcript 20,000자, segment 512개로 제한한다. 한국어 언어 표식, source chunk 길이 안의 유한·정방향 segment timestamp, 한국어 본문을 모두 검증하고 빈 segment 응답은 `[대사 없음]`으로 정규화한다. 검증된 상대 timestamp와 bounded no-speech/log-probability 신호는 terminal에 보존한다. provider의 request ID, 원문 오류 메시지, credential은 브라우저에 전달하지 않는다.
 - Qwen 기본 route의 bounded fallback은 계속 Gemini이며 Groq secret 때문에 달라지지 않는다. 명시적 Groq `paid-direct` route는 기존 정책상 안전하게 분류된 실패에만 Qwen으로 한 번 fallback할 수 있다. `free-r2` resolve는 staged media 계약을 보존하기 위해 provider 간 자동 fallback을 하지 않는다.
 - 무료 운영에서는 기존 전사 quota gate와 최대 동시 참여자 5명 정책을 공유한다. 공식 무료 계정의 실제 rate limit은 계정별 콘솔 값과 응답 header를 smoke에서 확인해야 하며, 코드가 임의로 더 높은 처리량을 가정하지 않는다. 활성화 전 2초·30초·90초 한국어 WAV, 무발화, 401/429/5xx, R2 object cleanup, 모델 ID/revision header를 검증한다.
 - 현재 Pages의 전사 캐시 revision도 선택된 서버 모델 revision과 함께 fence되어야 한다. 해당 client release가 반영되기 전에는 준비된 Groq route를 production 기본값으로 바꾸지 않는다. 키 등록과 실제 provider smoke·비용 발생은 별도 운영 승인 뒤 수행한다.
@@ -311,7 +392,7 @@ closure test로 다시 확인한다. seed 뒤 workflow를 수동으로 한 번 �
 - Worker `/healthz`는 `candidateTransport.version`, `mode`, `configured`, required frame count 4와 staged schema를 보고한다. 일시적인 503은 Pages에 영구 cache하지 않고, 성공한 transport 판단도 60초 뒤 갱신한다.
 - 후보 media stage는 private `TRANSCRIPT_MEDIA` bucket의 `transcript/candidate/` prefix를 사용한다. public R2 access는 열지 않는다. 정상 실행 후 object 0개를 확인하고, 실패 smoke에서는 capability 만료 뒤 GET 404와 1일 lifecycle 범위를 확인한다.
 - 배포 순서는 새 분석 유입 중지 → Worker → plain health/OPTIONS/R2 candidate smoke → 같은 commit의 Pages → 새 분석 재개다. current-only 계약이므로 서로 다른 릴리스의 Worker와 Pages를 섞어 운영하지 않는다.
-- Free R2 candidate smoke는 실제 후보 WAV와 서로 다른 JPEG 4장을 사용해 stage 202, resolve 200, Qwen model identity, 한국어 event/reaction/context 결과와 object cleanup을 확인한다. byte-counting transform 뒤에는 반드시 `FixedLengthStream(expectedByteLength)`을 두어 R2에 known length를 보존한다. 같은 payload retry는 object·ticket 하나를 재사용하고 재전송 body pump를 abort/cancel해 제한 시간 안에 202를 반환해야 한다. candidate manifest가 달라지면 기존 object를 보존한 채 provider 호출 전에 거부돼야 한다.
+- Free R2 candidate smoke는 실제 후보 WAV와 서로 다른 JPEG 4장을 사용해 stage 202, resolve 200, Qwen model identity, 한국어 event/reaction/context 결과와 object cleanup을 확인한다. byte-counting transform 뒤에는 반드시 `FixedLengthStream(expectedByteLength)`을 두어 R2에 known length를 보존한다. 같은 media payload의 재시도는 object를 재사용하고 재전송 body pump를 abort/cancel해 제한 시간 안에 202를 반환해야 한다. ticket이 만료돼 새 capability가 발급되어도 semantic operation ID가 유지되고 terminal replay가 provider를 다시 호출하지 않는지 확인한다. candidate manifest가 달라지면 기존 object를 보존한 채 provider 호출 전에 거부돼야 한다.
 - 합법적인 최대 candidate context도 provider 호출 전에 48KiB canonical packet으로 정리되어 Qwen shared prompt 80KiB와 최대 예약 94,180 token 안에 들어가야 한다. 필드가 줄면 `[중간 생략 / middle omitted]`과 앞·뒤가 남고, 원본 session artifact는 불변이어야 한다. Qwen·Gemini direct/proxy·quota fingerprint·verification receipt의 packet과 fingerprint가 byte-for-byte 같아야 하며, receipt의 candidate ID·source start/end·routing revision도 실제 provider 요청과 정확히 같아야 한다. 정상 입력이 크기 때문에 중단되거나 413 `TOKEN_BUDGET_TOO_LARGE`로 끝나면 배포하지 않는다. Free R2에서 Gemini fallback이 없다는 사실은 장애가 아니라 명시적 transport 제한으로 health에 유지한다.
 - candidate bundle smoke는 `Content-Length`가 있는 정상·초과·미달 입력뿐 아니라 헤더 없는 정상·초과 입력도 포함한다. 헤더 없는 초과 stream은 signed exact byte length 직후 413 `PAYLOAD_TOO_LARGE`로 끊기고 R2 object가 남지 않아야 한다.
 - conditional R2 put의 loser는 R2가 본문을 소비한다고 가정하지 않는다. `put() == null` 뒤 강한 일관성의 `head`로 winner metadata·checksum·signature를 재검증하고, 성공하면 `reused`, 실패하면 bounded 오류로 닫되 두 경우 모두 loser pump를 terminal abort한다. Qwen 200 응답이 candidate schema를 어기면 fresh internal quota operation으로 최대 두 번만 복구하고, 모두 실패하면 staged object를 ticket 만료까지 보존해 missing-only 재시도가 재업로드 없이 이어지게 한다.

@@ -151,7 +151,67 @@ describe("broadcastTranscriptQwen", () => {
       detectedLanguage: "ko",
       emotion: null,
       billedSeconds: 29.7,
+      segments: [
+        {
+          relativeStartMs: 200,
+          relativeEndMs: 11_400,
+          textKo: "고구마를 먹고",
+          noSpeechProbability: null,
+          averageLogProbability: null,
+        },
+        {
+          relativeStartMs: 11_400,
+          relativeEndMs: 29_700,
+          textKo: "예상 밖의 맛에 놀랐다.",
+          noSpeechProbability: null,
+          averageLogProbability: null,
+        },
+      ],
     });
+  });
+
+  it("preserves bounded Whisper confidence signals for conservative no-speech filtering", () => {
+    const result = extractBroadcastTranscriptGroqResponse(
+      {
+        language: "ko",
+        duration: 12,
+        text: "음악 소리 뒤에 실제 대사가 들린다.",
+        segments: [
+          {
+            start: 0,
+            end: 5,
+            text: "음악 소리",
+            no_speech_prob: 0.99,
+            avg_logprob: -1.2,
+          },
+          {
+            start: 5,
+            end: 12,
+            text: "뒤에 실제 대사가 들린다.",
+            no_speech_prob: 0.65,
+            avg_logprob: -0.2,
+          },
+        ],
+      },
+      { sourceStartMs: 90_000, durationMs: 12_000 },
+    );
+
+    expect(result?.segments).toEqual([
+      {
+        relativeStartMs: 0,
+        relativeEndMs: 5_000,
+        textKo: "음악 소리",
+        noSpeechProbability: 0.99,
+        averageLogProbability: -1.2,
+      },
+      {
+        relativeStartMs: 5_000,
+        relativeEndMs: 12_000,
+        textKo: "뒤에 실제 대사가 들린다.",
+        noSpeechProbability: 0.65,
+        averageLogProbability: -0.2,
+      },
+    ]);
   });
 
   it("rejects incomplete current Qwen Omni output", () => {

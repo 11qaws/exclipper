@@ -1,6 +1,4 @@
 import {
-  AMORETTO_YOUTUBE_CHANNEL_HANDLE,
-  AMORETTO_YOUTUBE_CHANNEL_ID,
   CHANNEL_PREANALYSIS_CATALOG_SCHEMA_VERSION,
   isChannelPreanalysisState,
   matchChannelPreanalysisVideo,
@@ -11,7 +9,14 @@ import {
   type ChannelPreanalysisMatchQuery,
   type ChannelPreanalysisMatchResult,
   type ChannelPreanalysisRetryCheckpoint,
+  channelPreanalysisSourceForManifest,
 } from "./channelPreanalysisCatalog";
+import {
+  AMORETTO_CHANNEL_PREANALYSIS_SOURCE,
+  CHANNEL_PREANALYSIS_SOURCES,
+  channelPreanalysisStoragePrefix,
+  type ConfiguredChannelPreanalysisSource,
+} from "./channelPreanalysisSources";
 import {
   CHANNEL_PREANALYSIS_BUNDLE_MAX_BYTES,
   assertChannelPreanalysisBundleMatchesCatalogVideo,
@@ -31,6 +36,14 @@ import {
   type ChannelPreanalysisVisualFingerprint,
   type LocalChannelPreanalysisVisualSample,
 } from "./channelPreanalysisVisualFingerprint";
+import {
+  CHANNEL_PREANALYSIS_REVIEW_BUNDLE_MAX_BYTES,
+  channelPreanalysisReviewBundleArtifactId,
+  channelPreanalysisReviewBundleStorageKey,
+  parseChannelPreanalysisReviewBundle,
+  verifyChannelPreanalysisReviewBundleIntegrity,
+  type ChannelPreanalysisReviewBundle,
+} from "./channelPreanalysisReviewBundle";
 
 export const CHANNEL_PREANALYSIS_RAW_BASE_URL =
   "https://raw.githubusercontent.com/11qaws/exclipper/preanalysis-catalog/amoretto-vods/" as const;
@@ -45,7 +58,6 @@ export const CHANNEL_PREANALYSIS_MANIFEST_MAX_BYTES = 4 * 1024 * 1024;
 export const CHANNEL_PREANALYSIS_MANIFEST_REQUEST_TIMEOUT_MS = 3_000;
 export const CHANNEL_PREANALYSIS_BUNDLE_REQUEST_MIN_TIMEOUT_MS = 8_000;
 export const CHANNEL_PREANALYSIS_REQUEST_MAX_TIMEOUT_MS = 75_000;
-const CHANNEL_PREANALYSIS_STORAGE_PREFIX = "amoretto-vods/" as const;
 const CHANNEL_PREANALYSIS_MINIMUM_DOWNLOAD_BYTES_PER_SECOND = 512 * 1024;
 
 export type ChannelPreanalysisCatalogSource = "raw" | "bundled";
@@ -58,6 +70,7 @@ export type ChannelPreanalysisClientErrorCode =
   | "INVALID_JSON"
   | "INVALID_MANIFEST"
   | "INVALID_BUNDLE"
+  | "INVALID_REVIEW"
   | "INVALID_FINGERPRINT";
 
 export class ChannelPreanalysisClientError extends Error {
@@ -82,6 +95,7 @@ export type ChannelPreanalysisFetch = (
 ) => Promise<Response>;
 
 export interface ChannelPreanalysisClientOptions {
+  readonly configuredSource?: ConfiguredChannelPreanalysisSource;
   readonly fetchImplementation?: ChannelPreanalysisFetch;
   readonly rawBaseUrl?: string;
   readonly bundledBaseUrl?: string;
@@ -100,6 +114,11 @@ export interface LoadedChannelPreanalysisManifest {
 
 export interface LoadedChannelPreanalysisVisualFingerprint {
   readonly fingerprint: ChannelPreanalysisVisualFingerprint;
+  readonly artifact: ChannelPreanalysisArtifact;
+}
+
+export interface LoadedChannelPreanalysisReview {
+  readonly review: ChannelPreanalysisReviewBundle;
   readonly artifact: ChannelPreanalysisArtifact;
 }
 
@@ -147,6 +166,33 @@ export interface ChannelPreanalysisLookupResult {
   readonly bundleArtifact: ChannelPreanalysisArtifact | null;
 }
 
+export type ConfiguredChannelPreanalysisSearchSelection =
+  | "exact"
+  | "probable"
+  | "visual-cohort"
+  | "ambiguous"
+  | "partial"
+  | "none";
+
+export interface ConfiguredChannelPreanalysisSearchResult {
+  readonly selection: ConfiguredChannelPreanalysisSearchSelection;
+  readonly coverage: "complete" | "partial";
+  readonly primaryLookup: ChannelPreanalysisLookupResult;
+  readonly lookups: readonly ChannelPreanalysisLookupResult[];
+  readonly unavailableSourceIds: readonly string[];
+}
+
+export interface ConfiguredChannelPreanalysisClientOptions
+  extends Omit<
+    ChannelPreanalysisClientOptions,
+    "configuredSource" | "rawBaseUrl" | "bundledBaseUrl"
+  > {
+  readonly configuredSources?: readonly ConfiguredChannelPreanalysisSource[];
+  readonly sourceOptions?: (
+    source: ConfiguredChannelPreanalysisSource,
+  ) => Pick<ChannelPreanalysisClientOptions, "rawBaseUrl" | "bundledBaseUrl">;
+}
+
 const VIDEO_ID_PATTERN = /^[A-Za-z0-9_-]{11}$/u;
 const LOCAL_FINGERPRINT_PATTERN =
   /^local-file-sampled-sha256-v1:[0-9a-f]{64}$/u;
@@ -162,6 +208,7 @@ const READY_BUNDLE_STATES = new Set([
 interface ChannelPreanalysisSourceBase {
   readonly source: ChannelPreanalysisCatalogSource;
   readonly baseUrl: string;
+  readonly configuredSource: ConfiguredChannelPreanalysisSource;
 }
 
 export async function fetchChannelPreanalysisManifest(
@@ -273,6 +320,186 @@ export async function requestChannelPreanalysisMatch(
 }
 
 /**
+ * Searches every configured catalog before allowing fuzzy or perceptual
+ * inference. Explicit IDs and registered exact-file fingerprints can survive
+ * an unrelated catalog outage; probable and visual lanes require complete
+ * coverage so a missing source cannot manufacture a false unique match.
+ */
+export async function requestConfiguredChannelPreanalysisMatch(
+  query: ChannelPreanalysisMatchQuery,
+  options: ConfiguredChannelPreanalysisClientOptions = {},
+): Promise<ConfiguredChannelPreanalysisSearchResult> {
+  const {
+    configuredSources = CHANNEL_PREANALYSIS_SOURCES,
+    sourceOptions,
+    ...sharedOptions
+  } = options;
+  if (
+    configuredSources.length === 0 ||
+    new Set(configuredSources.map(({ sourceId }) => sourceId)).size !==
+      configuredSources.length
+  ) {
+    throw new ChannelPreanalysisClientError(
+      "FETCH_FAILED",
+      "Configured channel preanalysis sources are invalid.",
+    );
+  }
+
+  const settled = await Promise.allSettled(
+    configuredSources.map((configuredSource) =>
+      requestChannelPreanalysisMatch(query, {
+        ...sharedOptions,
+        ...sourceOptions?.(configuredSource),
+        configuredSource,
+      }),
+    ),
+  );
+  const lookups: ChannelPreanalysisLookupResult[] = [];
+  // A bundled catalog keeps exact-ID recovery available, but it is not proof
+  // that the current raw branch was observed. Treat that source as uncovered
+  // for fuzzy uniqueness and visual-cohort selection; otherwise an empty or
+  // stale bundled fallback can manufacture a false cross-channel singleton.
+  const unavailableSourceIds: string[] = [];
+  settled.forEach((result, index) => {
+    if (result.status === "fulfilled") {
+      lookups.push(result.value);
+      if (result.value.manifestSource === "bundled") {
+        const source = configuredSources[index];
+        if (source !== undefined) unavailableSourceIds.push(source.sourceId);
+      }
+      return;
+    }
+    const source = configuredSources[index];
+    if (source !== undefined) unavailableSourceIds.push(source.sourceId);
+  });
+  if (lookups.length === 0) {
+    throw new ChannelPreanalysisClientError(
+      "FETCH_FAILED",
+      "Every configured channel preanalysis catalog failed.",
+    );
+  }
+
+  const coverage =
+    lookups.length === configuredSources.length &&
+    unavailableSourceIds.length === 0
+      ? "complete"
+      : "partial";
+  const exact = lookups.filter(
+    ({ match }) => match.confidence === "exact" && match.match !== null,
+  );
+  if (exact.length === 1) {
+    return configuredSearchResult(
+      "exact",
+      coverage,
+      exact[0]!,
+      lookups,
+      unavailableSourceIds,
+    );
+  }
+  if (exact.length > 1) {
+    return configuredSearchResult(
+      "ambiguous",
+      coverage,
+      exact[0]!,
+      lookups,
+      unavailableSourceIds,
+    );
+  }
+  if (coverage === "partial") {
+    return configuredSearchResult(
+      "partial",
+      coverage,
+      lookups[0]!,
+      lookups,
+      unavailableSourceIds,
+    );
+  }
+
+  const probable = lookups.filter(
+    ({ match }) => match.confidence === "probable" && match.match !== null,
+  );
+  if (probable.length === 1) {
+    return configuredSearchResult(
+      "probable",
+      coverage,
+      probable[0]!,
+      lookups,
+      unavailableSourceIds,
+    );
+  }
+  if (probable.length > 1) {
+    return configuredSearchResult(
+      "ambiguous",
+      coverage,
+      probable[0]!,
+      lookups,
+      unavailableSourceIds,
+    );
+  }
+
+  const durationMs = query.durationMs;
+  if (durationMs !== null && durationMs !== undefined) {
+    const compatibleCount = lookups.reduce(
+      (count, { manifest }) =>
+        count +
+        manifest.videos.filter(
+          ({ durationMs: candidateDurationMs }) =>
+            candidateDurationMs !== null &&
+            isChannelPreanalysisVisualFingerprintDurationCompatible(
+              durationMs,
+              candidateDurationMs,
+            ),
+        ).length,
+      0,
+    );
+    if (
+      compatibleCount > 0 &&
+      compatibleCount <= CHANNEL_PREANALYSIS_VISUAL_FINGERPRINT_MAX_COHORT
+    ) {
+      return configuredSearchResult(
+        "visual-cohort",
+        coverage,
+        lookups[0]!,
+        lookups,
+        unavailableSourceIds,
+      );
+    }
+    if (compatibleCount > CHANNEL_PREANALYSIS_VISUAL_FINGERPRINT_MAX_COHORT) {
+      return configuredSearchResult(
+        "ambiguous",
+        coverage,
+        lookups[0]!,
+        lookups,
+        unavailableSourceIds,
+      );
+    }
+  }
+  return configuredSearchResult(
+    "none",
+    coverage,
+    lookups[0]!,
+    lookups,
+    unavailableSourceIds,
+  );
+}
+
+function configuredSearchResult(
+  selection: ConfiguredChannelPreanalysisSearchSelection,
+  coverage: ConfiguredChannelPreanalysisSearchResult["coverage"],
+  primaryLookup: ChannelPreanalysisLookupResult,
+  lookups: readonly ChannelPreanalysisLookupResult[],
+  unavailableSourceIds: readonly string[],
+): ConfiguredChannelPreanalysisSearchResult {
+  return {
+    selection,
+    coverage,
+    primaryLookup,
+    lookups: [...lookups],
+    unavailableSourceIds: [...unavailableSourceIds],
+  };
+}
+
+/**
  * Loads one digest-verified perceptual fingerprint. Callers can request the
  * 12-timestamp zero-offset plan first and fetch the bounded recovery plan only
  * if the common path does not reach consensus.
@@ -282,6 +509,7 @@ export async function fetchChannelPreanalysisVisualFingerprint(
   video: ChannelPreanalysisCatalogVideo,
   options: ChannelPreanalysisClientOptions = {},
 ): Promise<LoadedChannelPreanalysisVisualFingerprint | null> {
+  const configuredSource = requireConfiguredSource(loaded.manifest);
   const artifact = selectVisualFingerprintArtifact(
     loaded.manifest,
     video,
@@ -292,7 +520,10 @@ export async function fetchChannelPreanalysisVisualFingerprint(
     CHANNEL_PREANALYSIS_VISUAL_FINGERPRINT_MAX_BYTES,
   );
   const bytes = await fetchBoundedBytes(
-    joinBaseUrl(loaded.baseUrl, relativeBundlePath(artifact.storageKey)),
+    joinBaseUrl(
+      loaded.baseUrl,
+      relativeBundlePath(artifact.storageKey, configuredSource),
+    ),
     maximumBytes,
     options,
     resolveRequestTimeoutMs(
@@ -354,8 +585,108 @@ export async function fetchChannelPreanalysisVisualFingerprintForLookup(
 }
 
 /**
+ * Loads the immutable review snapshot only for an exact match bound to this
+ * manifest instance. The transcript/context bundle remains part of the fence:
+ * a review artifact alone never proves that the editor may skip analysis.
+ */
+export async function fetchChannelPreanalysisReviewForLookup(
+  lookup: ChannelPreanalysisLookupResult,
+  options: ChannelPreanalysisClientOptions = {},
+): Promise<LoadedChannelPreanalysisReview | null> {
+  const matchedVideo = lookup.match.match;
+  if (lookup.match.confidence !== "exact" || matchedVideo === null) return null;
+  const video = lookup.manifest.videos.find(
+    ({ videoId }) => videoId === matchedVideo.videoId,
+  );
+  if (video === undefined || video !== matchedVideo) {
+    throw invalidReview("Review lookup is not bound to its catalog snapshot.");
+  }
+  if (!hasReviewReadySnapshot(video)) return null;
+  if (
+    lookup.bundleStatus !== "loaded" ||
+    lookup.bundle === null ||
+    lookup.bundleArtifact === null
+  ) {
+    throw invalidReview("Review lookup is missing its verified context bundle.");
+  }
+
+  const configuredSource = requireConfiguredSource(lookup.manifest);
+  const transcriptArtifact = selectTranscriptBundleArtifact(
+    lookup.manifest,
+    video,
+  );
+  if (transcriptArtifact !== lookup.bundleArtifact) {
+    throw invalidReview("Review lookup transcript receipt is stale.");
+  }
+  try {
+    await verifyChannelPreanalysisTranscriptDigest(lookup.bundle);
+    assertChannelPreanalysisBundleMatchesCatalogVideo(
+      lookup.bundle,
+      { ...video, state: "context-ready" },
+      lookup.manifest.revision,
+    );
+  } catch (cause) {
+    throw invalidReview("Review lookup context bundle failed verification.", cause);
+  }
+
+  const artifact = selectReviewBundleArtifact(lookup.manifest, video);
+  const fingerprintArtifact = selectVisualFingerprintArtifact(
+    lookup.manifest,
+    video,
+  );
+  if (fingerprintArtifact === null) {
+    throw invalidReview("Review lookup is missing its visual coverage fingerprint.");
+  }
+  const maximumBytes = resolveMaximumBytes(
+    options.bundleMaxBytes,
+    CHANNEL_PREANALYSIS_REVIEW_BUNDLE_MAX_BYTES,
+  );
+  const bytes = await fetchBoundedBytes(
+    joinBaseUrl(
+      lookup.manifestBaseUrl,
+      relativeBundlePath(artifact.storageKey, configuredSource),
+    ),
+    maximumBytes,
+    options,
+    resolveRequestTimeoutMs(
+      options.bundleRequestTimeoutMs,
+      defaultBundleRequestTimeoutMs(artifact.byteLength),
+    ),
+  );
+
+  let review: ChannelPreanalysisReviewBundle;
+  try {
+    await verifyArtifactBytes(bytes, artifact);
+    review = parseChannelPreanalysisReviewBundle(decodeUtf8(bytes));
+    await verifyChannelPreanalysisReviewBundleIntegrity(review);
+  } catch (cause) {
+    throw invalidReview("Review artifact failed digest or schema verification.", cause);
+  }
+  if (
+    review.artifactId !== artifact.artifactId ||
+    review.artifactRevision !== artifact.revision ||
+    review.createdAt !== artifact.createdAt ||
+    review.source.sourceId !== configuredSource.sourceId ||
+    review.source.channelId !== configuredSource.channelId ||
+    review.source.videoId !== video.videoId ||
+    review.sourceDurationMs !== video.durationMs ||
+    review.transcriptDigest !== lookup.bundle.transcriptDigest ||
+    review.visualCoverage.sourceFingerprintArtifactId !==
+      fingerprintArtifact.artifactId ||
+    review.visualCoverage.sourceFingerprintDigest !==
+      fingerprintArtifact.contentDigest ||
+    lookup.bundle.broadcastContext === null ||
+    JSON.stringify(review.broadcastContext) !==
+      JSON.stringify(lookup.bundle.broadcastContext)
+  ) {
+    throw invalidReview("Review artifact does not match its catalog context.");
+  }
+  return { review, artifact };
+}
+
+/**
  * Loads every duration-compatible visual identity from the exact catalog
- * snapshot already returned to the caller. The cohort is capped before any
+ * snapshot already returned to the caller. The 32-item cohort is capped before any
  * artifact request. A missing, malformed or unavailable fingerprint makes the
  * whole cohort partial so a subset can never manufacture a false unique match.
  */
@@ -649,6 +980,8 @@ export async function fetchChannelPreanalysisBundle(
 
 export function parseChannelPreanalysisManifest(
   input: string,
+  configuredSource: ConfiguredChannelPreanalysisSource =
+    AMORETTO_CHANNEL_PREANALYSIS_SOURCE,
 ): ChannelPreanalysisCatalogManifest {
   if (
     typeof input !== "string" ||
@@ -670,10 +1003,13 @@ export function parseChannelPreanalysisManifest(
       { cause },
     );
   }
-  return validateManifest(value);
+  return validateManifest(value, configuredSource);
 }
 
-function validateManifest(value: unknown): ChannelPreanalysisCatalogManifest {
+function validateManifest(
+  value: unknown,
+  configuredSource: ConfiguredChannelPreanalysisSource,
+): ChannelPreanalysisCatalogManifest {
   const manifest = exactRecord(value, [
     "schemaVersion",
     "channelId",
@@ -685,8 +1021,8 @@ function validateManifest(value: unknown): ChannelPreanalysisCatalogManifest {
   ]);
   if (
     manifest.schemaVersion !== CHANNEL_PREANALYSIS_CATALOG_SCHEMA_VERSION ||
-    manifest.channelId !== AMORETTO_YOUTUBE_CHANNEL_ID ||
-    manifest.channelHandle !== AMORETTO_YOUTUBE_CHANNEL_HANDLE ||
+    manifest.channelId !== configuredSource.channelId ||
+    manifest.channelHandle !== configuredSource.channelHandle ||
     !isPositiveInteger(manifest.revision) ||
     !isIsoDate(manifest.generatedAt) ||
     !Array.isArray(manifest.videos) ||
@@ -698,7 +1034,9 @@ function validateManifest(value: unknown): ChannelPreanalysisCatalogManifest {
   }
 
   const videoIds = new Set<string>();
-  const videos = manifest.videos.map((video) => validateVideo(video, videoIds));
+  const videos = manifest.videos.map((video) =>
+    validateVideo(video, videoIds, configuredSource),
+  );
   const registeredFingerprints = new Set<string>();
   for (const video of videos) {
     for (const fingerprint of video.registeredLocalSampledFingerprints) {
@@ -710,7 +1048,7 @@ function validateManifest(value: unknown): ChannelPreanalysisCatalogManifest {
   }
   const artifactIds = new Set<string>();
   const artifacts = manifest.artifacts.map((artifact) =>
-    validateArtifact(artifact, videoIds, artifactIds),
+    validateArtifact(artifact, videoIds, artifactIds, configuredSource),
   );
   const artifactById = new Map(artifacts.map((artifact) => [artifact.artifactId, artifact]));
   const referencedArtifactIds = new Set<string>();
@@ -730,16 +1068,26 @@ function validateManifest(value: unknown): ChannelPreanalysisCatalogManifest {
     const fingerprintArtifacts = referencedArtifacts.filter(
       ({ kind }) => kind === "fingerprint",
     );
+    const reviewArtifacts = referencedArtifacts.filter(
+      ({ kind }) => kind === "review",
+    );
+    const reviewArtifactRequired = hasReviewReadySnapshot(video);
     if (
       (loadableTranscriptBundleState(video) !== null &&
         transcriptArtifacts.length !== 1) ||
       fingerprintArtifacts.length > 1 ||
+      reviewArtifacts.length !== (reviewArtifactRequired ? 1 : 0) ||
+      (reviewArtifactRequired && video.durationMs === null) ||
+      reviewArtifacts.some(
+        (artifact) => artifact.revision !== video.revision,
+      ) ||
       transcriptArtifacts.some(
         (artifact) =>
           !isCanonicalBundleStorageKey(
             video.videoId,
             artifact.revision,
             artifact.storageKey,
+            configuredSource,
           ) ||
           artifact.revision > video.revision,
       )
@@ -756,8 +1104,8 @@ function validateManifest(value: unknown): ChannelPreanalysisCatalogManifest {
   }
   return {
     schemaVersion: CHANNEL_PREANALYSIS_CATALOG_SCHEMA_VERSION,
-    channelId: AMORETTO_YOUTUBE_CHANNEL_ID,
-    channelHandle: AMORETTO_YOUTUBE_CHANNEL_HANDLE,
+    channelId: configuredSource.channelId,
+    channelHandle: configuredSource.channelHandle,
     revision: manifest.revision,
     generatedAt: manifest.generatedAt,
     videos,
@@ -768,6 +1116,7 @@ function validateManifest(value: unknown): ChannelPreanalysisCatalogManifest {
 function validateVideo(
   value: unknown,
   seenVideoIds: Set<string>,
+  configuredSource: ConfiguredChannelPreanalysisSource,
 ): ChannelPreanalysisCatalogVideo {
   const video = exactRecord(value, [
     "channelId",
@@ -785,7 +1134,7 @@ function validateVideo(
     "retry",
   ]);
   if (
-    video.channelId !== AMORETTO_YOUTUBE_CHANNEL_ID ||
+    video.channelId !== configuredSource.channelId ||
     typeof video.videoId !== "string" ||
     !VIDEO_ID_PATTERN.test(video.videoId) ||
     seenVideoIds.has(video.videoId) ||
@@ -827,7 +1176,7 @@ function validateVideo(
   }
   const retry = validateRetry(video.retry, video.state);
   return {
-    channelId: AMORETTO_YOUTUBE_CHANNEL_ID,
+    channelId: configuredSource.channelId,
     videoId: video.videoId,
     title: video.title,
     normalizedTitle: video.normalizedTitle,
@@ -860,18 +1209,39 @@ function validateRetry(
     "errorCode",
   ]);
   if (
-    !["metadata", "transcript", "context", "fingerprint"].includes(retry.stage as string) ||
+    !["metadata", "transcript", "context", "review", "fingerprint"].includes(retry.stage as string) ||
     ![
       "discovered",
       "metadata-ready",
       "transcript-ready",
       "context-ready",
+      "review-ready",
     ].includes(retry.lastSuccessfulState as string) ||
     !isPositiveInteger(retry.attemptCount) ||
     retry.attemptCount > 1_000 ||
     !isIsoDate(retry.nextAttemptAt) ||
     typeof retry.errorCode !== "string" ||
     !/^[A-Z0-9][A-Z0-9_:-]{0,95}$/u.test(retry.errorCode)
+  ) {
+    throw invalidManifest();
+  }
+  if (
+    (retry.stage === "metadata" &&
+      retry.lastSuccessfulState !== "discovered") ||
+    (retry.stage === "transcript" &&
+      retry.lastSuccessfulState !== "metadata-ready") ||
+    (retry.stage === "context" &&
+      retry.lastSuccessfulState !== "transcript-ready") ||
+    (retry.stage === "review" &&
+      retry.lastSuccessfulState !== "context-ready") ||
+    (retry.stage === "fingerprint" &&
+      ![
+        "discovered",
+        "metadata-ready",
+        "transcript-ready",
+        "context-ready",
+        "review-ready",
+      ].includes(retry.lastSuccessfulState as string))
   ) {
     throw invalidManifest();
   }
@@ -882,6 +1252,7 @@ function validateArtifact(
   value: unknown,
   videoIds: ReadonlySet<string>,
   artifactIds: Set<string>,
+  configuredSource: ConfiguredChannelPreanalysisSource,
 ): ChannelPreanalysisArtifact {
   const artifact = exactRecord(value, [
     "artifactId",
@@ -898,14 +1269,15 @@ function validateArtifact(
     artifactIds.has(artifact.artifactId) ||
     typeof artifact.videoId !== "string" ||
     !videoIds.has(artifact.videoId) ||
-    !["metadata", "transcript", "context", "fingerprint"].includes(artifact.kind as string) ||
+    !["metadata", "transcript", "context", "review", "fingerprint"].includes(artifact.kind as string) ||
     !isPositiveInteger(artifact.revision) ||
-    !isSafeStorageKey(artifact.storageKey) ||
+    !isSafeStorageKey(artifact.storageKey, configuredSource) ||
     (artifact.kind === "transcript" &&
       !isCanonicalBundleStorageKey(
         artifact.videoId,
         artifact.revision,
         artifact.storageKey,
+        configuredSource,
       )) ||
     (artifact.kind === "fingerprint" &&
       (artifact.revision !== 1 ||
@@ -916,6 +1288,19 @@ function validateArtifact(
         artifact.storageKey !==
           canonicalChannelPreanalysisVisualFingerprintStorageKey(
             artifact.videoId,
+            configuredSource.sourceId,
+          ))) ||
+    (artifact.kind === "review" &&
+      (artifact.artifactId !==
+        channelPreanalysisReviewBundleArtifactId(
+          artifact.videoId,
+          artifact.revision,
+        ) ||
+        artifact.storageKey !==
+          channelPreanalysisReviewBundleStorageKey(
+            configuredSource.sourceId,
+            artifact.videoId,
+            artifact.revision,
           ))) ||
     typeof artifact.contentDigest !== "string" ||
     !SHA256_PATTERN.test(artifact.contentDigest) ||
@@ -923,6 +1308,8 @@ function validateArtifact(
     artifact.byteLength >
       (artifact.kind === "fingerprint"
         ? CHANNEL_PREANALYSIS_VISUAL_FINGERPRINT_MAX_BYTES
+        : artifact.kind === "review"
+          ? CHANNEL_PREANALYSIS_REVIEW_BUNDLE_MAX_BYTES
         : CHANNEL_PREANALYSIS_BUNDLE_MAX_BYTES) ||
     !isIsoDate(artifact.createdAt)
   ) {
@@ -951,7 +1338,7 @@ async function fetchChannelPreanalysisManifestFromSource(
   );
   return {
     ...source,
-    manifest: parseChannelPreanalysisManifest(text),
+    manifest: parseChannelPreanalysisManifest(text, source.configuredSource),
   };
 }
 
@@ -963,6 +1350,7 @@ async function fetchChannelPreanalysisBundleFromSource(
   readonly bundle: ChannelPreanalysisBundle;
   readonly artifact: ChannelPreanalysisArtifact;
 }> {
+  const configuredSource = requireConfiguredSource(loaded.manifest);
   const expectedBundleState = loadableTranscriptBundleState(video);
   if (expectedBundleState === null) {
     throw new ChannelPreanalysisClientError(
@@ -976,7 +1364,10 @@ async function fetchChannelPreanalysisBundleFromSource(
     CHANNEL_PREANALYSIS_BUNDLE_MAX_BYTES,
   );
   const bytes = await fetchBoundedBytes(
-    joinBaseUrl(loaded.baseUrl, relativeBundlePath(artifact.storageKey)),
+    joinBaseUrl(
+      loaded.baseUrl,
+      relativeBundlePath(artifact.storageKey, configuredSource),
+    ),
     maximumBytes,
     options,
     resolveRequestTimeoutMs(
@@ -1001,6 +1392,7 @@ function selectTranscriptBundleArtifact(
   manifest: ChannelPreanalysisCatalogManifest,
   video: ChannelPreanalysisCatalogVideo,
 ): ChannelPreanalysisArtifact {
+  const configuredSource = requireConfiguredSource(manifest);
   const artifactById = new Map(
     manifest.artifacts.map((artifact) => [artifact.artifactId, artifact]),
   );
@@ -1020,6 +1412,7 @@ function selectTranscriptBundleArtifact(
       video.videoId,
       artifact.revision,
       artifact.storageKey,
+      configuredSource,
     )
   ) {
     throw new ChannelPreanalysisClientError(
@@ -1034,6 +1427,7 @@ function selectVisualFingerprintArtifact(
   manifest: ChannelPreanalysisCatalogManifest,
   video: ChannelPreanalysisCatalogVideo,
 ): ChannelPreanalysisArtifact | null {
+  const configuredSource = requireConfiguredSource(manifest);
   const artifactById = new Map(
     manifest.artifacts.map((artifact) => [artifact.artifactId, artifact]),
   );
@@ -1054,13 +1448,55 @@ function selectVisualFingerprintArtifact(
       canonicalChannelPreanalysisVisualFingerprintArtifactId(video.videoId) ||
     artifact.revision !== 1 ||
     artifact.storageKey !==
-      canonicalChannelPreanalysisVisualFingerprintStorageKey(video.videoId) ||
+      canonicalChannelPreanalysisVisualFingerprintStorageKey(
+        video.videoId,
+        configuredSource.sourceId,
+      ) ||
     artifact.byteLength > CHANNEL_PREANALYSIS_VISUAL_FINGERPRINT_MAX_BYTES
   ) {
     throw new ChannelPreanalysisClientError(
       "INVALID_FINGERPRINT",
       "Catalog does not identify one canonical visual fingerprint.",
     );
+  }
+  return artifact;
+}
+
+function selectReviewBundleArtifact(
+  manifest: ChannelPreanalysisCatalogManifest,
+  video: ChannelPreanalysisCatalogVideo,
+): ChannelPreanalysisArtifact {
+  const configuredSource = requireConfiguredSource(manifest);
+  const artifactById = new Map(
+    manifest.artifacts.map((artifact) => [artifact.artifactId, artifact]),
+  );
+  const artifacts = video.artifactIds
+    .map((artifactId) => artifactById.get(artifactId))
+    .filter(
+      (artifact): artifact is ChannelPreanalysisArtifact =>
+        artifact !== undefined &&
+        artifact.videoId === video.videoId &&
+        artifact.kind === "review",
+    );
+  const artifact = artifacts[0];
+  if (
+    artifacts.length !== 1 ||
+    artifact === undefined ||
+    artifact.revision !== video.revision ||
+    artifact.artifactId !==
+      channelPreanalysisReviewBundleArtifactId(
+        video.videoId,
+        video.revision,
+      ) ||
+    artifact.storageKey !==
+      channelPreanalysisReviewBundleStorageKey(
+        configuredSource.sourceId,
+        video.videoId,
+        video.revision,
+      ) ||
+    artifact.byteLength > CHANNEL_PREANALYSIS_REVIEW_BUNDLE_MAX_BYTES
+  ) {
+    throw invalidReview("Catalog does not identify one canonical review bundle.");
   }
   return artifact;
 }
@@ -1128,14 +1564,18 @@ function lookupResult(
 function loadableTranscriptBundleState(
   video: ChannelPreanalysisCatalogVideo,
 ): ChannelPreanalysisBundle["state"] | null {
+  if (video.state === "review-ready") return "context-ready";
   if (READY_BUNDLE_STATES.has(video.state)) {
     return video.state as ChannelPreanalysisBundle["state"];
   }
   if (
     video.state !== "retryable" ||
-    !["context", "fingerprint"].includes(video.retry?.stage ?? "")
+    !["context", "review", "fingerprint"].includes(video.retry?.stage ?? "")
   ) {
     return null;
+  }
+  if (video.retry?.lastSuccessfulState === "review-ready") {
+    return "context-ready";
   }
   return ["transcript-ready", "context-ready"].includes(
     video.retry?.lastSuccessfulState ?? "",
@@ -1143,6 +1583,17 @@ function loadableTranscriptBundleState(
     ? (video.retry
         ?.lastSuccessfulState as ChannelPreanalysisBundle["state"])
     : null;
+}
+
+function hasReviewReadySnapshot(
+  video: ChannelPreanalysisCatalogVideo,
+): boolean {
+  return (
+    video.state === "review-ready" ||
+    (video.state === "retryable" &&
+      video.retry?.stage === "fingerprint" &&
+      video.retry.lastSuccessfulState === "review-ready")
+  );
 }
 
 async function fetchBoundedText(
@@ -1364,14 +1815,20 @@ function channelPreanalysisAbortReason(signal: AbortSignal): Error {
 function sourceBases(
   options: ChannelPreanalysisClientOptions,
 ): readonly ChannelPreanalysisSourceBase[] {
+  const configuredSource =
+    options.configuredSource ?? AMORETTO_CHANNEL_PREANALYSIS_SOURCE;
+  const rawBaseUrl = `https://raw.githubusercontent.com/11qaws/exclipper/preanalysis-catalog/${configuredSource.sourceId}/`;
+  const bundledBaseUrl = `${channelPreanalysisApplicationBaseUrl}preanalysis/${configuredSource.sourceId}/`;
   const values = [
     {
       source: "raw" as const,
-      baseUrl: options.rawBaseUrl ?? CHANNEL_PREANALYSIS_RAW_BASE_URL,
+      baseUrl: options.rawBaseUrl ?? rawBaseUrl,
+      configuredSource,
     },
     {
       source: "bundled" as const,
-      baseUrl: options.bundledBaseUrl ?? CHANNEL_PREANALYSIS_BUNDLED_BASE_URL,
+      baseUrl: options.bundledBaseUrl ?? bundledBaseUrl,
+      configuredSource,
     },
   ];
   return values.filter(
@@ -1419,25 +1876,32 @@ function resolveMaximumBytes(
 function canonicalBundleStorageKey(
   videoId: string,
   revision: number,
+  configuredSource: ConfiguredChannelPreanalysisSource,
 ): string {
-  return `${CHANNEL_PREANALYSIS_STORAGE_PREFIX}videos/${videoId}.v${revision}.json`;
+  return `${channelPreanalysisStoragePrefix(configuredSource)}videos/${videoId}.v${revision}.json`;
 }
 
 function isCanonicalBundleStorageKey(
   videoId: string,
   revision: number,
   storageKey: string,
+  configuredSource: ConfiguredChannelPreanalysisSource =
+    AMORETTO_CHANNEL_PREANALYSIS_SOURCE,
 ): boolean {
   return (
-    storageKey === canonicalBundleStorageKey(videoId, revision) ||
+    storageKey ===
+      canonicalBundleStorageKey(videoId, revision, configuredSource) ||
     (revision === 1 &&
       storageKey ===
-        `${CHANNEL_PREANALYSIS_STORAGE_PREFIX}videos/${videoId}.json`)
+        `${channelPreanalysisStoragePrefix(configuredSource)}videos/${videoId}.json`)
   );
 }
 
-function relativeBundlePath(storageKey: string): string {
-  return storageKey.slice(CHANNEL_PREANALYSIS_STORAGE_PREFIX.length);
+function relativeBundlePath(
+  storageKey: string,
+  configuredSource: ConfiguredChannelPreanalysisSource,
+): string {
+  return storageKey.slice(channelPreanalysisStoragePrefix(configuredSource).length);
 }
 
 function exactRecord(value: unknown, keys: readonly string[]): Record<string, unknown> {
@@ -1491,13 +1955,16 @@ function isUniqueStringArray(
   );
 }
 
-function isSafeStorageKey(value: unknown): value is string {
+function isSafeStorageKey(
+  value: unknown,
+  configuredSource: ConfiguredChannelPreanalysisSource,
+): value is string {
+  const prefix = channelPreanalysisStoragePrefix(configuredSource);
   return (
     typeof value === "string" &&
     value.length <= 512 &&
-    /^amoretto-vods\/[A-Za-z0-9_-]+(?:\/[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*)*$/u.test(
-      value,
-    ) &&
+    value.startsWith(prefix) &&
+    /^[a-z0-9-]+\/[A-Za-z0-9_-]+(?:\/[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*)*$/u.test(value) &&
     value.split("/").every((segment) => segment !== "." && segment !== "..")
   );
 }
@@ -1513,4 +1980,21 @@ function invalidManifest(): ChannelPreanalysisClientError {
     "INVALID_MANIFEST",
     "Channel preanalysis catalog failed strict validation.",
   );
+}
+
+function invalidReview(
+  message: string,
+  cause?: unknown,
+): ChannelPreanalysisClientError {
+  return new ChannelPreanalysisClientError("INVALID_REVIEW", message, {
+    cause,
+  });
+}
+
+function requireConfiguredSource(
+  manifest: Pick<ChannelPreanalysisCatalogManifest, "channelId" | "channelHandle">,
+): ConfiguredChannelPreanalysisSource {
+  const source = channelPreanalysisSourceForManifest(manifest);
+  if (source === null) throw invalidManifest();
+  return source;
 }
