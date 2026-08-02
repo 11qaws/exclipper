@@ -404,6 +404,7 @@ closure test로 다시 확인한다. seed 뒤 workflow를 수동으로 한 번 �
 
 - 정식 배포 전에는 rolling 호환 경로를 운영하지 않는다. 새 분석 유입을 멈춘 뒤 **Worker 배포 → plain `/healthz`의 service 6·transport 3과 OPTIONS 확인 → 같은 commit의 Pages 배포 → 새 분석 재개** 순서로 교체한다.
 - plain `/healthz` 하나만 현재 provider·model·transport·fallback manifest를 반환한다. 모든 전사 stage·resolve·direct 요청은 이 manifest의 route fingerprint header를 필수로 보내며, 누락·형식 오류·현재 경로 불일치는 quota·R2·provider 실행 전에 각각 400 또는 409로 거부한다.
+- `/healthz.providers.schemaVersion`은 모든 AI 역할을 포괄하는 provider catalog 계약이고, 전사 route fingerprint의 `providerConfigurationVersion`은 전사 라우팅 전용 계약이다. 현재 값은 각각 `1.4.0`, `1.3.0`이며 하나의 상수로 취급하지 않는다. 배포 smoke는 두 값을 별도로 검증해야 한다.
 - Free R2 media는 schema 2·ticket v2만 읽고 쓴다. refinement checkpoint는 현재 v4 signature와 frozen plan이 정확히 같을 때만 열며, signature가 달라지면 과거 settlement를 이관하지 않고 새 checkpoint를 만든다. 같은 signature에서는 성공·무발화 결과를 보존하고 gap만 다시 보낸다.
 - route 변경이 연속되면 자동 재개 간격은 250ms부터 지수적으로 늘어나 최대 10초에서 고정된다. 재시도 횟수 상한은 없으며 정상 또는 다른 종류의 결과가 나오면 즉시 0으로 초기화한다. 대기 중 source 변경·취소는 `AbortSignal`로 타이머까지 정리한다.
 - 롤백도 새 분석 유입을 멈추고 Worker와 Pages를 같은 이전 artifact 쌍으로 교체한다. 현재 계약 밖 ticket·checkpoint를 bridge하지 않으므로 교체 전에 진행 중 분석을 명시적으로 종료하고, 롤백 뒤 새 route와 새 checkpoint로 다시 시작한다.

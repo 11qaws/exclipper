@@ -3216,3 +3216,11 @@ PassB가 정상 동작해도 `context-missing` 6개는 남는다. 대사 텍스�
 - **운영 검증:** Qwen `qwen3.5-omni-flash` free-r2 경로 지문을 운영 health에서 생성한 뒤 실제
   5초 한국어 음성을 전사해 HTTP 200과 임시 R2 미디어 삭제까지 확인했다. 관련 smoke 9개,
   브라우저 route manifest 10개, TypeScript와 ESLint가 모두 통과했다.
+- **Sena 무자막 E2E:** Actions `30763695999`에서 3:29:58 원본 `U1k8DjM0EN8`을 실제로 처리했다.
+  48.782kbps 오디오 다운로드와 Groq Whisper 예약 ASR은 11분 6초에 3,306 event·105 bounded
+  chapter를 만들었고, Qwen 3.7 Plus 전체 맥락과 Qwen 3.5 Omni Flash 후보 검증은 5분 54초에
+  끝났다. 전체 영상 샘플 2,520/2,520과 후보 12개×JPEG 4장, 참가자 근거 51개가 모두 준비됐다.
+- **게시 폐쇄:** 원격 `preanalysis-catalog/sena-replay` revision 11에서 대상은 `review-ready`,
+  `retry: null`이다. transcript 568,018 bytes와 review 2,062,667 bytes의 SHA-256·byteLength,
+  schema 2.0.0 `scheduled-review-ready-v8` 인증서의 후보 ID·transcript/context digest가 카탈로그와
+  일치했다. 개인 채널 정책에 따라 세라 교수님은 제외하고 다섯 명의 닫힌 후보군을 사용했다.
