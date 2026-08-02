@@ -2,23 +2,29 @@
   "schemaVersion": 1,
   "channelId": "UCgq07mhOmrjVeZeJYXiAClw",
   "channelHandle": "@kokotorori",
-  "revision": 2,
-  "generatedAt": "2026-08-02T13:58:00.979Z",
+  "revision": 4,
+  "generatedAt": "2026-08-02T18:30:24.029Z",
   "videos": [
     {
       "channelId": "UCgq07mhOmrjVeZeJYXiAClw",
       "videoId": "o4cpTovEjMw",
       "title": "2주년 기념 애장품 경매 🍮🎐",
       "normalizedTitle": "2주년 기념 애장품 경매",
-      "durationMs": null,
+      "durationMs": 5194000,
       "publishedAt": "2026-05-25T23:38:12.000Z",
       "updatedAt": "2026-06-24T17:50:08.000Z",
       "watchUrl": "https://www.youtube.com/watch?v=o4cpTovEjMw",
-      "state": "discovered",
-      "revision": 1,
+      "state": "retryable",
+      "revision": 3,
       "artifactIds": [],
       "registeredLocalSampledFingerprints": [],
-      "retry": null
+      "retry": {
+        "stage": "transcript",
+        "lastSuccessfulState": "metadata-ready",
+        "attemptCount": 1,
+        "nextAttemptAt": "2026-08-02T21:30:24.029Z",
+        "errorCode": "INVALID_TRANSCRIPT"
+      }
     },
     {
       "channelId": "UCgq07mhOmrjVeZeJYXiAClw",

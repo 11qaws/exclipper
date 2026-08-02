@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "channelId": "UCk0Mu5MpVzJ056e65XpAj0Q",
   "channelHandle": "@SENAREPLAY",
-  "revision": 4,
-  "generatedAt": "2026-08-02T15:30:30.680Z",
+  "revision": 6,
+  "generatedAt": "2026-08-02T18:30:19.119Z",
   "videos": [
     {
       "channelId": "UCk0Mu5MpVzJ056e65XpAj0Q",
@@ -31,15 +31,21 @@
       "videoId": "U1k8DjM0EN8",
       "title": "【26. 07. 29】 오랜만에 친모아 한 날~ ★",
       "normalizedTitle": "26 07 29 오랜만에 친모아 한 날",
-      "durationMs": null,
+      "durationMs": 12598000,
       "publishedAt": "2026-07-31T00:43:20.000Z",
       "updatedAt": "2026-07-31T00:43:21.000Z",
       "watchUrl": "https://www.youtube.com/watch?v=U1k8DjM0EN8",
-      "state": "discovered",
-      "revision": 1,
+      "state": "retryable",
+      "revision": 3,
       "artifactIds": [],
       "registeredLocalSampledFingerprints": [],
-      "retry": null
+      "retry": {
+        "stage": "transcript",
+        "lastSuccessfulState": "metadata-ready",
+        "attemptCount": 1,
+        "nextAttemptAt": "2026-08-02T21:30:19.119Z",
+        "errorCode": "ASR_DOWNLOAD_FAILED"
+      }
     },
     {
       "channelId": "UCk0Mu5MpVzJ056e65XpAj0Q",
