@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "channelId": "UCHycoTBFDhXz4XNz8jBP-_A",
   "channelHandle": "@AmorettoVODs",
-  "revision": 61,
-  "generatedAt": "2026-08-02T16:50:14.743Z",
+  "revision": 67,
+  "generatedAt": "2026-08-02T17:35:45.945Z",
   "videos": [
     {
       "channelId": "UCHycoTBFDhXz4XNz8jBP-_A",
@@ -15,18 +15,15 @@
       "updatedAt": "2026-07-26T06:01:39.000Z",
       "watchUrl": "https://www.youtube.com/watch?v=bm4R6rZI4t4",
       "state": "retryable",
-      "revision": 7,
-      "artifactIds": [
-        "youtube-storyboard-visual-fingerprint:bm4R6rZI4t4:v1",
-        "youtube-caption-bundle:bm4R6rZI4t4:v2"
-      ],
+      "revision": 8,
+      "artifactIds": [],
       "registeredLocalSampledFingerprints": [],
       "retry": {
-        "stage": "review",
-        "lastSuccessfulState": "context-ready",
+        "stage": "transcript",
+        "lastSuccessfulState": "metadata-ready",
         "attemptCount": 1,
-        "nextAttemptAt": "2026-08-02T17:00:08.497Z",
-        "errorCode": "PROCESS_FAILED"
+        "nextAttemptAt": "2026-08-02T17:29:04.298Z",
+        "errorCode": "ARTIFACT_INVALID_CONTEXT"
       }
     },
     {
@@ -93,11 +90,11 @@
       "updatedAt": "2026-07-19T06:46:05.000Z",
       "watchUrl": "https://www.youtube.com/watch?v=KzAW3yow80Q",
       "state": "review-ready",
-      "revision": 10,
+      "revision": 15,
       "artifactIds": [
-        "youtube-storyboard-visual-fingerprint:KzAW3yow80Q:v1",
         "youtube-caption-bundle:KzAW3yow80Q:v2",
-        "review-bundle:KzAW3yow80Q:v10"
+        "youtube-storyboard-visual-fingerprint:KzAW3yow80Q:v1",
+        "review-bundle:KzAW3yow80Q:v15"
       ],
       "registeredLocalSampledFingerprints": [
         {
@@ -275,16 +272,6 @@
   ],
   "artifacts": [
     {
-      "artifactId": "youtube-storyboard-visual-fingerprint:KzAW3yow80Q:v1",
-      "videoId": "KzAW3yow80Q",
-      "kind": "fingerprint",
-      "revision": 1,
-      "storageKey": "amoretto-vods/videos/KzAW3yow80Q.visual-fingerprint.v1.json",
-      "contentDigest": "sha256:9544dd215e6d9626f8ce7f1fe201ae649790bc00554f24e41c5588c363a0a2cd",
-      "byteLength": 2199,
-      "createdAt": "2026-07-19T06:46:05.000Z"
-    },
-    {
       "artifactId": "youtube-caption-bundle:Xns8EY3gae0:v1",
       "videoId": "Xns8EY3gae0",
       "kind": "transcript",
@@ -343,16 +330,6 @@
       "contentDigest": "sha256:712e6e2f23947708aa3aacdb233e60f39791d149fe7009d11db4840ef4e1e8cb",
       "byteLength": 2193,
       "createdAt": "2026-07-18T17:01:25.000Z"
-    },
-    {
-      "artifactId": "youtube-storyboard-visual-fingerprint:bm4R6rZI4t4:v1",
-      "videoId": "bm4R6rZI4t4",
-      "kind": "fingerprint",
-      "revision": 1,
-      "storageKey": "amoretto-vods/videos/bm4R6rZI4t4.visual-fingerprint.v1.json",
-      "contentDigest": "sha256:2069f024fd1109a42d0d75ae00f2830f21833620201ffb193fb635bbbc3831b7",
-      "byteLength": 2198,
-      "createdAt": "2026-07-26T06:01:39.000Z"
     },
     {
       "artifactId": "youtube-caption-bundle:EZfCGS5ms_Q:v1",
@@ -515,34 +492,34 @@
       "createdAt": "2026-07-08T05:17:06.000Z"
     },
     {
-      "artifactId": "youtube-caption-bundle:bm4R6rZI4t4:v2",
-      "videoId": "bm4R6rZI4t4",
-      "kind": "transcript",
-      "revision": 2,
-      "storageKey": "amoretto-vods/videos/bm4R6rZI4t4.v2.json",
-      "contentDigest": "sha256:5b660cb23317cbc9908718c1ed8c06764c1a8f90446bcd75977f9d196c1e2317",
-      "byteLength": 315873,
-      "createdAt": "2026-08-02T14:00:01.863Z"
-    },
-    {
       "artifactId": "youtube-caption-bundle:KzAW3yow80Q:v2",
       "videoId": "KzAW3yow80Q",
       "kind": "transcript",
       "revision": 2,
       "storageKey": "amoretto-vods/videos/KzAW3yow80Q.v2.json",
-      "contentDigest": "sha256:559981601f59831bfebed25b8e582dea0cd93e1f0bc372fa241719c6ce79cd3f",
-      "byteLength": 456055,
-      "createdAt": "2026-08-02T14:12:04.821Z"
+      "contentDigest": "sha256:76d1a8dbe8c9def1bb65f59bfdb9357c18d4ffa22588467a1feba70080c96bf2",
+      "byteLength": 469489,
+      "createdAt": "2026-08-02T17:30:51.577Z"
     },
     {
-      "artifactId": "review-bundle:KzAW3yow80Q:v10",
+      "artifactId": "youtube-storyboard-visual-fingerprint:KzAW3yow80Q:v1",
+      "videoId": "KzAW3yow80Q",
+      "kind": "fingerprint",
+      "revision": 1,
+      "storageKey": "amoretto-vods/videos/KzAW3yow80Q.visual-fingerprint.v1.json",
+      "contentDigest": "sha256:9544dd215e6d9626f8ce7f1fe201ae649790bc00554f24e41c5588c363a0a2cd",
+      "byteLength": 2199,
+      "createdAt": "2026-07-19T06:46:05.000Z"
+    },
+    {
+      "artifactId": "review-bundle:KzAW3yow80Q:v15",
       "videoId": "KzAW3yow80Q",
       "kind": "review",
-      "revision": 10,
-      "storageKey": "amoretto-vods/videos/KzAW3yow80Q.review.v10.json",
-      "contentDigest": "sha256:8544aed495e7a927bd615a2cef4d991feac8874d95ce458e66e1c7a07770019f",
-      "byteLength": 1636845,
-      "createdAt": "2026-08-02T16:44:46.362Z"
+      "revision": 15,
+      "storageKey": "amoretto-vods/videos/KzAW3yow80Q.review.v15.json",
+      "contentDigest": "sha256:1671d39031e391db1dfdfd1317b320445afdf0a44274fa0bd4d2820b289581c4",
+      "byteLength": 1928452,
+      "createdAt": "2026-08-02T17:32:34.736Z"
     }
   ]
 }
