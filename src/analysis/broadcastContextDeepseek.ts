@@ -58,7 +58,7 @@ export type BroadcastContextQwenMode =
 
 export type BroadcastContextDeepseekParseOutcome =
   | { readonly ok: true; readonly result: BroadcastContextResult }
-  | { readonly ok: false };
+  | { readonly ok: false; readonly reason?: string };
 
 const UNEXPECTED_HAN_REPLACEMENT_KO = "한글 표기 미확인";
 const UNEXPECTED_HAN_REPLACEMENT_EN = "wording not verified";
@@ -572,17 +572,17 @@ export function extractBroadcastContextQwenOverviewResponse(
   request: BroadcastContextRequest,
 ): BroadcastContextDeepseekParseOutcome {
   if (!isRecord(payload) || !Array.isArray(payload.choices) || payload.choices.length === 0) {
-    return { ok: false };
+    return { ok: false, reason: "provider-envelope" };
   }
   const choice: unknown = payload.choices[0];
   if (!isRecord(choice) || !isRecord(choice.message) || typeof choice.message.content !== "string") {
-    return { ok: false };
+    return { ok: false, reason: "message-content" };
   }
   let parsed: unknown;
   try {
     parsed = JSON.parse(choice.message.content);
   } catch {
-    return { ok: false };
+    return { ok: false, reason: "content-json" };
   }
   parsed = replaceUnexpectedHan(parsed, request.outputLanguage);
   if (
@@ -604,11 +604,13 @@ export function extractBroadcastContextQwenOverviewResponse(
     !Array.isArray(parsed.leads) ||
     parsed.leads.length > 12
   ) {
-    return { ok: false };
+    return { ok: false, reason: "top-level" };
   }
   const broadcastSummaryKo = parsed.summary;
   const parsedHostStreamerProfile = parseHostStreamerProfile(parsed.host, true);
-  if (parsedHostStreamerProfile === null) return { ok: false };
+  if (parsedHostStreamerProfile === null) {
+    return { ok: false, reason: "host" };
+  }
   const themes = parsed.themes.slice(0, 4);
   const hostStreamerProfile = groundHostStreamerProfile(
     parsedHostStreamerProfile,
@@ -634,7 +636,7 @@ export function extractBroadcastContextQwenOverviewResponse(
       value.p > 1 ||
       typeof value.reason !== "string"
     ) {
-      return { ok: false };
+      return { ok: false, reason: "candidate-item" };
     }
     const rejectionReasons: readonly BroadcastContextRejectionReason[] =
       value.d !== "reject"
@@ -660,7 +662,7 @@ export function extractBroadcastContextQwenOverviewResponse(
     verdicts.size !== requestedIds.size ||
     rawCandidates.length !== requestedIds.size
   ) {
-    return { ok: false };
+    return { ok: false, reason: "candidate-coverage" };
   }
   const annotations = request.candidates.map((candidate) => {
     const verdict = verdicts.get(candidate.candidateId)!;
@@ -704,7 +706,7 @@ export function extractBroadcastContextQwenOverviewResponse(
       typeof value.event !== "string" ||
       typeof value.cue !== "string"
     ) {
-      return { ok: false };
+      return { ok: false, reason: "lead-item" };
     }
     if (
       isRoutineGameplayEvidence(broadcastSummaryKo, [value.event, value.cue])
@@ -728,7 +730,7 @@ export function extractBroadcastContextQwenOverviewResponse(
     try {
       discoveredLeads.push(...normalizeDiscoveredLeads([lead], request.chapters));
     } catch {
-      return { ok: false };
+      return { ok: false, reason: "lead-range" };
     }
   }
   discoveredLeads.sort(
@@ -753,7 +755,7 @@ export function extractBroadcastContextQwenOverviewResponse(
       typeof value.sal !== "string" ||
       !isValidSemanticSalience(value.sal)
     ) {
-      return { ok: false };
+      return { ok: false, reason: "chapter-item" };
     }
     rawSemanticChapters.push({
       startChapterId: value.s,
@@ -774,7 +776,7 @@ export function extractBroadcastContextQwenOverviewResponse(
       calculateCoverage(request.chapters, request.sourceDurationMs).gaps,
     );
   } catch {
-    return { ok: false };
+    return { ok: false, reason: "chapter-normalization" };
   }
   return {
     ok: true,

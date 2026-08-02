@@ -2019,6 +2019,40 @@ test("a bounded Qwen overview fallback receipt is preserved as the actual proven
   }
 });
 
+test("a bounded allowlisted provider diagnostic survives a failed context response", async () => {
+  const catalogDir = await mkdtemp(
+    join(tmpdir(), "exclipper-context-diagnostic-"),
+  );
+  try {
+    const fixture = await readyCatalogFixture(catalogDir);
+    const transcriptBundle = JSON.parse(fixture.serialized);
+    const diagnostic =
+      "primary-code=UPSTREAM_INVALID_RESPONSE|model=qwen3.7-plus;stage=chapter-normalization;finish=stop;json=1;keys=summary+host+themes+chapters+candidates+leads;extra=0;chars=1234|fallback-code=UPSTREAM_INVALID_RESPONSE|model=qwen3.6-flash;stage=lead-item;finish=stop;json=1;keys=summary+host+themes+chapters+candidates+leads;extra=0;chars=999";
+    await assert.rejects(
+      requestScheduledBroadcastContext(transcriptBundle, {
+        proxyUrl: "https://worker.example/v1/broadcast-context",
+        authorizationToken: TEST_CONTEXT_TOKEN,
+        fetchImplementation: async () =>
+          Response.json(
+            {
+              error: {
+                code: "UPSTREAM_INVALID_RESPONSE",
+                message: "The provider response did not satisfy the schema.",
+                diagnostic,
+              },
+            },
+            { status: 502 },
+          ),
+      }),
+      (error) =>
+        error?.code === "UPSTREAM_INVALID_RESPONSE" &&
+        error.message.includes(`Provider diagnostic: ${diagnostic}`),
+    );
+  } finally {
+    await rm(catalogDir, { recursive: true, force: true });
+  }
+});
+
 test("the context request deadline includes a response body that never finishes", async () => {
   const catalogDir = await mkdtemp(
     join(tmpdir(), "exclipper-context-body-timeout-"),

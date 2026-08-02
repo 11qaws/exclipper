@@ -1122,11 +1122,13 @@ export async function requestScheduledBroadcastContext(
       fetchImplementation,
       async (response, signal) => {
         if (!response.ok) {
-          const proxyErrorCode =
-            await readBoundedProxyErrorCode(response, signal);
+          const proxyError = await readBoundedProxyError(response, signal);
           throw syncError(
-            proxyErrorCode ?? `CONTEXT_HTTP_${response.status}`,
-            `Scheduled context request failed with HTTP ${response.status}.`,
+            proxyError?.code ?? `CONTEXT_HTTP_${response.status}`,
+            `Scheduled context request failed with HTTP ${response.status}.` +
+              (proxyError?.diagnostic === null || proxyError?.diagnostic === undefined
+                ? ""
+                : ` Provider diagnostic: ${proxyError.diagnostic}`),
           );
         }
         const contextReceipt = verifyScheduledContextReceipt({
@@ -1890,9 +1892,10 @@ export async function synchronizeChannelPreanalysisCatalog(
       const diagnostic = redactDiagnostic(rawMessage);
       // Classify the raw message: redaction is a lossy transform meant for
       // display, so matching against it would couple the classifier to it.
-      const failureKind = classifyYtDlpFailure(rawMessage);
+      const failureKind =
+        stage === "transcript" ? ` (${classifyYtDlpFailure(rawMessage)})` : "";
       log.warn(
-        `Deferred ${selectedVideo.videoId} at ${stage}: ${retry.errorCode} (${failureKind}); next attempt ${retry.nextAttemptAt}.` +
+        `Deferred ${selectedVideo.videoId} at ${stage}: ${retry.errorCode}${failureKind}; next attempt ${retry.nextAttemptAt}.` +
           (diagnostic === "" ? "" : ` Diagnostic: ${diagnostic}`),
       );
     }
@@ -3337,17 +3340,23 @@ async function readBoundedJsonResponse(response, maximumBytes, signal = null) {
   }
 }
 
-async function readBoundedProxyErrorCode(response, signal = null) {
+async function readBoundedProxyError(response, signal = null) {
   try {
     const payload = await readBoundedJsonResponse(response, 2_048, signal);
     const error = isRecord(payload.error) ? payload.error : null;
-    return (
-      error !== null &&
-      typeof error.code === "string" &&
-      /^[A-Z][A-Z0-9_]{0,63}$/u.test(error.code)
-        ? error.code
-        : null
-    );
+    if (
+      error === null ||
+      typeof error.code !== "string" ||
+      !/^[A-Z][A-Z0-9_]{0,63}$/u.test(error.code)
+    ) {
+      return null;
+    }
+    const diagnostic =
+      typeof error.diagnostic === "string" &&
+      /^[A-Za-z0-9_.;=+|:-]{1,1024}$/u.test(error.diagnostic)
+        ? error.diagnostic
+        : null;
+    return { code: error.code, diagnostic };
   } catch (error) {
     if (signal?.aborted) throw error;
     return null;

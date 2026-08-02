@@ -1893,7 +1893,22 @@ describe("preanalysisContextProxy.worker", () => {
       harness.environment,
     );
     expect(invalid.status).toBe(502);
-    await expect(errorCode(invalid)).resolves.toBe("UPSTREAM_INVALID_RESPONSE");
+    const invalidPayload = await invalid.json() as {
+      error?: { code?: string; diagnostic?: string };
+    };
+    expect(invalidPayload.error?.code).toBe("UPSTREAM_INVALID_RESPONSE");
+    expect(invalidPayload.error?.diagnostic).toContain(
+      "primary-code=UPSTREAM_INVALID_RESPONSE",
+    );
+    expect(invalidPayload.error?.diagnostic).toContain(
+      "model=qwen3.7-plus;stage=top-level",
+    );
+    expect(invalidPayload.error?.diagnostic).toContain(
+      "fallback-code=UPSTREAM_INVALID_RESPONSE",
+    );
+    expect(invalidPayload.error?.diagnostic).toContain(
+      "model=qwen3.6-flash;stage=top-level",
+    );
 
     nowMs = 30_000;
     const recovered = await handlePreanalysisContextProxyRequest(

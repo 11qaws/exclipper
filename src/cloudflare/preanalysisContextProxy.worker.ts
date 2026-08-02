@@ -382,6 +382,7 @@ type ProviderAttempt =
       readonly response: Response;
       readonly code: string;
       readonly possibleDuplicateProviderCharge: boolean;
+      readonly diagnostic?: string;
     };
 
 type CandidateProviderAttempt =
@@ -420,6 +421,51 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function diagnosticToken(value: string | null, fallback: string): string {
+  if (value === null) return fallback;
+  const token = value.replace(/[^A-Za-z0-9_.-]+/gu, "_").slice(0, 64);
+  return token === "" ? fallback : token;
+}
+
+function scheduledContextDiagnostic({
+  modelId,
+  stage,
+  finishReason = null,
+  contentLength = null,
+  generatedJson = false,
+  generatedKeys = [],
+}: {
+  readonly modelId: string;
+  readonly stage: string;
+  readonly finishReason?: string | null;
+  readonly contentLength?: number | null;
+  readonly generatedJson?: boolean;
+  readonly generatedKeys?: readonly string[];
+}): string {
+  const expectedKeys = [
+    "summary",
+    "host",
+    "themes",
+    "chapters",
+    "candidates",
+    "leads",
+  ] as const;
+  const keySet = new Set(generatedKeys);
+  const presentKeys = expectedKeys.filter((key) => keySet.has(key));
+  const extraKeyCount = generatedKeys.filter(
+    (key) => !(expectedKeys as readonly string[]).includes(key),
+  ).length;
+  return [
+    `model=${diagnosticToken(modelId, "unknown-model")}`,
+    `stage=${diagnosticToken(stage, "unknown-stage")}`,
+    `finish=${diagnosticToken(finishReason, "none")}`,
+    `json=${generatedJson ? "1" : "0"}`,
+    `keys=${presentKeys.length === 0 ? "none" : presentKeys.join("+")}`,
+    `extra=${Math.min(99, extraKeyCount)}`,
+    `chars=${contentLength === null ? "none" : Math.min(999_999, Math.max(0, contentLength))}`,
+  ].join(";");
+}
+
 function hasExactKeys(
   value: Record<string, unknown>,
   expected: readonly string[],
@@ -445,12 +491,14 @@ function errorResponse(
   code: string,
   message: string,
   extraHeaders: Readonly<Record<string, string>> = {},
+  diagnostic?: string,
 ): Response {
   return jsonResponse(
     {
       error: {
         code,
         message,
+        ...(diagnostic === undefined ? {} : { diagnostic }),
       },
     },
     status,
@@ -1255,15 +1303,22 @@ async function attemptProviderModel(
           ) {
             throw new UpstreamTimeoutError();
           }
+          const diagnostic = scheduledContextDiagnostic({
+            modelId,
+            stage: "provider-envelope-json",
+          });
           return {
             kind: "failure",
             response: errorResponse(
               502,
               "UPSTREAM_INVALID_RESPONSE",
               "The provider response could not be verified.",
+              {},
+              diagnostic,
             ),
             code: "UPSTREAM_INVALID_RESPONSE",
             possibleDuplicateProviderCharge: true,
+            diagnostic,
           };
         }
 
@@ -1296,15 +1351,25 @@ async function attemptProviderModel(
               // Log shape metadata only; captions and generated prose stay private.
             }
           }
-          console.warn("scheduled-context-invalid-response", {
+          const finishReason =
+            isRecord(choice) && typeof choice.finish_reason === "string"
+              ? choice.finish_reason.slice(0, 40)
+              : null;
+          const diagnostic = scheduledContextDiagnostic({
             modelId,
-            finishReason:
-              isRecord(choice) && typeof choice.finish_reason === "string"
-                ? choice.finish_reason.slice(0, 40)
-                : null,
+            stage: parsed.reason ?? "context-schema",
+            finishReason,
             contentLength: content?.length ?? null,
             generatedJson,
             generatedKeys,
+          });
+          console.warn("scheduled-context-invalid-response", {
+            modelId,
+            finishReason,
+            contentLength: content?.length ?? null,
+            generatedJson,
+            generatedKeys,
+            parseStage: parsed.reason ?? "context-schema",
           });
           return {
             kind: "failure",
@@ -1312,9 +1377,12 @@ async function attemptProviderModel(
               502,
               "UPSTREAM_INVALID_RESPONSE",
               "The provider response did not satisfy the current context schema.",
+              {},
+              diagnostic,
             ),
             code: "UPSTREAM_INVALID_RESPONSE",
             possibleDuplicateProviderCharge: true,
+            diagnostic,
           };
         }
         return {
@@ -1386,8 +1454,28 @@ async function attemptProvider(
     Math.min(upstreamTimeoutMs, CONTEXT_FALLBACK_TIMEOUT_MS),
   );
   if (fallback.kind === "failure" && primary.kind === "failure") {
+    const diagnostic = [
+      `primary-code=${diagnosticToken(primary.code, "unknown")}`,
+      primary.diagnostic ?? scheduledContextDiagnostic({
+        modelId: primaryModelId,
+        stage: primary.code,
+      }),
+      `fallback-code=${diagnosticToken(fallback.code, "unknown")}`,
+      fallback.diagnostic ?? scheduledContextDiagnostic({
+        modelId: QWEN_CONTEXT_OVERVIEW_FALLBACK_MODEL_ID,
+        stage: fallback.code,
+      }),
+    ].join("|");
     return {
       ...fallback,
+      response: errorResponse(
+        fallback.response.status,
+        fallback.code,
+        "The bounded primary and fallback context attempts did not produce a verified result.",
+        {},
+        diagnostic,
+      ),
+      diagnostic,
       possibleDuplicateProviderCharge:
         primary.possibleDuplicateProviderCharge ||
         fallback.possibleDuplicateProviderCharge,
