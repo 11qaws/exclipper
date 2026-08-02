@@ -556,6 +556,60 @@ test("a source with complete static visual coverage and no other lead is verifie
   assert.equal(mediaCalls, 0);
 });
 
+test("an explicit music-only caption is removed before media and AI review", async () => {
+  const durationMs = 120_000;
+  const sourceChapters = [{
+    chapterId: "opening-music",
+    startMs: 0,
+    endMs: durationMs,
+    evidenceMode: "complete-transcript",
+    evidenceCoverageRatio: 1,
+    summaryKo: "오프닝 음악 구간입니다.",
+  }];
+  const bundle = await customBundle({
+    durationMs,
+    sourceChapters,
+    captionEvents: [{
+      startMs: 45_000,
+      durationMs: 2_000,
+      text: "[음악] >> เฮ [음악]",
+    }],
+    discoveredLeads: [{
+      leadId: "opening-music-lead",
+      startChapterId: "opening-music",
+      endChapterId: "opening-music",
+      startMs: 30_000,
+      endMs: 90_000,
+      category: "context-dependent",
+      confidence: 0.9,
+      eventSummaryKo: "오프닝 음악이 재생됩니다.",
+      whyThisMomentKo: "음악 구간입니다.",
+      evidenceCueKo: "오프닝 음악",
+      uncertaintiesKo: [],
+    }],
+  });
+  let mediaCalls = 0;
+  let aiCalls = 0;
+
+  const result = await runChannelPreanalysisReview(customRunnerInput(bundle, sourceChapters, {
+    extractCandidateMedia: async () => {
+      mediaCalls += 1;
+      return completeMedia();
+    },
+    analyzeCandidate: async () => {
+      aiCalls += 1;
+      return analyzer()();
+    },
+  }));
+
+  assert.equal(result.status, "complete");
+  assert.equal(result.reviewBundle.certificate.outcome, "verified-empty");
+  assert.deepEqual(result.reviewBundle.candidates, []);
+  assert.deepEqual(result.candidateResults, []);
+  assert.equal(mediaCalls, 0);
+  assert.equal(aiCalls, 0);
+});
+
 test("a quiet visual event enters four-frame AI verification without an audio or semantic lead", async () => {
   let aiCalls = 0;
   const result = await runChannelPreanalysisReview(

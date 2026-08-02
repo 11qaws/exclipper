@@ -1002,6 +1002,47 @@ test("due selection protects fresh discoveries from retry starvation and never e
   );
 });
 
+test("explicit selection revalidates a reached target while scheduled selection skips it", () => {
+  const transcriptArtifact = catalogArtifact();
+  const target = video({ state: "transcript-ready" });
+  const serializedFingerprint =
+    serializeChannelPreanalysisVisualFingerprint(
+      testVisualFingerprintForVideo(target),
+    );
+  const fingerprintArtifact = artifactForVisualFingerprint(
+    target.videoId,
+    serializedFingerprint,
+    target.updatedAt,
+  );
+  const completedTarget = {
+    ...target,
+    artifactIds: [
+      transcriptArtifact.artifactId,
+      fingerprintArtifact.artifactId,
+    ],
+  };
+  const completedManifest = manifest(
+    [completedTarget],
+    [transcriptArtifact, fingerprintArtifact],
+  );
+
+  assert.deepEqual(
+    selectDueCatalogVideos(completedManifest, {
+      nowIso: BASE_TIME,
+      maxVideos: 1,
+    }),
+    [],
+  );
+  assert.deepEqual(
+    selectDueCatalogVideos(completedManifest, {
+      nowIso: BASE_TIME,
+      maxVideos: 1,
+      videoId: target.videoId,
+    }).map(({ videoId }) => videoId),
+    [target.videoId],
+  );
+});
+
 test("retry checkpoints keep the last durable stage and bounded backoff", () => {
   const metadataRetry = video({
     state: "retryable",

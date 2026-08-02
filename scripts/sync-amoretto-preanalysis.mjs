@@ -575,13 +575,10 @@ export function selectDueCatalogVideos(
         "The requested video is not present in the reconciled catalog.",
       );
     }
-    return catalogVideoReachedTarget(
-      catalog,
-      selected,
-      includeTranscriptReady,
-    )
-      ? []
-      : [selected];
+    // An explicit retry is also a readback verification. Current artifacts
+    // return immediately in prepareVideo, while stale routing/schema bytes are
+    // rebuilt from their last authoritative source in this same invocation.
+    return [selected];
   }
 
   return catalog.videos

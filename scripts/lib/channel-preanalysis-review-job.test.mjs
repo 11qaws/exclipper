@@ -431,6 +431,57 @@ test("one scheduled video reaches the publisher only after download, full featur
   assert.equal(await stat(downloadedDirectory).catch(() => null), null);
 });
 
+test("parallel media scans both stop before a failed job removes their shared download", async (t) => {
+  const data = await fixture(t);
+  const workRoot = join(data.root, "parallel-work");
+  const downloadedDirectory = join(workRoot, "downloaded");
+  const sourcePath = join(downloadedDirectory, "source.mkv");
+  const audioError = new Error("audio scan failed");
+  let releaseVisual;
+  let markVisualStarted;
+  const visualRelease = new Promise((resolve) => {
+    releaseVisual = resolve;
+  });
+  const visualStarted = new Promise((resolve) => {
+    markVisualStarted = resolve;
+  });
+
+  const pending = prepareChannelPreanalysisReviewVideo(
+    {
+      catalogDir: data.catalogDir,
+      source: AMORETTO_CHANNEL_PREANALYSIS_SOURCE,
+      video: data.video,
+      createCandidateAnalyzer: async () =>
+        assert.fail("A failed media scan must not create the candidate analyzer."),
+      workRoot,
+    },
+    {
+      downloadMedia: async () => {
+        await mkdir(downloadedDirectory, { recursive: true });
+        await writeFile(sourcePath, "media");
+        return { sourcePath, workingDirectory: downloadedDirectory };
+      },
+      probeMedia: async () => ({ durationMs: DURATION_MS }),
+      extractAudioFeatures: async () => {
+        throw audioError;
+      },
+      extractVisualCoverage: async () => {
+        markVisualStarted();
+        await visualRelease;
+        return visualAnalysis();
+      },
+      publishReview: async (_input, { prepareReview }) =>
+        prepareReview({ artifactRevision: 2 }),
+    },
+  );
+
+  await visualStarted;
+  assert.notEqual(await stat(downloadedDirectory).catch(() => null), null);
+  releaseVisual();
+  await assert.rejects(pending, (error) => error === audioError);
+  assert.equal(await stat(downloadedDirectory).catch(() => null), null);
+});
+
 test("real runner, publisher and checkpoint finalizer close over their distinct context digests", async (t) => {
   const data = await fixture(t);
   const workRoot = join(data.root, "work");

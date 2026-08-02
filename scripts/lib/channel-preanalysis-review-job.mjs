@@ -36,7 +36,7 @@ import {
 } from "./channel-preanalysis-review-runner.mjs";
 
 export const CHANNEL_PREANALYSIS_REVIEW_PIPELINE_REVISION =
-  "scheduled-review-ready-v5";
+  "scheduled-review-ready-v6";
 export const CHANNEL_PREANALYSIS_REVIEW_JOB_MAX_VIDEOS = 2;
 
 const MANIFEST_MAX_BYTES = 4 * 1_024 * 1_024;
@@ -352,21 +352,30 @@ export async function prepareChannelPreanalysisReviewVideo(
               "The downloaded media duration does not match the catalog video.",
             );
           }
-          const audioFeatures = await extractAudioFeatures(
-            downloaded.sourcePath,
-            loaded.contextBundle.durationMs,
-            { ffmpegPath },
-          );
-          const visualAnalysis = await extractVisualCoverage(
-            downloaded.sourcePath,
-            loaded.contextBundle.durationMs,
-            {
-              videoId: loaded.video.videoId,
-              sourceFingerprint: loaded.visualFingerprint,
-              sourceFingerprintArtifact: loaded.fingerprintArtifact,
-              ffmpegPath,
-            },
-          );
+          const [audioResult, visualResult] = await Promise.allSettled([
+            extractAudioFeatures(
+              downloaded.sourcePath,
+              loaded.contextBundle.durationMs,
+              { ffmpegPath },
+            ),
+            extractVisualCoverage(
+              downloaded.sourcePath,
+              loaded.contextBundle.durationMs,
+              {
+                videoId: loaded.video.videoId,
+                sourceFingerprint: loaded.visualFingerprint,
+                sourceFingerprintArtifact: loaded.fingerprintArtifact,
+                ffmpegPath,
+              },
+            ),
+          ]);
+          // Wait for both ffmpeg processes before the outer finally removes
+          // their shared download directory. Preserve the former audio-first
+          // failure precedence once both scans have stopped.
+          if (audioResult.status === "rejected") throw audioResult.reason;
+          if (visualResult.status === "rejected") throw visualResult.reason;
+          const audioFeatures = audioResult.value;
+          const visualAnalysis = visualResult.value;
           const grounding = participantGrounding(loaded.contextBundle);
           const { broadcastContextDigest } =
             await createChannelPreanalysisReviewContentDigests({

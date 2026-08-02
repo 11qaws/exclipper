@@ -7,7 +7,7 @@ import { MAX_BROADCAST_TRANSCRIPT_WORKER_CHUNKS } from "./broadcastTranscriptWor
 
 export const AI_MODEL_ROUTING_POLICY_VERSION = "1.11.0" as const;
 /** Context scheduling or model-role changes must fence incompatible cached results. */
-export const AI_BROADCAST_CONTEXT_ROUTING_REVISION = "1.11.0" as const;
+export const AI_BROADCAST_CONTEXT_ROUTING_REVISION = "1.12.0" as const;
 
 export const EXCLIPPER_MODEL_IDS = {
   candidatePerceptionPrimary: "qwen3.5-omni-flash",

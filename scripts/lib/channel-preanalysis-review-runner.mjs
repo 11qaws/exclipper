@@ -1,7 +1,10 @@
 import { createHash } from "node:crypto";
 
 import { selectAudioReactionHighlights } from "../../src/media/localAudioReactionAnalysisCore.ts";
-import { captionTextForRange } from "../../src/analysis/captionCandidateEvidence.ts";
+import {
+  captionTextForRange,
+  isExplicitMusicOnlyCaption,
+} from "../../src/analysis/captionCandidateEvidence.ts";
 import {
   createCaptionDiscoveredLeadRefinementPlan,
   materializeRefinedDiscoveredLeadEvidence,
@@ -44,7 +47,7 @@ import {
   verifyChannelPreanalysisReviewBundleIntegrity,
 } from "../../src/analysis/channelPreanalysisReviewBundle.ts";
 
-export const CHANNEL_PREANALYSIS_REVIEW_RUNNER_SCHEMA_VERSION = "4.1.0";
+export const CHANNEL_PREANALYSIS_REVIEW_RUNNER_SCHEMA_VERSION = "4.2.0";
 export const CHANNEL_PREANALYSIS_REVIEW_MAX_CANDIDATES = 12;
 export const CHANNEL_PREANALYSIS_REVIEW_DEFAULT_CONCURRENCY = 2;
 export const CHANNEL_PREANALYSIS_REVIEW_MAX_SEMANTIC_RECOVERIES = 2;
@@ -285,7 +288,10 @@ function createRawCandidates(bundle, audioFeatures, visualSeeds) {
     category: lead.category,
     contextDecision: "select",
   }));
-  return [...audio, ...semantic, ...normalizeVisualSeeds(visualSeeds, bundle)];
+  return [...audio, ...semantic, ...normalizeVisualSeeds(visualSeeds, bundle)]
+    .filter((candidate) => !isExplicitMusicOnlyCaption(
+      captionText(bundle, candidate.startMs, candidate.endMs),
+    ));
 }
 
 function candidatesOverlap(left, right) {
