@@ -58,8 +58,133 @@ export type BroadcastContextQwenMode =
   | "selection";
 
 export type BroadcastContextDeepseekParseOutcome =
-  | { readonly ok: true; readonly result: BroadcastContextResult }
+  | {
+      readonly ok: true;
+      readonly result: BroadcastContextResult;
+      readonly jsonRecovered: boolean;
+    }
   | { readonly ok: false; readonly reason?: string };
+
+export interface RecoveredJsonParse {
+  readonly value: unknown;
+  readonly recovered: boolean;
+}
+
+function removeTrailingJsonCommas(value: string): string {
+  let result = "";
+  let inString = false;
+  let escaped = false;
+  for (let index = 0; index < value.length; index += 1) {
+    const character = value[index]!;
+    if (inString) {
+      result += character;
+      if (escaped) {
+        escaped = false;
+      } else if (character === "\\") {
+        escaped = true;
+      } else if (character === '"') {
+        inString = false;
+      }
+      continue;
+    }
+    if (character === '"') {
+      inString = true;
+      result += character;
+      continue;
+    }
+    if (character === ",") {
+      let nextIndex = index + 1;
+      while (nextIndex < value.length && /\s/u.test(value[nextIndex]!)) {
+        nextIndex += 1;
+      }
+      if (value[nextIndex] === "}" || value[nextIndex] === "]") continue;
+    }
+    result += character;
+  }
+  return result;
+}
+
+function extractSingleJsonObject(value: string): string | null {
+  const start = value.indexOf("{");
+  if (start < 0) return null;
+  const stack: ("{" | "[")[] = [];
+  let inString = false;
+  let escaped = false;
+  for (let index = start; index < value.length; index += 1) {
+    const character = value[index]!;
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (character === "\\") {
+        escaped = true;
+      } else if (character === '"') {
+        inString = false;
+      }
+      continue;
+    }
+    if (character === '"') {
+      inString = true;
+      continue;
+    }
+    if (character === "{" || character === "[") {
+      stack.push(character);
+      continue;
+    }
+    if (character !== "}" && character !== "]") continue;
+    const expected = character === "}" ? "{" : "[";
+    if (stack.pop() !== expected) return null;
+    if (stack.length !== 0) continue;
+    const suffix = value.slice(index + 1).trim();
+    if (["{", "}", "[", "]"].some((token) => suffix.includes(token))) {
+      return null;
+    }
+    return value.slice(start, index + 1);
+  }
+  if (inString || stack.length !== 1 || stack[0] !== "{") return null;
+  const incompleteRoot = value.slice(start).trimEnd();
+  if (
+    incompleteRoot.length <= 1 ||
+    incompleteRoot.endsWith(",") ||
+    incompleteRoot.endsWith(":")
+  ) {
+    return null;
+  }
+  return `${incompleteRoot}}`;
+}
+
+/**
+ * Recovers only deterministic JSON packaging defects. Missing fields and
+ * semantic values remain the responsibility of the strict parsers below.
+ */
+export function parseRecoverableModelJson(
+  content: string,
+): RecoveredJsonParse | null {
+  if (
+    new TextEncoder().encode(content).byteLength >
+      MAX_BROADCAST_CONTEXT_DEEPSEEK_RESPONSE_BYTES
+  ) {
+    return null;
+  }
+  try {
+    return { value: JSON.parse(content), recovered: false };
+  } catch {
+    // Continue with bounded syntax-only recovery.
+  }
+  const trimmed = content.replace(/^\uFEFF/u, "").trim();
+  const fenced = /^```(?:json)?[^\S\r\n]*(?:\r?\n)?([\s\S]*?)(?:\r?\n)?```$/iu.exec(
+    trimmed,
+  );
+  const extracted = extractSingleJsonObject((fenced?.[1] ?? trimmed).trim());
+  if (extracted === null) return null;
+  try {
+    return {
+      value: JSON.parse(removeTrailingJsonCommas(extracted)),
+      recovered: true,
+    };
+  } catch {
+    return null;
+  }
+}
 
 const UNEXPECTED_HAN_REPLACEMENT_KO = "한글 표기 미확인";
 const UNEXPECTED_HAN_REPLACEMENT_EN = "wording not verified";
@@ -391,16 +516,15 @@ export function extractBroadcastContextQwenRefinementResponse(
   if (!isRecord(choice) || !isRecord(choice.message) || typeof choice.message.content !== "string") {
     return { ok: false };
   }
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(choice.message.content);
-  } catch {
-    return { ok: false };
-  }
-  parsed = replaceUnexpectedHan(parsed, request.outputLanguage);
+  const recoveredJson = parseRecoverableModelJson(choice.message.content);
+  if (recoveredJson === null) return { ok: false, reason: "content-json" };
+  const parsed = replaceUnexpectedHan(
+    recoveredJson.value,
+    request.outputLanguage,
+  );
   if (
     !isRecord(parsed) ||
-    !hasExactKeys(parsed, ["summary", "leads"]) ||
+    !hasRequiredKeys(parsed, ["summary", "leads"]) ||
     typeof parsed.summary !== "string" ||
     !Array.isArray(parsed.leads) ||
     parsed.leads.length > 3
@@ -412,7 +536,7 @@ export function extractBroadcastContextQwenRefinementResponse(
   for (const [index, value] of parsed.leads.entries()) {
     if (
       !isRecord(value) ||
-      !hasExactKeys(value, ["s", "e", "c", "p", "event", "cue"]) ||
+      !hasRequiredKeys(value, ["s", "e", "c", "p", "event", "cue"]) ||
       typeof value.s !== "string" ||
       typeof value.e !== "string" ||
       typeof value.c !== "string" ||
@@ -454,6 +578,7 @@ export function extractBroadcastContextQwenRefinementResponse(
   );
   return {
     ok: true,
+    jsonRecovered: recoveredJson.recovered,
     result: {
       schemaVersion: BROADCAST_CONTEXT_SCHEMA_VERSION,
       broadcastSummaryKo: parsed.summary,
@@ -490,16 +615,15 @@ export function extractBroadcastContextQwenDiscoveryResponse(
   if (!isRecord(choice) || !isRecord(choice.message) || typeof choice.message.content !== "string") {
     return { ok: false };
   }
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(choice.message.content);
-  } catch {
-    return { ok: false };
-  }
-  parsed = replaceUnexpectedHan(parsed, request.outputLanguage);
+  const recoveredJson = parseRecoverableModelJson(choice.message.content);
+  if (recoveredJson === null) return { ok: false, reason: "content-json" };
+  const parsed = replaceUnexpectedHan(
+    recoveredJson.value,
+    request.outputLanguage,
+  );
   if (
     !isRecord(parsed) ||
-    !hasExactKeys(parsed, ["summary", "leads"]) ||
+    !hasRequiredKeys(parsed, ["summary", "leads"]) ||
     typeof parsed.summary !== "string" ||
     !Array.isArray(parsed.leads) ||
     parsed.leads.length > 8
@@ -511,7 +635,7 @@ export function extractBroadcastContextQwenDiscoveryResponse(
   for (const [index, value] of parsed.leads.entries()) {
     if (
       !isRecord(value) ||
-      !hasExactKeys(value, ["s", "e", "c", "p", "event", "cue"]) ||
+      !hasRequiredKeys(value, ["s", "e", "c", "p", "event", "cue"]) ||
       typeof value.s !== "string" ||
       typeof value.e !== "string" ||
       typeof value.c !== "string" ||
@@ -556,6 +680,7 @@ export function extractBroadcastContextQwenDiscoveryResponse(
   );
   return {
     ok: true,
+    jsonRecovered: recoveredJson.recovered,
     result: {
       schemaVersion: BROADCAST_CONTEXT_SCHEMA_VERSION,
       broadcastSummaryKo: parsed.summary,
@@ -582,16 +707,17 @@ export function extractBroadcastContextQwenOverviewResponse(
   if (!isRecord(choice) || !isRecord(choice.message) || typeof choice.message.content !== "string") {
     return { ok: false, reason: "message-content" };
   }
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(choice.message.content);
-  } catch {
+  const recoveredJson = parseRecoverableModelJson(choice.message.content);
+  if (recoveredJson === null) {
     return { ok: false, reason: "content-json" };
   }
-  parsed = replaceUnexpectedHan(parsed, request.outputLanguage);
+  const parsed = replaceUnexpectedHan(
+    recoveredJson.value,
+    request.outputLanguage,
+  );
   if (
     !isRecord(parsed) ||
-    !hasExactKeys(parsed, [
+    !hasRequiredKeys(parsed, [
       "summary",
       "host",
       "themes",
@@ -632,7 +758,7 @@ export function extractBroadcastContextQwenOverviewResponse(
   for (const value of rawCandidates) {
     if (
       !isRecord(value) ||
-      !hasExactKeys(value, ["id", "d", "c", "p", "reason"]) ||
+      !hasRequiredKeys(value, ["id", "d", "c", "p", "reason"]) ||
       typeof value.id !== "string" ||
       !requestedIds.has(value.id) ||
       verdicts.has(value.id) ||
@@ -704,7 +830,7 @@ export function extractBroadcastContextQwenOverviewResponse(
   for (const [index, value] of parsed.leads.entries()) {
     if (
       !isRecord(value) ||
-      !hasExactKeys(value, ["s", "e", "c", "p", "event", "cue"]) ||
+      !hasRequiredKeys(value, ["s", "e", "c", "p", "event", "cue"]) ||
       typeof value.s !== "string" ||
       typeof value.e !== "string" ||
       typeof value.c !== "string" ||
@@ -762,29 +888,37 @@ export function extractBroadcastContextQwenOverviewResponse(
       left.leadId.localeCompare(right.leadId),
   );
   const rawSemanticChapters: BroadcastContextSemanticChapterReference[] = [];
+  let chapterMetadataRecovered = false;
   for (const value of parsed.chapters) {
     if (
       !isRecord(value) ||
-      !hasExactKeys(value, ["s", "e", "title", "desc", "kind", "sal"]) ||
-      typeof value.s !== "string" ||
-      typeof value.e !== "string" ||
-      typeof value.title !== "string" ||
-      value.title.trim().length === 0 ||
-      typeof value.desc !== "string" ||
-      value.desc.trim().length === 0 ||
-      typeof value.kind !== "string" ||
-      !isValidSemanticKind(value.kind) ||
-      typeof value.sal !== "string" ||
-      !isValidSemanticSalience(value.sal)
+      !hasRequiredKeys(value, ["s", "e", "title", "desc", "kind", "sal"])
     ) {
-      return { ok: false, reason: "chapter-item" };
+      return { ok: false, reason: "chapter-item-shape" };
+    }
+    if (typeof value.s !== "string" || typeof value.e !== "string") {
+      return { ok: false, reason: "chapter-item-range" };
+    }
+    if (typeof value.title !== "string" || value.title.trim().length === 0) {
+      return { ok: false, reason: "chapter-item-title" };
+    }
+    if (typeof value.desc !== "string" || value.desc.trim().length === 0) {
+      return { ok: false, reason: "chapter-item-description" };
+    }
+    if (typeof value.kind !== "string" || value.kind.trim().length === 0) {
+      return { ok: false, reason: "chapter-item-kind" };
+    }
+    const kind = isValidSemanticKind(value.kind) ? value.kind : "other";
+    chapterMetadataRecovered ||= kind !== value.kind;
+    if (typeof value.sal !== "string" || !isValidSemanticSalience(value.sal)) {
+      return { ok: false, reason: "chapter-item-salience" };
     }
     rawSemanticChapters.push({
       startChapterId: value.s,
       endChapterId: value.e,
       titleKo: Array.from(value.title.trim()).slice(0, 64).join(""),
       summaryKo: Array.from(value.desc.trim()).slice(0, 1_200).join(""),
-      kind: value.kind as BroadcastContextSemanticChapterKind,
+      kind: kind as BroadcastContextSemanticChapterKind,
       salience: value.sal as BroadcastContextSemanticChapterSalience,
       relatedCandidateIds: [],
       uncertaintiesKo: [],
@@ -802,6 +936,7 @@ export function extractBroadcastContextQwenOverviewResponse(
   }
   return {
     ok: true,
+    jsonRecovered: recoveredJson.recovered || chapterMetadataRecovered,
     result: {
       schemaVersion: BROADCAST_CONTEXT_SCHEMA_VERSION,
       broadcastSummaryKo,
@@ -828,16 +963,15 @@ export function extractBroadcastContextQwenSelectionResponse(
   if (!isRecord(choice) || !isRecord(choice.message) || typeof choice.message.content !== "string") {
     return { ok: false };
   }
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(choice.message.content);
-  } catch {
-    return { ok: false };
-  }
-  parsed = replaceUnexpectedHan(parsed, request.outputLanguage);
+  const recoveredJson = parseRecoverableModelJson(choice.message.content);
+  if (recoveredJson === null) return { ok: false, reason: "content-json" };
+  const parsed = replaceUnexpectedHan(
+    recoveredJson.value,
+    request.outputLanguage,
+  );
   if (
     !isRecord(parsed) ||
-    !hasExactKeys(parsed, ["summary", "selected"]) ||
+    !hasRequiredKeys(parsed, ["summary", "selected"]) ||
     typeof parsed.summary !== "string" ||
     !Array.isArray(parsed.selected) ||
     parsed.selected.length > 8
@@ -864,7 +998,7 @@ export function extractBroadcastContextQwenSelectionResponse(
   for (const value of parsed.selected) {
     if (
       !isRecord(value) ||
-      !hasExactKeys(value, ["id", "p", "reason"]) ||
+      !hasRequiredKeys(value, ["id", "p", "reason"]) ||
       typeof value.id !== "string" ||
       !candidateIds.has(value.id) ||
       selected.has(value.id) ||
@@ -916,6 +1050,7 @@ export function extractBroadcastContextQwenSelectionResponse(
   }
   return {
     ok: true,
+    jsonRecovered: recoveredJson.recovered,
     result: {
       schemaVersion: BROADCAST_CONTEXT_SCHEMA_VERSION,
       broadcastSummaryKo: parsed.summary,
@@ -983,6 +1118,23 @@ function hasExactKeys(
     actual.length === expected.length &&
     actual.every((key, index) => key === expected[index])
   );
+}
+
+function hasRequiredKeys(
+  value: Readonly<Record<string, unknown>>,
+  keys: readonly string[],
+): boolean {
+  return keys.every((key) => Object.prototype.hasOwnProperty.call(value, key));
+}
+
+function hasExpectedKeys(
+  value: Readonly<Record<string, unknown>>,
+  keys: readonly string[],
+  allowExtraKeys: boolean,
+): boolean {
+  return allowExtraKeys
+    ? hasRequiredKeys(value, keys)
+    : hasExactKeys(value, keys);
 }
 
 function isStringArray(value: unknown): value is readonly string[] {
@@ -1182,6 +1334,7 @@ function isRoutineGameplayEvidence(
 function parseCurrentCandidateAnnotations(
   value: unknown,
   request: BroadcastContextRequest,
+  allowExtraKeys = false,
 ): readonly BroadcastContextCandidateAnnotation[] | null {
   if (!Array.isArray(value)) return null;
   const requestedIds = new Set(
@@ -1191,17 +1344,21 @@ function parseCurrentCandidateAnnotations(
   for (const annotation of value) {
     if (
       !isRecord(annotation) ||
-      !hasExactKeys(annotation, [
-        "candidateId",
-        "category",
-        "clipDecision",
-        "confidence",
-        "rejectionReasons",
-        "contextSummaryKo",
-        "whyThisMomentKo",
-        "relatedCandidateIds",
-        "uncertaintiesKo",
-      ]) ||
+      !hasExpectedKeys(
+        annotation,
+        [
+          "candidateId",
+          "category",
+          "clipDecision",
+          "confidence",
+          "rejectionReasons",
+          "contextSummaryKo",
+          "whyThisMomentKo",
+          "relatedCandidateIds",
+          "uncertaintiesKo",
+        ],
+        allowExtraKeys,
+      ) ||
       typeof annotation.candidateId !== "string" ||
       !requestedIds.has(annotation.candidateId) ||
       byCandidateId.has(annotation.candidateId) ||
@@ -1543,18 +1700,16 @@ export function extractBroadcastContextDeepseekResponse(
     return { ok: false };
   }
 
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(choice.message.content);
-  } catch {
-    return { ok: false };
-  }
-
-  parsed = replaceUnexpectedHan(parsed, request.outputLanguage);
+  const recoveredJson = parseRecoverableModelJson(choice.message.content);
+  if (recoveredJson === null) return { ok: false, reason: "content-json" };
+  const parsed = replaceUnexpectedHan(
+    recoveredJson.value,
+    request.outputLanguage,
+  );
 
   if (
     !isRecord(parsed) ||
-    !hasExactKeys(parsed, [
+    !hasRequiredKeys(parsed, [
       "broadcastSummaryKo",
       "hostStreamerProfile",
       "recurringThemesKo",
@@ -1587,6 +1742,7 @@ export function extractBroadcastContextDeepseekResponse(
   const annotations = parseCurrentCandidateAnnotations(
     parsed.annotations,
     request,
+    true,
   );
   if (annotations === null) return { ok: false };
 
@@ -1671,6 +1827,7 @@ export function extractBroadcastContextDeepseekResponse(
 
   return {
     ok: true,
+    jsonRecovered: recoveredJson.recovered,
     result: {
       schemaVersion: BROADCAST_CONTEXT_SCHEMA_VERSION,
       broadcastSummaryKo: parsed.broadcastSummaryKo,

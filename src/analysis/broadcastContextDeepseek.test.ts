@@ -224,6 +224,94 @@ describe("broadcastContextDeepseek", () => {
     }
   });
 
+  it("recovers deterministic JSON packaging defects without weakening context validation", () => {
+    const basePayload = qwenOverviewPayloadWithLeads([]);
+    const baseContent = basePayload.choices[0]!.message.content;
+    const value = JSON.parse(baseContent) as Record<string, unknown>;
+    const host = value.host as Record<string, unknown>;
+    const chapters = value.chapters as Record<string, unknown>[];
+    const candidates = value.candidates as Record<string, unknown>[];
+    const withHarmlessExtras = {
+      ...value,
+      ignoredTopLevelNote: "provider-added metadata",
+      host: { ...host, ignored: true },
+      chapters: [{ ...chapters[0], ignored: true }],
+      candidates: [{ ...candidates[0], ignored: true }],
+    };
+    const malformedContent = [
+      "요청한 JSON입니다.",
+      "```json",
+      `${JSON.stringify(withHarmlessExtras).slice(0, -1)},}`,
+      "```",
+    ].join("\n");
+    const parsed = extractBroadcastContextQwenOverviewResponse(
+      { choices: [{ message: { content: malformedContent } }] },
+      dummyRequest,
+    );
+
+    expect(parsed.ok).toBe(true);
+    if (parsed.ok) {
+      expect(parsed.jsonRecovered).toBe(true);
+      expect(parsed.result.broadcastSummaryKo).toBe(value.summary);
+      expect(parsed.result.annotations).toHaveLength(1);
+      expect(parsed.result.semanticChapters).toHaveLength(1);
+    }
+  });
+
+  it("recovers only a missing root close and rejects incomplete nested content", () => {
+    const payload = qwenOverviewPayloadWithLeads([]);
+    const content = payload.choices[0]!.message.content;
+    const recovered = extractBroadcastContextQwenOverviewResponse(
+      { choices: [{ message: { content: content.slice(0, -1) } }] },
+      dummyRequest,
+    );
+    const incompleteNested = extractBroadcastContextQwenOverviewResponse(
+      { choices: [{ message: { content: content.slice(0, -2) } }] },
+      dummyRequest,
+    );
+
+    expect(recovered.ok).toBe(true);
+    if (recovered.ok) expect(recovered.jsonRecovered).toBe(true);
+    expect(incompleteNested).toEqual({ ok: false, reason: "content-json" });
+  });
+
+  it("rejects multiple JSON objects instead of choosing one", () => {
+    const payload = qwenOverviewPayloadWithLeads([]);
+    const content = payload.choices[0]!.message.content;
+
+    expect(
+      extractBroadcastContextQwenOverviewResponse(
+        { choices: [{ message: { content: `${content}\n${content}` } }] },
+        dummyRequest,
+      ),
+    ).toEqual({ ok: false, reason: "content-json" });
+  });
+
+  it("preserves a valid chapter while normalizing an unknown kind to other", () => {
+    const payload = qwenOverviewPayloadWithLeads([]);
+    const content = JSON.parse(payload.choices[0]!.message.content) as Record<
+      string,
+      unknown
+    >;
+    const chapters = content.chapters as Record<string, unknown>[];
+    chapters[0] = { ...chapters[0], kind: "quiz-and-chat" };
+    const parsed = extractBroadcastContextQwenOverviewResponse(
+      {
+        choices: [{ message: { content: JSON.stringify(content) } }],
+      },
+      dummyRequest,
+    );
+
+    expect(parsed.ok).toBe(true);
+    if (parsed.ok) {
+      expect(parsed.jsonRecovered).toBe(true);
+      expect(parsed.result.semanticChapters[0]?.kind).toBe("other");
+      expect(parsed.result.semanticChapters[0]?.titleKo).toBe(
+        chapters[0]?.title,
+      );
+    }
+  });
+
   describe("buildBroadcastContextDeepseekRequestBody", () => {
     it("builds a correct prompt and request body", () => {
       const body = buildBroadcastContextDeepseekRequestBody(dummyRequest);

@@ -5,6 +5,7 @@ import {
   extractBroadcastContextDeepseekResponse,
   extractBroadcastContextQwenDiscoveryResponse,
   extractBroadcastContextQwenOverviewResponse,
+  parseRecoverableModelJson,
   parseCurrentBroadcastContextResult,
 } from "../analysis/broadcastContextDeepseek";
 import {
@@ -1334,7 +1335,7 @@ async function attemptProviderModel(
           };
         }
 
-        let payload: unknown;
+        let envelopeText: string;
         try {
           const bytes = await readBodyWithLimit(
             response.body,
@@ -1342,9 +1343,9 @@ async function attemptProviderModel(
             remainingMs(),
           );
           try {
-            payload = JSON.parse(
-              new TextDecoder("utf-8", { fatal: true }).decode(bytes),
-            ) as unknown;
+            envelopeText = new TextDecoder("utf-8", { fatal: true }).decode(
+              bytes,
+            );
           } finally {
             bytes.fill(0);
           }
@@ -1355,6 +1356,30 @@ async function attemptProviderModel(
           ) {
             throw new UpstreamTimeoutError();
           }
+          const diagnostic = scheduledContextDiagnostic({
+            modelId,
+            stage: error instanceof BodyLimitError
+              ? "provider-envelope-too-large"
+              : error instanceof TypeError
+                ? "provider-envelope-encoding"
+                : "provider-envelope-body",
+          });
+          return {
+            kind: "failure",
+            response: errorResponse(
+              502,
+              "UPSTREAM_INVALID_RESPONSE",
+              "The provider response could not be verified.",
+              {},
+              diagnostic,
+            ),
+            code: "UPSTREAM_INVALID_RESPONSE",
+            possibleDuplicateProviderCharge: true,
+            diagnostic,
+          };
+        }
+        const recoveredEnvelope = parseRecoverableModelJson(envelopeText);
+        if (recoveredEnvelope === null) {
           const diagnostic = scheduledContextDiagnostic({
             modelId,
             stage: "provider-envelope-json",
@@ -1373,6 +1398,7 @@ async function attemptProviderModel(
             diagnostic,
           };
         }
+        const payload = recoveredEnvelope.value;
 
         const parsed = connection.provider === "qwen"
           ? analysisMode === "discovery"
@@ -1437,6 +1463,13 @@ async function attemptProviderModel(
             possibleDuplicateProviderCharge: true,
             diagnostic,
           };
+        }
+        if (recoveredEnvelope.recovered || parsed.jsonRecovered) {
+          console.info("scheduled-context-json-recovered", {
+            analysisMode,
+            modelId,
+            envelopeRecovered: recoveredEnvelope.recovered,
+          });
         }
         return {
           kind: "success",

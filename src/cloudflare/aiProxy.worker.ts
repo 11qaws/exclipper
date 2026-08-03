@@ -50,6 +50,7 @@ import {
   extractBroadcastContextQwenRefinementResponse,
   extractBroadcastContextQwenSelectionResponse,
   extractBroadcastContextQwenOverviewResponse,
+  parseRecoverableModelJson,
 } from "../analysis/broadcastContextDeepseek";
 import {
   createBroadcastContextRequest,
@@ -257,6 +258,7 @@ const EXCLIPPER_USAGE_TOTAL_TOKENS_HEADER =
 const EXCLIPPER_FALLBACK_REASON_HEADER = "X-ExClipper-Fallback-Reason";
 const EXCLIPPER_PRIMARY_FAILURE_HEADER = "X-ExClipper-Primary-Failure";
 const EXCLIPPER_FALLBACK_FAILURE_HEADER = "X-ExClipper-Fallback-Failure";
+const EXCLIPPER_JSON_RECOVERED_HEADER = "X-ExClipper-Json-Recovered";
 const MAX_YOUTUBE_WATCH_PAGE_BYTES = 2 * 1024 * 1024;
 const MAX_YOUTUBE_CAPTION_BYTES = 8 * 1024 * 1024;
 const MAX_CHZZK_VIDEO_METADATA_BYTES = 256 * 1024;
@@ -494,6 +496,8 @@ function corsHeaders(origin: string): Headers {
       EXCLIPPER_FALLBACK_REASON_HEADER,
       EXCLIPPER_PRIMARY_FAILURE_HEADER,
       EXCLIPPER_FALLBACK_FAILURE_HEADER,
+      EXCLIPPER_JSON_RECOVERED_HEADER,
+      "X-Upstream-Parse-Stage",
       "Retry-After",
     ].join(", "),
   );
@@ -4704,6 +4708,7 @@ type BroadcastContextProviderAttempt =
       readonly modelId: string;
       readonly modelRevision: string;
       readonly usage: ProviderTokenUsage | null;
+      readonly jsonRecovered: boolean;
     }
   | {
       readonly ok: false;
@@ -4834,26 +4839,49 @@ async function attemptBroadcastContextProvider(
     };
   }
 
-  let upstreamPayload: unknown;
+  let upstreamText: string;
   try {
     const upstreamBytes = await readBodyWithLimit(
       upstreamResponse.body,
       MAX_BROADCAST_CONTEXT_DEEPSEEK_RESPONSE_BYTES,
       timeoutMs,
     );
-    const text = new TextDecoder("utf-8", { fatal: true }).decode(upstreamBytes);
-    upstreamBytes.fill(0);
-    upstreamPayload = JSON.parse(text);
+    try {
+      upstreamText = new TextDecoder("utf-8", { fatal: true }).decode(
+        upstreamBytes,
+      );
+    } finally {
+      upstreamBytes.fill(0);
+    }
   } catch (error) {
+    if (
+      error instanceof QuotaOutcomeUnknownError ||
+      error instanceof AiQuotaCoordinatorUnavailableError
+    ) {
+      return { ok: false, kind: "outcome-unknown" };
+    }
+    const parseStage = error instanceof BodyTooLargeError
+      ? "provider-envelope-too-large"
+      : error instanceof TypeError
+        ? "provider-envelope-encoding"
+        : "provider-envelope-body";
     return {
       ok: false,
-      kind:
-        error instanceof QuotaOutcomeUnknownError ||
-        error instanceof AiQuotaCoordinatorUnavailableError
-          ? "outcome-unknown"
-          : "invalid-response",
+      kind: "invalid-response",
+      diagnosticHeaders: { "X-Upstream-Parse-Stage": parseStage },
     };
   }
+  const recoveredEnvelope = parseRecoverableModelJson(upstreamText);
+  if (recoveredEnvelope === null) {
+    return {
+      ok: false,
+      kind: "invalid-response",
+      diagnosticHeaders: {
+        "X-Upstream-Parse-Stage": "provider-envelope-json",
+      },
+    };
+  }
+  const upstreamPayload = recoveredEnvelope.value;
 
   const parsed =
     connection.provider === "qwen" && contextMode === "discovery"
@@ -4914,6 +4942,7 @@ async function attemptBroadcastContextProvider(
       contentLength: content?.length ?? null,
       generatedJson,
       generatedKeys,
+      parseStage: parsed.reason ?? "context-schema",
     });
     return {
       ok: false,
@@ -4926,12 +4955,25 @@ async function attemptBroadcastContextProvider(
         "X-Upstream-Content-Length": String(content?.length ?? -1),
         "X-Upstream-Json": generatedJson ? "record" : "invalid",
         "X-Upstream-Keys": generatedKeys.join(",").slice(0, 160),
+        "X-Upstream-Parse-Stage": (parsed.reason ?? "context-schema").slice(
+          0,
+          40,
+        ),
       },
     };
+  }
+  const jsonRecovered = recoveredEnvelope.recovered || parsed.jsonRecovered;
+  if (jsonRecovered) {
+    console.info("broadcast-context-json-recovered", {
+      contextMode,
+      modelId: qwenModelId,
+      envelopeRecovered: recoveredEnvelope.recovered,
+    });
   }
   return {
     ok: true,
     result: parsed.result,
+    jsonRecovered,
     modelId:
       connection.provider === "qwen"
         ? qwenModelId
@@ -5373,6 +5415,9 @@ export async function handleBroadcastContextRequest(
   let finalAttempt = primaryAttempt;
   let fallbackUsed = false;
   let primaryFailureKind: BroadcastContextProviderFailureKind | null = null;
+  const primaryParseStage = primaryAttempt.ok
+    ? undefined
+    : primaryAttempt.diagnosticHeaders?.["X-Upstream-Parse-Stage"];
   if (
     !primaryAttempt.ok &&
     providerConnection.provider === "qwen" &&
@@ -5471,9 +5516,15 @@ export async function handleBroadcastContextRequest(
     [CANDIDATE_PASS_B_RESPONSE_MODEL_REVISION_HEADER]:
       finalAttempt.modelRevision,
     [CANDIDATE_PASS_B_RESPONSE_FALLBACK_HEADER]: fallbackUsed ? "true" : "false",
+    ...(finalAttempt.jsonRecovered
+      ? { [EXCLIPPER_JSON_RECOVERED_HEADER]: "true" }
+      : {}),
     ...(primaryFailureKind === null || !fallbackUsed
       ? {}
       : { [EXCLIPPER_FALLBACK_REASON_HEADER]: primaryFailureKind }),
+    ...(fallbackUsed && primaryParseStage !== undefined
+      ? { "X-Upstream-Parse-Stage": primaryParseStage }
+      : {}),
     ...(finalAttempt.usage === null
       ? {}
       : {

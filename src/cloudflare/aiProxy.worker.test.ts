@@ -501,6 +501,86 @@ describe("aiProxy.worker", () => {
     );
   });
 
+  it("recovers a bounded malformed context JSON before paying for fallback", async () => {
+    const contextInput = withSealedParticipantGrounding({
+      sourceDurationMs: 60_000,
+      chapters: [{
+        chapterId: "chapter-1",
+        startMs: 0,
+        endMs: 60_000,
+        evidenceMode: "complete-transcript",
+        evidenceCoverageRatio: 1,
+        summaryKo: "스트리머가 음식 이름을 맞히며 채팅과 대화했다.",
+      }],
+      candidates: [],
+    });
+    const providerResult = {
+      summary: "음식 이름을 맞히며 채팅과 대화한 방송이다.",
+      host: {
+        name: null,
+        profile: "음식 취향을 설명하고 채팅의 답을 확인하며 진행했다.",
+        evidence: ["음식 이름을 직접 설명했다."],
+        uncertainty: ["인물 이름은 확인하지 못했다."],
+        ignored: "harmless provider metadata",
+      },
+      themes: ["음식 토크"],
+      chapters: [{
+        s: "chapter-1",
+        e: "chapter-1",
+        title: "음식 이름 맞히기",
+        desc: "음식 이름을 맞히고 채팅과 답을 비교했다.",
+        kind: "main-event",
+        sal: "primary",
+        ignored: true,
+      }],
+      candidates: [],
+      leads: [],
+      ignoredTopLevelNote: true,
+    };
+    const malformed = [
+      "분석 결과입니다.",
+      "```json",
+      `${JSON.stringify(providerResult).slice(0, -1)},}`,
+      "```",
+    ].join("\n");
+    const malformedEnvelope = [
+      "Qwen response follows.",
+      "```json",
+      `${JSON.stringify({
+        choices: [{ message: { content: malformed } }],
+      }).slice(0, -1)},}`,
+      "```",
+    ].join("\n");
+    const upstreamFetch = vi.fn(() =>
+      Promise.resolve(
+        new Response(malformedEnvelope, { status: 200 }),
+      ),
+    );
+    const response = await handleBroadcastContextRequest(
+      createRequest(contextInput, {
+        url: "https://rettohighlight-gemini.example/v1/broadcast-context",
+      }),
+      {
+        ...createEnvironment(),
+        BROADCAST_CONTEXT_PROVIDER: "qwen",
+        AI_PROVIDER_FALLBACK_MODE: "bounded",
+        QWEN_API_KEY: "qwen-secret",
+      },
+      { fetchImplementation: upstreamFetch, upstreamRetryDelaysMs: [] },
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      broadcastSummaryKo: providerResult.summary,
+    });
+    expect(upstreamFetch).toHaveBeenCalledTimes(1);
+    expect(response.headers.get("X-ExClipper-Fallback-Used")).toBe("false");
+    expect(response.headers.get("X-ExClipper-Json-Recovered")).toBe("true");
+    expect(response.headers.get("Access-Control-Expose-Headers")).toContain(
+      "X-ExClipper-Json-Recovered",
+    );
+  });
+
   it("rejects a 145-chapter map before any paid context request", async () => {
     const chapters = Array.from({ length: 145 }, (_, index) => ({
       chapterId: `chapter-${index + 1}`,
@@ -779,6 +859,52 @@ describe("aiProxy.worker", () => {
     expect(response.headers.get("X-ExClipper-Fallback-Used")).toBe("true");
     expect(response.headers.get("X-ExClipper-Fallback-Reason")).toBe(
       "unavailable",
+    );
+
+    const invalidPrimaryFetch = vi.fn(
+      (_input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+        const body = JSON.parse(
+          typeof init?.body === "string" ? init.body : "{}",
+        ) as { model: string };
+        return Promise.resolve(
+          body.model === "qwen3.7-plus"
+            ? new Response(
+                JSON.stringify({
+                  choices: [{ message: { content: "not-json" } }],
+                }),
+                { status: 200 },
+              )
+            : new Response(
+                JSON.stringify({
+                  choices: [
+                    { message: { content: JSON.stringify(providerResult) } },
+                  ],
+                }),
+                { status: 200 },
+              ),
+        );
+      },
+    );
+    const invalidPrimaryResponse = await handleBroadcastContextRequest(
+      createRequest(contextInput, {
+        url: "https://rettohighlight-gemini.example/v1/broadcast-context",
+      }),
+      {
+        ...createEnvironment(),
+        BROADCAST_CONTEXT_PROVIDER: "qwen",
+        AI_PROVIDER_FALLBACK_MODE: "bounded",
+        QWEN_API_KEY: "qwen-secret",
+      },
+      { fetchImplementation: invalidPrimaryFetch, upstreamRetryDelaysMs: [] },
+    );
+
+    expect(invalidPrimaryResponse.status).toBe(200);
+    expect(invalidPrimaryFetch).toHaveBeenCalledTimes(2);
+    expect(invalidPrimaryResponse.headers.get("X-ExClipper-Fallback-Reason")).toBe(
+      "invalid-response",
+    );
+    expect(invalidPrimaryResponse.headers.get("X-Upstream-Parse-Stage")).toBe(
+      "content-json",
     );
   });
 
