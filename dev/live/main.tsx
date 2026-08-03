@@ -176,23 +176,25 @@ function Harness(): React.ReactElement {
 
   if (new URLSearchParams(globalThis.location?.search).get("shell") === "prepared") {
     return (
-      <main className="prv">
-        <header className="prv-toolbar">
-          <div>
+      <div className="rh-app rh-app--prepared-review">
+        <main className="prv">
+          <header className="prv-toolbar">
+            <div>
             <span className="prv-eyebrow">사전 분석 완료</span>
             <strong>2026 07 17 - 음식 토크</strong>
             <span>저장된 전체 맥락과 화면·대사 검증본을 불러왔어요.</span>
-          </div>
-          <div className="prv-tools">
+            </div>
+            <div className="prv-tools">
             <div className="prv-language" role="group" aria-label="언어 선택">
               <button type="button" data-active="true">한국어</button>
               <button type="button">English</button>
             </div>
             <button className="prv-exit" type="button">다른 영상</button>
-          </div>
-        </header>
-        {review}
-      </main>
+            </div>
+          </header>
+          {review}
+        </main>
+      </div>
     );
   }
 
