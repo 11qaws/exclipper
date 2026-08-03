@@ -9,8 +9,15 @@ import {
   type ReviewPage,
 } from "../../src/app/ReviewSurface";
 import "../../styles/exclipper-foundation.css";
+import "../../styles/retto-highlight.css";
 import "../../styles/exclipper-app.css";
+import "../../styles/exclipper-surface.css";
 import "../../styles/review-surface.css";
+
+function frameFixture(label: string, hue: number): string {
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="640" height="360" viewBox="0 0 640 360"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop stop-color="hsl(${hue} 70% 28%)"/><stop offset="1" stop-color="hsl(${hue + 38} 80% 68%)"/></linearGradient></defs><rect width="640" height="360" fill="url(#g)"/><circle cx="470" cy="150" r="92" fill="rgba(255,255,255,.22)"/><rect x="48" y="56" width="300" height="188" rx="24" fill="rgba(15,18,30,.48)"/><text x="76" y="138" fill="white" font-family="sans-serif" font-size="42" font-weight="700">${label}</text><text x="76" y="188" fill="rgba(255,255,255,.8)" font-family="sans-serif" font-size="22">640 x 360</text></svg>`;
+  return `data:image/svg+xml,${encodeURIComponent(svg)}`;
+}
 
 const BASE: ReviewCandidate[] = [
   {
@@ -42,10 +49,10 @@ const BASE: ReviewCandidate[] = [
       { id: "x2", label: "이어지는 반응", text: "다른 참가자들이 차례로 맛을 보며 비교하는 흐름", atMs: 1_990_000 },
     ],
     frames: [
-      { id: "f1", atMs: 1_924_000 },
-      { id: "f2", atMs: 1_940_000 },
-      { id: "f3", atMs: 1_952_000 },
-      { id: "f4", atMs: 1_964_000 },
+      { id: "f1", atMs: 1_924_000, imageUrl: frameFixture("FRAME 1", 342) },
+      { id: "f2", atMs: 1_940_000, imageUrl: frameFixture("FRAME 2", 22) },
+      { id: "f3", atMs: 1_952_000, imageUrl: frameFixture("FRAME 3", 182) },
+      { id: "f4", atMs: 1_964_000, imageUrl: frameFixture("FRAME 4", 232) },
     ],
   },
   {
@@ -117,8 +124,24 @@ function Harness(): React.ReactElement {
   }, []);
 
   return (
-    <div style={{ padding: 24, background: "#1b1d24", height: "100vh", boxSizing: "border-box" }}>
-      <ReviewSurface
+    <div className="rh-app">
+      <div className="ex-device">
+        <div className="ex-device-screen">
+          <nav className="ex-rail" aria-label="App workflow">
+            <span className="ex-rail-brand" aria-hidden="true">E</span>
+            <ol className="ex-rail-steps">
+              {[1, 2, 3, 4].map((step) => <li className="ex-rail-step" key={step}>{step}</li>)}
+            </ol>
+          </nav>
+          <div className="ex-screen">
+            <header><div className="rh-header-inner"><strong>ExClipper</strong></div></header>
+            <main className="rh-shell">
+              <div className="ex-shell-content">
+                <section className="rh-panel rh-review-workspace">
+                  <div className="rh-results-header">
+                    <div><p className="rh-eyebrow">AI analysis complete</p><h3>Final review candidates</h3></div>
+                  </div>
+                  <ReviewSurface
         sourceTitle="교환학생 1기 · 음식 토크 풀버전"
         sourceDurationMs={8_114_000}
         candidates={candidates}
@@ -145,8 +168,22 @@ function Harness(): React.ReactElement {
         onResetConfirmOpen={() => setResetOpen(true)}
         onResetConfirm={() => { setResetOpen(false); setCandidates(BASE); }}
         onResetCancel={() => setResetOpen(false)}
-        onItemFocusMover={(move) => { moverRef.current = move; }}
-      />
+                    onItemFocusMover={(move) => { moverRef.current = move; }}
+                  />
+                  <section className="rh-export-panel" aria-label="Export regression fixture">
+                    <div className="rh-export-heading"><h3>Approved clips</h3></div>
+                    <div className="rh-export-actions">
+                      <button className="btn btn-primary rh-export-main-action" type="button">
+                        Download approved clips
+                      </button>
+                    </div>
+                  </section>
+                </section>
+              </div>
+            </main>
+          </div>
+        </div>
+      </div>
       {helpOpen && (
         <p style={{ color: "#9aa2b8", font: "12px monospace", marginTop: 12 }}>
           도움말 열림 (Esc 로 닫힘) — 실제 오버레이는 부모가 소유합니다.

@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <title>ReviewSurface viewport verification</title>
+    <style>
+      html, body { margin: 0; background: #171922; }
+      iframe { display: block; border: 0; }
+    </style>
+  </head>
+  <body>
+    <script>
+      const params = new URLSearchParams(location.search);
+      const width = Number(params.get("w") ?? 1024);
+      const height = Number(params.get("h") ?? 768);
+      const page = params.get("page") === "summary" ? "" : "#evidence";
+      const frame = document.createElement("iframe");
+      frame.title = `${width}x${height} review fixture`;
+      frame.width = String(width);
+      frame.height = String(height);
+      frame.src = `./?embedded=${width}x${height}${page}`;
+      document.body.append(frame);
+    </script>
+  </body>
+</html>

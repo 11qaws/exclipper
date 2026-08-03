@@ -656,15 +656,12 @@ export function ReviewSurface({
                   <div className="rvw-tl-empty">이 구간의 장면 이미지는 준비되지 않았습니다</div>
                 ) : (
                   active.frames.map((frame) => {
-                    const raw = ratioOf(frame.atMs) * 100;
-                    const left = `clamp(46px, ${raw}%, calc(100% - 46px))`;
                     const markId = `frame-${frame.id}`;
                     return (
                       <button
                         key={frame.id}
                         type="button"
                         className={`fr${selectedMarkId === markId ? " sel" : ""}`}
-                        style={{ left }}
                         onClick={() => playFrom(frame.atMs, markId)}
                         aria-label={`${formatTime(frame.atMs)} 장면부터 재생`}
                       >
@@ -673,10 +670,21 @@ export function ReviewSurface({
                             ? <img src={frame.imageUrl} alt="" />
                             : formatTime(frame.atMs)}
                         </span>
+                        {frame.imageUrl !== undefined && (
+                          <span className="rvw-frame-time">{formatTime(frame.atMs)}</span>
+                        )}
                       </button>
                     );
                   })
                 )}
+                {active.frames.map((frame) => (
+                  <span
+                    key={`${frame.id}-point`}
+                    className="rvw-frame-point"
+                    style={{ left: `${ratioOf(frame.atMs) * 100}%` }}
+                    aria-hidden="true"
+                  />
+                ))}
                 {/* 정점 — 이 구간이 뽑힌 이유의 중심 지점 */}
                 <button
                   type="button"

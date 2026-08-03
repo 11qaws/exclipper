@@ -3248,3 +3248,20 @@ PassB가 정상 동작해도 `context-missing` 6개는 남는다. 대사 텍스�
   `retry: null`이다. transcript 568,018 bytes와 review 2,062,667 bytes의 SHA-256·byteLength,
   schema 2.0.0 `scheduled-review-ready-v8` 인증서의 후보 ID·transcript/context digest가 카탈로그와
   일치했다. 개인 채널 정책에 따라 세라 교수님은 제외하고 다섯 명의 닫힌 후보군을 사용했다.
+
+### 검토 작업면 프레임 붕괴 핫픽스 · 2026-08-03
+
+- **재현된 원인:** 독립 `ReviewSurface` 하네스만 확인한 탓에 실제 앱의 80vw 태블릿 프레임,
+  기존 왼쪽 rail·header·결과 panel 안에 새 검토 작업면이 다시 중첩되는 상태를 놓쳤다. 1280×720에서
+  새 작업면은 828px, 근거 본문은 431px까지 줄고 높이는 부모 screen보다 304px 넘쳤다. 하네스의
+  frame에도 실제 이미지가 없어서 66×38px로 축소되는 문제를 보지 못했다.
+- **수정:** 검토 단계에서는 바깥 tablet body만 유지하고 중복 rail·header를 제거했다. 작업면은
+  viewport에서 12px 여백만 두고 사용하며 2560 화면에서는 2320px에서 멈춘다. 네 대표 화면은
+  시간 위치에 절대 배치하지 않고 16:9 가로 filmstrip으로 정렬하며, 실제 시간 위치는 별도 square
+  marker와 timecode로 보존한다. 기존 export panel은 검토 작업면 내부 스크롤로 계속 접근 가능하다.
+- **브라우저 검증:** 실제 앱 wrapper와 640×360 이미지 네 장을 쓰는 하네스로 1024×768,
+  1280×720, 1440×900, 1600×900, 1920×1080, 2560×1440을 각각 검사했다. 모든 경우 문서
+  overflow 0, frame 겹침 0, 표시 비율 1.778, 2장·0장 빈 상태, frame 선택 후 seek와 무자동재생,
+  summary/evidence 양쪽 배치, export panel 재접근을 확인했다.
+- **회귀 검증:** 변경 제품 파일 ESLint, TypeScript, production build, 전체 Vitest 177파일
+  2,195개가 통과했다. 이 변경은 앱 버전 0.9.2 배포 대상으로 확정했다.

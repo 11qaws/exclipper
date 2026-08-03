@@ -78,6 +78,83 @@
   container: rvw / size;
 }
 
+/*
+ * The app already owns a tablet body, rail and header. ReviewSurface is itself
+ * a complete editor workspace, so nesting both shells halves the useful width
+ * and makes its viewport height overflow the inner screen. In review mode the
+ * outer body remains the single tablet frame while ReviewSurface supplies the
+ * only rail and toolbar inside it.
+ */
+.rh-app:has(.rh-review-workspace > .rvw) {
+  box-sizing: border-box;
+  height: 100dvh;
+  min-height: 0;
+  padding: 12px;
+  overflow: hidden;
+}
+
+.rh-app:has(.rh-review-workspace > .rvw) .ex-device-screen {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.rh-app:has(.rh-review-workspace > .rvw) .ex-device {
+  box-sizing: border-box;
+}
+
+.rh-app:has(.rh-review-workspace > .rvw) .ex-device-screen > .ex-rail,
+.rh-app:has(.rh-review-workspace > .rvw) .ex-screen > header,
+.rh-app:has(.rh-review-workspace > .rvw) .rh-footer,
+.rh-review-workspace:has(> .rvw) > .rh-results-header,
+.rh-review-workspace:has(> .rvw) > .rh-notice,
+.rh-review-workspace:has(> .rvw) > .rh-context-summary,
+.rh-review-workspace:has(> .rvw) > .rh-review-tools,
+.rh-review-workspace:has(> .rvw) > .rh-screen-reader-only,
+.rh-review-workspace:has(> .rvw) > .rh-session-note {
+  display: none;
+}
+
+.rh-app:has(.rh-review-workspace > .rvw) .ex-screen {
+  overflow: hidden;
+}
+
+.rh-app:has(.rh-review-workspace > .rvw) .ex-screen > .rh-shell,
+.rh-app:has(.rh-review-workspace > .rvw) .ex-shell-content,
+.rh-review-workspace:has(> .rvw) {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.rh-app:has(.rh-review-workspace > .rvw) .ex-screen > .rh-shell {
+  max-width: none;
+  display: block;
+}
+
+.rh-review-workspace:has(> .rvw) {
+  display: block;
+  overflow-y: auto;
+}
+
+.rh-review-workspace:has(> .rvw) > .rvw {
+  height: 100%;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+@media (min-width: 1101px) {
+  .rh-app:has(.rh-review-workspace > .rvw) {
+    --ex-device-w: min(calc(100vw - 24px), calc(2320px + var(--ex-bezel) * 2));
+    --ex-device-h: calc(100dvh - 24px);
+  }
+}
+
 .rvw h1,
 .rvw h2,
 .rvw h3,
@@ -896,7 +973,12 @@
 .rvw-tl {
   min-width: 0;
   min-height: 0;
+  padding: 10px 8px 0;
   border-block: 1px solid var(--rvw-line);
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(88px, 100%), 1fr));
+  align-content: start;
+  gap: 8px;
   position: relative;
 }
 
@@ -904,16 +986,18 @@
   position: absolute;
   left: 0;
   right: 0;
-  top: 53%;
+  top: 72%;
   height: 2px;
   background: var(--rvw-line2);
 }
 
 .rvw-tl .fr {
-  position: absolute;
-  top: 10px;
-  width: clamp(64px, 6vw, 96px);
-  height: clamp(40px, 3.4vw, 58px);
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  max-width: 240px;
+  aspect-ratio: 16 / 9;
+  justify-self: center;
   padding: 0;
   overflow: hidden;
   border: 2px solid var(--rvw-bg2);
@@ -921,17 +1005,10 @@
   background: var(--rvw-stage);
   box-shadow: 0 0 0 1px var(--rvw-line);
   cursor: pointer;
-  transform: translateX(-50%);
 }
 
 .rvw-tl .fr::after {
-  content: "";
-  position: absolute;
-  left: 50%;
-  top: 100%;
-  width: 1px;
-  height: clamp(18px, 4vh, 44px);
-  background: var(--rvw-line2);
+  content: none;
 }
 
 .rvw-tl .fr.sel {
@@ -953,12 +1030,38 @@
 }
 
 .rvw-tl .fr img {
+  display: block;
   object-fit: cover;
+}
+
+.rvw-frame-time {
+  position: absolute;
+  left: 5px;
+  bottom: 5px;
+  padding: 2px 4px;
+  border-radius: 4px;
+  background: rgba(9, 12, 20, .78);
+  color: #fff;
+  font: 700 9px var(--rvw-mono);
+  line-height: 1.2;
+}
+
+.rvw-frame-point {
+  position: absolute;
+  z-index: 2;
+  top: calc(72% - 4px);
+  width: 8px;
+  height: 8px;
+  border: 2px solid var(--rvw-bg2);
+  border-radius: 2px;
+  background: var(--rvw-ink3);
+  box-shadow: 0 0 0 1px var(--rvw-line2);
+  transform: translateX(-50%);
 }
 
 .rvw-tl > .peak {
   position: absolute;
-  top: calc(53% - 8px);
+  top: calc(72% - 8px);
   width: 16px;
   height: 16px;
   padding: 0;
@@ -972,7 +1075,7 @@
 
 .rvw-tl > .cue {
   position: absolute;
-  top: calc(53% + 18px);
+  top: calc(72% + 18px);
   width: 9px;
   height: 9px;
   padding: 0;
@@ -1464,9 +1567,7 @@
   }
 
   .rvw-tl .fr {
-    top: 6px;
-    width: 66px;
-    height: 38px;
+    max-width: 136px;
   }
 
   .rvw-evplayer {
