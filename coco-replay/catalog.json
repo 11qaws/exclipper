@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "channelId": "UCgq07mhOmrjVeZeJYXiAClw",
   "channelHandle": "@kokotorori",
-  "revision": 26,
-  "generatedAt": "2026-08-03T07:50:13.539Z",
+  "revision": 28,
+  "generatedAt": "2026-08-03T11:48:57.447Z",
   "videos": [
     {
       "channelId": "UCgq07mhOmrjVeZeJYXiAClw",
@@ -141,15 +141,21 @@
       "videoId": "o5gjWZ_BYn8",
       "title": "Hello~! 🍮🎐",
       "normalizedTitle": "hello",
-      "durationMs": null,
+      "durationMs": 5227000,
       "publishedAt": "2026-02-01T16:19:58.000Z",
       "updatedAt": "2026-07-09T09:00:20.000Z",
       "watchUrl": "https://www.youtube.com/watch?v=o5gjWZ_BYn8",
-      "state": "discovered",
-      "revision": 1,
+      "state": "retryable",
+      "revision": 3,
       "artifactIds": [],
       "registeredLocalSampledFingerprints": [],
-      "retry": null
+      "retry": {
+        "stage": "transcript",
+        "lastSuccessfulState": "metadata-ready",
+        "attemptCount": 1,
+        "nextAttemptAt": "2026-08-03T14:48:57.447Z",
+        "errorCode": "YT_DLP_FAILED"
+      }
     },
     {
       "channelId": "UCgq07mhOmrjVeZeJYXiAClw",

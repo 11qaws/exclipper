@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "channelId": "UCk0Mu5MpVzJ056e65XpAj0Q",
   "channelHandle": "@SENAREPLAY",
-  "revision": 18,
-  "generatedAt": "2026-08-03T07:50:08.145Z",
+  "revision": 23,
+  "generatedAt": "2026-08-03T11:55:23.429Z",
   "videos": [
     {
       "channelId": "UCk0Mu5MpVzJ056e65XpAj0Q",
@@ -111,13 +111,17 @@
       "videoId": "zAStKpSi3So",
       "title": "【26. 07. 21】 더현대 탐방 + 싱드컵 연습 등 저챗 ★",
       "normalizedTitle": "26 07 21 더현대 탐방 싱드컵 연습 등 저챗",
-      "durationMs": null,
+      "durationMs": 9795000,
       "publishedAt": "2026-07-22T10:13:53.000Z",
       "updatedAt": "2026-07-22T10:13:54.000Z",
       "watchUrl": "https://www.youtube.com/watch?v=zAStKpSi3So",
-      "state": "discovered",
-      "revision": 1,
-      "artifactIds": [],
+      "state": "review-ready",
+      "revision": 6,
+      "artifactIds": [
+        "youtube-caption-bundle:zAStKpSi3So:v2",
+        "youtube-storyboard-visual-fingerprint:zAStKpSi3So:v1",
+        "review-bundle:zAStKpSi3So:v6"
+      ],
       "registeredLocalSampledFingerprints": [],
       "retry": null
     },
@@ -317,6 +321,36 @@
       "contentDigest": "sha256:361a3051e2c6e8800efb6e6f66c1601febbdb86e53a105b09b6742d79c22e9f5",
       "byteLength": 1960794,
       "createdAt": "2026-08-02T23:32:53.438Z"
+    },
+    {
+      "artifactId": "youtube-caption-bundle:zAStKpSi3So:v2",
+      "videoId": "zAStKpSi3So",
+      "kind": "transcript",
+      "revision": 2,
+      "storageKey": "sena-replay/videos/zAStKpSi3So.v2.json",
+      "contentDigest": "sha256:1c2f80043165cf2f3164c380c92456c6647ff71c6eb8d851d14fa556cb087d08",
+      "byteLength": 487530,
+      "createdAt": "2026-08-03T11:48:51.897Z"
+    },
+    {
+      "artifactId": "youtube-storyboard-visual-fingerprint:zAStKpSi3So:v1",
+      "videoId": "zAStKpSi3So",
+      "kind": "fingerprint",
+      "revision": 1,
+      "storageKey": "sena-replay/videos/zAStKpSi3So.visual-fingerprint.v1.json",
+      "contentDigest": "sha256:f888cb2d1121673fd6355e99547a3f9656fa886ef698b8328d374b884d32d1a3",
+      "byteLength": 2200,
+      "createdAt": "2026-07-22T10:13:54.000Z"
+    },
+    {
+      "artifactId": "review-bundle:zAStKpSi3So:v6",
+      "videoId": "zAStKpSi3So",
+      "kind": "review",
+      "revision": 6,
+      "storageKey": "sena-replay/videos/zAStKpSi3So.review.v6.json",
+      "contentDigest": "sha256:35a1422ea10c0bc39167305db6816cb354997068814ca60b8ade41878eb928fd",
+      "byteLength": 1643080,
+      "createdAt": "2026-08-03T11:53:03.676Z"
     }
   ]
 }
