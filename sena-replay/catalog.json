@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "channelId": "UCk0Mu5MpVzJ056e65XpAj0Q",
   "channelHandle": "@SENAREPLAY",
-  "revision": 23,
-  "generatedAt": "2026-08-03T11:55:23.429Z",
+  "revision": 25,
+  "generatedAt": "2026-08-03T22:03:17.768Z",
   "videos": [
     {
       "channelId": "UCk0Mu5MpVzJ056e65XpAj0Q",
@@ -130,15 +130,21 @@
       "videoId": "_B8ILdspQBY",
       "title": "【26. 07. 19】 카페 탐방 + 레카와 15만 원 빵 야추 ★",
       "normalizedTitle": "26 07 19 카페 탐방 레카와 15만 원 빵 야추",
-      "durationMs": null,
+      "durationMs": 20862000,
       "publishedAt": "2026-07-22T10:13:42.000Z",
       "updatedAt": "2026-07-22T10:58:13.000Z",
       "watchUrl": "https://www.youtube.com/watch?v=_B8ILdspQBY",
-      "state": "discovered",
-      "revision": 1,
+      "state": "retryable",
+      "revision": 3,
       "artifactIds": [],
       "registeredLocalSampledFingerprints": [],
-      "retry": null
+      "retry": {
+        "stage": "transcript",
+        "lastSuccessfulState": "metadata-ready",
+        "attemptCount": 1,
+        "nextAttemptAt": "2026-08-04T01:03:17.768Z",
+        "errorCode": "YT_DLP_FAILED"
+      }
     },
     {
       "channelId": "UCk0Mu5MpVzJ056e65XpAj0Q",
