@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "channelId": "UCHycoTBFDhXz4XNz8jBP-_A",
   "channelHandle": "@AmorettoVODs",
-  "revision": 70,
-  "generatedAt": "2026-08-03T00:36:09.470Z",
+  "revision": 72,
+  "generatedAt": "2026-08-03T04:18:46.006Z",
   "videos": [
     {
       "channelId": "UCHycoTBFDhXz4XNz8jBP-_A",
@@ -59,11 +59,12 @@
       "publishedAt": "2026-07-18T15:35:05.000Z",
       "updatedAt": "2026-07-18T17:01:25.000Z",
       "watchUrl": "https://www.youtube.com/watch?v=VFCOVyDeWWk",
-      "state": "transcript-ready",
-      "revision": 6,
+      "state": "review-ready",
+      "revision": 8,
       "artifactIds": [
-        "youtube-caption-bundle:VFCOVyDeWWk:v1",
-        "youtube-storyboard-visual-fingerprint:VFCOVyDeWWk:v1"
+        "youtube-storyboard-visual-fingerprint:VFCOVyDeWWk:v1",
+        "youtube-caption-bundle:VFCOVyDeWWk:v2",
+        "review-bundle:VFCOVyDeWWk:v8"
       ],
       "registeredLocalSampledFingerprints": [],
       "retry": null
@@ -308,16 +309,6 @@
       "createdAt": "2026-07-18T06:14:18.000Z"
     },
     {
-      "artifactId": "youtube-caption-bundle:VFCOVyDeWWk:v1",
-      "videoId": "VFCOVyDeWWk",
-      "kind": "transcript",
-      "revision": 1,
-      "storageKey": "amoretto-vods/videos/VFCOVyDeWWk.v1.json",
-      "contentDigest": "sha256:24c993d3e04ee23ff6a4b228675fcb2b18a09756630a6a40f6bc7ac6f55a2533",
-      "byteLength": 479511,
-      "createdAt": "2026-07-30T13:34:21.195Z"
-    },
-    {
       "artifactId": "youtube-storyboard-visual-fingerprint:VFCOVyDeWWk:v1",
       "videoId": "VFCOVyDeWWk",
       "kind": "fingerprint",
@@ -526,6 +517,26 @@
       "contentDigest": "sha256:7a290248cbba769665a2f15f2ede799c9ec623325148ab704e2d52a3a9023d15",
       "byteLength": 276792,
       "createdAt": "2026-08-03T00:18:53.662Z"
+    },
+    {
+      "artifactId": "youtube-caption-bundle:VFCOVyDeWWk:v2",
+      "videoId": "VFCOVyDeWWk",
+      "kind": "transcript",
+      "revision": 2,
+      "storageKey": "amoretto-vods/videos/VFCOVyDeWWk.v2.json",
+      "contentDigest": "sha256:a6cd75461b7c7cd1129c2f96c0e7fdefe03f2206556e24ffcdffa6f3fa81e41a",
+      "byteLength": 505596,
+      "createdAt": "2026-08-03T04:02:31.812Z"
+    },
+    {
+      "artifactId": "review-bundle:VFCOVyDeWWk:v8",
+      "videoId": "VFCOVyDeWWk",
+      "kind": "review",
+      "revision": 8,
+      "storageKey": "amoretto-vods/videos/VFCOVyDeWWk.review.v8.json",
+      "contentDigest": "sha256:a170516bc0ea2ab876d30bdfc064c0a80907a9206d5843aa92b2c97f332a3e8b",
+      "byteLength": 1580117,
+      "createdAt": "2026-08-03T04:16:07.998Z"
     }
   ]
 }

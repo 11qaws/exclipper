@@ -2,21 +2,25 @@
   "schemaVersion": 1,
   "channelId": "UCiFzBB8xsUjEBq8_h6Yl6tA",
   "channelHandle": "@eureka_history",
-  "revision": 7,
-  "generatedAt": "2026-08-03T00:15:25.351Z",
+  "revision": 12,
+  "generatedAt": "2026-08-03T04:36:07.218Z",
   "videos": [
     {
       "channelId": "UCiFzBB8xsUjEBq8_h6Yl6tA",
       "videoId": "qpAyqsZllPg",
       "title": "2026 08 02 세피리아",
       "normalizedTitle": "2026 08 02 세피리아",
-      "durationMs": null,
+      "durationMs": 41406000,
       "publishedAt": "2026-08-02T18:57:53.000Z",
       "updatedAt": "2026-08-02T22:51:00.000Z",
       "watchUrl": "https://www.youtube.com/watch?v=qpAyqsZllPg",
-      "state": "discovered",
-      "revision": 2,
-      "artifactIds": [],
+      "state": "review-ready",
+      "revision": 7,
+      "artifactIds": [
+        "youtube-caption-bundle:qpAyqsZllPg:v2",
+        "youtube-storyboard-visual-fingerprint:qpAyqsZllPg:v1",
+        "review-bundle:qpAyqsZllPg:v7"
+      ],
       "registeredLocalSampledFingerprints": [],
       "retry": null
     },
@@ -258,5 +262,36 @@
       "retry": null
     }
   ],
-  "artifacts": []
+  "artifacts": [
+    {
+      "artifactId": "youtube-caption-bundle:qpAyqsZllPg:v2",
+      "videoId": "qpAyqsZllPg",
+      "kind": "transcript",
+      "revision": 2,
+      "storageKey": "eureka-history/videos/qpAyqsZllPg.v2.json",
+      "contentDigest": "sha256:6a6b818400d3475f448b7ce7f052f6cbdf1dfd6e275b5bf453ff3b273517c0d7",
+      "byteLength": 1293080,
+      "createdAt": "2026-08-03T04:13:19.155Z"
+    },
+    {
+      "artifactId": "youtube-storyboard-visual-fingerprint:qpAyqsZllPg:v1",
+      "videoId": "qpAyqsZllPg",
+      "kind": "fingerprint",
+      "revision": 1,
+      "storageKey": "eureka-history/videos/qpAyqsZllPg.visual-fingerprint.v1.json",
+      "contentDigest": "sha256:b5986e46b56b307c63ec7527a73dddc35ee904f6b7ed42e884201e334c9d3cb0",
+      "byteLength": 2202,
+      "createdAt": "2026-08-02T22:51:00.000Z"
+    },
+    {
+      "artifactId": "review-bundle:qpAyqsZllPg:v7",
+      "videoId": "qpAyqsZllPg",
+      "kind": "review",
+      "revision": 7,
+      "storageKey": "eureka-history/videos/qpAyqsZllPg.review.v7.json",
+      "contentDigest": "sha256:d544c3f1f0ccb3a1e9eec65d18b1f5ec730bdc674433f6ccc75d90c2485bcdd4",
+      "byteLength": 1720278,
+      "createdAt": "2026-08-03T04:33:57.385Z"
+    }
+  ]
 }
