@@ -57,7 +57,7 @@
 | `analysis/channelPreanalysisSources.ts` | 다섯 YouTube 선분석 source의 canonical channel ID·handle·playlist·storage namespace와 single/combined replay 정책을 소유한다. |
 | `analysis/channelPreanalysisCatalog.ts` | configured YouTube playlist feed, 원격 영상 생애주기, exact/probable 로컬 identity 매칭 규칙을 소유한다. sampled SHA는 등록된 동일 파일끼리만 비교한다. |
 | `analysis/channelPreanalysisBundle.ts` | 공개 자막·연속 챕터·선분석 맥락을 담는 provider-neutral bundle 스키마와 transcript SHA-256 검증을 소유한다. 예약 맥락의 자막 전용 evidence scope, 로컬 visual 검증 필요 여부와 proxy contract·routing·실제 model ID/revision의 bounded `contextReceipt`도 보존한다. |
-| `analysis/channelPreanalysisClient.ts` | raw catalog branch → Pages fallback, revision별 immutable bundle·시각 지문·review artifact의 bounded fetch와 manifest-bound SHA-256 readback을 소유한다. `review-ready`는 exact identity와 transcript/context/review closure가 모두 일치할 때만 반환한다. |
+| `analysis/channelPreanalysisClient.ts` | raw catalog branch → Pages fallback, 다섯 source의 manifest-only 병렬 목록 조회, revision별 immutable bundle·시각 지문·review artifact의 bounded fetch와 manifest-bound SHA-256 readback을 소유한다. `review-ready`는 exact identity와 transcript/context/review closure가 모두 일치할 때만 반환한다. |
 | `analysis/channelPreanalysisReviewBundle.ts` | 최대 12개 최종 후보의 전체 맥락, participant grounding, 후보별 context/evidence/AI receipt, 서로 다른 JPEG 4장, 대표 thumbnail과 `review-ready | verified-empty` certificate를 4MiB 안에서 봉인한다. |
 | `analysis/channelPreanalysisVisualFingerprint.ts` | 원격 12-anchor 화면 지문 schema, 32×18 luma에서의 dHash/blockHash·밝기·edge 비교, 3등분 coverage, 유일 합의와 단일 후보 bounded offset 복구를 소유한다. 오디오 landmark는 이 모듈의 현재 계약이 아니다. |
 | `analysis/channelPreanalysisBundleBinding.ts` | 현재 로컬 source 지문, 실제로 검증해 읽은 bundle bytes, manifest의 exact artifact ID·SHA-256을 하나의 원자적 receipt로 묶는다. manifest가 바뀌거나 병렬 lookup 자료가 섞이면 자막·맥락 seed 사용을 거부한다. |
@@ -77,6 +77,8 @@
 | `../scripts/sync-channel-preanalysis-reviews.mjs` | 다섯 source의 전역 최대 2개 review queue, 안전한 yt-dlp 환경, 임시 media cleanup, 후보 Worker adapter와 최종 catalog closure 검증을 연결한다. |
 | `../scripts/activate-channel-preanalysis.ps1` | Groq·Qwen key를 보안 입력으로 받아 전용 Worker의 네 필수 secret과 코드를 원자 배포하고, GitHub Actions secret 연결 및 무과금 인증 probe를 수행한다. |
 | `app/PreparedReviewExperience.tsx` | exact `review-ready` artifact를 기존 검토 UI에 즉시 투영하고 편집자의 선택·경계 조정만 artifact digest별로 로컬 저장한다. |
+| `app/preparedAnalysisLibrary.ts` | 검증된 manifest의 `review-ready` 영상만 configured source 순서와 최신 게시 시각으로 묶는 순수 projection이다. |
+| `app/PreparedAnalysisEntry.tsx` | 첫 화면의 YouTube 링크 입력, 스트리머별 준비본 탭·영상 목록, partial/failed 재시도 상태를 표시하고 선택을 기존 exact lookup에 전달한다. |
 | `cloudflare/preanalysisContextProxy.worker.ts` | 예약 context·candidate·transcript 전용 Bearer/source fence와 operation Durable Object checkpoint를 소유한다. 무료 후보·전사 media는 Worker JS가 큰 본문을 읽지 않고 private R2 native checksum과 bounded header만 검증하며 provider key는 Worker Secret 밖으로 내보내지 않는다. |
 | `../wrangler.preanalysis-context.jsonc` | 전경 5인 Worker와 분리된 예약 Worker, Durable Object, context 4회/분·transcript 20회/분 limiter, free-R2 transport와 전용 secret 이름을 정의한다. |
 | `cloudflare/aiProviderConfiguration.ts` | 후보·전체 맥락·전사의 provider 선택, secret readiness, endpoint와 bounded fallback 정책을 소유한다. Groq secret이 있어도 기본 Qwen route를 자동 변경하지 않는다. |
@@ -98,7 +100,7 @@
 | 남은 시간 추정 | `app/progressEstimate.ts` — 패딩·단조 감소 포함 |
 | 분석 진행 막대 비율 | `app/analysisProgressAxis.ts` — 스테이지 시간 가중·단조 증가·남은 시간 하나 |
 | 입력·분석 앞단 표시 계약 | `app/frontSurfaceModel.ts` — source identity·대사/챕터·전체 맥락·복구·검증된 0개를 후보 데이터 없이 투영하는 순수 view model |
-| 입력·분석 앞단 화면 | `app/FrontSurface.tsx` + `styles/front-surface.css` — A안 단일 surface, source ribbon, 주제 timeline, 자료/이력/detail sheet |
+| 입력·분석 앞단 화면 | `app/FrontSurface.tsx` + `app/PreparedAnalysisEntry.tsx` + `styles/front-surface.css` — A안 단일 surface, 링크 단독 준비본 진입, 스트리머별 준비 목록, source ribbon, 주제 timeline, 자료/이력/detail sheet |
 | 후보 이동 규칙 | `app/reviewNavigation.ts` |
 | 후보 위치 스트립 좌표 | `app/positionStrip.ts` |
 | 분석 실행 상태 기계 | `domain/analysisRun.ts` — **16 상태 전이표** |

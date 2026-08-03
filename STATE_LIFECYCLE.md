@@ -87,6 +87,13 @@
   모두 일치하면 브라우저는 새 AI run을 만들지 않고 저장된 후보를 검토 화면에 투영한다.
   후보 0개도 `verified-empty` certificate가 있을 때만 정상 완료이며, partial artifact는
   어떤 경우에도 이 경로로 들어오지 않는다.
+- 첫 화면의 준비본 라이브러리는 `loading -> ready(complete | partial) | failed`인 일시적
+  presentation state다. 다섯 manifest만 읽고 `review-ready`가 아닌 영상은 숨기며 session이나
+  `AnalysisJob`을 만들지 않는다. 스트리머 탭 선택도 로컬 표시 상태일 뿐이다. 영상 행 또는
+  YouTube 주소가 canonical video ID를 만들 때에만 기존 exact lookup으로 전환하고, 선택한
+  review artifact의 bounded fetch·SHA·내부 closure가 모두 끝난 뒤 `PreparedReviewExperience`를
+  연다. 한 source manifest 실패는 다른 source 목록을 없애지 않으며, context-only 항목을
+  준비 완료로 승격하지 않는다.
 - 제목/설명 변경은 같은 `(channelId, videoId)`의 source revision을 올린다. 자막,
   지문, 맥락 입력 digest가 같으면 비싼 하위 단계를 다시 실행하지 않는다.
 - `published`는 원격 bundle의 내부 완결 상태일 뿐 로컬 편집 후보의 완료 상태가

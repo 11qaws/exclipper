@@ -1,5 +1,27 @@
 # Development Log
 
+## 2026-08-04 다시보기 링크 단독 진입과 스트리머별 준비 목록
+
+- 기존 exact YouTube video ID → manifest → immutable review artifact → SHA·certificate closure →
+  `PreparedReviewExperience` 경로는 유지하고, 첫 화면에서 바로 쓸 수 있도록 링크 입력을 주 경로로
+  올렸다. 원본 파일 없이 준비된 URL을 붙이면 새 분석을 만들지 않고 저장된 검토 화면으로 간다.
+- 다섯 configured source의 manifest만 병렬로 읽는 catalog-only client를 추가했다. transcript,
+  review, frame, audio artifact는 목록 단계에서 받지 않는다. `review-ready`인 영상만 source 순서로
+  묶고 source 안에서는 최신 게시 순으로 정렬한다. 일부 source 실패는 partial coverage로 격리한다.
+- 파일 선택 아래를 링크 검색과 스트리머별 라이브러리의 균형 2열로 구성했다. 860px 아래에서는 한
+  열로 전환하며 긴 제목은 한 줄 말줄임한다. 기존 YouTube 연결 타일의 중복은 없애고 CHZZK 채팅과
+  지난 분석만 보조 진입으로 남겼다.
+- 로컬 실제 catalog에서 아모레또 2, 유레카 1, 세나 3, 코코 1, 망징이 3으로 총 10개의 준비본이
+  표시됐다. 음식 토크 목록 선택과 URL 단독 입력이 후보 12개의 저장 검토 화면을 열었고 플레이어는
+  정지 상태였다. 1600×900, 1440×900, 1024×768, 768×900에서 가로 overflow 0을 확인했다.
+- React 개발 모드의 effect 재검증이 manifest fetch 다섯 개를 abort하며 console에 잡음을 남기던
+  cleanup은 결과 적용만 비활성화하는 작은 stale guard로 바꿨다. 새 탭 재검증에서 warning/error 0을
+  확인했다.
+- 앱 버전은 `0.9.6`이다. TypeScript, 변경 파일 ESLint, 기존 사용자 산출물
+  `.wrangler-dry-run-2/**`만 제외한 전체 ESLint, 전체 Vitest 178파일·2,202개, 음성 등록 도구 9개,
+  production build와 Worker dry-run을 통과했다. 공식 `npm run lint`가 보고한 102개 오류는 모두 해당
+  미추적 번들 한 파일에서만 발생했으며 파일은 수정하거나 배포 범위에 넣지 않았다.
+
 ## 2026-08-03 사전 분석 검토의 좁은 폭 레이아웃 복구
 
 - 이전 0.9.2 수정은 일반 분석의 `.rh-review-workspace` 경로만 확인했고, 실제 배포

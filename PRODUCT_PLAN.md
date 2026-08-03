@@ -15,6 +15,7 @@
 - 원격 지문은 YouTube storyboard에서 방송 전 구간에 흩어진 12개 anchor를 골라 각 화면의 `32×18` luma, dHash64, blockHash64, 평균 밝기와 edge energy를 manifest-bound SHA-256 artifact로 저장한다. 로컬 파일은 같은 source 시각을 한 번만 디코딩해 후보 전체와 대조한다. 최소 8개이면서 전체의 67% 이상, 방송의 앞·중간·뒤 세 구간을 모두 덮고 median·p90 거리 상한을 통과한 **유일한** 영상만 `visual-fingerprint-consensus` exact 연결로 승격한다. 단일 후보는 인코딩 시작점 차이를 위한 ±30초 bounded offset 복구를 허용하지만, 여러 영상이 통과하거나 자료 일부를 읽지 못하면 자동 연결하지 않는다.
 - 향후 오디오 landmark는 재생 시작점이 크게 잘린 원본이나 storyboard가 없는 영상의 보조 경로로만 검토한다. 현재 구현이 오디오 지문이나 affine scale 보정을 수행한다고 표시하지 않는다.
 - `context-ready` bundle은 public 채널의 정규화 자막·챕터·전체 맥락·의미 후보·모델 revision과 bundle SHA를 담는다. 그 뒤 별도 `review-ready` artifact가 정확한 영상 ID·duration·transcript/context digest·participant grounding·최종 후보 집합·후보별 화면 4장·대표 thumbnail·AI receipt·완료 certificate를 닫는다. 이 artifact까지 일치하면 URL 입력은 로컬 재분석 없이 곧바로 검토 UI를 연다.
+- 첫 화면은 다섯 source의 가벼운 manifest만 병렬로 읽어 `review-ready` 영상만 스트리머별로 묶는다. 이 목록을 만드는 동안 transcript·review·frame·audio artifact는 내려받지 않으며, 일부 source가 잠시 실패해도 정상 source의 준비본은 계속 보여 준다. 목록의 영상을 고르거나 YouTube 다시보기 주소를 붙이면 canonical video ID로 exact lookup을 수행하고, 선택한 한 영상의 review artifact closure를 다시 검증한 뒤에만 저장된 검토 화면을 연다.
 - canonical bundle artifact는 state 전환 때 revision을 올리고 `videos/<videoId>.v1.json`, `videos/<videoId>.v2.json`처럼 revision별 immutable key를 쓴다. manifest가 가리키는 exact revision의 전체 SHA·bundle state·video identity가 함께 맞아야 하며, `transcript-ready` v1 뒤 `context-ready` v2+를 추가해도 이전 bytes를 덮거나 새 맥락 결과로 가장하지 않는다. v2 write 뒤 manifest commit 전에 중단되면 v1 pointer는 계속 유효하고 다음 예약 실행이 검증된 v2 orphan을 AI 재호출 없이 채택한다.
 - 예약 `context-ready`의 근거 범위는 YouTube 한국어 자막과 연속 챕터뿐이며 그 상태만으로는 최종 후보가 아니다. 화면·오디오·등장인물·후보별 상세 검증을 모두 마친 별도 `review-ready` certificate가 있을 때만 사전 분석 완료로 취급한다.
 - 검증된 `context-ready` bundle은 현재 로컬 시간축으로 주제 구간과 의미 lead를 재매핑한 whole-broadcast seed로만 사용할 수 있다. source ID·channel ID·영상 ID·transcript digest·artifact digest·roster·언어·routing·시간 범위 중 하나라도 다르면 seed를 버리고 기존 로컬 overview 경로로 간다. seed를 사용해도 현재 후보와 현재 participant grounding을 넣은 selection jury는 필수이며, 화면 4장·오디오·thumbnail receipt를 갖춘 후보별 상세 검증이 끝나기 전에는 최종 후보가 아니다.
@@ -326,7 +327,8 @@ A bracketed YouTube ID in the selected source filename identifies a matching pub
 - 전체 영상 기반 AI 추천
   - 로컬 원본 또는 브라우저가 실제 미디어 샘플을 읽을 수 있는 소스에서 제공한다.
   - 사용자가 직접 넣은 자막·채팅 로그를 함께 쓰면 추천 근거와 회수율을 높인다.
-  - YouTube·CHZZK 일반 시청 링크만 넣은 경우에는 프레임·오디오를 읽을 수 없으므로 전체 영상 AI 분석을 제공한다고 약속하지 않는다.
+- YouTube·CHZZK 일반 시청 링크만 넣은 경우에는 프레임·오디오를 읽을 수 없으므로 전체 영상 AI 분석을 제공한다고 약속하지 않는다.
+- 단, configured 채널의 YouTube video ID가 이미 `review-ready`로 완결된 예약 분석과 정확히 일치하는 경우에는 새로 링크 영상을 읽는 것이 아니라 검증된 저장 artifact를 불러와 곧바로 검토 화면을 연다.
 - 자막·채팅만 있는 제한 분석
   - 미디어 없이도 반응 급증과 대화 내용을 바탕으로 후보 시각을 제안할 수 있다.
   - 결과에 `채팅·텍스트만 분석`, `영상·음성 미분석` 배지를 붙이고 신뢰도를 낮춘다.

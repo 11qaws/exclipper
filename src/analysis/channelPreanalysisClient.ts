@@ -112,6 +112,12 @@ export interface LoadedChannelPreanalysisManifest {
   readonly manifest: ChannelPreanalysisCatalogManifest;
 }
 
+export interface ConfiguredChannelPreanalysisManifestsResult {
+  readonly coverage: "complete" | "partial";
+  readonly manifests: readonly LoadedChannelPreanalysisManifest[];
+  readonly unavailableSourceIds: readonly string[];
+}
+
 export interface LoadedChannelPreanalysisVisualFingerprint {
   readonly fingerprint: ChannelPreanalysisVisualFingerprint;
   readonly artifact: ChannelPreanalysisArtifact;
@@ -228,6 +234,62 @@ export async function fetchChannelPreanalysisManifest(
     "Both channel preanalysis catalog sources failed.",
     { cause: lastError },
   );
+}
+
+/**
+ * Loads the lightweight manifest for every configured replay source. This is
+ * the catalog-only path used by the editor library; it never downloads a
+ * transcript, review bundle, frame, or audio artifact.
+ */
+export async function fetchConfiguredChannelPreanalysisManifests(
+  options: ConfiguredChannelPreanalysisClientOptions = {},
+): Promise<ConfiguredChannelPreanalysisManifestsResult> {
+  const {
+    configuredSources = CHANNEL_PREANALYSIS_SOURCES,
+    sourceOptions,
+    ...sharedOptions
+  } = options;
+  if (
+    configuredSources.length === 0 ||
+    new Set(configuredSources.map(({ sourceId }) => sourceId)).size !==
+      configuredSources.length
+  ) {
+    throw new ChannelPreanalysisClientError(
+      "FETCH_FAILED",
+      "Configured channel preanalysis sources are invalid.",
+    );
+  }
+
+  const settled = await Promise.allSettled(
+    configuredSources.map((configuredSource) =>
+      fetchChannelPreanalysisManifest({
+        ...sharedOptions,
+        ...sourceOptions?.(configuredSource),
+        configuredSource,
+      }),
+    ),
+  );
+  const manifests: LoadedChannelPreanalysisManifest[] = [];
+  const unavailableSourceIds: string[] = [];
+  settled.forEach((result, index) => {
+    if (result.status === "fulfilled") {
+      manifests.push(result.value);
+      return;
+    }
+    const source = configuredSources[index];
+    if (source !== undefined) unavailableSourceIds.push(source.sourceId);
+  });
+  if (manifests.length === 0) {
+    throw new ChannelPreanalysisClientError(
+      "FETCH_FAILED",
+      "Every configured channel preanalysis catalog failed.",
+    );
+  }
+  return {
+    coverage: unavailableSourceIds.length === 0 ? "complete" : "partial",
+    manifests,
+    unavailableSourceIds,
+  };
 }
 
 export async function requestChannelPreanalysisMatch(
@@ -601,7 +663,7 @@ export async function fetchChannelPreanalysisReviewForLookup(
   if (video === undefined || video !== matchedVideo) {
     throw invalidReview("Review lookup is not bound to its catalog snapshot.");
   }
-  if (!hasReviewReadySnapshot(video)) return null;
+  if (!isChannelPreanalysisReviewReadyVideo(video)) return null;
   if (
     lookup.bundleStatus !== "loaded" ||
     lookup.bundle === null ||
@@ -1071,7 +1133,7 @@ function validateManifest(
     const reviewArtifacts = referencedArtifacts.filter(
       ({ kind }) => kind === "review",
     );
-    const reviewArtifactRequired = hasReviewReadySnapshot(video);
+    const reviewArtifactRequired = isChannelPreanalysisReviewReadyVideo(video);
     if (
       (loadableTranscriptBundleState(video) !== null &&
         transcriptArtifacts.length !== 1) ||
@@ -1585,7 +1647,7 @@ function loadableTranscriptBundleState(
     : null;
 }
 
-function hasReviewReadySnapshot(
+export function isChannelPreanalysisReviewReadyVideo(
   video: ChannelPreanalysisCatalogVideo,
 ): boolean {
   return (

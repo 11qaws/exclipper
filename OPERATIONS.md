@@ -1,5 +1,19 @@
 # ExClipper 개인용 운영·배포·복구 계획
 
+## 2026-08-04 준비된 분석 목록과 링크 단독 진입 확인
+
+- Pages 첫 화면은 다섯 configured source의 catalog manifest만 읽어 스트리머별
+  `review-ready` 개수를 표시한다. 개수는 catalog가 바뀔 때 함께 바뀌므로 앱에 고정하지 않는다.
+  일부 source가 실패하면 `partial` 안내와 정상 source 목록을 함께 보여 주며, 전부 실패할 때만
+  목록 재시도를 제시한다.
+- 배포 확인은 `https://11qaws.github.io/exclipper/`에서 스트리머 탭 전환, 긴 제목 말줄임,
+  1024px 이상 가로 overflow 0을 확인한다. 준비된 YouTube 주소 한 건을 붙여 넣고 원본 파일을
+  고르지 않은 상태에서 저장된 후보 검토 화면이 열리는지, 플레이어가 자동 재생되지 않는지도
+  확인한다.
+- catalog 목록 조회는 transcript·review·JPEG·WAV를 받지 않는다. 사용자가 영상 하나를
+  선택한 뒤에만 기존 exact lookup이 해당 transcript/review artifact를 bounded fetch하고
+  manifest-bound digest와 certificate closure를 다시 검증한다.
+
 ## 2026-08-02 YouTube 업로드 → 즉시 검토용 `review-ready`
 
 예약 실행의 성공 목표는 더 이상 `transcript-ready`나 `context-ready`가 아니다.

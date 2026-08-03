@@ -51,6 +51,8 @@ export interface FrontParticipantSummary {
 }
 
 export interface FrontSupplementalPanels {
+  /** Primary empty-state entry for an already prepared replay. */
+  readonly entry?: ReactNode;
   /** Input controls and provenance that do not belong on the main path. */
   readonly connections?: ReactNode;
   readonly history?: ReactNode;
@@ -812,7 +814,11 @@ export function FrontSurface({
   );
 
   const renderEmpty = (): ReactElement => (
-    <section className="frt-surface frt-empty" aria-labelledby="frt-empty-heading">
+    <section
+      className="frt-surface frt-empty"
+      aria-labelledby="frt-empty-heading"
+      data-has-entry={panels?.entry !== undefined}
+    >
       <header className="frt-empty-heading">
         <p>{stage.eyebrow}</p>
         <h1 id="frt-empty-heading">{stage.title}</h1>
@@ -840,12 +846,9 @@ export function FrontSurface({
         </button>
       </div>
 
+      {panels?.entry}
+
       <nav className="frt-source-options" aria-label={copy.connections}>
-        <button type="button" onClick={() => requestConnections("youtube")}>
-          <FrontIcon name="link" />
-          <span><strong>{copy.youtube}</strong><small>{copy.youtubeDetail}</small></span>
-          <em>{copy.add}</em>
-        </button>
         <button type="button" onClick={() => requestConnections("chat")}>
           <FrontIcon name="chat" />
           <span><strong>{copy.chzzk}</strong><small>{copy.chzzkDetail}</small></span>

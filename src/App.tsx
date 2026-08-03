@@ -185,8 +185,10 @@ import {
 } from "./analysis/youtubeCaptionTrack";
 import { requestYouTubeCaptionTrack } from "./analysis/youtubeCaptionClient";
 import {
+  fetchConfiguredChannelPreanalysisManifests,
   fetchChannelPreanalysisReviewForLookup,
   requestConfiguredChannelPreanalysisMatch,
+  type ConfiguredChannelPreanalysisManifestsResult,
   type ConfiguredChannelPreanalysisSearchResult,
   type ChannelPreanalysisLookupResult,
   type LoadedChannelPreanalysisReview,
@@ -652,6 +654,8 @@ import {
 } from "./app/analysisPipelineRecoveryPlanner";
 import { executeAnalysisPipelineRecoveryInApp } from "./app/analysisPipelineRecoveryAppIntegration";
 import { AnalysisProgressPanel } from "./app/components/AnalysisProgressPanel";
+import { PreparedAnalysisEntry } from "./app/PreparedAnalysisEntry";
+import { buildPreparedAnalysisLibraryGroups } from "./app/preparedAnalysisLibrary";
 import { STREAMER_PROFILE_IMAGE_BY_NAME } from "./app/streamerProfiles";
 import { STREAMER_PALETTE_SEEDS } from "./app/streamerPalette";
 import { paletteIdForCastRosterId } from "./app/streamerPaletteForRoster";
@@ -718,6 +722,13 @@ type PreparedChannelReviewState =
       readonly title: string;
       readonly lookup: ChannelPreanalysisLookupResult;
       readonly loaded: LoadedChannelPreanalysisReview;
+    };
+
+type PreparedAnalysisCatalogState =
+  | { readonly status: "loading" | "failed" }
+  | {
+      readonly status: "ready";
+      readonly result: ConfiguredChannelPreanalysisManifestsResult;
     };
 
 const PREPARED_CHANNEL_REVIEW_POLL_INTERVAL_MS = 30_000;
@@ -875,7 +886,7 @@ type AnalysisSelectionSummary = DurableAnalysisSelectionSummary;
 type AnalysisCoverageSummary = DurableAnalysisCoverageSummary;
 type AnalysisGapApprovalEvidence = DurableAnalysisGapApprovalEvidence;
 
-const APP_VERSION = "0.9.5";
+const APP_VERSION = "0.9.6";
 const PERSISTENCE_SCHEMA_VERSION = "0.3.0";
 const SIGNAL_ENGINE_VERSION = CURRENT_FAST_PASS_MODEL_MANIFEST_HASH;
 const MAX_CHAT_FILE_BYTES = 32 * 1024 * 1024;
@@ -986,6 +997,10 @@ function App() {
     useState<PreparedChannelReviewState>({ status: "idle" });
   const [preparedChannelReviewRetryEpoch, setPreparedChannelReviewRetryEpoch] =
     useState(0);
+  const [preparedAnalysisCatalogRetryEpoch, setPreparedAnalysisCatalogRetryEpoch] =
+    useState(0);
+  const [preparedAnalysisCatalogs, setPreparedAnalysisCatalogs] =
+    useState<PreparedAnalysisCatalogState>({ status: "loading" });
   const preparedChannelReviewAbortController = useRef<AbortController | null>(null);
   const dismissedPreparedChannelReviewKeyRef = useRef<string | null>(null);
   const registeredChannelPreanalysisVideoId = useMemo(() => {
@@ -1708,6 +1723,35 @@ function App() {
   useEffect(() => {
     void refreshRecoveryCatalog();
   }, [refreshRecoveryCatalog]);
+
+  useEffect(() => {
+    let active = true;
+    setPreparedAnalysisCatalogs({ status: "loading" });
+    void fetchConfiguredChannelPreanalysisManifests()
+      .then((result) => {
+        if (active) {
+          setPreparedAnalysisCatalogs({ status: "ready", result });
+        }
+      })
+      .catch(() => {
+        if (active) {
+          setPreparedAnalysisCatalogs({ status: "failed" });
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, [preparedAnalysisCatalogRetryEpoch]);
+
+  const preparedAnalysisLibraryGroups = useMemo(
+    () =>
+      preparedAnalysisCatalogs.status === "ready"
+        ? buildPreparedAnalysisLibraryGroups(
+            preparedAnalysisCatalogs.result.manifests,
+          )
+        : [],
+    [preparedAnalysisCatalogs],
+  );
 
   const sourceReady =
     sourceCheck?.status === "completed" &&
@@ -14296,6 +14340,97 @@ function App() {
     }
   };
 
+  const frontReplayVideoId = youtubeVideoIdFromUserInput(manualVodInput);
+  const frontReplayLookupPending =
+    channelPreanalysisConfirmationPending ||
+    channelPreanalysisConnection.status === "checking" ||
+    preparedChannelReview.status === "checking";
+  const frontReplayLookupRetryable =
+    preparedChannelReview.status === "preparing" ||
+    preparedChannelReview.status === "unavailable";
+  const frontReplayLookupTone:
+    | "neutral"
+    | "positive"
+    | "warning"
+    | "error" =
+    manualVodInput.trim().length === 0 || frontReplayLookupPending
+      ? "neutral"
+      : frontReplayVideoId === null ||
+          preparedChannelReview.status === "unavailable"
+        ? "error"
+        : preparedChannelReview.status === "preparing"
+          ? "warning"
+          : preparedTranscriptReady
+            ? "positive"
+            : "neutral";
+  const frontReplayLookupMessage =
+    manualVodInput.trim().length === 0
+      ? ui(
+          "주소를 붙여 넣으면 준비된 결과를 먼저 찾습니다.",
+          "Paste a replay URL to check prepared results first.",
+        )
+      : frontReplayVideoId === null
+        ? ui(
+            "영상 주소를 확인하지 못했어요. 전체 YouTube 주소를 붙여 넣어 주세요.",
+            "No video ID was found. Paste the full YouTube URL.",
+          )
+        : frontReplayLookupPending
+          ? ui(
+              "검토까지 끝난 저장 결과를 찾고 있어요.",
+              "Looking for a saved review-ready result.",
+            )
+          : preparedChannelReview.status === "preparing"
+            ? ui(
+                "이 영상은 아직 사전 분석 중이에요. 완료 여부를 자동으로 다시 확인합니다.",
+                "This replay is still being prepared. Completion will be checked again automatically.",
+              )
+            : preparedChannelReview.status === "unavailable"
+              ? ui(
+                  "저장된 검토 결과에 잠시 연결하지 못했어요. 다시 확인할 수 있어요.",
+                  "The saved review result is temporarily unavailable. You can check again.",
+                )
+              : preparedTranscriptReady
+                ? ui(
+                    "이 원본과 맞는 대사·챕터를 연결했어요.",
+                    "Matching transcript and chapters are connected.",
+                  )
+                : ui(
+                    "준비된 최종 검토 결과가 없으면 원본 파일로 새 분석을 시작할 수 있어요.",
+                    "If no final review is prepared, you can start a new analysis from the source file.",
+                  );
+  const retryPreparedReplayLookup = (): void => {
+    dismissedPreparedChannelReviewKeyRef.current = null;
+    setPreparedChannelReviewRetryEpoch((epoch) => epoch + 1);
+  };
+  const frontPreparedAnalysisEntry = (
+    <PreparedAnalysisEntry
+      language={analysisLanguage}
+      inputValue={manualVodInput}
+      inputDisabled={analysisBusy}
+      lookupMessage={frontReplayLookupMessage}
+      lookupTone={frontReplayLookupTone}
+      lookupPending={frontReplayLookupPending}
+      lookupRetryable={frontReplayLookupRetryable}
+      activeVideoId={frontReplayVideoId}
+      catalogStatus={preparedAnalysisCatalogs.status}
+      catalogCoverage={
+        preparedAnalysisCatalogs.status === "ready"
+          ? preparedAnalysisCatalogs.result.coverage
+          : "complete"
+      }
+      groups={preparedAnalysisLibraryGroups}
+      onInputChange={updateManualVodInput}
+      onSearch={retryPreparedReplayLookup}
+      onSelectVideo={(watchUrl) => {
+        updateManualVodInput(watchUrl);
+        retryPreparedReplayLookup();
+      }}
+      onRefreshCatalogs={() =>
+        setPreparedAnalysisCatalogRetryEpoch((epoch) => epoch + 1)
+      }
+    />
+  );
+
   const frontConnectionsPanel = (
     <div className="frt-panel-stack">
       <section className="frt-panel-section" aria-labelledby="frt-youtube-title">
@@ -14322,42 +14457,7 @@ function App() {
           />
         </label>
         <p className="frt-field-note" aria-live="polite">
-          {manualVodInput.trim().length === 0
-            ? ui(
-                "주소 없이도 분석할 수 있습니다.",
-                "Analysis can continue without a replay URL.",
-              )
-            : youtubeVideoIdFromUserInput(manualVodInput) === null
-              ? ui(
-                  "영상 주소를 확인하지 못했어요. 전체 YouTube 주소를 붙여 넣어 주세요.",
-                  "No video ID was found. Paste the full YouTube URL.",
-                )
-              : channelPreanalysisConfirmationPending ||
-                  channelPreanalysisConnection.status === "checking" ||
-                  preparedChannelReview.status === "checking"
-                ? ui(
-                    "검토까지 끝난 저장 결과를 찾고 있어요.",
-                    "Looking for a saved review-ready result.",
-                  )
-                : preparedChannelReview.status === "preparing"
-                  ? ui(
-                      "이 영상은 백그라운드 분석 중이에요. 완료 여부를 자동으로 확인하고 바로 검토 화면을 열게요.",
-                      "This replay is being analyzed in the background. It will be checked automatically and open directly in review when ready.",
-                    )
-                  : preparedChannelReview.status === "unavailable"
-                    ? ui(
-                        "저장된 검토 결과에 잠시 연결하지 못했어요. 다시 확인할 수 있어요.",
-                        "The saved review result is temporarily unavailable. You can check again.",
-                      )
-                : preparedTranscriptReady
-                  ? ui(
-                      "이 원본과 맞는 대사·챕터를 연결했어요.",
-                      "Matching transcript and chapters are connected.",
-                    )
-                  : ui(
-                      "주소를 기억했습니다. 저장 자료가 없으면 일반 자막과 음성 인식을 사용해요.",
-                      "The URL is saved. Normal captions and speech recognition are used when prepared data is absent.",
-                    )}
+          {frontReplayLookupMessage}
         </p>
         {youtubeVideoIdFromUserInput(manualVodInput) !== null &&
           (preparedChannelReview.status === "preparing" ||
@@ -14365,10 +14465,7 @@ function App() {
             <button
               className="frt-secondary-button"
               type="button"
-              onClick={() => {
-                dismissedPreparedChannelReviewKeyRef.current = null;
-                setPreparedChannelReviewRetryEpoch((epoch) => epoch + 1);
-              }}
+              onClick={retryPreparedReplayLookup}
             >
               {ui("완료 여부 다시 확인", "Check again")}
             </button>
@@ -14542,6 +14639,7 @@ function App() {
           scope={frontScope}
           participants={frontParticipants}
           panels={{
+            entry: frontPreparedAnalysisEntry,
             connections: frontConnectionsPanel,
             history: frontHistoryPanel,
           }}

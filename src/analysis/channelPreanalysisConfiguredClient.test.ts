@@ -4,7 +4,10 @@ import {
   normalizeChannelVideoTitle,
   type ChannelPreanalysisCatalogManifest,
 } from "./channelPreanalysisCatalog";
-import { requestConfiguredChannelPreanalysisMatch } from "./channelPreanalysisClient";
+import {
+  fetchConfiguredChannelPreanalysisManifests,
+  requestConfiguredChannelPreanalysisMatch,
+} from "./channelPreanalysisClient";
 import {
   AMORETTO_CHANNEL_PREANALYSIS_SOURCE,
   EUREKA_CHANNEL_PREANALYSIS_SOURCE,
@@ -67,6 +70,31 @@ function requestUrl(input: RequestInfo | URL): URL {
 }
 
 describe("configured channel preanalysis search", () => {
+  it("loads the healthy streamer catalogs without downloading video artifacts", async () => {
+    const fetchImplementation = vi.fn((input: RequestInfo | URL) => {
+      const sourceId = requestUrl(input).pathname.split("/")[1];
+      const source = SOURCES.find((candidate) => candidate.sourceId === sourceId);
+      if (source === undefined) {
+        return Promise.resolve(new Response("unavailable", { status: 503 }));
+      }
+      return Promise.resolve(
+        new Response(JSON.stringify(manifest(source, VIDEO_ID)), { status: 200 }),
+      );
+    });
+
+    const result = await fetchConfiguredChannelPreanalysisManifests({
+      configuredSources: SOURCES,
+      sourceOptions,
+      fetchImplementation,
+    });
+
+    expect(result.coverage).toBe("complete");
+    expect(result.manifests.map(({ manifest: value }) => value.channelId)).toEqual(
+      SOURCES.map(({ channelId }) => channelId),
+    );
+    expect(fetchImplementation).toHaveBeenCalledTimes(2);
+  });
+
   it("finds one exact video across all healthy source catalogs", async () => {
     const bySource = new Map<string, ChannelPreanalysisCatalogManifest>([
       [AMORETTO_CHANNEL_PREANALYSIS_SOURCE.sourceId, manifest(AMORETTO_CHANNEL_PREANALYSIS_SOURCE, OTHER_VIDEO_ID)],
