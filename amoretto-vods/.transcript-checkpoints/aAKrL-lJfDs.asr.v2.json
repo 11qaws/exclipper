@@ -1,0 +1,4221 @@
+{
+  "schemaVersion": 2,
+  "sourceId": "amoretto-vods",
+  "channelId": "UCHycoTBFDhXz4XNz8jBP-_A",
+  "videoId": "aAKrL-lJfDs",
+  "durationMs": 9184000,
+  "modelId": "whisper-large-v3-turbo",
+  "modelRevision": "groq-whisper-large-v3-turbo-ko-segment-v2-2026-08-02",
+  "chunks": [
+    {
+      "sourceStartMs": 0,
+      "durationMs": 90000,
+      "result": {
+        "schemaVersion": "1.0.0",
+        "modelId": "whisper-large-v3-turbo",
+        "modelRevision": "groq-whisper-large-v3-turbo-ko-segment-v2-2026-08-02",
+        "sourceStartMs": 0,
+        "sourceEndMs": 90000,
+        "textKo": "다음 영상에서 만나요. 다음 영상에서 만나요. 다음 영상에서 만나요.",
+        "detectedLanguage": "ko",
+        "emotion": null,
+        "billedSeconds": 89.999998976,
+        "segments": [
+          {
+            "relativeStartMs": 0,
+            "relativeEndMs": 29980,
+            "textKo": "다음 영상에서 만나요.",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.4990214
+          },
+          {
+            "relativeStartMs": 30000,
+            "relativeEndMs": 59980,
+            "textKo": "다음 영상에서 만나요.",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.25290418
+          },
+          {
+            "relativeStartMs": 60000,
+            "relativeEndMs": 89980,
+            "textKo": "다음 영상에서 만나요.",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.23792307
+          }
+        ]
+      }
+    },
+    {
+      "sourceStartMs": 90000,
+      "durationMs": 90000,
+      "result": {
+        "schemaVersion": "1.0.0",
+        "modelId": "whisper-large-v3-turbo",
+        "modelRevision": "groq-whisper-large-v3-turbo-ko-segment-v2-2026-08-02",
+        "sourceStartMs": 90000,
+        "sourceEndMs": 180000,
+        "textKo": "다음 영상에서 만나요. 다음 영상에서 만나요. 다음 영상에서 만나요.",
+        "detectedLanguage": "ko",
+        "emotion": null,
+        "billedSeconds": 89.999998976,
+        "segments": [
+          {
+            "relativeStartMs": 0,
+            "relativeEndMs": 29980,
+            "textKo": "다음 영상에서 만나요.",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.24343082
+          },
+          {
+            "relativeStartMs": 30000,
+            "relativeEndMs": 59980,
+            "textKo": "다음 영상에서 만나요.",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.28686553
+          },
+          {
+            "relativeStartMs": 60000,
+            "relativeEndMs": 89980,
+            "textKo": "다음 영상에서 만나요.",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.23476969
+          }
+        ]
+      }
+    },
+    {
+      "sourceStartMs": 180000,
+      "durationMs": 90000,
+      "result": {
+        "schemaVersion": "1.0.0",
+        "modelId": "whisper-large-v3-turbo",
+        "modelRevision": "groq-whisper-large-v3-turbo-ko-segment-v2-2026-08-02",
+        "sourceStartMs": 180000,
+        "sourceEndMs": 270000,
+        "textKo": "다음 영상에서 만나요. 다음 영상에서 만나요. 다음 영상에서 만나요.",
+        "detectedLanguage": "ko",
+        "emotion": null,
+        "billedSeconds": 89.999998976,
+        "segments": [
+          {
+            "relativeStartMs": 0,
+            "relativeEndMs": 29980,
+            "textKo": "다음 영상에서 만나요.",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.25999257
+          },
+          {
+            "relativeStartMs": 30000,
+            "relativeEndMs": 59980,
+            "textKo": "다음 영상에서 만나요.",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.23873462
+          },
+          {
+            "relativeStartMs": 60000,
+            "relativeEndMs": 89980,
+            "textKo": "다음 영상에서 만나요.",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.24115865
+          }
+        ]
+      }
+    },
+    {
+      "sourceStartMs": 270000,
+      "durationMs": 90000,
+      "result": {
+        "schemaVersion": "1.0.0",
+        "modelId": "whisper-large-v3-turbo",
+        "modelRevision": "groq-whisper-large-v3-turbo-ko-segment-v2-2026-08-02",
+        "sourceStartMs": 270000,
+        "sourceEndMs": 360000,
+        "textKo": "다음 영상에서 만나요. 다음 영상에서 만나요. 다음 영상에서 만나요.",
+        "detectedLanguage": "ko",
+        "emotion": null,
+        "billedSeconds": 89.999998976,
+        "segments": [
+          {
+            "relativeStartMs": 0,
+            "relativeEndMs": 29980,
+            "textKo": "다음 영상에서 만나요.",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.27614763
+          },
+          {
+            "relativeStartMs": 30000,
+            "relativeEndMs": 59980,
+            "textKo": "다음 영상에서 만나요.",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.2434868
+          },
+          {
+            "relativeStartMs": 60000,
+            "relativeEndMs": 89980,
+            "textKo": "다음 영상에서 만나요.",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.25677675
+          }
+        ]
+      }
+    },
+    {
+      "sourceStartMs": 360000,
+      "durationMs": 90000,
+      "result": {
+        "schemaVersion": "1.0.0",
+        "modelId": "whisper-large-v3-turbo",
+        "modelRevision": "groq-whisper-large-v3-turbo-ko-segment-v2-2026-08-02",
+        "sourceStartMs": 360000,
+        "sourceEndMs": 450000,
+        "textKo": "여러분 다들 소리 질려!!! 와아! 이게 얼마 만이야! 야 다들 소리 질려! 왔다 그녀가 그녀가 돌아왔다! 와우 안녕! 안녕! 오늘은 행복한 날이니까 주식은 꺼도록 하겠습니다 저리가! 안녕! 안녕! 매우 오래됐습니다 안녕! 그녀가 돌아왔다 안녕하세요 아보야 안돼! 저리가 안녕! 안녕! 아아아 아아아 와 주말 행복합니다 치즈 백 아! 저 그리고 구원짤! 구원짤이 생겼어요! 와 너무 귀엽다!",
+        "detectedLanguage": "ko",
+        "emotion": null,
+        "billedSeconds": 89.999998976,
+        "segments": [
+          {
+            "relativeStartMs": 0,
+            "relativeEndMs": 13140,
+            "textKo": "여러분 다들 소리 질려!!!",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.4604944
+          },
+          {
+            "relativeStartMs": 13140,
+            "relativeEndMs": 26120,
+            "textKo": "와아! 이게 얼마 만이야!",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.45217454
+          },
+          {
+            "relativeStartMs": 27960,
+            "relativeEndMs": 33640,
+            "textKo": "야 다들 소리 질려!",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.45217454
+          },
+          {
+            "relativeStartMs": 37320,
+            "relativeEndMs": 40260,
+            "textKo": "왔다 그녀가 그녀가 돌아왔다!",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.45217454
+          },
+          {
+            "relativeStartMs": 40260,
+            "relativeEndMs": 42180,
+            "textKo": "와우 안녕!",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.45217454
+          },
+          {
+            "relativeStartMs": 42180,
+            "relativeEndMs": 44180,
+            "textKo": "안녕!",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.036642574
+          },
+          {
+            "relativeStartMs": 44180,
+            "relativeEndMs": 48180,
+            "textKo": "오늘은 행복한 날이니까 주식은 꺼도록 하겠습니다",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.036642574
+          },
+          {
+            "relativeStartMs": 48180,
+            "relativeEndMs": 49180,
+            "textKo": "저리가!",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.036642574
+          },
+          {
+            "relativeStartMs": 49180,
+            "relativeEndMs": 52180,
+            "textKo": "안녕!",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.036642574
+          },
+          {
+            "relativeStartMs": 52180,
+            "relativeEndMs": 54180,
+            "textKo": "안녕!",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.036642574
+          },
+          {
+            "relativeStartMs": 54180,
+            "relativeEndMs": 56180,
+            "textKo": "매우 오래됐습니다",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.036642574
+          },
+          {
+            "relativeStartMs": 56180,
+            "relativeEndMs": 58180,
+            "textKo": "안녕!",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.036642574
+          },
+          {
+            "relativeStartMs": 58180,
+            "relativeEndMs": 60180,
+            "textKo": "그녀가 돌아왔다",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.036642574
+          },
+          {
+            "relativeStartMs": 60180,
+            "relativeEndMs": 61180,
+            "textKo": "안녕하세요",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.036642574
+          },
+          {
+            "relativeStartMs": 61180,
+            "relativeEndMs": 62180,
+            "textKo": "아보야 안돼!",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.036642574
+          },
+          {
+            "relativeStartMs": 62180,
+            "relativeEndMs": 63180,
+            "textKo": "저리가",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.036642574
+          },
+          {
+            "relativeStartMs": 63180,
+            "relativeEndMs": 65180,
+            "textKo": "안녕!",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.036642574
+          },
+          {
+            "relativeStartMs": 65180,
+            "relativeEndMs": 67180,
+            "textKo": "안녕!",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.036642574
+          },
+          {
+            "relativeStartMs": 67180,
+            "relativeEndMs": 69180,
+            "textKo": "아아아",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.036642574
+          },
+          {
+            "relativeStartMs": 69180,
+            "relativeEndMs": 71180,
+            "textKo": "아아아",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.23223668
+          },
+          {
+            "relativeStartMs": 74100,
+            "relativeEndMs": 77100,
+            "textKo": "와 주말 행복합니다",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.23223668
+          },
+          {
+            "relativeStartMs": 77100,
+            "relativeEndMs": 79100,
+            "textKo": "치즈 백",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.23223668
+          },
+          {
+            "relativeStartMs": 79100,
+            "relativeEndMs": 82180,
+            "textKo": "아! 저 그리고",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.23223668
+          },
+          {
+            "relativeStartMs": 82180,
+            "relativeEndMs": 85480,
+            "textKo": "구원짤! 구원짤이 생겼어요!",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.23223668
+          },
+          {
+            "relativeStartMs": 85480,
+            "relativeEndMs": 90000,
+            "textKo": "와 너무 귀엽다!",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.23223668
+          }
+        ]
+      }
+    },
+    {
+      "sourceStartMs": 450000,
+      "durationMs": 90000,
+      "result": {
+        "schemaVersion": "1.0.0",
+        "modelId": "whisper-large-v3-turbo",
+        "modelRevision": "groq-whisper-large-v3-turbo-ko-segment-v2-2026-08-02",
+        "sourceStartMs": 450000,
+        "sourceEndMs": 540000,
+        "textKo": "She's back! 감사합니다! 그녀가 드디어 돌아왔답니다. 와우! 와우! 그녀가 왔어! 왔다! 그녀가 왔다! 빠아! 야호! 레토가 돌아왔다고? 야호! 짱 귀엽죠? 예이! 치즈를 냠냠하는 레토 후원짜리! 드디어 나왔습니다. 빠아! 오늘은 밤이라서 밤 배경을 좀 하려고 하는데 잠시만요 이거 하나밖에 없나? 배경이 없을려나 뭔가 여름 배경이었으면 좋겠어요 별거 같지 않아요? 약간 비치 사이드 비치 약간 그 바닷가의 시원함을 즐기면서 여름 여름날에 부르는 노래 아닌가? 너무 안 어울리나? 방금 있었던 게 더 나으려나? 고민되네요 잠시만요 근데 이것도 뭔가 충분히 여름 느낌 나긴 해서 단 버전은 없나? 있을 거예요",
+        "detectedLanguage": "ko",
+        "emotion": null,
+        "billedSeconds": 89.999998976,
+        "segments": [
+          {
+            "relativeStartMs": 0,
+            "relativeEndMs": 2560,
+            "textKo": "She's back! 감사합니다!",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.40831646
+          },
+          {
+            "relativeStartMs": 2560,
+            "relativeEndMs": 4500,
+            "textKo": "그녀가 드디어 돌아왔답니다.",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.40831646
+          },
+          {
+            "relativeStartMs": 4500,
+            "relativeEndMs": 5680,
+            "textKo": "와우!",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.40831646
+          },
+          {
+            "relativeStartMs": 5680,
+            "relativeEndMs": 7340,
+            "textKo": "와우!",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.40831646
+          },
+          {
+            "relativeStartMs": 7340,
+            "relativeEndMs": 9340,
+            "textKo": "그녀가 왔어!",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.40831646
+          },
+          {
+            "relativeStartMs": 9340,
+            "relativeEndMs": 12180,
+            "textKo": "왔다! 그녀가 왔다!",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.40831646
+          },
+          {
+            "relativeStartMs": 12180,
+            "relativeEndMs": 13820,
+            "textKo": "빠아!",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.40831646
+          },
+          {
+            "relativeStartMs": 13820,
+            "relativeEndMs": 15020,
+            "textKo": "야호! 레토가 돌아왔다고?",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.40831646
+          },
+          {
+            "relativeStartMs": 15020,
+            "relativeEndMs": 17960,
+            "textKo": "야호! 짱 귀엽죠?",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.40831646
+          },
+          {
+            "relativeStartMs": 17960,
+            "relativeEndMs": 20120,
+            "textKo": "예이!",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.40831646
+          },
+          {
+            "relativeStartMs": 20120,
+            "relativeEndMs": 24760,
+            "textKo": "치즈를 냠냠하는 레토 후원짜리!",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.40831646
+          },
+          {
+            "relativeStartMs": 24760,
+            "relativeEndMs": 26600,
+            "textKo": "드디어 나왔습니다.",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.40831646
+          },
+          {
+            "relativeStartMs": 26600,
+            "relativeEndMs": 28320,
+            "textKo": "빠아!",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.40831646
+          },
+          {
+            "relativeStartMs": 30000,
+            "relativeEndMs": 35860,
+            "textKo": "오늘은 밤이라서 밤 배경을 좀 하려고 하는데",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.48742646
+          },
+          {
+            "relativeStartMs": 35860,
+            "relativeEndMs": 37240,
+            "textKo": "잠시만요",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.48742646
+          },
+          {
+            "relativeStartMs": 42760,
+            "relativeEndMs": 43760,
+            "textKo": "이거 하나밖에 없나?",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.48742646
+          },
+          {
+            "relativeStartMs": 51000,
+            "relativeEndMs": 54060,
+            "textKo": "배경이 없을려나",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.48742646
+          },
+          {
+            "relativeStartMs": 54840,
+            "relativeEndMs": 58000,
+            "textKo": "뭔가 여름 배경이었으면 좋겠어요",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.48742646
+          },
+          {
+            "relativeStartMs": 58000,
+            "relativeEndMs": 61000,
+            "textKo": "별거 같지 않아요? 약간",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.22166039
+          },
+          {
+            "relativeStartMs": 61000,
+            "relativeEndMs": 63000,
+            "textKo": "비치 사이드",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.22166039
+          },
+          {
+            "relativeStartMs": 63000,
+            "relativeEndMs": 65000,
+            "textKo": "비치 약간",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.22166039
+          },
+          {
+            "relativeStartMs": 65000,
+            "relativeEndMs": 70000,
+            "textKo": "그 바닷가의 시원함을",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.22166039
+          },
+          {
+            "relativeStartMs": 70000,
+            "relativeEndMs": 73000,
+            "textKo": "즐기면서 여름",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.22166039
+          },
+          {
+            "relativeStartMs": 73000,
+            "relativeEndMs": 76000,
+            "textKo": "여름날에 부르는 노래 아닌가?",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.22166039
+          },
+          {
+            "relativeStartMs": 76000,
+            "relativeEndMs": 78000,
+            "textKo": "너무 안 어울리나?",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.22166039
+          },
+          {
+            "relativeStartMs": 78000,
+            "relativeEndMs": 80000,
+            "textKo": "방금 있었던 게 더 나으려나?",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.22166039
+          },
+          {
+            "relativeStartMs": 80000,
+            "relativeEndMs": 83000,
+            "textKo": "고민되네요 잠시만요",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.22166039
+          },
+          {
+            "relativeStartMs": 83000,
+            "relativeEndMs": 86000,
+            "textKo": "근데 이것도 뭔가 충분히 여름 느낌 나긴 해서",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.22166039
+          },
+          {
+            "relativeStartMs": 86000,
+            "relativeEndMs": 87360,
+            "textKo": "단 버전은 없나?",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.4032775
+          },
+          {
+            "relativeStartMs": 87360,
+            "relativeEndMs": 90000,
+            "textKo": "있을 거예요",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.4032775
+          }
+        ]
+      }
+    },
+    {
+      "sourceStartMs": 540000,
+      "durationMs": 90000,
+      "result": {
+        "schemaVersion": "1.0.0",
+        "modelId": "whisper-large-v3-turbo",
+        "modelRevision": "groq-whisper-large-v3-turbo-ko-segment-v2-2026-08-02",
+        "sourceStartMs": 540000,
+        "sourceEndMs": 630000,
+        "textKo": "빠바바빵 Hey, no no no no 저는요, 비츠를 제대로 얘기합니다. I'm American. 그렇기 때문에 저는 비츠라는 단어 전혀 어렵지 않아요. 비츠라는 단어가 전혀 어려운 단어가 아닙니다. I say, beach. Oh... 비츠. It's 비츠. 아 있다 있다 있다 있다 Summer 서.. 잠시만요 Summer Beach Background night 아다지롱 하하하 Beach I love the beach 자 다시 한 번 다 한번 따라해 보세요 I love the beach I love beaches 좋아요 좋아요 자 제가 한 일주일 반 정도 출장을 갔다 왔는데요 뭔가 오해하는 분들이 있어서 그러는데 진심으로 출장 갔다 왔고요 진짜 일주일 반 동안 하루 3, 4시간 자느라 죽은 줄 알았습니다 어제 일하고 잤어야 됐는데 7시 반에 뻗었어요 7시 반에 침대에 뻗은 것도 아니에요 소",
+        "detectedLanguage": "ko",
+        "emotion": null,
+        "billedSeconds": 89.999998976,
+        "segments": [
+          {
+            "relativeStartMs": 0,
+            "relativeEndMs": 2000,
+            "textKo": "빠바바빵",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.3159319
+          },
+          {
+            "relativeStartMs": 2000,
+            "relativeEndMs": 4000,
+            "textKo": "Hey, no no no no",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.3159319
+          },
+          {
+            "relativeStartMs": 4000,
+            "relativeEndMs": 8000,
+            "textKo": "저는요, 비츠를 제대로 얘기합니다.",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.3159319
+          },
+          {
+            "relativeStartMs": 8000,
+            "relativeEndMs": 10000,
+            "textKo": "I'm American.",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.3159319
+          },
+          {
+            "relativeStartMs": 10000,
+            "relativeEndMs": 12000,
+            "textKo": "그렇기 때문에 저는 비츠라는 단어",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.3159319
+          },
+          {
+            "relativeStartMs": 12000,
+            "relativeEndMs": 14000,
+            "textKo": "전혀 어렵지 않아요.",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.3159319
+          },
+          {
+            "relativeStartMs": 14000,
+            "relativeEndMs": 16000,
+            "textKo": "비츠라는 단어가",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.3159319
+          },
+          {
+            "relativeStartMs": 16000,
+            "relativeEndMs": 18000,
+            "textKo": "전혀 어려운 단어가 아닙니다.",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.3159319
+          },
+          {
+            "relativeStartMs": 18000,
+            "relativeEndMs": 20000,
+            "textKo": "I say, beach.",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.3159319
+          },
+          {
+            "relativeStartMs": 20000,
+            "relativeEndMs": 22000,
+            "textKo": "Oh...",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.3159319
+          },
+          {
+            "relativeStartMs": 22000,
+            "relativeEndMs": 24000,
+            "textKo": "비츠.",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.3159319
+          },
+          {
+            "relativeStartMs": 24000,
+            "relativeEndMs": 26000,
+            "textKo": "It's",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.3159319
+          },
+          {
+            "relativeStartMs": 26000,
+            "relativeEndMs": 28000,
+            "textKo": "비츠.",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.3159319
+          },
+          {
+            "relativeStartMs": 30000,
+            "relativeEndMs": 32000,
+            "textKo": "아 있다 있다 있다 있다",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.55449873
+          },
+          {
+            "relativeStartMs": 32000,
+            "relativeEndMs": 33000,
+            "textKo": "Summer",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.55449873
+          },
+          {
+            "relativeStartMs": 33000,
+            "relativeEndMs": 34500,
+            "textKo": "서.. 잠시만요",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.55449873
+          },
+          {
+            "relativeStartMs": 34500,
+            "relativeEndMs": 36000,
+            "textKo": "Summer",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.55449873
+          },
+          {
+            "relativeStartMs": 36000,
+            "relativeEndMs": 38000,
+            "textKo": "Beach",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.55449873
+          },
+          {
+            "relativeStartMs": 38000,
+            "relativeEndMs": 40000,
+            "textKo": "Background night",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.55449873
+          },
+          {
+            "relativeStartMs": 40000,
+            "relativeEndMs": 42000,
+            "textKo": "아다지롱",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.55449873
+          },
+          {
+            "relativeStartMs": 42000,
+            "relativeEndMs": 44000,
+            "textKo": "하하하",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.55449873
+          },
+          {
+            "relativeStartMs": 45000,
+            "relativeEndMs": 46000,
+            "textKo": "Beach",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.55449873
+          },
+          {
+            "relativeStartMs": 46000,
+            "relativeEndMs": 49000,
+            "textKo": "I love the beach",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.55449873
+          },
+          {
+            "relativeStartMs": 49000,
+            "relativeEndMs": 51000,
+            "textKo": "자 다시 한 번 다",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.55449873
+          },
+          {
+            "relativeStartMs": 51000,
+            "relativeEndMs": 52000,
+            "textKo": "한번 따라해 보세요",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.55449873
+          },
+          {
+            "relativeStartMs": 52000,
+            "relativeEndMs": 55000,
+            "textKo": "I love the beach",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.55449873
+          },
+          {
+            "relativeStartMs": 55000,
+            "relativeEndMs": 58000,
+            "textKo": "I love beaches",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.55449873
+          },
+          {
+            "relativeStartMs": 58000,
+            "relativeEndMs": 60000,
+            "textKo": "좋아요 좋아요",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.2870268
+          },
+          {
+            "relativeStartMs": 60000,
+            "relativeEndMs": 63720,
+            "textKo": "자 제가",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.2870268
+          },
+          {
+            "relativeStartMs": 63720,
+            "relativeEndMs": 67620,
+            "textKo": "한 일주일 반 정도",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.2870268
+          },
+          {
+            "relativeStartMs": 67620,
+            "relativeEndMs": 69580,
+            "textKo": "출장을 갔다 왔는데요",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.2870268
+          },
+          {
+            "relativeStartMs": 69580,
+            "relativeEndMs": 71680,
+            "textKo": "뭔가 오해하는 분들이 있어서 그러는데",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.2870268
+          },
+          {
+            "relativeStartMs": 71680,
+            "relativeEndMs": 73580,
+            "textKo": "진심으로 출장 갔다 왔고요",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.2870268
+          },
+          {
+            "relativeStartMs": 73580,
+            "relativeEndMs": 77600,
+            "textKo": "진짜 일주일 반 동안",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.2870268
+          },
+          {
+            "relativeStartMs": 77600,
+            "relativeEndMs": 79980,
+            "textKo": "하루 3, 4시간 자느라 죽은 줄 알았습니다",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.2870268
+          },
+          {
+            "relativeStartMs": 79980,
+            "relativeEndMs": 81100,
+            "textKo": "어제",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.2870268
+          },
+          {
+            "relativeStartMs": 81100,
+            "relativeEndMs": 83580,
+            "textKo": "일하고 잤어야 됐는데",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.2870268
+          },
+          {
+            "relativeStartMs": 83580,
+            "relativeEndMs": 86000,
+            "textKo": "7시 반에 뻗었어요",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.2870268
+          },
+          {
+            "relativeStartMs": 86000,
+            "relativeEndMs": 87360,
+            "textKo": "7시 반에",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.2870268
+          },
+          {
+            "relativeStartMs": 87360,
+            "relativeEndMs": 89300,
+            "textKo": "침대에 뻗은 것도 아니에요",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.2724651
+          },
+          {
+            "relativeStartMs": 89300,
+            "relativeEndMs": 90000,
+            "textKo": "소",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.2724651
+          }
+        ]
+      }
+    },
+    {
+      "sourceStartMs": 630000,
+      "durationMs": 90000,
+      "result": {
+        "schemaVersion": "1.0.0",
+        "modelId": "whisper-large-v3-turbo",
+        "modelRevision": "groq-whisper-large-v3-turbo-ko-segment-v2-2026-08-02",
+        "sourceStartMs": 630000,
+        "sourceEndMs": 720000,
+        "textKo": "소파에 뻗었어요. 소파에 뻗고 새벽 4시에 일어나서 지금까지 일했습니다. 오해 불 불러왔습니다. 저는 진심 출장 갔고요. 진심 출장 갔고 일하고 왔습니다. 짜잔! 밤이에요. 이쁘죠? 이쁘다. 이 배경 좋은 것 같아요. 이런 이 이 이 바이브 이 바이브 너무 좋아요. 좋다 좋다. 영어는 왜? 진짜 정말 오랜만에 정말 많은 영어를 잔뜩 하고 왔어요. 역시 해외에 나가면 영어. 폭력, 번역 열심히 하고 일도 열심히 하고 왔습니다. 너무 힘들었어요. 하지만 드디어 복귀했습니다. She's back! She's back! 빠바밤 빠바밤 짠 안녕 다들 잘 지내셨습니까 저 사실 귀여운 뭐지? SD 모델을 준비했었는데 저희가 숙소를 옮긴 다음에는 와이파이가 너무 나빠서 못 썼어요 저는 그리고 가서 좀 더 많이 방송을 할 줄 알았는데 아아 감사합니다 감사합니다 아우!",
+        "detectedLanguage": "ko",
+        "emotion": null,
+        "billedSeconds": 89.999998976,
+        "segments": [
+          {
+            "relativeStartMs": 0,
+            "relativeEndMs": 1200,
+            "textKo": "소파에 뻗었어요.",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.4891301
+          },
+          {
+            "relativeStartMs": 1200,
+            "relativeEndMs": 4680,
+            "textKo": "소파에 뻗고 새벽 4시에 일어나서 지금까지 일했습니다.",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.4891301
+          },
+          {
+            "relativeStartMs": 7200,
+            "relativeEndMs": 9740,
+            "textKo": "오해 불 불러왔습니다.",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.4891301
+          },
+          {
+            "relativeStartMs": 9740,
+            "relativeEndMs": 11980,
+            "textKo": "저는 진심 출장 갔고요.",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.4891301
+          },
+          {
+            "relativeStartMs": 13780,
+            "relativeEndMs": 16080,
+            "textKo": "진심 출장 갔고 일하고 왔습니다.",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.4891301
+          },
+          {
+            "relativeStartMs": 16520,
+            "relativeEndMs": 17480,
+            "textKo": "짜잔!",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.4891301
+          },
+          {
+            "relativeStartMs": 18020,
+            "relativeEndMs": 19220,
+            "textKo": "밤이에요. 이쁘죠?",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.4891301
+          },
+          {
+            "relativeStartMs": 19680,
+            "relativeEndMs": 20320,
+            "textKo": "이쁘다.",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.4891301
+          },
+          {
+            "relativeStartMs": 20520,
+            "relativeEndMs": 21920,
+            "textKo": "이 배경 좋은 것 같아요.",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.4891301
+          },
+          {
+            "relativeStartMs": 21920,
+            "relativeEndMs": 22920,
+            "textKo": "이런 이 이",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.4891301
+          },
+          {
+            "relativeStartMs": 23420,
+            "relativeEndMs": 25920,
+            "textKo": "이 바이브 이 바이브 너무 좋아요.",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.4891301
+          },
+          {
+            "relativeStartMs": 26160,
+            "relativeEndMs": 26860,
+            "textKo": "좋다 좋다.",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.4891301
+          },
+          {
+            "relativeStartMs": 26860,
+            "relativeEndMs": 28860,
+            "textKo": "영어는 왜?",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.60394037
+          },
+          {
+            "relativeStartMs": 28860,
+            "relativeEndMs": 36100,
+            "textKo": "진짜 정말 오랜만에 정말 많은 영어를 잔뜩 하고 왔어요.",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.60394037
+          },
+          {
+            "relativeStartMs": 36100,
+            "relativeEndMs": 38100,
+            "textKo": "역시 해외에 나가면 영어.",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.60394037
+          },
+          {
+            "relativeStartMs": 40100,
+            "relativeEndMs": 44620,
+            "textKo": "폭력, 번역 열심히 하고 일도 열심히 하고 왔습니다.",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.60394037
+          },
+          {
+            "relativeStartMs": 44620,
+            "relativeEndMs": 46820,
+            "textKo": "너무 힘들었어요.",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.60394037
+          },
+          {
+            "relativeStartMs": 46820,
+            "relativeEndMs": 49620,
+            "textKo": "하지만 드디어 복귀했습니다.",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.60394037
+          },
+          {
+            "relativeStartMs": 49620,
+            "relativeEndMs": 50620,
+            "textKo": "She's back!",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.60394037
+          },
+          {
+            "relativeStartMs": 51620,
+            "relativeEndMs": 54620,
+            "textKo": "She's back!",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.60394037
+          },
+          {
+            "relativeStartMs": 56860,
+            "relativeEndMs": 58860,
+            "textKo": "빠바밤 빠바밤",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.18635963
+          },
+          {
+            "relativeStartMs": 58860,
+            "relativeEndMs": 60860,
+            "textKo": "짠",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.18635963
+          },
+          {
+            "relativeStartMs": 60860,
+            "relativeEndMs": 62860,
+            "textKo": "안녕",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.18635963
+          },
+          {
+            "relativeStartMs": 62860,
+            "relativeEndMs": 64860,
+            "textKo": "다들 잘 지내셨습니까",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.18635963
+          },
+          {
+            "relativeStartMs": 64860,
+            "relativeEndMs": 66860,
+            "textKo": "저 사실 귀여운",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.18635963
+          },
+          {
+            "relativeStartMs": 66860,
+            "relativeEndMs": 68860,
+            "textKo": "뭐지? SD 모델을 준비했었는데",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.18635963
+          },
+          {
+            "relativeStartMs": 68860,
+            "relativeEndMs": 70860,
+            "textKo": "저희가 숙소를 옮긴 다음에는",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.18635963
+          },
+          {
+            "relativeStartMs": 70860,
+            "relativeEndMs": 72860,
+            "textKo": "와이파이가 너무 나빠서 못 썼어요",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.18635963
+          },
+          {
+            "relativeStartMs": 72860,
+            "relativeEndMs": 74860,
+            "textKo": "저는 그리고",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.18635963
+          },
+          {
+            "relativeStartMs": 74860,
+            "relativeEndMs": 76860,
+            "textKo": "가서 좀 더 많이",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.18635963
+          },
+          {
+            "relativeStartMs": 76860,
+            "relativeEndMs": 78860,
+            "textKo": "방송을 할 줄 알았는데",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.18635963
+          },
+          {
+            "relativeStartMs": 78860,
+            "relativeEndMs": 80860,
+            "textKo": "아아",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.18635963
+          },
+          {
+            "relativeStartMs": 80860,
+            "relativeEndMs": 82860,
+            "textKo": "감사합니다 감사합니다",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.18635963
+          },
+          {
+            "relativeStartMs": 82860,
+            "relativeEndMs": 90000,
+            "textKo": "아우!",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -1.0397764
+          }
+        ]
+      }
+    },
+    {
+      "sourceStartMs": 720000,
+      "durationMs": 90000,
+      "result": {
+        "schemaVersion": "1.0.0",
+        "modelId": "whisper-large-v3-turbo",
+        "modelRevision": "groq-whisper-large-v3-turbo-ko-segment-v2-2026-08-02",
+        "sourceStartMs": 720000,
+        "sourceEndMs": 810000,
+        "textKo": "너무 귀엽죠? 너무 귀엽네요 감사합니다! 감사합니다! 너무 감사합니다! 감사합니다! 너무 즐겁습니다 아우 너무 돌아왔어요! 너무 돌아왔어요! 봉봉이의 울음소리가 여기까지 퍼집니다. 어우, 너무 행복해! 어우, 다들 잘 지냈나요? 역시 해외 쉽지 않아요. 한국이 최고야! 감사합니다! Come back to 한국! 와, 감사합니다! Welcome back! Welcome back! 아 야 야 아 아 아 뭐 잘 지내셨다면 다행입니다 다행이에요 다행이에요 컬러커렉션 이거다 이거를 블루 오",
+        "detectedLanguage": "ko",
+        "emotion": null,
+        "billedSeconds": 89.999998976,
+        "segments": [
+          {
+            "relativeStartMs": 0,
+            "relativeEndMs": 2240,
+            "textKo": "너무 귀엽죠?",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -1.3866928
+          },
+          {
+            "relativeStartMs": 9060,
+            "relativeEndMs": 9920,
+            "textKo": "너무 귀엽네요",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -1.3866928
+          },
+          {
+            "relativeStartMs": 9920,
+            "relativeEndMs": 11560,
+            "textKo": "감사합니다!",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -1.3866928
+          },
+          {
+            "relativeStartMs": 12120,
+            "relativeEndMs": 13460,
+            "textKo": "감사합니다!",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -1.3866928
+          },
+          {
+            "relativeStartMs": 13980,
+            "relativeEndMs": 15600,
+            "textKo": "너무 감사합니다!",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -1.3866928
+          },
+          {
+            "relativeStartMs": 15980,
+            "relativeEndMs": 17360,
+            "textKo": "감사합니다!",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -1.3866928
+          },
+          {
+            "relativeStartMs": 19780,
+            "relativeEndMs": 21380,
+            "textKo": "너무 즐겁습니다",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -1.3866928
+          },
+          {
+            "relativeStartMs": 21380,
+            "relativeEndMs": 22200,
+            "textKo": "아우",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -1.3866928
+          },
+          {
+            "relativeStartMs": 22480,
+            "relativeEndMs": 23980,
+            "textKo": "너무 돌아왔어요!",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -1.3866928
+          },
+          {
+            "relativeStartMs": 24480,
+            "relativeEndMs": 26180,
+            "textKo": "너무 돌아왔어요!",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -1.3866928
+          },
+          {
+            "relativeStartMs": 30000,
+            "relativeEndMs": 33460,
+            "textKo": "봉봉이의 울음소리가 여기까지 퍼집니다.",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.521584
+          },
+          {
+            "relativeStartMs": 33460,
+            "relativeEndMs": 34900,
+            "textKo": "어우, 너무 행복해!",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.521584
+          },
+          {
+            "relativeStartMs": 37800,
+            "relativeEndMs": 39500,
+            "textKo": "어우, 다들 잘 지냈나요?",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.521584
+          },
+          {
+            "relativeStartMs": 42000,
+            "relativeEndMs": 43700,
+            "textKo": "역시 해외 쉽지 않아요.",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.521584
+          },
+          {
+            "relativeStartMs": 44100,
+            "relativeEndMs": 45300,
+            "textKo": "한국이 최고야!",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.521584
+          },
+          {
+            "relativeStartMs": 47900,
+            "relativeEndMs": 48900,
+            "textKo": "감사합니다!",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.521584
+          },
+          {
+            "relativeStartMs": 48900,
+            "relativeEndMs": 50000,
+            "textKo": "Come back to 한국!",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.521584
+          },
+          {
+            "relativeStartMs": 50000,
+            "relativeEndMs": 51800,
+            "textKo": "와, 감사합니다!",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.521584
+          },
+          {
+            "relativeStartMs": 54600,
+            "relativeEndMs": 56300,
+            "textKo": "Welcome back! Welcome back!",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.521584
+          },
+          {
+            "relativeStartMs": 60000,
+            "relativeEndMs": 62000,
+            "textKo": "아",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.4544996
+          },
+          {
+            "relativeStartMs": 62000,
+            "relativeEndMs": 64000,
+            "textKo": "야",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.4544996
+          },
+          {
+            "relativeStartMs": 64000,
+            "relativeEndMs": 66000,
+            "textKo": "야",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.4544996
+          },
+          {
+            "relativeStartMs": 66000,
+            "relativeEndMs": 68000,
+            "textKo": "아",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.4544996
+          },
+          {
+            "relativeStartMs": 68000,
+            "relativeEndMs": 70000,
+            "textKo": "아",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.4544996
+          },
+          {
+            "relativeStartMs": 70000,
+            "relativeEndMs": 72000,
+            "textKo": "아",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.4544996
+          },
+          {
+            "relativeStartMs": 72000,
+            "relativeEndMs": 78000,
+            "textKo": "뭐 잘 지내셨다면 다행입니다",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.4544996
+          },
+          {
+            "relativeStartMs": 78000,
+            "relativeEndMs": 80000,
+            "textKo": "다행이에요",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.4544996
+          },
+          {
+            "relativeStartMs": 80000,
+            "relativeEndMs": 82000,
+            "textKo": "다행이에요",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.4544996
+          },
+          {
+            "relativeStartMs": 82000,
+            "relativeEndMs": 84000,
+            "textKo": "컬러커렉션 이거다",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.4544996
+          },
+          {
+            "relativeStartMs": 84000,
+            "relativeEndMs": 86000,
+            "textKo": "이거를",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.4544996
+          },
+          {
+            "relativeStartMs": 86000,
+            "relativeEndMs": 88000,
+            "textKo": "블루",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.4544996
+          },
+          {
+            "relativeStartMs": 88000,
+            "relativeEndMs": 90000,
+            "textKo": "오",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.77066714
+          }
+        ]
+      }
+    },
+    {
+      "sourceStartMs": 810000,
+      "durationMs": 90000,
+      "result": {
+        "schemaVersion": "1.0.0",
+        "modelId": "whisper-large-v3-turbo",
+        "modelRevision": "groq-whisper-large-v3-turbo-ko-segment-v2-2026-08-02",
+        "sourceStartMs": 810000,
+        "sourceEndMs": 900000,
+        "textKo": "2블루우 와우 와 2블루우 오 슈트 잠시만요 살짝 이런 느낌? 전 좋아요 오 오케 오케 오케 오케 오케 The moon is so bright 와우 이쁜데? 이쁜데요? 좋습니다 약간 약간 소울 소울이 느끼는 곡을 들어야 되는 듯한 그런 느낌이 듭니다 우우 색감 소알 소알 자 너무 아쉽게도 제가 출장 얘기에 대해서는 거의 말을 못하는 상황이긴 한데 너무 슬프.. ..뒤.. 어 신기한 신기한 거 많이 보고 멋진 분들이랑 많이 얘기하고 재밌는 거 찍는 거 많이 도와주고 왔습니다 간격하게 생략해서 설명할 수 없나요? 그 어딜 갔는지 뭘 했는지 뭘 도와줬는지 뭘 먹었는지 제가 말을 못하는 상황인데 너무 아쉽게도 근데 뭐지? 뭐지?",
+        "detectedLanguage": "ko",
+        "emotion": null,
+        "billedSeconds": 89.999998976,
+        "segments": [
+          {
+            "relativeStartMs": 0,
+            "relativeEndMs": 2000,
+            "textKo": "2블루우",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.5244163
+          },
+          {
+            "relativeStartMs": 2000,
+            "relativeEndMs": 3000,
+            "textKo": "와우",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.5244163
+          },
+          {
+            "relativeStartMs": 3000,
+            "relativeEndMs": 4000,
+            "textKo": "와",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.5244163
+          },
+          {
+            "relativeStartMs": 4000,
+            "relativeEndMs": 5000,
+            "textKo": "2블루우",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.5244163
+          },
+          {
+            "relativeStartMs": 5000,
+            "relativeEndMs": 6000,
+            "textKo": "오 슈트",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.5244163
+          },
+          {
+            "relativeStartMs": 6000,
+            "relativeEndMs": 7000,
+            "textKo": "잠시만요",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.5244163
+          },
+          {
+            "relativeStartMs": 11000,
+            "relativeEndMs": 12000,
+            "textKo": "살짝 이런 느낌?",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.5244163
+          },
+          {
+            "relativeStartMs": 16000,
+            "relativeEndMs": 17000,
+            "textKo": "전 좋아요",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.5244163
+          },
+          {
+            "relativeStartMs": 17000,
+            "relativeEndMs": 18000,
+            "textKo": "오 오케 오케",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.5244163
+          },
+          {
+            "relativeStartMs": 18000,
+            "relativeEndMs": 19000,
+            "textKo": "오케 오케",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.5244163
+          },
+          {
+            "relativeStartMs": 26000,
+            "relativeEndMs": 27000,
+            "textKo": "오케",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.5244163
+          },
+          {
+            "relativeStartMs": 27000,
+            "relativeEndMs": 29000,
+            "textKo": "The moon is so bright",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.4757561
+          },
+          {
+            "relativeStartMs": 29000,
+            "relativeEndMs": 30000,
+            "textKo": "와우",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.4757561
+          },
+          {
+            "relativeStartMs": 31200,
+            "relativeEndMs": 31800,
+            "textKo": "이쁜데?",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.4757561
+          },
+          {
+            "relativeStartMs": 32700,
+            "relativeEndMs": 33900,
+            "textKo": "이쁜데요? 좋습니다",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.4757561
+          },
+          {
+            "relativeStartMs": 33900,
+            "relativeEndMs": 34400,
+            "textKo": "약간",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.4757561
+          },
+          {
+            "relativeStartMs": 35300,
+            "relativeEndMs": 35800,
+            "textKo": "약간",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.4757561
+          },
+          {
+            "relativeStartMs": 36300,
+            "relativeEndMs": 36800,
+            "textKo": "소울",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.4757561
+          },
+          {
+            "relativeStartMs": 36800,
+            "relativeEndMs": 38200,
+            "textKo": "소울이 느끼는",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.4757561
+          },
+          {
+            "relativeStartMs": 38500,
+            "relativeEndMs": 40200,
+            "textKo": "곡을 들어야 되는 듯한",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.4757561
+          },
+          {
+            "relativeStartMs": 40200,
+            "relativeEndMs": 41500,
+            "textKo": "그런 느낌이 듭니다",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.4757561
+          },
+          {
+            "relativeStartMs": 41500,
+            "relativeEndMs": 42500,
+            "textKo": "우우 색감",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.4757561
+          },
+          {
+            "relativeStartMs": 43000,
+            "relativeEndMs": 43700,
+            "textKo": "소알",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.4757561
+          },
+          {
+            "relativeStartMs": 44500,
+            "relativeEndMs": 45000,
+            "textKo": "소알",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.4757561
+          },
+          {
+            "relativeStartMs": 47000,
+            "relativeEndMs": 48700,
+            "textKo": "자 너무 아쉽게도 제가",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.4757561
+          },
+          {
+            "relativeStartMs": 49200,
+            "relativeEndMs": 50800,
+            "textKo": "출장 얘기에 대해서는",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.4757561
+          },
+          {
+            "relativeStartMs": 51200,
+            "relativeEndMs": 52500,
+            "textKo": "거의 말을 못하는",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.4757561
+          },
+          {
+            "relativeStartMs": 53100,
+            "relativeEndMs": 54100,
+            "textKo": "상황이긴 한데",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.4757561
+          },
+          {
+            "relativeStartMs": 54500,
+            "relativeEndMs": 55200,
+            "textKo": "너무 슬프..",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.4757561
+          },
+          {
+            "relativeStartMs": 55200,
+            "relativeEndMs": 55800,
+            "textKo": "..뒤..",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.4757561
+          },
+          {
+            "relativeStartMs": 57000,
+            "relativeEndMs": 68400,
+            "textKo": "어 신기한 신기한 거 많이 보고 멋진 분들이랑 많이 얘기하고",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.3738249
+          },
+          {
+            "relativeStartMs": 68400,
+            "relativeEndMs": 72660,
+            "textKo": "재밌는 거 찍는 거 많이 도와주고 왔습니다",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.3738249
+          },
+          {
+            "relativeStartMs": 72660,
+            "relativeEndMs": 76520,
+            "textKo": "간격하게 생략해서 설명할 수 없나요?",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.3738249
+          },
+          {
+            "relativeStartMs": 76520,
+            "relativeEndMs": 84720,
+            "textKo": "그 어딜 갔는지 뭘 했는지 뭘 도와줬는지 뭘 먹었는지 제가 말을 못하는 상황인데",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.3738249
+          },
+          {
+            "relativeStartMs": 84720,
+            "relativeEndMs": 88160,
+            "textKo": "너무 아쉽게도",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.6037683
+          },
+          {
+            "relativeStartMs": 88160,
+            "relativeEndMs": 88520,
+            "textKo": "근데",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.6037683
+          },
+          {
+            "relativeStartMs": 88520,
+            "relativeEndMs": 89640,
+            "textKo": "뭐지?",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.6037683
+          },
+          {
+            "relativeStartMs": 89760,
+            "relativeEndMs": 90000,
+            "textKo": "뭐지?",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.6037683
+          }
+        ]
+      }
+    },
+    {
+      "sourceStartMs": 900000,
+      "durationMs": 90000,
+      "result": {
+        "schemaVersion": "1.0.0",
+        "modelId": "whisper-large-v3-turbo",
+        "modelRevision": "groq-whisper-large-v3-turbo-ko-segment-v2-2026-08-02",
+        "sourceStartMs": 900000,
+        "sourceEndMs": 990000,
+        "textKo": "스팀 분들이랑 네트워킹 많이 하고 그리고 재밌는 프로젝트 같은 거 보조로 많이 일했습니다 매우 아썸! 맞아요, 먹은 것도 안 돼요 약간 공개할 수 있는 게 없어요 너무 쉽지 않지만 어쨌든 그렇답니다 그러니까요 하지만 이제 제 비밀 임무를 마치고 왔습니다. I'm back! I'm back! 따단 따단 따단 따단 따단 따단 따단 언제쯤 풀리는 걸까요? 아마 평생 못 풀릴 것 같아요 사실 근데 이거 얘기해도 되려나? 구글에서 비즈니스 런치는 한번 했습니다. 되게 신기했어요. 거기까지만 얘기할 수 있을 것 같습니다. 어느 구글이었는... 어디 구글이었는지는 얘기는 못하는데 구글 한 군데에서 아",
+        "detectedLanguage": "ko",
+        "emotion": null,
+        "billedSeconds": 89.999998976,
+        "segments": [
+          {
+            "relativeStartMs": 0,
+            "relativeEndMs": 3760,
+            "textKo": "스팀 분들이랑 네트워킹 많이 하고",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.5927736
+          },
+          {
+            "relativeStartMs": 3760,
+            "relativeEndMs": 11520,
+            "textKo": "그리고 재밌는 프로젝트 같은 거 보조로 많이 일했습니다",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.5927736
+          },
+          {
+            "relativeStartMs": 13120,
+            "relativeEndMs": 14480,
+            "textKo": "매우 아썸!",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.5927736
+          },
+          {
+            "relativeStartMs": 15120,
+            "relativeEndMs": 16720,
+            "textKo": "맞아요, 먹은 것도 안 돼요",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.5927736
+          },
+          {
+            "relativeStartMs": 18320,
+            "relativeEndMs": 20480,
+            "textKo": "약간 공개할 수 있는 게 없어요",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.5927736
+          },
+          {
+            "relativeStartMs": 21280,
+            "relativeEndMs": 22880,
+            "textKo": "너무 쉽지 않지만",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.5927736
+          },
+          {
+            "relativeStartMs": 25600,
+            "relativeEndMs": 26800,
+            "textKo": "어쨌든 그렇답니다",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.5927736
+          },
+          {
+            "relativeStartMs": 28320,
+            "relativeEndMs": 29200,
+            "textKo": "그러니까요",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.5927736
+          },
+          {
+            "relativeStartMs": 29200,
+            "relativeEndMs": 34000,
+            "textKo": "하지만 이제 제 비밀 임무를 마치고 왔습니다.",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.4925726
+          },
+          {
+            "relativeStartMs": 34000,
+            "relativeEndMs": 36320,
+            "textKo": "I'm back! I'm back!",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.4925726
+          },
+          {
+            "relativeStartMs": 36320,
+            "relativeEndMs": 40960,
+            "textKo": "따단 따단 따단 따단 따단 따단 따단",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.4925726
+          },
+          {
+            "relativeStartMs": 40960,
+            "relativeEndMs": 42960,
+            "textKo": "언제쯤 풀리는 걸까요?",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.4925726
+          },
+          {
+            "relativeStartMs": 42960,
+            "relativeEndMs": 47960,
+            "textKo": "아마 평생 못 풀릴 것 같아요 사실",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.4925726
+          },
+          {
+            "relativeStartMs": 47960,
+            "relativeEndMs": 51960,
+            "textKo": "근데 이거 얘기해도 되려나?",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.4925726
+          },
+          {
+            "relativeStartMs": 51960,
+            "relativeEndMs": 56960,
+            "textKo": "구글에서",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.4925726
+          },
+          {
+            "relativeStartMs": 56960,
+            "relativeEndMs": 64060,
+            "textKo": "비즈니스 런치는 한번 했습니다. 되게 신기했어요.",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.44217196
+          },
+          {
+            "relativeStartMs": 68060,
+            "relativeEndMs": 71060,
+            "textKo": "거기까지만 얘기할 수 있을 것 같습니다.",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.44217196
+          },
+          {
+            "relativeStartMs": 76260,
+            "relativeEndMs": 82860,
+            "textKo": "어느 구글이었는... 어디 구글이었는지는 얘기는 못하는데",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.44217196
+          },
+          {
+            "relativeStartMs": 82860,
+            "relativeEndMs": 85540,
+            "textKo": "구글",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.35874325
+          },
+          {
+            "relativeStartMs": 85540,
+            "relativeEndMs": 88540,
+            "textKo": "한 군데에서",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.35874325
+          },
+          {
+            "relativeStartMs": 88540,
+            "relativeEndMs": 90000,
+            "textKo": "아",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.35874325
+          }
+        ]
+      }
+    },
+    {
+      "sourceStartMs": 990000,
+      "durationMs": 90000,
+      "result": {
+        "schemaVersion": "1.0.0",
+        "modelId": "whisper-large-v3-turbo",
+        "modelRevision": "groq-whisper-large-v3-turbo-ko-segment-v2-2026-08-02",
+        "sourceStartMs": 990000,
+        "sourceEndMs": 1080000,
+        "textKo": "먹고 왔습니다. 버거가 맛있었어요. 햄버거가 맛있었습니다. 그 다음에 디저트도 먹고 싶었는데 시간이 없어서 못 먹었어요. 아이스크림도 있었는데 못 먹었어요. 못 먹었어요. 신기했습니다. Very cool, very cool. 다음 그.. 그것만 얘기할 수 있을 것 같아요 나머지는 아마 얘기를 못할 것 같습니다 햄버거 맛있었어요 저는 신입이라서 사실 막 이것저것 얘기할 건 별로 없고요 그냥.. 그냥 따라가서 밥만 먹었어요 그리고 열심히 들었습니다 구글 버거는 뭐가 다른가요? 토핑을! 맛있는 게... 토핑이 맛있는 게 있었어요 양파... 카라멜라이즈드 양파 있잖아요 막 엄청 많이 볶은 양파 양파랑... 그 다음에 베이컨이랑... 그 다음에 로스테드 벨페퍼스 파프리카 있잖아요 전막 다 달라있어 이것도 넣어주고 저것도 넣어주고 다 들어요",
+        "detectedLanguage": "ko",
+        "emotion": null,
+        "billedSeconds": 89.999998976,
+        "segments": [
+          {
+            "relativeStartMs": 0,
+            "relativeEndMs": 1120,
+            "textKo": "먹고 왔습니다.",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.54282874
+          },
+          {
+            "relativeStartMs": 3260,
+            "relativeEndMs": 4780,
+            "textKo": "버거가 맛있었어요.",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.54282874
+          },
+          {
+            "relativeStartMs": 4780,
+            "relativeEndMs": 6660,
+            "textKo": "햄버거가 맛있었습니다.",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.54282874
+          },
+          {
+            "relativeStartMs": 7240,
+            "relativeEndMs": 8760,
+            "textKo": "그 다음에 디저트도 먹고 싶었는데",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.54282874
+          },
+          {
+            "relativeStartMs": 8760,
+            "relativeEndMs": 10440,
+            "textKo": "시간이 없어서 못 먹었어요.",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.54282874
+          },
+          {
+            "relativeStartMs": 10440,
+            "relativeEndMs": 13620,
+            "textKo": "아이스크림도 있었는데 못 먹었어요.",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.54282874
+          },
+          {
+            "relativeStartMs": 16500,
+            "relativeEndMs": 17380,
+            "textKo": "못 먹었어요.",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.54282874
+          },
+          {
+            "relativeStartMs": 21060,
+            "relativeEndMs": 22060,
+            "textKo": "신기했습니다.",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.54282874
+          },
+          {
+            "relativeStartMs": 25260,
+            "relativeEndMs": 26760,
+            "textKo": "Very cool, very cool.",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.54282874
+          },
+          {
+            "relativeStartMs": 26760,
+            "relativeEndMs": 28760,
+            "textKo": "다음",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.4045744
+          },
+          {
+            "relativeStartMs": 28760,
+            "relativeEndMs": 32760,
+            "textKo": "그.. 그것만 얘기할 수 있을 것 같아요",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.4045744
+          },
+          {
+            "relativeStartMs": 32760,
+            "relativeEndMs": 35760,
+            "textKo": "나머지는 아마 얘기를 못할 것 같습니다",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.4045744
+          },
+          {
+            "relativeStartMs": 38760,
+            "relativeEndMs": 40760,
+            "textKo": "햄버거 맛있었어요",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.4045744
+          },
+          {
+            "relativeStartMs": 44760,
+            "relativeEndMs": 46760,
+            "textKo": "저는 신입이라서",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.4045744
+          },
+          {
+            "relativeStartMs": 46760,
+            "relativeEndMs": 49760,
+            "textKo": "사실 막 이것저것 얘기할 건 별로 없고요",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.4045744
+          },
+          {
+            "relativeStartMs": 49760,
+            "relativeEndMs": 52760,
+            "textKo": "그냥.. 그냥 따라가서",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.4045744
+          },
+          {
+            "relativeStartMs": 52760,
+            "relativeEndMs": 54760,
+            "textKo": "밥만 먹었어요",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.4045744
+          },
+          {
+            "relativeStartMs": 56760,
+            "relativeEndMs": 58760,
+            "textKo": "그리고 열심히 들었습니다",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.2892555
+          },
+          {
+            "relativeStartMs": 61760,
+            "relativeEndMs": 63760,
+            "textKo": "구글 버거는 뭐가 다른가요?",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.2892555
+          },
+          {
+            "relativeStartMs": 63760,
+            "relativeEndMs": 64760,
+            "textKo": "토핑을!",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.2892555
+          },
+          {
+            "relativeStartMs": 64760,
+            "relativeEndMs": 67760,
+            "textKo": "맛있는 게... 토핑이 맛있는 게 있었어요",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.2892555
+          },
+          {
+            "relativeStartMs": 67760,
+            "relativeEndMs": 69760,
+            "textKo": "양파...",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.2892555
+          },
+          {
+            "relativeStartMs": 69760,
+            "relativeEndMs": 71760,
+            "textKo": "카라멜라이즈드 양파 있잖아요",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.2892555
+          },
+          {
+            "relativeStartMs": 71760,
+            "relativeEndMs": 74760,
+            "textKo": "막 엄청 많이 볶은 양파",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.2892555
+          },
+          {
+            "relativeStartMs": 74760,
+            "relativeEndMs": 75760,
+            "textKo": "양파랑...",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.2892555
+          },
+          {
+            "relativeStartMs": 75760,
+            "relativeEndMs": 78760,
+            "textKo": "그 다음에 베이컨이랑...",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.2892555
+          },
+          {
+            "relativeStartMs": 78760,
+            "relativeEndMs": 81760,
+            "textKo": "그 다음에 로스테드 벨페퍼스",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.2892555
+          },
+          {
+            "relativeStartMs": 81760,
+            "relativeEndMs": 82760,
+            "textKo": "파프리카 있잖아요",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.2892555
+          },
+          {
+            "relativeStartMs": 82760,
+            "relativeEndMs": 86760,
+            "textKo": "전막 다 달라있어",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.3766511
+          },
+          {
+            "relativeStartMs": 86760,
+            "relativeEndMs": 88080,
+            "textKo": "이것도 넣어주고 저것도 넣어주고",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.3766511
+          },
+          {
+            "relativeStartMs": 88080,
+            "relativeEndMs": 90000,
+            "textKo": "다 들어요",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.3766511
+          }
+        ]
+      }
+    },
+    {
+      "sourceStartMs": 1080000,
+      "durationMs": 90000,
+      "result": {
+        "schemaVersion": "1.0.0",
+        "modelId": "whisper-large-v3-turbo",
+        "modelRevision": "groq-whisper-large-v3-turbo-ko-segment-v2-2026-08-02",
+        "sourceStartMs": 1080000,
+        "sourceEndMs": 1170000,
+        "textKo": "맛있었습니다 냠냠 그 다음에 그 다음에 뭐지? 어.. 법카로 밥 많이 얻어먹었어요 제.. 저희.. 제가.. 제가 사실 출장 가기 전에 법카 하나 받고 갔는데 제 법카는 사실 못 썼고요 근데 어.. 다른 다른 팀원들 법카로 밥 많이 얻어먹었어요 얻어먹었어요 근데 너무 슬픈게 한 이틀 동안은 제가 너무 바빠서 진짜 아침부터 새벽까지 너무 바빠가지고 이제 다섯시간 자고 샤워하고 이제 막 20분 안에 샤워하고 뛰쳐나가서 나가기 전에 렌즈 끼고 엘리베이터에서 메이크업 3분 딱 하고 가가지고 계속 일하다가 이틀 동안 밥을 못 먹었어요. 제가 하루는 하루 종일 아무것도 못 먹었고 밤에 네트워킹 디너 같은 게 하나 있었어가지고 거기서 음료 하나 받아먹고 위스키 콕이었나? 그거 하나 받아먹고 그때는 아무것도 못 먹었고요. 그 다음날 밤 7시까지 아무것도 못 먹었어요. 너무 힘들었는데 막 너무 바쁘니까 배고플 틈이 없었어서",
+        "detectedLanguage": "ko",
+        "emotion": null,
+        "billedSeconds": 89.999998976,
+        "segments": [
+          {
+            "relativeStartMs": 0,
+            "relativeEndMs": 2000,
+            "textKo": "맛있었습니다",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.23916592
+          },
+          {
+            "relativeStartMs": 2000,
+            "relativeEndMs": 4000,
+            "textKo": "냠냠",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.23916592
+          },
+          {
+            "relativeStartMs": 6000,
+            "relativeEndMs": 8000,
+            "textKo": "그 다음에",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.23916592
+          },
+          {
+            "relativeStartMs": 8000,
+            "relativeEndMs": 10000,
+            "textKo": "그 다음에",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.23916592
+          },
+          {
+            "relativeStartMs": 10000,
+            "relativeEndMs": 12000,
+            "textKo": "뭐지?",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.23916592
+          },
+          {
+            "relativeStartMs": 12000,
+            "relativeEndMs": 14000,
+            "textKo": "어.. 법카로 밥 많이 얻어먹었어요",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.23916592
+          },
+          {
+            "relativeStartMs": 14000,
+            "relativeEndMs": 16000,
+            "textKo": "제.. 저희.. 제가..",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.23916592
+          },
+          {
+            "relativeStartMs": 16000,
+            "relativeEndMs": 18000,
+            "textKo": "제가 사실",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.23916592
+          },
+          {
+            "relativeStartMs": 18000,
+            "relativeEndMs": 20000,
+            "textKo": "출장 가기 전에 법카 하나 받고 갔는데",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.23916592
+          },
+          {
+            "relativeStartMs": 20000,
+            "relativeEndMs": 22000,
+            "textKo": "제 법카는 사실 못 썼고요",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.23916592
+          },
+          {
+            "relativeStartMs": 22000,
+            "relativeEndMs": 24000,
+            "textKo": "근데",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.23916592
+          },
+          {
+            "relativeStartMs": 24000,
+            "relativeEndMs": 26000,
+            "textKo": "어.. 다른",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.23916592
+          },
+          {
+            "relativeStartMs": 26000,
+            "relativeEndMs": 28000,
+            "textKo": "다른 팀원들 법카로 밥 많이 얻어먹었어요",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.23916592
+          },
+          {
+            "relativeStartMs": 28000,
+            "relativeEndMs": 30000,
+            "textKo": "얻어먹었어요",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.19919892
+          },
+          {
+            "relativeStartMs": 32000,
+            "relativeEndMs": 34000,
+            "textKo": "근데 너무 슬픈게",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.19919892
+          },
+          {
+            "relativeStartMs": 34000,
+            "relativeEndMs": 36000,
+            "textKo": "한 이틀 동안은 제가 너무 바빠서",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.19919892
+          },
+          {
+            "relativeStartMs": 36000,
+            "relativeEndMs": 38000,
+            "textKo": "진짜 아침부터 새벽까지 너무 바빠가지고",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.19919892
+          },
+          {
+            "relativeStartMs": 38000,
+            "relativeEndMs": 40000,
+            "textKo": "이제 다섯시간 자고",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.19919892
+          },
+          {
+            "relativeStartMs": 40000,
+            "relativeEndMs": 42000,
+            "textKo": "샤워하고",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.19919892
+          },
+          {
+            "relativeStartMs": 42000,
+            "relativeEndMs": 44000,
+            "textKo": "이제 막 20분 안에 샤워하고",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.19919892
+          },
+          {
+            "relativeStartMs": 44000,
+            "relativeEndMs": 46000,
+            "textKo": "뛰쳐나가서",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.19919892
+          },
+          {
+            "relativeStartMs": 46000,
+            "relativeEndMs": 48000,
+            "textKo": "나가기 전에 렌즈 끼고",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.19919892
+          },
+          {
+            "relativeStartMs": 48000,
+            "relativeEndMs": 50000,
+            "textKo": "엘리베이터에서 메이크업",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.19919892
+          },
+          {
+            "relativeStartMs": 50000,
+            "relativeEndMs": 52000,
+            "textKo": "3분 딱 하고 가가지고",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.19919892
+          },
+          {
+            "relativeStartMs": 52000,
+            "relativeEndMs": 54000,
+            "textKo": "계속 일하다가",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.19919892
+          },
+          {
+            "relativeStartMs": 54000,
+            "relativeEndMs": 58500,
+            "textKo": "이틀 동안 밥을 못 먹었어요.",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.24883951
+          },
+          {
+            "relativeStartMs": 58500,
+            "relativeEndMs": 64400,
+            "textKo": "제가 하루는 하루 종일 아무것도 못 먹었고",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.24883951
+          },
+          {
+            "relativeStartMs": 64400,
+            "relativeEndMs": 70200,
+            "textKo": "밤에 네트워킹 디너 같은 게 하나 있었어가지고",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.24883951
+          },
+          {
+            "relativeStartMs": 70200,
+            "relativeEndMs": 72900,
+            "textKo": "거기서 음료 하나 받아먹고",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.24883951
+          },
+          {
+            "relativeStartMs": 72900,
+            "relativeEndMs": 75100,
+            "textKo": "위스키 콕이었나? 그거 하나 받아먹고",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.24883951
+          },
+          {
+            "relativeStartMs": 75100,
+            "relativeEndMs": 77800,
+            "textKo": "그때는 아무것도 못 먹었고요.",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.24883951
+          },
+          {
+            "relativeStartMs": 77800,
+            "relativeEndMs": 82100,
+            "textKo": "그 다음날 밤 7시까지 아무것도 못 먹었어요.",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.24883951
+          },
+          {
+            "relativeStartMs": 82100,
+            "relativeEndMs": 83360,
+            "textKo": "너무 힘들었는데",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.42998475
+          },
+          {
+            "relativeStartMs": 83360,
+            "relativeEndMs": 86800,
+            "textKo": "막 너무 바쁘니까 배고플 틈이 없었어서",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.42998475
+          }
+        ]
+      }
+    },
+    {
+      "sourceStartMs": 1170000,
+      "durationMs": 90000,
+      "result": {
+        "schemaVersion": "1.0.0",
+        "modelId": "whisper-large-v3-turbo",
+        "modelRevision": "groq-whisper-large-v3-turbo-ko-segment-v2-2026-08-02",
+        "sourceStartMs": 1170000,
+        "sourceEndMs": 1260000,
+        "textKo": "그래서... 그때 또 악마 어머님이... 그때 또 돌아왔는데... 하셨던 말씀이... 살은 하나도 안 쪼고 왔다고... 그리고... 그리고 저희 대표님 선물도... 챙겼습니다. 그리고 해외 초콜릿 신기한 거 몇 개 샀었는데 오늘 다 가서 테이스팅 했거든요? 근데 건질 게 하나도 없었어요 아! 하나 있었다! 하나 빼고는 다 맛이 없었어요 초콜릿 4개를 샀는데 그 중에서 하나가 Salted Pistachio Salted Pistachio Pistachio 소금? 소금 Pistachio 솔티드 비슷하죠? 그게 제일 맛있었고 나머지는 못 건지는 나머지는 너무 이국적이었던 것 같아요 아 그거 너무 맛있었어요 야 솔티드 초콜릿 너무 맛있는 것 같아요 어쨌든 저의 출장설이었습니다 그 외에는 약간 풀 수 있는 게 아무것도 없어서 너무 슬프지만 아 제가 방송 장비를 가져갔는데 촬영에 계속 쓰일 일이 생겨가지고 몇 년",
+        "detectedLanguage": "ko",
+        "emotion": null,
+        "billedSeconds": 89.999998976,
+        "segments": [
+          {
+            "relativeStartMs": 0,
+            "relativeEndMs": 2000,
+            "textKo": "그래서...",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.36022168
+          },
+          {
+            "relativeStartMs": 2000,
+            "relativeEndMs": 5000,
+            "textKo": "그때 또 악마 어머님이...",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.36022168
+          },
+          {
+            "relativeStartMs": 5000,
+            "relativeEndMs": 7000,
+            "textKo": "그때 또 돌아왔는데...",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.36022168
+          },
+          {
+            "relativeStartMs": 7000,
+            "relativeEndMs": 10000,
+            "textKo": "하셨던 말씀이...",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.36022168
+          },
+          {
+            "relativeStartMs": 10000,
+            "relativeEndMs": 13000,
+            "textKo": "살은 하나도 안 쪼고 왔다고...",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.36022168
+          },
+          {
+            "relativeStartMs": 22000,
+            "relativeEndMs": 23000,
+            "textKo": "그리고...",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.36022168
+          },
+          {
+            "relativeStartMs": 23000,
+            "relativeEndMs": 26000,
+            "textKo": "그리고 저희 대표님 선물도...",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.36022168
+          },
+          {
+            "relativeStartMs": 26000,
+            "relativeEndMs": 28000,
+            "textKo": "챙겼습니다.",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.36022168
+          },
+          {
+            "relativeStartMs": 28000,
+            "relativeEndMs": 32140,
+            "textKo": "그리고 해외 초콜릿 신기한 거 몇 개 샀었는데",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.37769276
+          },
+          {
+            "relativeStartMs": 32140,
+            "relativeEndMs": 36640,
+            "textKo": "오늘 다 가서 테이스팅 했거든요?",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.37769276
+          },
+          {
+            "relativeStartMs": 36640,
+            "relativeEndMs": 38800,
+            "textKo": "근데 건질 게 하나도 없었어요",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.37769276
+          },
+          {
+            "relativeStartMs": 38800,
+            "relativeEndMs": 39840,
+            "textKo": "아! 하나 있었다!",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.37769276
+          },
+          {
+            "relativeStartMs": 39840,
+            "relativeEndMs": 44140,
+            "textKo": "하나 빼고는 다 맛이 없었어요",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.37769276
+          },
+          {
+            "relativeStartMs": 44140,
+            "relativeEndMs": 45820,
+            "textKo": "초콜릿 4개를 샀는데",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.37769276
+          },
+          {
+            "relativeStartMs": 45820,
+            "relativeEndMs": 47320,
+            "textKo": "그 중에서 하나가",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.37769276
+          },
+          {
+            "relativeStartMs": 47320,
+            "relativeEndMs": 51160,
+            "textKo": "Salted Pistachio",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.37769276
+          },
+          {
+            "relativeStartMs": 51160,
+            "relativeEndMs": 52360,
+            "textKo": "Salted Pistachio",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.37769276
+          },
+          {
+            "relativeStartMs": 52360,
+            "relativeEndMs": 55360,
+            "textKo": "Pistachio",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.37769276
+          },
+          {
+            "relativeStartMs": 55360,
+            "relativeEndMs": 55820,
+            "textKo": "소금?",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.37769276
+          },
+          {
+            "relativeStartMs": 55820,
+            "relativeEndMs": 57100,
+            "textKo": "소금 Pistachio",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.37769276
+          },
+          {
+            "relativeStartMs": 57100,
+            "relativeEndMs": 59260,
+            "textKo": "솔티드 비슷하죠? 그게 제일 맛있었고",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.34158272
+          },
+          {
+            "relativeStartMs": 59260,
+            "relativeEndMs": 61100,
+            "textKo": "나머지는 못 건지는",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.34158272
+          },
+          {
+            "relativeStartMs": 61980,
+            "relativeEndMs": 64380,
+            "textKo": "나머지는 너무 이국적이었던 것 같아요",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.34158272
+          },
+          {
+            "relativeStartMs": 67420,
+            "relativeEndMs": 68780,
+            "textKo": "아 그거 너무 맛있었어요",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.34158272
+          },
+          {
+            "relativeStartMs": 69340,
+            "relativeEndMs": 72300,
+            "textKo": "야 솔티드 초콜릿 너무 맛있는 것 같아요",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.34158272
+          },
+          {
+            "relativeStartMs": 72300,
+            "relativeEndMs": 74380,
+            "textKo": "어쨌든 저의 출장설이었습니다",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.34158272
+          },
+          {
+            "relativeStartMs": 74380,
+            "relativeEndMs": 77740,
+            "textKo": "그 외에는 약간 풀 수 있는 게 아무것도 없어서",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.34158272
+          },
+          {
+            "relativeStartMs": 78380,
+            "relativeEndMs": 79340,
+            "textKo": "너무 슬프지만",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.34158272
+          },
+          {
+            "relativeStartMs": 79340,
+            "relativeEndMs": 83340,
+            "textKo": "아 제가 방송 장비를 가져갔는데",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.34158272
+          },
+          {
+            "relativeStartMs": 83340,
+            "relativeEndMs": 88220,
+            "textKo": "촬영에 계속 쓰일 일이 생겨가지고",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.44046012
+          },
+          {
+            "relativeStartMs": 88220,
+            "relativeEndMs": 90000,
+            "textKo": "몇 년",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.44046012
+          }
+        ]
+      }
+    },
+    {
+      "sourceStartMs": 1260000,
+      "durationMs": 90000,
+      "result": {
+        "schemaVersion": "1.0.0",
+        "modelId": "whisper-large-v3-turbo",
+        "modelRevision": "groq-whisper-large-v3-turbo-ko-segment-v2-2026-08-02",
+        "sourceStartMs": 1260000,
+        "sourceEndMs": 1350000,
+        "textKo": "지난 날에는 방송할 수도 있었는데 제가 뭐지? 장비 가져오는 게 너무 힘들어서 그냥 잤어요 죄송해요 근데 잠도 막 너무 못 자면서 했어가지고 신기하게도 아프진 않았어요 원래 이렇게 힘들면 저 엄청 쉽게 감기 걸리는데 매일매일 막 비타민C 막 엄청나게 퍼부어가지고 몸에다가 어떻게 면역력은 버텼어요. 아 어쨌든. 너무나도 길고 힘들었던 출장이 끝났습니다. 야호! 야호! 작성에! 작성에 팔꿈치 박았어요! 아 히힛 으 으 으 으 으 으 으 으 책상",
+        "detectedLanguage": "ko",
+        "emotion": null,
+        "billedSeconds": 89.999998976,
+        "segments": [
+          {
+            "relativeStartMs": 0,
+            "relativeEndMs": 2760,
+            "textKo": "지난 날에는 방송할 수도 있었는데",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.42835987
+          },
+          {
+            "relativeStartMs": 2760,
+            "relativeEndMs": 6160,
+            "textKo": "제가 뭐지? 장비 가져오는 게 너무 힘들어서 그냥",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.42835987
+          },
+          {
+            "relativeStartMs": 7160,
+            "relativeEndMs": 8360,
+            "textKo": "잤어요 죄송해요",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.42835987
+          },
+          {
+            "relativeStartMs": 8360,
+            "relativeEndMs": 12000,
+            "textKo": "근데 잠도 막 너무 못 자면서",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.42835987
+          },
+          {
+            "relativeStartMs": 12000,
+            "relativeEndMs": 14200,
+            "textKo": "했어가지고",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.42835987
+          },
+          {
+            "relativeStartMs": 14200,
+            "relativeEndMs": 16360,
+            "textKo": "신기하게도 아프진 않았어요",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.42835987
+          },
+          {
+            "relativeStartMs": 16360,
+            "relativeEndMs": 20400,
+            "textKo": "원래 이렇게 힘들면 저 엄청 쉽게 감기 걸리는데",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.42835987
+          },
+          {
+            "relativeStartMs": 20400,
+            "relativeEndMs": 22800,
+            "textKo": "매일매일 막 비타민C 막",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.42835987
+          },
+          {
+            "relativeStartMs": 22800,
+            "relativeEndMs": 25640,
+            "textKo": "엄청나게 퍼부어가지고",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.42835987
+          },
+          {
+            "relativeStartMs": 25640,
+            "relativeEndMs": 29000,
+            "textKo": "몸에다가 어떻게 면역력은",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.42835987
+          },
+          {
+            "relativeStartMs": 29000,
+            "relativeEndMs": 30240,
+            "textKo": "버텼어요.",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.67583466
+          },
+          {
+            "relativeStartMs": 32360,
+            "relativeEndMs": 33640,
+            "textKo": "아 어쨌든.",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.67583466
+          },
+          {
+            "relativeStartMs": 35400,
+            "relativeEndMs": 38820,
+            "textKo": "너무나도 길고 힘들었던 출장이 끝났습니다.",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.67583466
+          },
+          {
+            "relativeStartMs": 38820,
+            "relativeEndMs": 40980,
+            "textKo": "야호! 야호!",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.67583466
+          },
+          {
+            "relativeStartMs": 47980,
+            "relativeEndMs": 49580,
+            "textKo": "작성에!",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.67583466
+          },
+          {
+            "relativeStartMs": 51060,
+            "relativeEndMs": 54820,
+            "textKo": "작성에 팔꿈치 박았어요!",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.67583466
+          },
+          {
+            "relativeStartMs": 59000,
+            "relativeEndMs": 61000,
+            "textKo": "아",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -1.1019281
+          },
+          {
+            "relativeStartMs": 65440,
+            "relativeEndMs": 67060,
+            "textKo": "히힛",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -1.1019281
+          },
+          {
+            "relativeStartMs": 67060,
+            "relativeEndMs": 69600,
+            "textKo": "으",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -1.1019281
+          },
+          {
+            "relativeStartMs": 69600,
+            "relativeEndMs": 71600,
+            "textKo": "으",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -1.1019281
+          },
+          {
+            "relativeStartMs": 71600,
+            "relativeEndMs": 73680,
+            "textKo": "으",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -1.1019281
+          },
+          {
+            "relativeStartMs": 73680,
+            "relativeEndMs": 77680,
+            "textKo": "으",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -1.1019281
+          },
+          {
+            "relativeStartMs": 77680,
+            "relativeEndMs": 79680,
+            "textKo": "으",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -1.1019281
+          },
+          {
+            "relativeStartMs": 79680,
+            "relativeEndMs": 83680,
+            "textKo": "으",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -1.1019281
+          },
+          {
+            "relativeStartMs": 83680,
+            "relativeEndMs": 85680,
+            "textKo": "으",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -1.1019281
+          },
+          {
+            "relativeStartMs": 85680,
+            "relativeEndMs": 87680,
+            "textKo": "으",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -1.1019281
+          },
+          {
+            "relativeStartMs": 87680,
+            "relativeEndMs": 90000,
+            "textKo": "책상",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.17073454
+          }
+        ]
+      }
+    },
+    {
+      "sourceStartMs": 1350000,
+      "durationMs": 90000,
+      "result": {
+        "schemaVersion": "1.0.0",
+        "modelId": "whisper-large-v3-turbo",
+        "modelRevision": "groq-whisper-large-v3-turbo-ko-segment-v2-2026-08-02",
+        "sourceStartMs": 1350000,
+        "sourceEndMs": 1440000,
+        "textKo": "괜찮냐구요? 네? 지금 제 팔꿈치가 걱정이 되는게 아니고 책상이 걱정되는거에요? 지금.. 지금 여기서 그 소리가 나옵니까? 어떻게 책상을 걱정해야 할 수 있어요? 몸은 낮지만 렛도 책상은 망가지면 안 낮잖아요 저 삐쳤어요 저 삐쳤어요 저 이제 안 놀아요 저 이제 벙벙이들이랑 안 놀아요 저 삐쳤어요 안 놀아 안 놀아 안 놀아 나 이제 나 이제 벙벙이들이랑 안 놀아 나 이제 너랑 안 놀아 사과해! 사과해! 호해줘! 호해줘! 내 발꿈치 호해줘! 사과해! 내 소중한 발꿈치한테 사과해요 얼른! 사과해요 나에게 미안하다? 나한테 미안하다? 나한테 호우 나 진짜 안 놀아 나 갈 거야.",
+        "detectedLanguage": "ko",
+        "emotion": null,
+        "billedSeconds": 89.999998976,
+        "segments": [
+          {
+            "relativeStartMs": 0,
+            "relativeEndMs": 2000,
+            "textKo": "괜찮냐구요?",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.31106615
+          },
+          {
+            "relativeStartMs": 2000,
+            "relativeEndMs": 4000,
+            "textKo": "네?",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.31106615
+          },
+          {
+            "relativeStartMs": 4000,
+            "relativeEndMs": 8000,
+            "textKo": "지금 제 팔꿈치가 걱정이 되는게 아니고",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.31106615
+          },
+          {
+            "relativeStartMs": 8000,
+            "relativeEndMs": 12000,
+            "textKo": "책상이 걱정되는거에요?",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.31106615
+          },
+          {
+            "relativeStartMs": 14000,
+            "relativeEndMs": 18000,
+            "textKo": "지금.. 지금 여기서 그 소리가 나옵니까?",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.31106615
+          },
+          {
+            "relativeStartMs": 20000,
+            "relativeEndMs": 22000,
+            "textKo": "어떻게 책상을 걱정해야 할 수 있어요?",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.31106615
+          },
+          {
+            "relativeStartMs": 22000,
+            "relativeEndMs": 26000,
+            "textKo": "몸은 낮지만 렛도 책상은 망가지면 안 낮잖아요",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.31106615
+          },
+          {
+            "relativeStartMs": 30000,
+            "relativeEndMs": 41280,
+            "textKo": "저 삐쳤어요",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.3197521
+          },
+          {
+            "relativeStartMs": 41280,
+            "relativeEndMs": 42700,
+            "textKo": "저 삐쳤어요",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.3197521
+          },
+          {
+            "relativeStartMs": 42700,
+            "relativeEndMs": 45220,
+            "textKo": "저 이제 안 놀아요",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.3197521
+          },
+          {
+            "relativeStartMs": 45220,
+            "relativeEndMs": 47580,
+            "textKo": "저 이제 벙벙이들이랑 안 놀아요",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.3197521
+          },
+          {
+            "relativeStartMs": 47580,
+            "relativeEndMs": 48920,
+            "textKo": "저 삐쳤어요",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.3197521
+          },
+          {
+            "relativeStartMs": 48920,
+            "relativeEndMs": 49720,
+            "textKo": "안 놀아",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.3197521
+          },
+          {
+            "relativeStartMs": 49720,
+            "relativeEndMs": 50840,
+            "textKo": "안 놀아",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.3197521
+          },
+          {
+            "relativeStartMs": 50840,
+            "relativeEndMs": 52540,
+            "textKo": "안 놀아",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.3197521
+          },
+          {
+            "relativeStartMs": 52540,
+            "relativeEndMs": 53440,
+            "textKo": "나 이제",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.3197521
+          },
+          {
+            "relativeStartMs": 53440,
+            "relativeEndMs": 55980,
+            "textKo": "나 이제 벙벙이들이랑 안 놀아",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.3197521
+          },
+          {
+            "relativeStartMs": 55980,
+            "relativeEndMs": 57280,
+            "textKo": "나 이제 너랑 안 놀아",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.3197521
+          },
+          {
+            "relativeStartMs": 57280,
+            "relativeEndMs": 61220,
+            "textKo": "사과해!",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.41675588
+          },
+          {
+            "relativeStartMs": 62020,
+            "relativeEndMs": 63080,
+            "textKo": "사과해!",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.41675588
+          },
+          {
+            "relativeStartMs": 63640,
+            "relativeEndMs": 64400,
+            "textKo": "호해줘!",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.41675588
+          },
+          {
+            "relativeStartMs": 65240,
+            "relativeEndMs": 66200,
+            "textKo": "호해줘!",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.41675588
+          },
+          {
+            "relativeStartMs": 67380,
+            "relativeEndMs": 68940,
+            "textKo": "내 발꿈치 호해줘!",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.41675588
+          },
+          {
+            "relativeStartMs": 69020,
+            "relativeEndMs": 69800,
+            "textKo": "사과해!",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.41675588
+          },
+          {
+            "relativeStartMs": 70560,
+            "relativeEndMs": 72100,
+            "textKo": "내 소중한 발꿈치한테",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.41675588
+          },
+          {
+            "relativeStartMs": 72100,
+            "relativeEndMs": 73620,
+            "textKo": "사과해요 얼른!",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.41675588
+          },
+          {
+            "relativeStartMs": 74540,
+            "relativeEndMs": 75180,
+            "textKo": "사과해요",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.41675588
+          },
+          {
+            "relativeStartMs": 75180,
+            "relativeEndMs": 80540,
+            "textKo": "나에게 미안하다?",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.41675588
+          },
+          {
+            "relativeStartMs": 80540,
+            "relativeEndMs": 82240,
+            "textKo": "나한테 미안하다?",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.41675588
+          },
+          {
+            "relativeStartMs": 82480,
+            "relativeEndMs": 83260,
+            "textKo": "나한테 호우",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.41675588
+          },
+          {
+            "relativeStartMs": 83260,
+            "relativeEndMs": 90000,
+            "textKo": "나 진짜 안 놀아 나 갈 거야.",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.08134067
+          }
+        ]
+      }
+    },
+    {
+      "sourceStartMs": 1440000,
+      "durationMs": 90000,
+      "result": {
+        "schemaVersion": "1.0.0",
+        "modelId": "whisper-large-v3-turbo",
+        "modelRevision": "groq-whisper-large-v3-turbo-ko-segment-v2-2026-08-02",
+        "sourceStartMs": 1440000,
+        "sourceEndMs": 1530000,
+        "textKo": "펫 펫 히드도 구독도 사과도 당하겠다 살려만다오 됐어 나 너랑 안 놀아 아니 그냥 뻑 휘 날리는 거잖아요 너무하네 됐어 나 노래 부를 거예요 병원비 병원비는 무슨 병원비는 뭐예요? 자 어쨌든 자 어쨌든 노래를 좀 불러볼까요 노래를 불러볼까요 오늘 일부러 알겠어요 용서 받을게요 잘했어요 고마워요 흥 흥 2번만 봐줄게요 흥 흥 그래요 영상 하고 있으니까 2번만 봐줄게요 흥 흥 너무하네 너무해 너무해 자",
+        "detectedLanguage": "ko",
+        "emotion": null,
+        "billedSeconds": 89.999998976,
+        "segments": [
+          {
+            "relativeStartMs": 0,
+            "relativeEndMs": 1660,
+            "textKo": "펫",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.5971791
+          },
+          {
+            "relativeStartMs": 1660,
+            "relativeEndMs": 3740,
+            "textKo": "펫",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.5971791
+          },
+          {
+            "relativeStartMs": 3740,
+            "relativeEndMs": 5720,
+            "textKo": "히드도 구독도 사과도 당하겠다 살려만다오",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.5971791
+          },
+          {
+            "relativeStartMs": 5720,
+            "relativeEndMs": 9360,
+            "textKo": "됐어 나 너랑 안 놀아",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.5971791
+          },
+          {
+            "relativeStartMs": 9360,
+            "relativeEndMs": 20060,
+            "textKo": "아니 그냥 뻑 휘 날리는 거잖아요",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.5971791
+          },
+          {
+            "relativeStartMs": 20060,
+            "relativeEndMs": 25600,
+            "textKo": "너무하네",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.5971791
+          },
+          {
+            "relativeStartMs": 25600,
+            "relativeEndMs": 28320,
+            "textKo": "됐어 나 노래 부를 거예요",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.5971791
+          },
+          {
+            "relativeStartMs": 28320,
+            "relativeEndMs": 28820,
+            "textKo": "병원비",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.44004914
+          },
+          {
+            "relativeStartMs": 29620,
+            "relativeEndMs": 30620,
+            "textKo": "병원비는 무슨",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.44004914
+          },
+          {
+            "relativeStartMs": 35320,
+            "relativeEndMs": 36620,
+            "textKo": "병원비는 뭐예요?",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.44004914
+          },
+          {
+            "relativeStartMs": 40220,
+            "relativeEndMs": 41120,
+            "textKo": "자 어쨌든",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.44004914
+          },
+          {
+            "relativeStartMs": 43420,
+            "relativeEndMs": 44120,
+            "textKo": "자 어쨌든",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.44004914
+          },
+          {
+            "relativeStartMs": 44520,
+            "relativeEndMs": 46620,
+            "textKo": "노래를 좀 불러볼까요",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.44004914
+          },
+          {
+            "relativeStartMs": 47420,
+            "relativeEndMs": 48920,
+            "textKo": "노래를 불러볼까요",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.44004914
+          },
+          {
+            "relativeStartMs": 50720,
+            "relativeEndMs": 51820,
+            "textKo": "오늘 일부러",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.44004914
+          },
+          {
+            "relativeStartMs": 56120,
+            "relativeEndMs": 57820,
+            "textKo": "알겠어요 용서 받을게요",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.44004914
+          },
+          {
+            "relativeStartMs": 58320,
+            "relativeEndMs": 61320,
+            "textKo": "잘했어요 고마워요",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.34139556
+          },
+          {
+            "relativeStartMs": 61320,
+            "relativeEndMs": 63320,
+            "textKo": "흥 흥",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.34139556
+          },
+          {
+            "relativeStartMs": 63320,
+            "relativeEndMs": 66320,
+            "textKo": "2번만 봐줄게요 흥 흥",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.34139556
+          },
+          {
+            "relativeStartMs": 66320,
+            "relativeEndMs": 68320,
+            "textKo": "그래요",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.34139556
+          },
+          {
+            "relativeStartMs": 68320,
+            "relativeEndMs": 69320,
+            "textKo": "영상",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.34139556
+          },
+          {
+            "relativeStartMs": 69320,
+            "relativeEndMs": 73320,
+            "textKo": "하고 있으니까 2번만 봐줄게요 흥",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.34139556
+          },
+          {
+            "relativeStartMs": 73320,
+            "relativeEndMs": 75320,
+            "textKo": "흥",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.34139556
+          },
+          {
+            "relativeStartMs": 75320,
+            "relativeEndMs": 77320,
+            "textKo": "너무하네",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.34139556
+          },
+          {
+            "relativeStartMs": 85320,
+            "relativeEndMs": 87320,
+            "textKo": "너무해 너무해",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.34139556
+          },
+          {
+            "relativeStartMs": 88320,
+            "relativeEndMs": 90000,
+            "textKo": "자",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.64489746
+          }
+        ]
+      }
+    },
+    {
+      "sourceStartMs": 1530000,
+      "durationMs": 90000,
+      "result": {
+        "schemaVersion": "1.0.0",
+        "modelId": "whisper-large-v3-turbo",
+        "modelRevision": "groq-whisper-large-v3-turbo-ko-segment-v2-2026-08-02",
+        "sourceStartMs": 1530000,
+        "sourceEndMs": 1620000,
+        "textKo": "노래를 뭘 부르면 좋을까 생각을 하고 있습니다. 뭐를 불러야 되지? 잠시만요. Where's my set list? 잠시만요. Set list가 어디 있지? 이건가? 어 뭐지? 이건 것 같아요. 이샤샤 이샤샤 Excuse me Excuse me 와 너무 큰데? 이걸로 하면 되겠죠? Blancy, oh thank you 감사합니다 12, 13, 14 사실 몇 곡 부를지는 모르겠지만 일단은 써놓읍시다 아무도 모르는거니까 자 저의 첫 싱크컵을 한번 참여해보려고 하는데 오늘 주사위를 못 올리는지에 따라서 한번 보고 안되겠다 싶으면 그냥 오늘은 저는 그냥 오늘 저는 그냥 노래방송을 한 청년이 되겠습니다 그냥 노래방송을 재밌게 한 청년 이 되어보도록 하겠습니다 생각해보니 렛도 기국하자마자 폭락했던 주식이 오르기 시작한 것 같아 아 말도 못해",
+        "detectedLanguage": "ko",
+        "emotion": null,
+        "billedSeconds": 89.999998976,
+        "segments": [
+          {
+            "relativeStartMs": 0,
+            "relativeEndMs": 6200,
+            "textKo": "노래를 뭘 부르면 좋을까 생각을 하고 있습니다.",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.49466693
+          },
+          {
+            "relativeStartMs": 6200,
+            "relativeEndMs": 10700,
+            "textKo": "뭐를 불러야 되지?",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.49466693
+          },
+          {
+            "relativeStartMs": 11200,
+            "relativeEndMs": 12200,
+            "textKo": "잠시만요.",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.49466693
+          },
+          {
+            "relativeStartMs": 13200,
+            "relativeEndMs": 14300,
+            "textKo": "Where's my set list?",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.49466693
+          },
+          {
+            "relativeStartMs": 14300,
+            "relativeEndMs": 14800,
+            "textKo": "잠시만요.",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.49466693
+          },
+          {
+            "relativeStartMs": 14800,
+            "relativeEndMs": 19000,
+            "textKo": "Set list가 어디 있지?",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.49466693
+          },
+          {
+            "relativeStartMs": 19000,
+            "relativeEndMs": 19800,
+            "textKo": "이건가?",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.49466693
+          },
+          {
+            "relativeStartMs": 23000,
+            "relativeEndMs": 24700,
+            "textKo": "어 뭐지? 이건 것 같아요.",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.49466693
+          },
+          {
+            "relativeStartMs": 24700,
+            "relativeEndMs": 26700,
+            "textKo": "이샤샤",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.26964703
+          },
+          {
+            "relativeStartMs": 26700,
+            "relativeEndMs": 28700,
+            "textKo": "이샤샤",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.26964703
+          },
+          {
+            "relativeStartMs": 28700,
+            "relativeEndMs": 30700,
+            "textKo": "Excuse me",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.26964703
+          },
+          {
+            "relativeStartMs": 30700,
+            "relativeEndMs": 32700,
+            "textKo": "Excuse me",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.26964703
+          },
+          {
+            "relativeStartMs": 34700,
+            "relativeEndMs": 36700,
+            "textKo": "와 너무 큰데?",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.26964703
+          },
+          {
+            "relativeStartMs": 38700,
+            "relativeEndMs": 40700,
+            "textKo": "이걸로 하면 되겠죠?",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.26964703
+          },
+          {
+            "relativeStartMs": 42700,
+            "relativeEndMs": 44700,
+            "textKo": "Blancy, oh thank you",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.26964703
+          },
+          {
+            "relativeStartMs": 44700,
+            "relativeEndMs": 46700,
+            "textKo": "감사합니다",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.26964703
+          },
+          {
+            "relativeStartMs": 48700,
+            "relativeEndMs": 50700,
+            "textKo": "12, 13, 14",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.26964703
+          },
+          {
+            "relativeStartMs": 50700,
+            "relativeEndMs": 52700,
+            "textKo": "사실 몇 곡 부를지는 모르겠지만",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.26964703
+          },
+          {
+            "relativeStartMs": 52700,
+            "relativeEndMs": 54700,
+            "textKo": "일단은 써놓읍시다",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.26964703
+          },
+          {
+            "relativeStartMs": 54700,
+            "relativeEndMs": 57700,
+            "textKo": "아무도 모르는거니까",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.29007652
+          },
+          {
+            "relativeStartMs": 57700,
+            "relativeEndMs": 59440,
+            "textKo": "자",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.29007652
+          },
+          {
+            "relativeStartMs": 59440,
+            "relativeEndMs": 62420,
+            "textKo": "저의 첫 싱크컵을",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.29007652
+          },
+          {
+            "relativeStartMs": 62420,
+            "relativeEndMs": 63960,
+            "textKo": "한번 참여해보려고 하는데",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.29007652
+          },
+          {
+            "relativeStartMs": 63960,
+            "relativeEndMs": 66800,
+            "textKo": "오늘 주사위를 못 올리는지에",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.29007652
+          },
+          {
+            "relativeStartMs": 66800,
+            "relativeEndMs": 68000,
+            "textKo": "따라서 한번 보고",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.29007652
+          },
+          {
+            "relativeStartMs": 68000,
+            "relativeEndMs": 70080,
+            "textKo": "안되겠다 싶으면",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.29007652
+          },
+          {
+            "relativeStartMs": 70080,
+            "relativeEndMs": 71820,
+            "textKo": "그냥 오늘은 저는 그냥",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.29007652
+          },
+          {
+            "relativeStartMs": 71820,
+            "relativeEndMs": 74300,
+            "textKo": "오늘 저는 그냥 노래방송을 한",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.29007652
+          },
+          {
+            "relativeStartMs": 74300,
+            "relativeEndMs": 75600,
+            "textKo": "청년이 되겠습니다",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.29007652
+          },
+          {
+            "relativeStartMs": 75600,
+            "relativeEndMs": 78320,
+            "textKo": "그냥 노래방송을 재밌게 한",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.29007652
+          },
+          {
+            "relativeStartMs": 78320,
+            "relativeEndMs": 79000,
+            "textKo": "청년",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.29007652
+          },
+          {
+            "relativeStartMs": 79000,
+            "relativeEndMs": 83220,
+            "textKo": "이 되어보도록 하겠습니다",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.29007652
+          },
+          {
+            "relativeStartMs": 83220,
+            "relativeEndMs": 86340,
+            "textKo": "생각해보니 렛도 기국하자마자",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.22560665
+          },
+          {
+            "relativeStartMs": 86340,
+            "relativeEndMs": 88180,
+            "textKo": "폭락했던 주식이 오르기 시작한 것 같아",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.22560665
+          },
+          {
+            "relativeStartMs": 88180,
+            "relativeEndMs": 90000,
+            "textKo": "아 말도 못해",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.22560665
+          }
+        ]
+      }
+    },
+    {
+      "sourceStartMs": 1620000,
+      "durationMs": 90000,
+      "result": {
+        "schemaVersion": "1.0.0",
+        "modelId": "whisper-large-v3-turbo",
+        "modelRevision": "groq-whisper-large-v3-turbo-ko-segment-v2-2026-08-02",
+        "sourceStartMs": 1620000,
+        "sourceEndMs": 1710000,
+        "textKo": "말 도와요 말 도와요 얘기하기 싫습니다 슬픈거 불러야 되나? 맞아요 여러분 저는 싱드컵을 이번에 처음 참여해봅니다 그래서 사실 사실 지금 보컬 오늘 노래할 수 있을지 모르겠어요 잠시만요 와우, 쉐아이트, 오케이 음... 제 노래방 플리를 한번 보고 일단 웜업을 좀 하고요 그 다음에... 그 다음에 노래를 시작하면 될 것 같긴 합니다 일단은 좀 웜업을... 웜업을 좀 해야 될 것 같아요 문제는 무슨 노래로 월드업을 하는지... 근데... 잠시만요... 뭐하지? 뭐하지? 너무 고민하네.",
+        "detectedLanguage": "ko",
+        "emotion": null,
+        "billedSeconds": 89.999998976,
+        "segments": [
+          {
+            "relativeStartMs": 0,
+            "relativeEndMs": 2000,
+            "textKo": "말 도와요",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.24685487
+          },
+          {
+            "relativeStartMs": 2000,
+            "relativeEndMs": 4000,
+            "textKo": "말 도와요",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.24685487
+          },
+          {
+            "relativeStartMs": 4000,
+            "relativeEndMs": 6000,
+            "textKo": "얘기하기 싫습니다",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.24685487
+          },
+          {
+            "relativeStartMs": 9000,
+            "relativeEndMs": 11000,
+            "textKo": "슬픈거 불러야 되나?",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.24685487
+          },
+          {
+            "relativeStartMs": 13000,
+            "relativeEndMs": 15000,
+            "textKo": "맞아요 여러분 저는 싱드컵을",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.24685487
+          },
+          {
+            "relativeStartMs": 15000,
+            "relativeEndMs": 17000,
+            "textKo": "이번에 처음 참여해봅니다",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.24685487
+          },
+          {
+            "relativeStartMs": 17000,
+            "relativeEndMs": 19000,
+            "textKo": "그래서 사실",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.24685487
+          },
+          {
+            "relativeStartMs": 19000,
+            "relativeEndMs": 21000,
+            "textKo": "사실",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.24685487
+          },
+          {
+            "relativeStartMs": 21000,
+            "relativeEndMs": 23000,
+            "textKo": "지금 보컬",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.24685487
+          },
+          {
+            "relativeStartMs": 23000,
+            "relativeEndMs": 26000,
+            "textKo": "오늘 노래할 수 있을지 모르겠어요",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.24685487
+          },
+          {
+            "relativeStartMs": 26000,
+            "relativeEndMs": 28000,
+            "textKo": "잠시만요",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.24685487
+          },
+          {
+            "relativeStartMs": 28000,
+            "relativeEndMs": 30400,
+            "textKo": "와우, 쉐아이트, 오케이",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.59810376
+          },
+          {
+            "relativeStartMs": 30400,
+            "relativeEndMs": 32600,
+            "textKo": "음...",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.59810376
+          },
+          {
+            "relativeStartMs": 35080,
+            "relativeEndMs": 39180,
+            "textKo": "제 노래방 플리를 한번 보고",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.59810376
+          },
+          {
+            "relativeStartMs": 39180,
+            "relativeEndMs": 42780,
+            "textKo": "일단 웜업을 좀 하고요",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.59810376
+          },
+          {
+            "relativeStartMs": 42780,
+            "relativeEndMs": 45780,
+            "textKo": "그 다음에...",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.59810376
+          },
+          {
+            "relativeStartMs": 45780,
+            "relativeEndMs": 48620,
+            "textKo": "그 다음에 노래를 시작하면",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.59810376
+          },
+          {
+            "relativeStartMs": 48620,
+            "relativeEndMs": 50480,
+            "textKo": "될 것 같긴 합니다",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.59810376
+          },
+          {
+            "relativeStartMs": 50480,
+            "relativeEndMs": 53120,
+            "textKo": "일단은 좀 웜업을...",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.59810376
+          },
+          {
+            "relativeStartMs": 53120,
+            "relativeEndMs": 56260,
+            "textKo": "웜업을 좀 해야 될 것 같아요",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.59810376
+          },
+          {
+            "relativeStartMs": 56260,
+            "relativeEndMs": 61300,
+            "textKo": "문제는 무슨 노래로 월드업을 하는지...",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.79543144
+          },
+          {
+            "relativeStartMs": 61300,
+            "relativeEndMs": 62400,
+            "textKo": "근데...",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.79543144
+          },
+          {
+            "relativeStartMs": 71040,
+            "relativeEndMs": 73020,
+            "textKo": "잠시만요...",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.79543144
+          },
+          {
+            "relativeStartMs": 82120,
+            "relativeEndMs": 82960,
+            "textKo": "뭐하지?",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.79543144
+          },
+          {
+            "relativeStartMs": 82960,
+            "relativeEndMs": 90000,
+            "textKo": "뭐하지? 너무 고민하네.",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.6004891
+          }
+        ]
+      }
+    },
+    {
+      "sourceStartMs": 1710000,
+      "durationMs": 90000,
+      "result": {
+        "schemaVersion": "1.0.0",
+        "modelId": "whisper-large-v3-turbo",
+        "modelRevision": "groq-whisper-large-v3-turbo-ko-segment-v2-2026-08-02",
+        "sourceStartMs": 1710000,
+        "sourceEndMs": 1800000,
+        "textKo": "무슨 노래를 해야 될까? Summertime? 어느 Summertime이죠? 희미의 희망이 날때는 바퀴가 있고 Summertime and the living is easy 다 있습니다 Fish are jumping and the... 뭐가 뭐가 뭐였는데? Your daddy's rich and your mama's good looking So hush little baby don't you cry Summer breeze Summer breeze makes me feel fine 또 다른 써머타임이 있나? 전 그거밖에 모르긴 해요 아니 제 노래책 사이트가 날아가서 이제 그걸 못 써요 너무 슬퍼요 아",
+        "detectedLanguage": "ko",
+        "emotion": null,
+        "billedSeconds": 89.999998976,
+        "segments": [
+          {
+            "relativeStartMs": 0,
+            "relativeEndMs": 2000,
+            "textKo": "무슨 노래를 해야 될까?",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.6433913
+          },
+          {
+            "relativeStartMs": 2000,
+            "relativeEndMs": 5000,
+            "textKo": "Summertime? 어느 Summertime이죠?",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.6433913
+          },
+          {
+            "relativeStartMs": 5000,
+            "relativeEndMs": 10000,
+            "textKo": "희미의 희망이 날때는 바퀴가 있고",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.6433913
+          },
+          {
+            "relativeStartMs": 10000,
+            "relativeEndMs": 18000,
+            "textKo": "Summertime and the living is easy",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.6433913
+          },
+          {
+            "relativeStartMs": 18000,
+            "relativeEndMs": 20000,
+            "textKo": "다 있습니다",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.6433913
+          },
+          {
+            "relativeStartMs": 20000,
+            "relativeEndMs": 26000,
+            "textKo": "Fish are jumping and the...",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.6433913
+          },
+          {
+            "relativeStartMs": 26000,
+            "relativeEndMs": 29000,
+            "textKo": "뭐가 뭐가 뭐였는데?",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.6433913
+          },
+          {
+            "relativeStartMs": 29000,
+            "relativeEndMs": 35400,
+            "textKo": "Your daddy's rich and your mama's good looking",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.5315607
+          },
+          {
+            "relativeStartMs": 35400,
+            "relativeEndMs": 42340,
+            "textKo": "So hush little baby don't you cry",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.5315607
+          },
+          {
+            "relativeStartMs": 42340,
+            "relativeEndMs": 48380,
+            "textKo": "Summer breeze",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.5315607
+          },
+          {
+            "relativeStartMs": 48380,
+            "relativeEndMs": 53440,
+            "textKo": "Summer breeze makes me feel fine",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.5315607
+          },
+          {
+            "relativeStartMs": 53440,
+            "relativeEndMs": 63520,
+            "textKo": "또 다른 써머타임이 있나?",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.47307903
+          },
+          {
+            "relativeStartMs": 63520,
+            "relativeEndMs": 65880,
+            "textKo": "전 그거밖에 모르긴 해요",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.47307903
+          },
+          {
+            "relativeStartMs": 65880,
+            "relativeEndMs": 70040,
+            "textKo": "아니 제 노래책 사이트가 날아가서",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.47307903
+          },
+          {
+            "relativeStartMs": 70040,
+            "relativeEndMs": 71740,
+            "textKo": "이제 그걸 못 써요",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.47307903
+          },
+          {
+            "relativeStartMs": 71740,
+            "relativeEndMs": 80400,
+            "textKo": "너무 슬퍼요",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.47307903
+          },
+          {
+            "relativeStartMs": 80400,
+            "relativeEndMs": 90000,
+            "textKo": "아",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -1.0168425
+          }
+        ]
+      }
+    },
+    {
+      "sourceStartMs": 1800000,
+      "durationMs": 90000,
+      "result": {
+        "schemaVersion": "1.0.0",
+        "modelId": "whisper-large-v3-turbo",
+        "modelRevision": "groq-whisper-large-v3-turbo-ko-segment-v2-2026-08-02",
+        "sourceStartMs": 1800000,
+        "sourceEndMs": 1890000,
+        "textKo": "어... 난 또... 또... 또... 또... 또... 또... 또... 또... 또... 또... 또... 또... 또... 또... 또... 수마타임이라는 노래 엄청 많을 것 같은데요. 제가 아는 것도 두 개니까 아마 훨씬 더 많지 않을까... 생각이 들긴 합니다. 쉽지 않구만. 어... 이거를 좀 생각을 못 해왔어요. 항상 일어나는 일이지만. 웜업하기 좋은 곡이 뭐가 있을까? 저는 사실 비브라토가 매우 발달되어 있지 않아서 매우 슬퍼요 슬픈 노래 하나 할까요? 우리 주식 아니 이제 밝은 노래를 해야 되는 게 아닐까? 제가 돌아왔으니까 밝은 노래를 해야 되는 게 아닐까요? 아닌가? 아 잠시만요 그거 그거 해야 될 것 같은데 노래 하나 갈기겠습니다",
+        "detectedLanguage": "ko",
+        "emotion": null,
+        "billedSeconds": 89.999998976,
+        "segments": [
+          {
+            "relativeStartMs": 0,
+            "relativeEndMs": 500,
+            "textKo": "어...",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.7042247
+          },
+          {
+            "relativeStartMs": 500,
+            "relativeEndMs": 1600,
+            "textKo": "난 또...",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.7042247
+          },
+          {
+            "relativeStartMs": 1600,
+            "relativeEndMs": 2100,
+            "textKo": "또...",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.7042247
+          },
+          {
+            "relativeStartMs": 2100,
+            "relativeEndMs": 2300,
+            "textKo": "또...",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.7042247
+          },
+          {
+            "relativeStartMs": 2300,
+            "relativeEndMs": 2700,
+            "textKo": "또...",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.7042247
+          },
+          {
+            "relativeStartMs": 2700,
+            "relativeEndMs": 3400,
+            "textKo": "또...",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.7042247
+          },
+          {
+            "relativeStartMs": 3400,
+            "relativeEndMs": 4000,
+            "textKo": "또...",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.7042247
+          },
+          {
+            "relativeStartMs": 4000,
+            "relativeEndMs": 4500,
+            "textKo": "또...",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.7042247
+          },
+          {
+            "relativeStartMs": 4500,
+            "relativeEndMs": 5000,
+            "textKo": "또...",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.7042247
+          },
+          {
+            "relativeStartMs": 5700,
+            "relativeEndMs": 6200,
+            "textKo": "또...",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.7042247
+          },
+          {
+            "relativeStartMs": 6200,
+            "relativeEndMs": 6700,
+            "textKo": "또...",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.7042247
+          },
+          {
+            "relativeStartMs": 6700,
+            "relativeEndMs": 7700,
+            "textKo": "또...",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.7042247
+          },
+          {
+            "relativeStartMs": 7700,
+            "relativeEndMs": 8200,
+            "textKo": "또...",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.7042247
+          },
+          {
+            "relativeStartMs": 8200,
+            "relativeEndMs": 8700,
+            "textKo": "또...",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.7042247
+          },
+          {
+            "relativeStartMs": 8700,
+            "relativeEndMs": 9200,
+            "textKo": "또...",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.7042247
+          },
+          {
+            "relativeStartMs": 9200,
+            "relativeEndMs": 10200,
+            "textKo": "또...",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.7042247
+          },
+          {
+            "relativeStartMs": 10200,
+            "relativeEndMs": 13700,
+            "textKo": "수마타임이라는 노래 엄청 많을 것 같은데요.",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.7042247
+          },
+          {
+            "relativeStartMs": 13700,
+            "relativeEndMs": 19700,
+            "textKo": "제가 아는 것도 두 개니까 아마 훨씬 더 많지 않을까...",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.7042247
+          },
+          {
+            "relativeStartMs": 19700,
+            "relativeEndMs": 22200,
+            "textKo": "생각이 들긴 합니다.",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.7042247
+          },
+          {
+            "relativeStartMs": 22200,
+            "relativeEndMs": 26200,
+            "textKo": "쉽지 않구만.",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.7042247
+          },
+          {
+            "relativeStartMs": 26200,
+            "relativeEndMs": 28400,
+            "textKo": "어...",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.7042247
+          },
+          {
+            "relativeStartMs": 28400,
+            "relativeEndMs": 31740,
+            "textKo": "이거를 좀 생각을 못 해왔어요.",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.4859521
+          },
+          {
+            "relativeStartMs": 31740,
+            "relativeEndMs": 34400,
+            "textKo": "항상 일어나는 일이지만.",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.4859521
+          },
+          {
+            "relativeStartMs": 44160,
+            "relativeEndMs": 47160,
+            "textKo": "웜업하기 좋은 곡이 뭐가 있을까?",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.4859521
+          },
+          {
+            "relativeStartMs": 47160,
+            "relativeEndMs": 59520,
+            "textKo": "저는 사실 비브라토가 매우 발달되어 있지 않아서",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.33541518
+          },
+          {
+            "relativeStartMs": 59520,
+            "relativeEndMs": 61160,
+            "textKo": "매우 슬퍼요",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.33541518
+          },
+          {
+            "relativeStartMs": 62160,
+            "relativeEndMs": 66000,
+            "textKo": "슬픈 노래 하나 할까요?",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.33541518
+          },
+          {
+            "relativeStartMs": 66660,
+            "relativeEndMs": 67260,
+            "textKo": "우리 주식",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.33541518
+          },
+          {
+            "relativeStartMs": 67260,
+            "relativeEndMs": 71160,
+            "textKo": "아니 이제 밝은 노래를 해야 되는 게 아닐까?",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.33541518
+          },
+          {
+            "relativeStartMs": 71160,
+            "relativeEndMs": 74160,
+            "textKo": "제가 돌아왔으니까 밝은 노래를 해야 되는 게 아닐까요?",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.33541518
+          },
+          {
+            "relativeStartMs": 75280,
+            "relativeEndMs": 75660,
+            "textKo": "아닌가?",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.33541518
+          },
+          {
+            "relativeStartMs": 75660,
+            "relativeEndMs": 77920,
+            "textKo": "아 잠시만요",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.48240703
+          },
+          {
+            "relativeStartMs": 77920,
+            "relativeEndMs": 80580,
+            "textKo": "그거 그거 해야 될 것 같은데",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.48240703
+          },
+          {
+            "relativeStartMs": 80580,
+            "relativeEndMs": 89300,
+            "textKo": "노래 하나 갈기겠습니다",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.48240703
+          }
+        ]
+      }
+    },
+    {
+      "sourceStartMs": 1890000,
+      "durationMs": 90000,
+      "result": {
+        "schemaVersion": "1.0.0",
+        "modelId": "whisper-large-v3-turbo",
+        "modelRevision": "groq-whisper-large-v3-turbo-ko-segment-v2-2026-08-02",
+        "sourceStartMs": 1890000,
+        "sourceEndMs": 1980000,
+        "textKo": "아우 아우 어 리버브 너무 세 아아아아 키를 맞춰야 되는데 키를 맞춰야 되는데 키를 맞춰야 되는데 아우 키를 맞춰야 되는데 I guess you wonder where I've been I search to find the love within I came back to let you know I've got a thing for you And I can't let go My friends wonder what is wrong with me Well I'm in a taste from your love you see I came back to let you know Gotta think for you and I can't let go Some people go around the world for love That they may never find But they dream of What you won't do Do for love You've tried everything",
+        "detectedLanguage": "ko",
+        "emotion": null,
+        "billedSeconds": 89.999998976,
+        "segments": [
+          {
+            "relativeStartMs": 0,
+            "relativeEndMs": 2000,
+            "textKo": "아우",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.4644188
+          },
+          {
+            "relativeStartMs": 2000,
+            "relativeEndMs": 3000,
+            "textKo": "아우",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.4644188
+          },
+          {
+            "relativeStartMs": 3000,
+            "relativeEndMs": 5000,
+            "textKo": "어 리버브 너무 세",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.4644188
+          },
+          {
+            "relativeStartMs": 5000,
+            "relativeEndMs": 6000,
+            "textKo": "아아아아",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.4644188
+          },
+          {
+            "relativeStartMs": 6000,
+            "relativeEndMs": 12000,
+            "textKo": "키를 맞춰야 되는데",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.4644188
+          },
+          {
+            "relativeStartMs": 12000,
+            "relativeEndMs": 14000,
+            "textKo": "키를 맞춰야 되는데",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.4644188
+          },
+          {
+            "relativeStartMs": 14000,
+            "relativeEndMs": 18000,
+            "textKo": "키를 맞춰야 되는데",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.4644188
+          },
+          {
+            "relativeStartMs": 18000,
+            "relativeEndMs": 20000,
+            "textKo": "아우",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.4644188
+          },
+          {
+            "relativeStartMs": 20000,
+            "relativeEndMs": 26000,
+            "textKo": "키를 맞춰야 되는데",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.4644188
+          },
+          {
+            "relativeStartMs": 26000,
+            "relativeEndMs": 31320,
+            "textKo": "I guess you wonder where I've been",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.3382335
+          },
+          {
+            "relativeStartMs": 31320,
+            "relativeEndMs": 36080,
+            "textKo": "I search to find the love within",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.3382335
+          },
+          {
+            "relativeStartMs": 36080,
+            "relativeEndMs": 42660,
+            "textKo": "I came back to let you know",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.3382335
+          },
+          {
+            "relativeStartMs": 42660,
+            "relativeEndMs": 45360,
+            "textKo": "I've got a thing for you",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.3382335
+          },
+          {
+            "relativeStartMs": 45360,
+            "relativeEndMs": 47680,
+            "textKo": "And I can't let go",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.3382335
+          },
+          {
+            "relativeStartMs": 47680,
+            "relativeEndMs": 53620,
+            "textKo": "My friends wonder what is wrong with me",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.3382335
+          },
+          {
+            "relativeStartMs": 53620,
+            "relativeEndMs": 59400,
+            "textKo": "Well I'm in a taste from your love you see",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.23533979
+          },
+          {
+            "relativeStartMs": 59400,
+            "relativeEndMs": 65060,
+            "textKo": "I came back to let you know",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.23533979
+          },
+          {
+            "relativeStartMs": 65060,
+            "relativeEndMs": 70500,
+            "textKo": "Gotta think for you and I can't let go",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.23533979
+          },
+          {
+            "relativeStartMs": 70500,
+            "relativeEndMs": 76320,
+            "textKo": "Some people go around the world for love",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.23533979
+          },
+          {
+            "relativeStartMs": 76320,
+            "relativeEndMs": 79420,
+            "textKo": "That they may never find",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.23533979
+          },
+          {
+            "relativeStartMs": 79420,
+            "relativeEndMs": 81660,
+            "textKo": "But they dream of",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.25959012
+          },
+          {
+            "relativeStartMs": 81660,
+            "relativeEndMs": 84180,
+            "textKo": "What you won't do",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.25959012
+          },
+          {
+            "relativeStartMs": 84180,
+            "relativeEndMs": 86980,
+            "textKo": "Do for love",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.25959012
+          },
+          {
+            "relativeStartMs": 86980,
+            "relativeEndMs": 90000,
+            "textKo": "You've tried everything",
+            "noSpeechProbability": 0,
+            "averageLogProbability": -0.25959012
+          }
+        ]
+      }
+    }
+  ]
+}

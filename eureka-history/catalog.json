@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "channelId": "UCiFzBB8xsUjEBq8_h6Yl6tA",
   "channelHandle": "@eureka_history",
-  "revision": 17,
-  "generatedAt": "2026-08-03T18:38:47.052Z",
+  "revision": 22,
+  "generatedAt": "2026-08-03T20:49:31.518Z",
   "videos": [
     {
       "channelId": "UCiFzBB8xsUjEBq8_h6Yl6tA",
@@ -134,15 +134,24 @@
       "videoId": "kXKcs9I4Zbg",
       "title": "2026 07 24 싱드컵깍이",
       "normalizedTitle": "2026 07 24 싱드컵깍이",
-      "durationMs": null,
+      "durationMs": 20067000,
       "publishedAt": "2026-07-24T20:30:00.000Z",
       "updatedAt": "2026-07-24T21:35:36.000Z",
       "watchUrl": "https://www.youtube.com/watch?v=kXKcs9I4Zbg",
-      "state": "discovered",
-      "revision": 1,
-      "artifactIds": [],
+      "state": "retryable",
+      "revision": 6,
+      "artifactIds": [
+        "youtube-caption-bundle:kXKcs9I4Zbg:v2",
+        "youtube-storyboard-visual-fingerprint:kXKcs9I4Zbg:v1"
+      ],
       "registeredLocalSampledFingerprints": [],
-      "retry": null
+      "retry": {
+        "stage": "review",
+        "lastSuccessfulState": "context-ready",
+        "attemptCount": 1,
+        "nextAttemptAt": "2026-08-03T23:49:31.518Z",
+        "errorCode": "REVIEW_CANDIDATES_INCOMPLETE"
+      }
     },
     {
       "channelId": "UCiFzBB8xsUjEBq8_h6Yl6tA",
@@ -310,6 +319,26 @@
       "contentDigest": "sha256:d544c3f1f0ccb3a1e9eec65d18b1f5ec730bdc674433f6ccc75d90c2485bcdd4",
       "byteLength": 1720278,
       "createdAt": "2026-08-03T04:33:57.385Z"
+    },
+    {
+      "artifactId": "youtube-caption-bundle:kXKcs9I4Zbg:v2",
+      "videoId": "kXKcs9I4Zbg",
+      "kind": "transcript",
+      "revision": 2,
+      "storageKey": "eureka-history/videos/kXKcs9I4Zbg.v2.json",
+      "contentDigest": "sha256:fa2285aa5308eed16afc9099e5b8921dd885b8b45c2653bdfe9c77311fe71ac6",
+      "byteLength": 711363,
+      "createdAt": "2026-08-03T20:30:05.164Z"
+    },
+    {
+      "artifactId": "youtube-storyboard-visual-fingerprint:kXKcs9I4Zbg:v1",
+      "videoId": "kXKcs9I4Zbg",
+      "kind": "fingerprint",
+      "revision": 1,
+      "storageKey": "eureka-history/videos/kXKcs9I4Zbg.visual-fingerprint.v1.json",
+      "contentDigest": "sha256:29c2db3f2ccd7f5c300f81d142b84a7f2beb25801642ce1031f79e06f04278e6",
+      "byteLength": 2198,
+      "createdAt": "2026-07-24T21:35:36.000Z"
     }
   ]
 }

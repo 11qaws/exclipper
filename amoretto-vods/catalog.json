@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "channelId": "UCHycoTBFDhXz4XNz8jBP-_A",
   "channelHandle": "@AmorettoVODs",
-  "revision": 79,
-  "generatedAt": "2026-08-03T18:40:57.035Z",
+  "revision": 82,
+  "generatedAt": "2026-08-03T20:29:14.260Z",
   "videos": [
     {
       "channelId": "UCHycoTBFDhXz4XNz8jBP-_A",
@@ -12,10 +12,10 @@
       "normalizedTitle": "2026 08 03 월요일 노래방송",
       "durationMs": 9524000,
       "publishedAt": "2026-08-03T18:00:05.000Z",
-      "updatedAt": "2026-08-03T18:20:54.000Z",
+      "updatedAt": "2026-08-03T18:41:45.000Z",
       "watchUrl": "https://www.youtube.com/watch?v=nE4iV8bSf5s",
       "state": "retryable",
-      "revision": 3,
+      "revision": 4,
       "artifactIds": [],
       "registeredLocalSampledFingerprints": [],
       "retry": {
@@ -31,15 +31,21 @@
       "videoId": "aAKrL-lJfDs",
       "title": "2026 08 01 - 복귀 노래방송",
       "normalizedTitle": "2026 08 01 복귀 노래방송",
-      "durationMs": null,
+      "durationMs": 9184000,
       "publishedAt": "2026-08-03T17:39:15.000Z",
-      "updatedAt": "2026-08-03T18:04:14.000Z",
+      "updatedAt": "2026-08-03T18:37:31.000Z",
       "watchUrl": "https://www.youtube.com/watch?v=aAKrL-lJfDs",
-      "state": "discovered",
-      "revision": 1,
+      "state": "retryable",
+      "revision": 4,
       "artifactIds": [],
       "registeredLocalSampledFingerprints": [],
-      "retry": null
+      "retry": {
+        "stage": "transcript",
+        "lastSuccessfulState": "metadata-ready",
+        "attemptCount": 1,
+        "nextAttemptAt": "2026-08-03T23:29:14.260Z",
+        "errorCode": "UPSTREAM_INVALID_RESPONSE"
+      }
     },
     {
       "channelId": "UCHycoTBFDhXz4XNz8jBP-_A",
