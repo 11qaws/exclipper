@@ -3,7 +3,6 @@ import type {
 } from "./candidatePassBWorkerProtocol";
 import {
   AMORETTO_CHANNEL_PREANALYSIS_SOURCE,
-  COCO_CHANNEL_PREANALYSIS_SOURCE,
   EUREKA_CHANNEL_PREANALYSIS_SOURCE,
   MANGJING_CHANNEL_PREANALYSIS_SOURCE,
   SENA_CHANNEL_PREANALYSIS_SOURCE,
@@ -118,42 +117,43 @@ const PERSONAL_CHANNEL_ROSTERS = Object.freeze([
   {
     rosterId: AMORETTO_CHANNEL_CAST_ROSTER_ID,
     chzzkChannelId: "33bc7a29b771728cf9378604973b620b",
-    youtubeSource: AMORETTO_CHANNEL_PREANALYSIS_SOURCE,
+    youtubeChannelId: AMORETTO_CHANNEL_PREANALYSIS_SOURCE.channelId,
+    youtubeChannelHandle: AMORETTO_CHANNEL_PREANALYSIS_SOURCE.channelHandle,
     ownerName: "아모레또",
   },
   {
     rosterId: EUREKA_CHANNEL_CAST_ROSTER_ID,
     chzzkChannelId: "3d5546fc8d0dcb478c973a9bc1328980",
-    youtubeSource: EUREKA_CHANNEL_PREANALYSIS_SOURCE,
+    youtubeChannelId: EUREKA_CHANNEL_PREANALYSIS_SOURCE.channelId,
+    youtubeChannelHandle: EUREKA_CHANNEL_PREANALYSIS_SOURCE.channelHandle,
     ownerName: "유레카",
   },
   {
     rosterId: SENA_ARBEL_CHANNEL_CAST_ROSTER_ID,
     chzzkChannelId: "8b7ccc2a6e05dd1468fb3eb6efd5b3d0",
-    youtubeSource: SENA_CHANNEL_PREANALYSIS_SOURCE,
+    youtubeChannelId: SENA_CHANNEL_PREANALYSIS_SOURCE.channelId,
+    youtubeChannelHandle: SENA_CHANNEL_PREANALYSIS_SOURCE.channelHandle,
     ownerName: "세나 아르벨",
   },
   {
     rosterId: TORORI_COCO_CHANNEL_CAST_ROSTER_ID,
     chzzkChannelId: "bda7676a8ca63a4acc64167610b5bf53",
-    youtubeSource: COCO_CHANNEL_PREANALYSIS_SOURCE,
+    youtubeChannelId: "UCgq07mhOmrjVeZeJYXiAClw",
+    youtubeChannelHandle: "@kokotorori",
     ownerName: "토로리 코코",
   },
   {
     rosterId: MANGJING_CHANNEL_CAST_ROSTER_ID,
     chzzkChannelId: "5b1edd3b95c1513cb502ca2cdd391670",
-    youtubeSource: MANGJING_CHANNEL_PREANALYSIS_SOURCE,
+    youtubeChannelId: MANGJING_CHANNEL_PREANALYSIS_SOURCE.channelId,
+    youtubeChannelHandle: MANGJING_CHANNEL_PREANALYSIS_SOURCE.channelHandle,
     ownerName: "망징이",
   },
 ] satisfies readonly {
   readonly rosterId: CandidatePassBCastRosterId;
   readonly chzzkChannelId: string;
-  readonly youtubeSource:
-    | typeof AMORETTO_CHANNEL_PREANALYSIS_SOURCE
-    | typeof EUREKA_CHANNEL_PREANALYSIS_SOURCE
-    | typeof SENA_CHANNEL_PREANALYSIS_SOURCE
-    | typeof COCO_CHANNEL_PREANALYSIS_SOURCE
-    | typeof MANGJING_CHANNEL_PREANALYSIS_SOURCE;
+  readonly youtubeChannelId: string;
+  readonly youtubeChannelHandle: string;
   readonly ownerName: string;
 }[]);
 
@@ -221,7 +221,7 @@ export function candidatePassBCastRosterIdForYouTubeChannelId(
   if (channelId === null) return null;
   return (
     PERSONAL_CHANNEL_ROSTERS.find(
-      ({ youtubeSource }) => youtubeSource.channelId === channelId,
+      ({ youtubeChannelId }) => youtubeChannelId === channelId,
     )?.rosterId ?? null
   );
 }
@@ -285,10 +285,10 @@ export function candidatePassBCastRosterIdForSourceName(
     if (
       normalized.includes(personal.chzzkChannelId) ||
       normalized.includes(
-        personal.youtubeSource.channelId.toLocaleLowerCase("en-US"),
+        personal.youtubeChannelId.toLocaleLowerCase("en-US"),
       ) ||
       normalized.includes(
-        personal.youtubeSource.channelHandle.toLocaleLowerCase("ko-KR"),
+        personal.youtubeChannelHandle.toLocaleLowerCase("ko-KR"),
       )
     ) {
       return personal.rosterId;

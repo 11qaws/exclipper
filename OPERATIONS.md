@@ -2,7 +2,7 @@
 
 ## 2026-08-04 준비된 분석 목록과 링크 단독 진입 확인
 
-- Pages 첫 화면은 다섯 configured source의 catalog manifest만 읽어 스트리머별
+- Pages 첫 화면은 네 configured source의 catalog manifest만 읽어 스트리머별
   `review-ready` 개수를 표시한다. 개수는 catalog가 바뀔 때 함께 바뀌므로 앱에 고정하지 않는다.
   일부 source가 실패하면 `partial` 안내와 정상 source 목록을 함께 보여 주며, 전부 실패할 때만
   목록 재시도를 제시한다.
@@ -112,7 +112,7 @@ Cloudflare WARP 출구의 평판이며, 그것은 한도가 아니라 상관 장
 - **연결 대상이 다르다.** `rekasong`의 Oracle VPS는 영속 등록 하나를 유지하고,
   이 저장소의 CI는 실행마다 ephemeral 러너에서 새로 등록한다. 같은 등록을 나눠
   쓰지 않는다.
-- **실측 부하(이 프로젝트):** 30분 cron의 기본 동작은 다섯 Atom feed와 catalog만
+- **실측 부하(이 프로젝트):** 30분 cron의 기본 동작은 네 Atom feed와 catalog만
   확인하며 WARP를 등록하지 않는다. 신규·retry·review 누락이 확인된 heavy run만 최대
   2개 영상을 처리한다. 영상당 WARP를 지나는 metadata와 JSON3 자막은 약 2MB이며,
   backlog가 소진되면 신규 업로드가 없는 30분 run의 WARP 트래픽은 0이다. storyboard와
@@ -154,25 +154,25 @@ Cloudflare WARP 출구의 평판이며, 그것은 한도가 아니라 상관 장
 - **전용 context Worker 배포는 계속 보류한다.** 이제 transcript는 쌓이지만
   `context-ready` 승격은 별도 provider 예산과 과금 판단이 필요하다.
 
-## 2026-08-02 다섯 YouTube source 선분석 운영 경계
+## 2026-08-04 네 YouTube source 선분석 운영 경계
 
 - configured source와 playlist는 다음으로 고정한다.
   - `amoretto-vods`: `@AmorettoVODs`, `UCHycoTBFDhXz4XNz8jBP-_A`, `UULFHycoTBFDhXz4XNz8jBP-_A`
   - `eureka-history`: `@eureka_history`, `UCiFzBB8xsUjEBq8_h6Yl6tA`, `UULFiFzBB8xsUjEBq8_h6Yl6tA`
   - `sena-replay`: `@SENAREPLAY`, `UCk0Mu5MpVzJ056e65XpAj0Q`, `UULFk0Mu5MpVzJ056e65XpAj0Q`
-  - `coco-replay`: `@kokotorori`, `UCgq07mhOmrjVeZeJYXiAClw`, `UULVgq07mhOmrjVeZeJYXiAClw`
   - `mangjing-compilations`: `@망징-b1t`, `UC_hftLL-ydsJd1YpcBZ_09g`, `UULF_hftLL-ydsJd1YpcBZ_09g`
-- 2026-08-02 실제 playlist Atom feed 검증에서 다섯 endpoint가 모두 HTTP 200,
+- 2026-08-02 실제 playlist Atom feed 검증에서 현재 활성인 네 endpoint가 모두 HTTP 200,
   canonical channel ID, 최근 14~15개 entry로 strict parser를 통과했다. Atom은
   증분 발견 창이며 전체 과거 영상 backfill 목록으로 해석하지 않는다.
-- 코코는 일반 uploads에 Shorts·커버가 섞이므로 live-stream playlist만 읽고 public
-  완료 영상의 `not_live | was_live`를 허용한다. 다른 네 source는 `not_live`만
-  허용한다. 망징이는 합본 업로드이므로 전체 파일 exact 일치만 연결하고 합본 내부
+- 코코 개인 채널은 2026-08-04부터 활성 registry·예약 workflow·준비본 UI에서 제외한다.
+  기존 `coco-replay` catalog bytes는 기록 보존을 위해 삭제하지 않지만 새 분석·게시·exact
+  lookup 대상으로 사용하지 않는다. 활성 네 source는 `not_live`만 허용한다. 망징이는
+  합본 업로드이므로 전체 파일 exact 일치만 연결하고 합본 내부
   구간 정렬은 구현 전까지 로컬 분석으로 fallback한다.
 - Pages 브라우저에서 feed를 직접 polling하지 않는다. CORS가 없고 탭 종료 뒤
   실행도 보장되지 않는다. 예약 GitHub Actions는 매시 17·47분에 lightweight
   preflight를 실행하고, 실제 due 작업이 있을 때만 bounded heavy 경로를 연다. 처리 상한
-  2개는 source마다가 아니라 다섯 source를 합친 heavy run 전체 상한이다. 수동 실행은
+  2개는 source마다가 아니라 네 source를 합친 heavy run 전체 상한이다. 수동 실행은
   preflight가 no-work여도 항상 heavy 경로를 점검한다.
 - public repository의 표준 GitHub-hosted runner는 현재 무료지만 schedule은 지연
   또는 누락될 수 있고 60일 repository activity가 없으면 비활성화될 수 있다.
@@ -256,7 +256,7 @@ Cloudflare WARP 출구의 평판이며, 그것은 한도가 아니라 상관 장
 - `preanalysis-catalog` branch와 예약 workflow의 최초 활성화는 repository에
   지속적인 외부 쓰기를 만든다. 코드 검증 보고와 명시적 배포 승인 뒤 branch를
   seed하고 workflow를 활성화한다. branch는 자동 생성하지 않으며 최초 commit은
-  branch root의 다섯 source `catalog.json`과 각 manifest가 참조하는
+  branch root의 네 source `catalog.json`과 각 manifest가 참조하는
   `<source-id>/videos/*.json`만 가진 orphan snapshot으로 만든다. branch가
   없으면 workflow는 쓰기 전에 명시적으로 실패한다.
 
@@ -393,7 +393,6 @@ for namespace in \
   amoretto-vods \
   eureka-history \
   sena-replay \
-  coco-replay \
   mangjing-compilations; do
   mkdir -p "${namespace}"
   cp -R "../exclipper/public/preanalysis/${namespace}/." "${namespace}/"
@@ -402,7 +401,6 @@ git add -- \
   amoretto-vods \
   eureka-history \
   sena-replay \
-  coco-replay \
   mangjing-compilations
 git commit -m "chore(catalog): seed channel preanalysis"
 git push origin HEAD:refs/heads/preanalysis-catalog

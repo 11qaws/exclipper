@@ -2,7 +2,6 @@ export const CHANNEL_PREANALYSIS_SOURCE_IDS = [
   "amoretto-vods",
   "eureka-history",
   "sena-replay",
-  "coco-replay",
   "mangjing-compilations",
 ] as const;
 
@@ -82,17 +81,6 @@ export const SENA_CHANNEL_PREANALYSIS_SOURCE = defineSource({
   uploadLayout: "single-replay",
 });
 
-export const COCO_CHANNEL_PREANALYSIS_SOURCE = defineSource({
-  sourceId: "coco-replay",
-  channelId: "UCgq07mhOmrjVeZeJYXiAClw",
-  channelHandle: "@kokotorori",
-  channelUrl: "https://www.youtube.com/@kokotorori",
-  playlistId: "UULVgq07mhOmrjVeZeJYXiAClw",
-  playlistKind: "live-streams",
-  displayNameKo: "토로리 코코",
-  uploadLayout: "single-replay",
-});
-
 export const MANGJING_CHANNEL_PREANALYSIS_SOURCE = defineSource({
   sourceId: "mangjing-compilations",
   channelId: "UC_hftLL-ydsJd1YpcBZ_09g",
@@ -108,7 +96,6 @@ export const CHANNEL_PREANALYSIS_SOURCES = Object.freeze([
   AMORETTO_CHANNEL_PREANALYSIS_SOURCE,
   EUREKA_CHANNEL_PREANALYSIS_SOURCE,
   SENA_CHANNEL_PREANALYSIS_SOURCE,
-  COCO_CHANNEL_PREANALYSIS_SOURCE,
   MANGJING_CHANNEL_PREANALYSIS_SOURCE,
 ] as const);
 

@@ -4836,7 +4836,7 @@ function printUsage() {
   npx tsx scripts/sync-amoretto-preanalysis.mjs [options]
 
 Options:
-  --source ID|all     Reconcile all five sources (default) or one source.
+  --source ID|all     Reconcile all four sources (default) or one source.
   --video-id ID       Force one catalog video to retry; requires --source.
   --max-videos 1|2    Process at most this many videos globally (default: 2).
   --catalog-dir PATH  Catalog root for all, or source directory for one source.

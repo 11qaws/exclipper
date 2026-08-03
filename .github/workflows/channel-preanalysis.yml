@@ -17,7 +17,6 @@ on:
           - amoretto-vods
           - eureka-history
           - sena-replay
-          - coco-replay
           - mangjing-compilations
       video_id:
         description: "Optional exact YouTube video ID; requires a single source"
@@ -89,7 +88,6 @@ jobs:
             amoretto-vods
             eureka-history
             sena-replay
-            coco-replay
             mangjing-compilations
           )
           for namespace in "${namespaces[@]}"; do
@@ -342,7 +340,6 @@ jobs:
             catalog/amoretto-vods
             catalog/eureka-history
             catalog/sena-replay
-            catalog/coco-replay
             catalog/mangjing-compilations
           if-no-files-found: error
           retention-days: 1
@@ -379,7 +376,7 @@ jobs:
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "${EXPECTED_BASE_SHA}"
 
-      - name: Replace only the five configured catalog namespaces
+      - name: Replace only the four configured catalog namespaces
         shell: bash
         run: |
           set -euo pipefail
@@ -387,7 +384,6 @@ jobs:
             amoretto-vods
             eureka-history
             sena-replay
-            coco-replay
             mangjing-compilations
           )
           for namespace in "${namespaces[@]}"; do
@@ -417,7 +413,6 @@ jobs:
             amoretto-vods \
             eureka-history \
             sena-replay \
-            coco-replay \
             mangjing-compilations
           if git diff --cached --quiet; then
             echo "Catalog is already current."

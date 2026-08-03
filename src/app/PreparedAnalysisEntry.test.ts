@@ -51,9 +51,26 @@ function video(
   } as const;
 }
 
+function retiredCocoManifest(): LoadedChannelPreanalysisManifest {
+  return {
+    source: "raw",
+    baseUrl: "https://catalog.test/coco-replay/",
+    manifest: {
+      schemaVersion: 1,
+      channelId: "UCgq07mhOmrjVeZeJYXiAClw",
+      channelHandle: "@kokotorori",
+      revision: 1,
+      generatedAt: "2026-08-04T00:00:00.000Z",
+      videos: [],
+      artifacts: [],
+    },
+  } as unknown as LoadedChannelPreanalysisManifest;
+}
+
 describe("prepared analysis library", () => {
   it("groups only review-ready videos by configured streamer order", () => {
     const groups = buildPreparedAnalysisLibraryGroups([
+      retiredCocoManifest(),
       loadedManifest(EUREKA_CHANNEL_PREANALYSIS_SOURCE, [
         video(
           EUREKA_CHANNEL_PREANALYSIS_SOURCE,
@@ -85,6 +102,9 @@ describe("prepared analysis library", () => {
       "amoretto-vods",
       "eureka-history",
     ]);
+    expect(groups.some(({ sourceId }) => String(sourceId) === "coco-replay")).toBe(
+      false,
+    );
     expect(groups[0]?.videos.map(({ videoId }) => videoId)).toEqual([
       "KzAW3yow80Q",
     ]);

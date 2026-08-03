@@ -7,11 +7,11 @@
 완료 뒤에도 자신의 source fence와 run 생애주기를 새로 만든다.
 
 - configured source는 `amoretto-vods`, `eureka-history`, `sena-replay`,
-  `coco-replay`, `mangjing-compilations`다. 각 source는 자신의 manifest·artifact
+  `mangjing-compilations`다. 각 source는 자신의 manifest·artifact
   namespace만 쓸 수 있고 source ID·channel ID·handle의 registry 조합이 다르면
   읽기와 게시를 모두 거부한다.
 - 예약 scheduler의 영상 처리 상한 2개는 source별이 아니라 run 전체에 적용한다.
-  다섯 feed reconciliation은 모두 수행하되 due 작업은 회전 순서로 한 개씩 먼저
+  네 feed reconciliation은 모두 수행하되 due 작업은 회전 순서로 한 개씩 먼저
   배분하고 남은 슬롯만 두 번째 round에 사용한다. 한 source 발견 실패는 기존
   snapshot을 유지하며 정상 sibling source의 checkpoint 진행을 취소하지 않는다.
 
@@ -88,7 +88,7 @@
   후보 0개도 `verified-empty` certificate가 있을 때만 정상 완료이며, partial artifact는
   어떤 경우에도 이 경로로 들어오지 않는다.
 - 첫 화면의 준비본 라이브러리는 `loading -> ready(complete | partial) | failed`인 일시적
-  presentation state다. 다섯 manifest만 읽고 `review-ready`가 아닌 영상은 숨기며 session이나
+  presentation state다. 네 manifest만 읽고 `review-ready`가 아닌 영상은 숨기며 session이나
   `AnalysisJob`을 만들지 않는다. 스트리머 탭 선택도 로컬 표시 상태일 뿐이다. 영상 행 또는
   YouTube 주소가 canonical video ID를 만들 때에만 기존 exact lookup으로 전환하고, 선택한
   review artifact의 bounded fetch·SHA·내부 closure가 모두 끝난 뒤 `PreparedReviewExperience`를

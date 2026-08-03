@@ -16,7 +16,6 @@ import {
 } from "./sync-amoretto-preanalysis.mjs";
 import {
   CHANNEL_PREANALYSIS_SOURCES,
-  COCO_CHANNEL_PREANALYSIS_SOURCE,
 } from "../src/analysis/channelPreanalysisSources.ts";
 
 const NOW = "2026-08-02T03:00:00.000Z";
@@ -41,23 +40,7 @@ test("every configured source owns an isolated catalog and artifact namespace", 
   }
 });
 
-test("completed live replays are accepted only for the live-stream source", () => {
-  const metadata = {
-    id: VIDEO_ID,
-    channel_id: COCO_CHANNEL_PREANALYSIS_SOURCE.channelId,
-    title: "완료된 다시보기",
-    duration: 3_600,
-    availability: "public",
-    live_status: "was_live",
-  };
-  assert.equal(
-    validateYtDlpMetadata(
-      metadata,
-      VIDEO_ID,
-      COCO_CHANNEL_PREANALYSIS_SOURCE,
-    ).liveStatus,
-    "was_live",
-  );
+test("completed live replays are rejected by the configured long-form sources", () => {
   const nonLiveSource = CHANNEL_PREANALYSIS_SOURCES.find(
     ({ playlistKind }) => playlistKind === "long-form-uploads",
   );
@@ -65,7 +48,14 @@ test("completed live replays are accepted only for the live-stream source", () =
   assert.throws(
     () =>
       validateYtDlpMetadata(
-        { ...metadata, channel_id: nonLiveSource.channelId },
+        {
+          id: VIDEO_ID,
+          channel_id: nonLiveSource.channelId,
+          title: "완료된 다시보기",
+          duration: 3_600,
+          availability: "public",
+          live_status: "was_live",
+        },
         VIDEO_ID,
         nonLiveSource,
       ),
@@ -73,7 +63,7 @@ test("completed live replays are accepted only for the live-stream source", () =
   );
 });
 
-test("the five-source coordinator shares one global two-video budget", async () => {
+test("the four-source coordinator shares one global two-video budget", async () => {
   const calls = [];
   const result = await synchronizeConfiguredChannelCatalogs(
     {

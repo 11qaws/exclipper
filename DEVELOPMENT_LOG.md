@@ -1,5 +1,21 @@
 # Development Log
 
+## 2026-08-04 코코 선분석 대상과 준비본 화면 제외
+
+- 활성 채널 선분석 registry에서 `coco-replay`·`@kokotorori`를 제거했다. 기본 manifest 조회,
+  YouTube exact lookup, 예약 discovery·context·review queue, Worker operation source fence가 모두 같은
+  네 source(`amoretto-vods`, `eureka-history`, `sena-replay`, `mangjing-compilations`)만 사용한다.
+- GitHub Actions의 수동 source 선택, catalog bootstrap, prepare artifact, publish namespace와 commit
+  path에서도 코코를 제거했다. 기존 catalog bytes는 기록 보존을 위해 삭제하지 않지만 새 예약 분석이나
+  게시 대상으로 읽지 않는다.
+- 인물 카탈로그에서 합방에 실제 등장한 토로리 코코의 식별 근거는 유지하되 개인 채널 ID/handle을 활성
+  선분석 source 객체와 분리했다. 따라서 다른 스트리머 방송의 실제 등장 맥락은 잃지 않으면서 코코 개인
+  채널은 준비본 목록과 링크 검색에 나타나지 않는다.
+- 앱 버전은 `0.9.7`이다. TypeScript, 전체 ESLint(사용자 소유 `.wrangler-dry-run-2/**` 제외), 전체
+  Vitest 178파일·2,199개, 예약 pipeline Node 계약 62개, 음성 등록 도구 9개, production build와 두
+  Worker dry-run이 통과했다. 로컬 브라우저에서 준비본 탭은 아모레또·유레카·세나 아르벨·망징이 네 개,
+  코코 노출은 0개였고 1600×900·1440×900·1024×768 모두 가로 overflow가 없었다.
+
 ## 2026-08-04 다시보기 링크 단독 진입과 스트리머별 준비 목록
 
 - 기존 exact YouTube video ID → manifest → immutable review artifact → SHA·certificate closure →

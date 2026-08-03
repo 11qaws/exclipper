@@ -595,11 +595,11 @@ test("scheduled and manual runs checkout the immutable workflow event revision t
     "amoretto-vods",
     "eureka-history",
     "sena-replay",
-    "coco-replay",
     "mangjing-compilations",
   ]) {
     assert.match(workflow, new RegExp(`\\b${sourceId}\\b`, "u"));
   }
+  assert.doesNotMatch(workflow, /\bcoco-replay\b/u);
   assert.match(workflow, /channel-preanalysis-run-report\.json/u);
   assert.match(workflow, /Bootstrap missing configured catalog namespaces/u);
   assert.match(workflow, /source\/public\/preanalysis\/\$\{namespace\}/u);

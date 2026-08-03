@@ -54,10 +54,10 @@
 | `analysis/broadcastTranscriptQwen.ts` | 이름과 달리 방송 전사의 provider-neutral 계약이다. Qwen·Gemini·Groq 요청/응답 검증, model ID/revision, 공통 `BroadcastTranscriptQwenResult`를 소유한다. Groq는 서버가 만든 URL 또는 bounded WAV만 받고 한국어·segment timestamp를 검증한다. |
 | `analysis/youtubeCaptionSandbox.ts` | opaque iframe의 수명·nonce/request ID·postMessage source fence와 JSON3 재검증을 소유한다. 자막 transport의 순서는 이 모듈 뒤 `youtubeCaptionClient.ts`의 Worker fallback으로 이어진다. |
 | `public/youtube-caption-sandbox.html` | source file·저장소·credential에 접근하지 않는 `allow-scripts` 전용 iframe 실행부다. Android player와 timedtext만 fixed-host로 읽고 bounded 원문을 부모 검증기로 돌려준다. |
-| `analysis/channelPreanalysisSources.ts` | 다섯 YouTube 선분석 source의 canonical channel ID·handle·playlist·storage namespace와 single/combined replay 정책을 소유한다. |
+| `analysis/channelPreanalysisSources.ts` | 네 YouTube 선분석 source의 canonical channel ID·handle·playlist·storage namespace와 single/combined replay 정책을 소유한다. |
 | `analysis/channelPreanalysisCatalog.ts` | configured YouTube playlist feed, 원격 영상 생애주기, exact/probable 로컬 identity 매칭 규칙을 소유한다. sampled SHA는 등록된 동일 파일끼리만 비교한다. |
 | `analysis/channelPreanalysisBundle.ts` | 공개 자막·연속 챕터·선분석 맥락을 담는 provider-neutral bundle 스키마와 transcript SHA-256 검증을 소유한다. 예약 맥락의 자막 전용 evidence scope, 로컬 visual 검증 필요 여부와 proxy contract·routing·실제 model ID/revision의 bounded `contextReceipt`도 보존한다. |
-| `analysis/channelPreanalysisClient.ts` | raw catalog branch → Pages fallback, 다섯 source의 manifest-only 병렬 목록 조회, revision별 immutable bundle·시각 지문·review artifact의 bounded fetch와 manifest-bound SHA-256 readback을 소유한다. `review-ready`는 exact identity와 transcript/context/review closure가 모두 일치할 때만 반환한다. |
+| `analysis/channelPreanalysisClient.ts` | raw catalog branch → Pages fallback, 네 source의 manifest-only 병렬 목록 조회, revision별 immutable bundle·시각 지문·review artifact의 bounded fetch와 manifest-bound SHA-256 readback을 소유한다. `review-ready`는 exact identity와 transcript/context/review closure가 모두 일치할 때만 반환한다. |
 | `analysis/channelPreanalysisReviewBundle.ts` | 최대 12개 최종 후보의 전체 맥락, participant grounding, 후보별 context/evidence/AI receipt, 서로 다른 JPEG 4장, 대표 thumbnail과 `review-ready | verified-empty` certificate를 4MiB 안에서 봉인한다. |
 | `analysis/channelPreanalysisVisualFingerprint.ts` | 원격 12-anchor 화면 지문 schema, 32×18 luma에서의 dHash/blockHash·밝기·edge 비교, 3등분 coverage, 유일 합의와 단일 후보 bounded offset 복구를 소유한다. 오디오 landmark는 이 모듈의 현재 계약이 아니다. |
 | `analysis/channelPreanalysisBundleBinding.ts` | 현재 로컬 source 지문, 실제로 검증해 읽은 bundle bytes, manifest의 exact artifact ID·SHA-256을 하나의 원자적 receipt로 묶는다. manifest가 바뀌거나 병렬 lookup 자료가 섞이면 자막·맥락 seed 사용을 거부한다. |
@@ -67,14 +67,14 @@
 | `app/channelPreanalysisVisualIdentity.ts` | App의 로컬 영상 화면 검증 orchestration이다. 단일 probable 후보 또는 이름이 완전히 바뀐 duration cohort의 공통 sampling plan을 한 번 실행하고, 유일한 합의일 때만 snapshot-bound exact lookup을 반환한다. |
 | `media/localVideoVisualAnalysis.ts` | 로컬 파일의 지정 source 시각을 seek·decode하고 원본 pixel buffer를 남기지 않는 고정 32×18 luma 표본으로 축소한다. 표본은 지문 비교 직후 명시적으로 지운다. |
 | `../scripts/channel-preanalysis-visual-fingerprint.mjs` | bounded YouTube storyboard metadata·sheet를 받아 12개 분산 anchor의 manifest-bound 시각 지문 artifact를 생성한다. sheet host·개수·bytes와 이미지 decode를 제한한다. |
-| `../scripts/sync-amoretto-preanalysis.mjs` | 다섯 공식 playlist feed reconciliation, 전역 최대 2개 fair scheduling, pinned `yt-dlp` metadata/한국어 자막 우선 추출과 자막 부재 예약 ASR fallback, source별 immutable bundle-first commit, review artifact까지 포함한 closure와 단계별 retry checkpoint를 수행한다. |
+| `../scripts/sync-amoretto-preanalysis.mjs` | 네 공식 playlist feed reconciliation, 전역 최대 2개 fair scheduling, pinned `yt-dlp` metadata/한국어 자막 우선 추출과 자막 부재 예약 ASR fallback, source별 immutable bundle-first commit, review artifact까지 포함한 closure와 단계별 retry checkpoint를 수행한다. |
 | `../scripts/lib/channel-preanalysis-media.mjs` | 정확한 YouTube 분석 사본의 bounded 다운로드·12시간/16GiB probe·전체 1초 오디오 특징 스트림·후보별 JPEG 4장과 16kHz WAV 추출을 소유한다. |
 | `../scripts/lib/channel-preanalysis-scheduled-asr.mjs` | 자막 없는 VOD의 audio-only 다운로드, 90초 canonical WAV 추출, private R2 stage/resolve, Groq segment timestamp·보수적 no-speech 검증과 range별 atomic checkpoint/resume를 소유한다. |
 | `../scripts/lib/channel-preanalysis-review-runner.mjs` | 전체 오디오 신호와 의미 lead를 최대 12개로 융합하고, 화면이 모두 준비된 후보만 AI에 보내 최종 검증 certificate를 만든다. |
 | `../scripts/lib/channel-preanalysis-review-checkpoint.mjs` | source/video/context/revision/pipeline에 봉인된 후보별 완료·제외·재시도 결과를 4MiB 안에서 원자 보존하고 게시 성공 뒤에만 삭제한다. |
 | `../scripts/lib/channel-preanalysis-review-candidate-client.mjs` | 후보 WAV·JPEG를 private R2에 stage하고 맥락을 전용 Worker로 보낸다. 만료 가능한 transport ticket과 고정 semantic operation을 분리해 409·429·5xx를 복구하며 실제 model receipt를 runner 계약으로 봉인한다. |
 | `../scripts/lib/channel-preanalysis-review-publisher.mjs` | 완전한 review bundle을 immutable write/readback한 뒤에만 catalog를 `review-ready`로 바꾸며 partial 결과는 `retryable(review)`로 남긴다. |
-| `../scripts/sync-channel-preanalysis-reviews.mjs` | 다섯 source의 전역 최대 2개 review queue, 안전한 yt-dlp 환경, 임시 media cleanup, 후보 Worker adapter와 최종 catalog closure 검증을 연결한다. |
+| `../scripts/sync-channel-preanalysis-reviews.mjs` | 네 source의 전역 최대 2개 review queue, 안전한 yt-dlp 환경, 임시 media cleanup, 후보 Worker adapter와 최종 catalog closure 검증을 연결한다. |
 | `../scripts/activate-channel-preanalysis.ps1` | Groq·Qwen key를 보안 입력으로 받아 전용 Worker의 네 필수 secret과 코드를 원자 배포하고, GitHub Actions secret 연결 및 무과금 인증 probe를 수행한다. |
 | `app/PreparedReviewExperience.tsx` | exact `review-ready` artifact를 기존 검토 UI에 즉시 투영하고 편집자의 선택·경계 조정만 artifact digest별로 로컬 저장한다. |
 | `app/preparedAnalysisLibrary.ts` | 검증된 manifest의 `review-ready` 영상만 configured source 순서와 최신 게시 시각으로 묶는 순수 projection이다. |

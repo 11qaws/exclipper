@@ -12,14 +12,14 @@ import {
 } from "./channelPreanalysisSources";
 
 describe("configured channel preanalysis sources", () => {
-  it("pins the five editor-approved YouTube sources exactly once", () => {
-    expect(CHANNEL_PREANALYSIS_SOURCES).toHaveLength(5);
+  it("pins the four editor-approved YouTube sources exactly once", () => {
+    expect(CHANNEL_PREANALYSIS_SOURCES).toHaveLength(4);
     expect(
       new Set(CHANNEL_PREANALYSIS_SOURCES.map(({ sourceId }) => sourceId)).size,
-    ).toBe(5);
+    ).toBe(4);
     expect(
       new Set(CHANNEL_PREANALYSIS_SOURCES.map(({ channelId }) => channelId)).size,
-    ).toBe(5);
+    ).toBe(4);
     expect(
       CHANNEL_PREANALYSIS_SOURCES.map(
         ({ channelHandle, channelId, sourceId }) => ({
@@ -45,11 +45,6 @@ describe("configured channel preanalysis sources", () => {
         channelId: "UCk0Mu5MpVzJ056e65XpAj0Q",
       },
       {
-        sourceId: "coco-replay",
-        channelHandle: "@kokotorori",
-        channelId: "UCgq07mhOmrjVeZeJYXiAClw",
-      },
-      {
         sourceId: "mangjing-compilations",
         channelHandle: "@망징-b1t",
         channelId: "UC_hftLL-ydsJd1YpcBZ_09g",
@@ -68,7 +63,7 @@ describe("configured channel preanalysis sources", () => {
     ).toEqual([MANGJING_CHANNEL_PREANALYSIS_SOURCE]);
   });
 
-  it("uses the live archive playlist only for Coco's mixed main channel", () => {
+  it("uses only the approved long-form archive playlists", () => {
     expect(
       CHANNEL_PREANALYSIS_SOURCES.map(
         ({ channelHandle, playlistId, playlistKind }) => ({
@@ -94,11 +89,6 @@ describe("configured channel preanalysis sources", () => {
         playlistKind: "long-form-uploads",
       },
       {
-        channelHandle: "@kokotorori",
-        playlistId: "UULVgq07mhOmrjVeZeJYXiAClw",
-        playlistKind: "live-streams",
-      },
-      {
         channelHandle: "@망징-b1t",
         playlistId: "UULF_hftLL-ydsJd1YpcBZ_09g",
         playlistKind: "long-form-uploads",
@@ -114,6 +104,10 @@ describe("configured channel preanalysis sources", () => {
       channelPreanalysisSourceByChannelId("UCHycoTBFDhXz4XNz8jBP-_A"),
     ).toBe(AMORETTO_CHANNEL_PREANALYSIS_SOURCE);
     expect(channelPreanalysisSourceById("unknown")).toBeNull();
+    expect(channelPreanalysisSourceById("coco-replay")).toBeNull();
+    expect(
+      channelPreanalysisSourceByChannelId("UCgq07mhOmrjVeZeJYXiAClw"),
+    ).toBeNull();
     expect(isChannelPreanalysisYouTubeChannelId("UC-invalid")).toBe(false);
     expect(
       channelPreanalysisStoragePrefix(MANGJING_CHANNEL_PREANALYSIS_SOURCE),

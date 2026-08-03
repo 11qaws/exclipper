@@ -39,7 +39,6 @@ import {
   EUREKA_CHANNEL_CAST_ROSTER_ID,
   MANGJING_CHANNEL_CAST_ROSTER_ID,
   SENA_ARBEL_CHANNEL_CAST_ROSTER_ID,
-  TORORI_COCO_CHANNEL_CAST_ROSTER_ID,
   type CandidatePassBCastRosterId,
 } from "../analysis/participantRoster";
 import {
@@ -204,10 +203,6 @@ const SOURCE_CASES = [
   },
   {
     source: CHANNEL_PREANALYSIS_SOURCES[3],
-    rosterId: TORORI_COCO_CHANNEL_CAST_ROSTER_ID,
-  },
-  {
-    source: CHANNEL_PREANALYSIS_SOURCES[4],
     rosterId: MANGJING_CHANNEL_CAST_ROSTER_ID,
   },
 ] as const satisfies readonly {
