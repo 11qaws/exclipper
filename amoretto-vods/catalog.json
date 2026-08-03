@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "channelId": "UCHycoTBFDhXz4XNz8jBP-_A",
   "channelHandle": "@AmorettoVODs",
-  "revision": 73,
-  "generatedAt": "2026-08-03T07:50:15.870Z",
+  "revision": 75,
+  "generatedAt": "2026-08-03T17:05:46.078Z",
   "videos": [
     {
       "channelId": "UCHycoTBFDhXz4XNz8jBP-_A",
@@ -78,11 +78,12 @@
       "publishedAt": "2026-07-18T05:42:21.000Z",
       "updatedAt": "2026-07-18T06:14:18.000Z",
       "watchUrl": "https://www.youtube.com/watch?v=vadCuMEo5PQ",
-      "state": "transcript-ready",
-      "revision": 4,
+      "state": "review-ready",
+      "revision": 6,
       "artifactIds": [
-        "youtube-caption-bundle:vadCuMEo5PQ:v1",
-        "youtube-storyboard-visual-fingerprint:vadCuMEo5PQ:v1"
+        "youtube-storyboard-visual-fingerprint:vadCuMEo5PQ:v1",
+        "youtube-caption-bundle:vadCuMEo5PQ:v2",
+        "review-bundle:vadCuMEo5PQ:v6"
       ],
       "registeredLocalSampledFingerprints": [],
       "retry": null
@@ -287,16 +288,6 @@
       "contentDigest": "sha256:3e052b01e5febbeece8c294d52d27b595b5b67aa498d0034ebd499d362e1eaf6",
       "byteLength": 2193,
       "createdAt": "2026-07-24T20:47:12.000Z"
-    },
-    {
-      "artifactId": "youtube-caption-bundle:vadCuMEo5PQ:v1",
-      "videoId": "vadCuMEo5PQ",
-      "kind": "transcript",
-      "revision": 1,
-      "storageKey": "amoretto-vods/videos/vadCuMEo5PQ.v1.json",
-      "contentDigest": "sha256:b238779d98b293346a712f9e3836b4d619ee60868efb868b255edd534dc8f7cf",
-      "byteLength": 321706,
-      "createdAt": "2026-07-30T13:18:42.026Z"
     },
     {
       "artifactId": "youtube-storyboard-visual-fingerprint:vadCuMEo5PQ:v1",
@@ -537,6 +528,26 @@
       "contentDigest": "sha256:a170516bc0ea2ab876d30bdfc064c0a80907a9206d5843aa92b2c97f332a3e8b",
       "byteLength": 1580117,
       "createdAt": "2026-08-03T04:16:07.998Z"
+    },
+    {
+      "artifactId": "youtube-caption-bundle:vadCuMEo5PQ:v2",
+      "videoId": "vadCuMEo5PQ",
+      "kind": "transcript",
+      "revision": 2,
+      "storageKey": "amoretto-vods/videos/vadCuMEo5PQ.v2.json",
+      "contentDigest": "sha256:ce588307be5de58a2d96107efd147b9f7cba9ffcbefd0adba6c564c1fc5792e1",
+      "byteLength": 345357,
+      "createdAt": "2026-08-03T16:43:11.897Z"
+    },
+    {
+      "artifactId": "review-bundle:vadCuMEo5PQ:v6",
+      "videoId": "vadCuMEo5PQ",
+      "kind": "review",
+      "revision": 6,
+      "storageKey": "amoretto-vods/videos/vadCuMEo5PQ.review.v6.json",
+      "contentDigest": "sha256:f6dd68902cde277f7e1d44f4eefd0ba94722a9bac13f0ee21429e574541eaac7",
+      "byteLength": 1655863,
+      "createdAt": "2026-08-03T16:57:44.663Z"
     }
   ]
 }

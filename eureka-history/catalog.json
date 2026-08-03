@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "channelId": "UCiFzBB8xsUjEBq8_h6Yl6tA",
   "channelHandle": "@eureka_history",
-  "revision": 13,
-  "generatedAt": "2026-08-03T07:50:05.826Z",
+  "revision": 15,
+  "generatedAt": "2026-08-03T16:55:14.551Z",
   "videos": [
     {
       "channelId": "UCiFzBB8xsUjEBq8_h6Yl6tA",
@@ -92,15 +92,21 @@
       "videoId": "0KiWzfFCoAA",
       "title": "2026 07 27 게릴라이던것",
       "normalizedTitle": "2026 07 27 게릴라이던것",
-      "durationMs": null,
+      "durationMs": 18411000,
       "publishedAt": "2026-07-27T15:44:06.000Z",
       "updatedAt": "2026-07-27T18:08:58.000Z",
       "watchUrl": "https://www.youtube.com/watch?v=0KiWzfFCoAA",
-      "state": "discovered",
-      "revision": 1,
+      "state": "retryable",
+      "revision": 3,
       "artifactIds": [],
       "registeredLocalSampledFingerprints": [],
-      "retry": null
+      "retry": {
+        "stage": "transcript",
+        "lastSuccessfulState": "metadata-ready",
+        "attemptCount": 1,
+        "nextAttemptAt": "2026-08-03T19:55:14.550Z",
+        "errorCode": "UPSTREAM_INVALID_RESPONSE"
+      }
     },
     {
       "channelId": "UCiFzBB8xsUjEBq8_h6Yl6tA",
