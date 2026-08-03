@@ -171,8 +171,18 @@ export function buildReviewCandidates(input: ReviewModelInput): readonly ReviewC
   return input.candidates.map((candidate) => {
     const insight = input.insightById[candidate.id];
     const packet = input.contextById[candidate.id];
-    const why = insight?.eventSummaryKo?.trim() ?? "";
+    const event = insight?.eventSummaryKo?.trim() ?? "";
     const reaction = insight?.reactionSummaryKo?.trim() ?? "";
+    const clipReason = insight?.whyGoodClipKo?.trim() ?? "";
+    const contextSummary = packet?.contextVerdictKo?.trim() ?? "";
+    const contextTopic = packet?.topicContextKo?.trim() ?? "";
+    const cues = toCues(input.cuesById[candidate.id], candidate.id);
+    const representativeCue = [...cues].sort(
+      (left, right) =>
+        Math.abs(left.atMs - candidate.peakMs) -
+          Math.abs(right.atMs - candidate.peakMs) ||
+        left.atMs - right.atMs,
+    )[0];
     const editedTitle = titles[candidate.id]?.trim();
     return {
       id: candidate.id,
@@ -184,10 +194,20 @@ export function buildReviewCandidates(input: ReviewModelInput): readonly ReviewC
       endMs: candidate.endMs,
       peakMs: candidate.peakMs,
       decision: input.decisionById[candidate.id] ?? "pending",
-      why: why.length > 0 ? why : "이 구간에 대한 설명이 아직 준비되지 않았습니다.",
-      ...(reaction.length > 0 ? { quote: reaction } : {}),
+      event: event.length > 0 ? event : "이 구간의 사건 설명이 아직 준비되지 않았습니다.",
+      reaction:
+        reaction.length > 0
+          ? reaction
+          : "스트리머의 반응 설명이 아직 준비되지 않았습니다.",
+      clipReason:
+        clipReason.length > 0
+          ? clipReason
+          : "클립 후보로 남긴 이유가 아직 준비되지 않았습니다.",
+      ...(contextSummary.length > 0 ? { contextSummary } : {}),
+      ...(contextTopic.length > 0 ? { contextTopic } : {}),
+      ...(representativeCue === undefined ? {} : { quote: representativeCue.text }),
       people: toPeople(insight, profiles),
-      cues: toCues(input.cuesById[candidate.id], candidate.id),
+      cues,
       context: toContext(packet, candidate),
       frames: toFrames(input.framesById[candidate.id], candidate),
     };

@@ -8,13 +8,12 @@
  * It binds no keys. The review keymap lives only in `useReviewShortcuts`, so
  * there is one table to check against the spec instead of two that drift — an
  * earlier duplicate here had already drifted in seven places. For the same
- * reason the layered states the keymap must reason about (page, player card,
- * reset confirmation) are owned by the container and passed in, not held here.
+ * reason the layered states the keymap must reason about (page and reset
+ * confirmation) are owned by the container and passed in, not held here.
  *
  * Motion follows §7.4: the UI is not a separate layer floating over the
- * content, it is the same space in another state. The player card grows out of
- * the item that opened it, the evidence page unfolds from the summary in place,
- * and moving between candidates carries a direction.
+ * content, it is the same space in another state. The evidence page unfolds
+ * from the summary in place, and moving between candidates carries a direction.
  */
 import {
   useCallback,
@@ -22,7 +21,6 @@ import {
   useMemo,
   useRef,
   useState,
-  type CSSProperties,
   type ReactElement,
 } from "react";
 
@@ -68,21 +66,22 @@ export interface ReviewCandidate {
   readonly endMs: number;
   readonly peakMs: number;
   readonly decision: ReviewDecision;
-  /** 왜 이 장면인가 — 한 문단. */
-  readonly why: string;
-  /** 대표 인용 한 줄(있을 때). */
+  /** 장면에서 실제로 벌어진 사건. */
+  readonly event: string;
+  /** 사건에 대한 스트리머의 반응. */
+  readonly reaction: string;
+  /** 편집 후보로 남길 가치. */
+  readonly clipReason: string;
+  /** 방송 전체 흐름 속 한 줄 위치. */
+  readonly contextSummary?: string;
+  /** 해당 시점의 방송 주제. */
+  readonly contextTopic?: string;
+  /** 실제 대사 cue에서 고른 대표 인용 한 줄(있을 때). */
   readonly quote?: string;
   readonly people: readonly ReviewPerson[];
   readonly cues: readonly ReviewCue[];
   readonly context: readonly ReviewContextItem[];
   readonly frames: readonly ReviewFrame[];
-}
-
-/** 카드가 자라날 출발점. 클릭한 요소의 화면 좌표(§7.4 연결감). */
-export interface PlayerCardOrigin {
-  readonly atMs: number;
-  readonly x: number;
-  readonly y: number;
 }
 
 export interface ReviewSurfaceProps {
@@ -108,10 +107,6 @@ export interface ReviewSurfaceProps {
   readonly onHelp?: () => void;
   readonly onToggleTheme?: () => void;
   readonly themeLabel?: string;
-  /** 슬라이드인 플레이어 카드 — 컨테이너가 소유(Esc 체인이 알아야 함). */
-  readonly playerCardOpen: boolean;
-  readonly onPlayerCardOpen: (origin: PlayerCardOrigin) => void;
-  readonly onPlayerCardClose: () => void;
   /** 후보 전체 리셋 확인창 — 컨테이너가 소유. */
   readonly resetConfirmOpen: boolean;
   readonly onResetConfirmOpen: () => void;
@@ -158,9 +153,6 @@ export function ReviewSurface({
   onHelp,
   onToggleTheme,
   themeLabel,
-  playerCardOpen,
-  onPlayerCardOpen,
-  onPlayerCardClose,
   resetConfirmOpen,
   onResetConfirmOpen,
   onResetConfirm,
@@ -171,12 +163,9 @@ export function ReviewSurface({
   const active = candidates[activeIndex];
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const barRef = useRef<HTMLDivElement | null>(null);
-  /** 카드를 연 요소. 닫을 때 포커스를 여기로 돌려준다(§7.7). */
-  const cardTriggerRef = useRef<HTMLElement | null>(null);
   const [playing, setPlaying] = useState(false);
   const [positionMs, setPositionMs] = useState(active?.startMs ?? 0);
   const [selectedMarkId, setSelectedMarkId] = useState<string | null>(null);
-  const [cardOrigin, setCardOrigin] = useState<PlayerCardOrigin | null>(null);
 
   const approvedCount = useMemo(
     () => candidates.filter((c) => c.decision === "used").length,
@@ -198,7 +187,6 @@ export function ReviewSurface({
     setPositionMs(active?.startMs ?? 0);
     setPlaying(false);
     setSelectedMarkId(null);
-    setCardOrigin(null);
   }
 
   const activeCandidateId = active?.id;
@@ -258,35 +246,14 @@ export function ReviewSurface({
     }
   }, [active, youtubeVideoId]);
 
-  /**
-   * 근거의 모든 표기는 재생 진입점이다(§7.5).
-   *
-   * 카드는 처음 연 요소에서 자라나고, **열려 있는 동안에는 움직이지 않는다**.
-   * 다른 조각을 고르면 재생 위치만 바뀐다(§7.7) — 카드가 매번 새 자리로 뛰면
-   * 어디를 보고 있었는지 놓치고, 자라나는 연출도 의미를 잃는다.
-   */
+  /** 근거의 모든 표기는 고정 검토 플레이어의 재생 진입점이다(§7.5). */
   const playFrom = useCallback(
-    (atMs: number, markId: string, element: HTMLElement | null) => {
+    (atMs: number, markId: string) => {
       seek(atMs);
       setSelectedMarkId(markId);
-      if (playerCardOpen || element === null) return;
-      cardTriggerRef.current = element;
-      const rect = element.getBoundingClientRect();
-      const origin = {
-        atMs,
-        x: rect.left + rect.width / 2,
-        y: rect.top + rect.height / 2,
-      };
-      setCardOrigin(origin);
-      onPlayerCardOpen(origin);
     },
-    [onPlayerCardOpen, playerCardOpen, seek],
+    [seek],
   );
-
-  const closeCard = useCallback(() => {
-    onPlayerCardClose();
-    cardTriggerRef.current?.focus();
-  }, [onPlayerCardClose]);
 
   /*
    * 근거 항목 사이 이동 (§7.7). `←/→` 는 후보 축이라 쓰지 않고, `↑/↓` 와
@@ -306,11 +273,6 @@ export function ReviewSurface({
     items[next]?.focus();
   }, []);
 
-  /*
-   * 카드가 열려 있는 동안 Tab 은 카드 안에서만 돈다 (§7.7 focus trap). 뒤의
-   * 근거 목록은 살아 있지만 지금 조작 대상은 카드이므로, 포커스가 그 밖으로
-   * 새면 무엇이 선택돼 있는지 알 수 없게 된다.
-   */
   // 컨테이너의 키맵이 이 함수를 부를 수 있도록 올려 보낸다. 화면만이 자기
   // DOM 순서를 알고 있으므로, 이동 자체는 여기 두고 호출권만 넘긴다.
   useEffect(() => {
@@ -320,24 +282,6 @@ export function ReviewSurface({
   useEffect(() => {
     onPlaybackToggler?.(togglePlay);
   }, [onPlaybackToggler, togglePlay]);
-
-  const cardRef = useRef<HTMLElement | null>(null);
-  const onCardKeyDown = (event: React.KeyboardEvent<HTMLElement>): void => {
-    if (event.key !== "Tab") return;
-    const root = cardRef.current;
-    if (root === null) return;
-    const items = [...root.querySelectorAll<HTMLElement>("button:not(:disabled)")];
-    if (items.length === 0) return;
-    const first = items[0];
-    const last = items[items.length - 1];
-    if (event.shiftKey && document.activeElement === first) {
-      event.preventDefault();
-      last?.focus();
-    } else if (!event.shiftKey && document.activeElement === last) {
-      event.preventDefault();
-      first?.focus();
-    }
-  };
 
   if (active === undefined) {
     return (
@@ -380,6 +324,85 @@ export function ReviewSurface({
     const ratio = (clientX - rect.left) / Math.max(1, rect.width);
     seek(active.startMs + ratio * durationMs, { allowOutside: true });
   };
+
+  const renderPlayer = (compact = false): ReactElement => (
+    <div className={`rvw-player${compact ? " compact" : ""}`}>
+      <div className="rvw-media">
+        {videoSrc !== undefined ? (
+          <video
+            ref={videoRef}
+            src={videoSrc}
+            onLoadedMetadata={(event) => {
+              event.currentTarget.pause();
+              event.currentTarget.currentTime = active.startMs / 1_000;
+              setPositionMs(active.startMs);
+              setPlaying(false);
+            }}
+            onTimeUpdate={(event) => {
+              const ms = event.currentTarget.currentTime * 1_000;
+              setPositionMs(ms);
+              if (ms >= active.endMs) {
+                event.currentTarget.pause();
+                setPlaying(false);
+              }
+            }}
+            onPlay={() => setPlaying(true)}
+            onPause={() => setPlaying(false)}
+          />
+        ) : youtubeEmbedUrl !== null ? (
+          <iframe
+            key={youtubeEmbedUrl}
+            className="rvw-youtube"
+            src={youtubeEmbedUrl}
+            title={`${active.title} YouTube 재생`}
+            allow="autoplay; encrypted-media; picture-in-picture"
+            allowFullScreen
+            referrerPolicy="strict-origin-when-cross-origin"
+          />
+        ) : (
+          <div className="rvw-poster">재생할 원본이 없습니다</div>
+        )}
+      </div>
+      <div className="rvw-pbar">
+        <button
+          className="rvw-play"
+          type="button"
+          onClick={togglePlay}
+          aria-label={playing ? "일시정지" : "재생"}
+        >
+          {playing ? "❚❚" : "▶"}
+        </button>
+        <span className="tc">{formatTime(positionMs)}</span>
+        <div
+          className="pb"
+          ref={barRef}
+          role="slider"
+          tabIndex={0}
+          aria-label="재생 위치"
+          aria-valuemin={active.startMs}
+          aria-valuemax={active.endMs}
+          aria-valuenow={Math.round(positionMs)}
+          onPointerDown={(event) => {
+            event.currentTarget.setPointerCapture(event.pointerId);
+            seekFromPointer(event.clientX);
+          }}
+          onPointerMove={(event) => {
+            if (event.buttons === 1) seekFromPointer(event.clientX);
+          }}
+        >
+          <span className="played" style={{ width: `${playedRatio * 100}%` }} />
+          <span className="mk peak" style={{ left: `${ratioOf(active.peakMs) * 100}%` }} />
+          {active.cues.map((cue) => (
+            <span key={cue.id} className="mk cue" style={{ left: `${ratioOf(cue.atMs) * 100}%` }} />
+          ))}
+          {active.frames.map((frame) => (
+            <span key={frame.id} className="mk frame" style={{ left: `${ratioOf(frame.atMs) * 100}%` }} />
+          ))}
+        </div>
+        <span className="tc">{formatTime(active.endMs)}</span>
+      </div>
+    </div>
+  );
 
   const decisionBadge = active.decision !== "pending" && (
     <span className={`rvw-stbadge ${active.decision === "used" ? "use" : "no"}`}>
@@ -510,82 +533,7 @@ export function ReviewSurface({
           {page === "summary" ? (
             <div className="rvw-sum" key="summary">
               <div className="rvw-stagecol">
-                <div className="rvw-player">
-                  {videoSrc !== undefined ? (
-                    <video
-                      ref={videoRef}
-                      src={videoSrc}
-                      onLoadedMetadata={(event) => {
-                        event.currentTarget.pause();
-                        event.currentTarget.currentTime = active.startMs / 1_000;
-                        setPositionMs(active.startMs);
-                        setPlaying(false);
-                      }}
-                      onTimeUpdate={(event) => {
-                        const ms = event.currentTarget.currentTime * 1000;
-                        setPositionMs(ms);
-                        // 구간 끝에서 멈춘다 — 다음 장면으로 흘러가지 않게(§7.6).
-                        if (ms >= active.endMs) {
-                          event.currentTarget.pause();
-                          setPlaying(false);
-                        }
-                      }}
-                      onPlay={() => setPlaying(true)}
-                      onPause={() => setPlaying(false)}
-                    />
-                  ) : youtubeEmbedUrl !== null ? (
-                    <iframe
-                      key={youtubeEmbedUrl}
-                      className="rvw-youtube"
-                      src={youtubeEmbedUrl}
-                      title={`${active.title} YouTube 재생`}
-                      allow="autoplay; encrypted-media; picture-in-picture"
-                      allowFullScreen
-                      referrerPolicy="strict-origin-when-cross-origin"
-                    />
-                  ) : (
-                    <div className="rvw-poster">재생할 원본이 없습니다</div>
-                  )}
-                  <div className="rvw-pbar">
-                    <button
-                      className="rvw-play"
-                      type="button"
-                      onClick={togglePlay}
-                      aria-label={playing ? "일시정지" : "재생"}
-                    >
-                      {playing ? "❚❚" : "▶"}
-                    </button>
-                    <span className="tc">{formatTime(positionMs)}</span>
-                    <div
-                      className="pb"
-                      ref={barRef}
-                      role="slider"
-                      tabIndex={0}
-                      aria-label="재생 위치"
-                      aria-valuemin={active.startMs}
-                      aria-valuemax={active.endMs}
-                      aria-valuenow={Math.round(positionMs)}
-                      onPointerDown={(event) => {
-                        event.currentTarget.setPointerCapture(event.pointerId);
-                        seekFromPointer(event.clientX);
-                      }}
-                      onPointerMove={(event) => {
-                        if (event.buttons === 1) seekFromPointer(event.clientX);
-                      }}
-                    >
-                      <span className="played" style={{ width: `${playedRatio * 100}%` }} />
-                      {/* 정점·대사·프레임을 진행 바 위 마커로(§7.6) */}
-                      <span className="mk peak" style={{ left: `${ratioOf(active.peakMs) * 100}%` }} />
-                      {active.cues.map((cue) => (
-                        <span key={cue.id} className="mk cue" style={{ left: `${ratioOf(cue.atMs) * 100}%` }} />
-                      ))}
-                      {active.frames.map((frame) => (
-                        <span key={frame.id} className="mk frame" style={{ left: `${ratioOf(frame.atMs) * 100}%` }} />
-                      ))}
-                    </div>
-                    <span className="tc">{formatTime(active.endMs)}</span>
-                  </div>
-                </div>
+                {renderPlayer()}
 
                 <div className="rvw-dock">
                   <button
@@ -640,47 +588,50 @@ export function ReviewSurface({
               </div>
 
               <div className="rvw-narr">
-                {/* 주장: 무엇인가 + 왜 뽑혔나. 한 질문의 답이라 늘 붙어 있다. */}
-                <div className="rvw-claim">
-                  <div className="rvw-titlerow">
+                <div className="rvw-titlerow">
+                  <div>
+                    <span className="rvw-eyebrow">편집자 브리프</span>
                     <h3 className="ttl">
                       {active.title}
                       {decisionBadge}
                     </h3>
-                    {pageTabs}
                   </div>
-                  <p className="rvw-why">{active.why}</p>
+                  {pageTabs}
                 </div>
 
-                {/* 근거: 실제로 뭐라 했나 + 혼자 서는가. 한 쌍으로 묶인다. */}
-                <div className="rvw-grps">
-                  {active.quote !== undefined && (
-                    <div className="rvw-grp">
-                      <span className="rvw-sub">확인한 대사</span>
-                      <blockquote className="rvw-quote">{active.quote}</blockquote>
-                    </div>
-                  )}
-                  {active.context.length > 0 && (
-                    <div className="rvw-grp">
-                      <span className="rvw-sub">연관 맥락</span>
-                      <div className="rvw-flow">
-                        {active.context.map((item) => (
-                          <div key={item.id}>
-                            <div className="rvw-flseg">
-                              <span className="lb">{item.label}</span>
-                              <span className="tx">{item.text}</span>
-                            </div>
-                            <div className="rvw-flcon" />
-                          </div>
-                        ))}
-                        <div className="rvw-flseg now">
-                          <span className="lb">이 클립</span>
-                          <span className="tx">{active.title}</span>
-                        </div>
-                      </div>
-                    </div>
-                  )}
+                <div className="rvw-brieflist">
+                  <section className="rvw-brief">
+                    <span className="rvw-sub">무슨 일이 있었나</span>
+                    <p>{active.event}</p>
+                  </section>
+                  <section className="rvw-brief">
+                    <span className="rvw-sub">스트리머 반응</span>
+                    <p>{active.reaction}</p>
+                  </section>
+                  <section className="rvw-brief accent">
+                    <span className="rvw-sub">왜 클립인가</span>
+                    <p>{active.clipReason}</p>
+                  </section>
                 </div>
+
+                <section className="rvw-quotegrp">
+                  <span className="rvw-sub">확인한 실제 대사</span>
+                  {active.quote !== undefined
+                    ? <blockquote className="rvw-quote">{active.quote}</blockquote>
+                    : <p className="rvw-note">또렷하게 확인된 대사가 없습니다.</p>}
+                </section>
+
+                {(active.contextTopic !== undefined || active.contextSummary !== undefined) && (
+                  <section className="rvw-contextline">
+                    {active.contextTopic !== undefined && (
+                      <span className="rvw-topic">{active.contextTopic}</span>
+                    )}
+                    {active.contextSummary !== undefined && <p>{active.contextSummary}</p>}
+                    <button type="button" onClick={() => onPageChange("evidence")}>
+                      근거에서 자세히
+                    </button>
+                  </section>
+                )}
 
                 <div className="rvw-nav">
                   <span><Keycap>←</Keycap> <Keycap>→</Keycap> 후보 이동</span>
@@ -695,8 +646,10 @@ export function ReviewSurface({
                 {pageTabs}
               </div>
 
-              {/* 통합 타임라인: 프레임 · 대사 · 정점이 한 축 위에(§10.5) */}
-              <div className="rvw-tl">
+              <div className="rvw-evwork">
+                <div className="rvw-evmain">
+                  {/* 통합 타임라인: 프레임 · 대사 · 정점이 한 축 위에(§10.5) */}
+                  <div className="rvw-tl">
                 <div className="axis" />
                 {active.frames.length === 0 ? (
                   // 프레임이 없어도 숨기지 않는다 — 회색 판으로 자리와 시각을 남긴다(§2).
@@ -712,7 +665,7 @@ export function ReviewSurface({
                         type="button"
                         className={`fr${selectedMarkId === markId ? " sel" : ""}`}
                         style={{ left }}
-                        onClick={(event) => playFrom(frame.atMs, markId, event.currentTarget)}
+                        onClick={() => playFrom(frame.atMs, markId)}
                         aria-label={`${formatTime(frame.atMs)} 장면부터 재생`}
                       >
                         <span className="img">
@@ -729,7 +682,7 @@ export function ReviewSurface({
                   type="button"
                   className="peak"
                   style={{ left: `${ratioOf(active.peakMs) * 100}%` }}
-                  onClick={(event) => playFrom(active.peakMs, "peak", event.currentTarget)}
+                  onClick={() => playFrom(active.peakMs, "peak")}
                   aria-label={`정점 ${formatTime(active.peakMs)}부터 재생`}
                 />
                 {active.cues.map((cue) => {
@@ -740,17 +693,17 @@ export function ReviewSurface({
                       type="button"
                       className={`cue${selectedMarkId === markId ? " sel" : ""}`}
                       style={{ left: `${ratioOf(cue.atMs) * 100}%` }}
-                      onClick={(event) => playFrom(cue.atMs, markId, event.currentTarget)}
+                      onClick={() => playFrom(cue.atMs, markId)}
                       aria-label={`${formatTime(cue.atMs)} 대사부터 재생`}
                     />
                   );
                 })}
                 <span className="tc" style={{ left: "0%" }}>{formatTime(active.startMs)}</span>
                 <span className="tc" style={{ left: "100%" }}>{formatTime(active.endMs)}</span>
-              </div>
+                  </div>
 
-              {/* 하단 2열: 확인한 대사 / 흐름·인물 (§6) */}
-              <div className="rvw-evcols">
+                  {/* 하단 2열: 확인한 대사 / 흐름·인물 (§6) */}
+                  <div className="rvw-evcols">
                 <div className="rvw-evcol">
                   <span className="rvw-sub">확인한 대사</span>
                   <div className="rvw-grp">
@@ -764,7 +717,7 @@ export function ReviewSurface({
                             key={cue.id}
                             type="button"
                             className={`rvw-cue${selectedMarkId === markId ? " sel" : ""}`}
-                            onClick={(event) => playFrom(cue.atMs, markId, event.currentTarget)}
+                            onClick={() => playFrom(cue.atMs, markId)}
                           >
                             <span className="tc">{formatTime(cue.atMs)}</span>
                             <span>
@@ -794,7 +747,7 @@ export function ReviewSurface({
                             key={item.id}
                             type="button"
                             className={`rvw-ctx${selectedMarkId === markId ? " sel" : ""}`}
-                            onClick={(event) => playFrom(item.atMs, markId, event.currentTarget)}
+                            onClick={() => playFrom(item.atMs, markId)}
                           >
                             <span className="when">{item.label} · {formatTime(item.atMs)}</span>
                             <span className="tx">{item.text}</span>
@@ -830,57 +783,32 @@ export function ReviewSurface({
                     </div>
                   </div>
                 </div>
-              </div>
+                  </div>
+                </div>
 
-              <div className="rvw-evfoot">
-                <span className="m">
-                  {formatTime(active.startMs)} – {formatTime(active.endMs)} · {formatTime(durationMs)}
-                </span>
-                <div className="acts">{decisionButtons}</div>
+                <aside className="rvw-evplayer" aria-label="근거 영상 검토">
+                  <div className="rvw-evplayer__head">
+                    <span className="rvw-eyebrow">선택 지점 검토</span>
+                    <strong>{formatTime(positionMs)}</strong>
+                  </div>
+                  {renderPlayer(true)}
+                  <p className="rvw-now">
+                    {selectedMarkId === null
+                      ? "프레임·대사·맥락을 누르면 해당 시점으로 이동합니다."
+                      : "선택한 근거 시점에 준비됐습니다. 재생 버튼을 눌러 확인하세요."}
+                  </p>
+                  <div className="rvw-evfoot">
+                    <span className="m">
+                      {formatTime(active.startMs)} – {formatTime(active.endMs)}
+                      <small>클립 길이 {formatTime(durationMs)}</small>
+                    </span>
+                    <div className="acts">{decisionButtons}</div>
+                  </div>
+                </aside>
               </div>
             </div>
           )}
         </div>
-
-        {/* 카드는 고른 항목에서 자라난다 — 화면 구석에서 튀어나오지 않는다(§7.4). */}
-        {playerCardOpen && cardOrigin !== null && (
-          <aside
-            className="rvw-pcard"
-            aria-label="선택한 지점 미리보기"
-            ref={cardRef}
-            onKeyDown={onCardKeyDown}
-            style={{
-              "--rvw-card-x": `${cardOrigin.x}px`,
-              "--rvw-card-y": `${cardOrigin.y}px`,
-            } as CSSProperties}
-          >
-            <div className="scr">
-              {videoSrc !== undefined ? (
-                <video src={videoSrc} controls={false} />
-              ) : youtubeEmbedUrl !== null ? (
-                <iframe
-                  key={`card-${youtubeEmbedUrl}`}
-                  className="rvw-youtube"
-                  src={youtubeEmbedUrl}
-                  title={`${active.title} 선택 지점 YouTube 재생`}
-                  allow="autoplay; encrypted-media; picture-in-picture"
-                  allowFullScreen
-                  referrerPolicy="strict-origin-when-cross-origin"
-                />
-              ) : "원본 없음"}
-            </div>
-            <div className="bar">
-              <button className="rvw-play" type="button" onClick={togglePlay} aria-label={playing ? "일시정지" : "재생"}>
-                {playing ? "❚❚" : "▶"}
-              </button>
-              <span className="tc">{formatTime(positionMs)}</span>
-              <span className="pb"><span style={{ width: `${playedRatio * 100}%` }} /></span>
-              <button className="x" type="button" onClick={closeCard} aria-label="미리보기 닫기">
-                닫기 <Keycap>Esc</Keycap>
-              </button>
-            </div>
-          </aside>
-        )}
 
         {resetConfirmOpen && (
           <div className="rvw-confirm" role="alertdialog" aria-modal="true" aria-labelledby="rvw-confirm-title">

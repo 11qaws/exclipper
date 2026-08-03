@@ -206,10 +206,13 @@ describe("prepared review projection", () => {
       endMs: 105_000,
       peakMs: 85_000,
       decision: "pending",
+      event: "마지막 시도에서 목표를 달성하고 결과 화면을 확인했습니다.",
+      reaction: "스트리머가 결과를 확인한 뒤 기뻐했습니다.",
+      clipReason: "앞선 실패와 성공의 보상이 한 구간 안에서 완결됩니다.",
+      contextTopic: "마지막 시도와 조용한 성공",
+      contextSummary: "앞선 실패가 쌓인 뒤 성공한 장면입니다.",
       quote: "됐다!",
     });
-    expect(candidate.why).toContain("목표를 달성");
-    expect(candidate.why).toContain("성공의 보상");
     expect(candidate.cues).toEqual([
       { id: "candidate-1-cue-0", atMs: 83_000, text: "됐다!" },
     ]);
@@ -235,6 +238,9 @@ describe("prepared review projection", () => {
         }),
         expect.objectContaining({ label: "AI가 확인하지 못한 점" }),
       ]),
+    );
+    expect(candidate.context.map(({ label }) => label)).not.toEqual(
+      expect.arrayContaining(["주제 맥락", "전체 흐름 판단", "빠른 탐색 근거"]),
     );
     expect(JSON.stringify(bundle)).toBe(before);
     expect(projectPreparedReviewBundle(bundle)).toEqual(result);

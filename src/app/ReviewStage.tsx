@@ -37,12 +37,9 @@ export interface ReviewStageProps {
   readonly onHelp?: () => void;
   readonly onToggleTheme?: () => void;
   readonly themeLabel?: string;
-  /** 페이지와 두 겹의 오버레이는 키맵(Esc 체인)이 알아야 해서 App 이 소유한다. */
+  /** 페이지와 확인 오버레이는 키맵(Esc 체인)이 알아야 해서 App 이 소유한다. */
   readonly page: ReviewPage;
   readonly onPageChange: (page: ReviewPage) => void;
-  readonly playerCardOpen: boolean;
-  readonly onPlayerCardOpen: () => void;
-  readonly onPlayerCardClose: () => void;
   readonly resetConfirmOpen: boolean;
   readonly onResetConfirmOpen: () => void;
   readonly onResetConfirm: () => void;
@@ -72,9 +69,6 @@ export function ReviewStage({
   themeLabel,
   page,
   onPageChange,
-  playerCardOpen,
-  onPlayerCardOpen,
-  onPlayerCardClose,
   resetConfirmOpen,
   onResetConfirmOpen,
   onResetConfirm,
@@ -127,9 +121,6 @@ export function ReviewStage({
       {...(onHelp === undefined ? {} : { onHelp })}
       {...(onToggleTheme === undefined ? {} : { onToggleTheme })}
       {...(themeLabel === undefined ? {} : { themeLabel })}
-      playerCardOpen={playerCardOpen}
-      onPlayerCardOpen={() => onPlayerCardOpen()}
-      onPlayerCardClose={onPlayerCardClose}
       resetConfirmOpen={resetConfirmOpen}
       onResetConfirmOpen={onResetConfirmOpen}
       onResetConfirm={onResetConfirm}

@@ -54,16 +54,6 @@ function nonEmptyText(value: string | null | undefined): string | null {
   return normalized.length === 0 ? null : normalized;
 }
 
-function joinedDistinctText(values: readonly (string | null | undefined)[]): string {
-  return [
-    ...new Set(
-      values
-        .map(nonEmptyText)
-        .filter((value): value is string => value !== null),
-    ),
-  ].join("\n");
-}
-
 function candidatePeakMs(candidate: ChannelPreanalysisReviewCandidate): number {
   return (
     candidate.sourceStartMs +
@@ -93,30 +83,6 @@ function candidateContext(
       atMs: candidate.sourceStartMs,
     },
     {
-      id: `${candidate.candidateId}-context-topic`,
-      label: "주제 맥락",
-      text: packet.topicContextKo,
-      atMs: peakMs,
-    },
-    {
-      id: `${candidate.candidateId}-context-verdict`,
-      label: "전체 흐름 판단",
-      text: packet.contextVerdictKo,
-      atMs: peakMs,
-    },
-    {
-      id: `${candidate.candidateId}-context-fast-evidence`,
-      label: "빠른 탐색 근거",
-      text: packet.fastEvidenceKo,
-      atMs: peakMs,
-    },
-    {
-      id: `${candidate.candidateId}-context-participants`,
-      label: "등장인물",
-      text: candidate.insight.participantSummaryKo,
-      atMs: peakMs,
-    },
-    {
       id: `${candidate.candidateId}-context-after`,
       label: "뒤 맥락",
       text: packet.afterContextKo,
@@ -128,6 +94,14 @@ function candidateContext(
       id: `${candidate.candidateId}-context-chat`,
       label: "채팅 반응",
       text: packet.chatReactionKo,
+      atMs: peakMs,
+    });
+  }
+  if (candidate.insight.identifiedParticipants.length === 0) {
+    items.push({
+      id: `${candidate.candidateId}-context-participants`,
+      label: "등장인물",
+      text: candidate.insight.participantSummaryKo,
       atMs: peakMs,
     });
   }
@@ -169,12 +143,22 @@ function projectCandidate(
     endMs: candidate.sourceEndMs,
     peakMs,
     decision: "pending",
-    why: joinedDistinctText([
-      candidate.insight.eventSummaryKo,
-      candidate.insight.reactionSummaryKo,
-      candidate.insight.whyGoodClipKo,
-      candidate.evidence.overlay.why,
-    ]),
+    event:
+      nonEmptyText(candidate.insight.eventSummaryKo) ??
+      "이 구간의 사건 설명이 아직 준비되지 않았습니다.",
+    reaction:
+      nonEmptyText(candidate.insight.reactionSummaryKo) ??
+      "스트리머의 반응 설명이 아직 준비되지 않았습니다.",
+    clipReason:
+      nonEmptyText(candidate.insight.whyGoodClipKo) ??
+      nonEmptyText(candidate.evidence.overlay.why) ??
+      "클립 후보로 남긴 이유가 아직 준비되지 않았습니다.",
+    ...(nonEmptyText(candidate.context.contextVerdictKo) === null
+      ? {}
+      : { contextSummary: candidate.context.contextVerdictKo.trim() }),
+    ...(nonEmptyText(candidate.context.topicContextKo) === null
+      ? {}
+      : { contextTopic: candidate.context.topicContextKo.trim() }),
     ...(representativeCue === undefined
       ? {}
       : { quote: representativeCue.text }),

@@ -875,7 +875,7 @@ type AnalysisSelectionSummary = DurableAnalysisSelectionSummary;
 type AnalysisCoverageSummary = DurableAnalysisCoverageSummary;
 type AnalysisGapApprovalEvidence = DurableAnalysisGapApprovalEvidence;
 
-const APP_VERSION = "0.9.0";
+const APP_VERSION = "0.9.1";
 const PERSISTENCE_SCHEMA_VERSION = "0.3.0";
 const SIGNAL_ENGINE_VERSION = CURRENT_FAST_PASS_MODEL_MANIFEST_HASH;
 const MAX_CHAT_FILE_BYTES = 32 * 1024 * 1024;
@@ -1378,11 +1378,10 @@ function App() {
    */
   const [dossierTab, setDossierTab] = useState<DossierTab>("summary");
   /**
-   * 새 검토 화면의 페이지(요약 ⇄ 근거)와 그 위에 겹치는 두 층.
+   * 새 검토 화면의 페이지(요약 ⇄ 근거)와 확인 오버레이.
    * 위의 `dossierTab`(3탭)을 대체하며, 레거시 검토 섹션이 걷히면 그쪽이 사라진다.
    */
   const [reviewPage, setReviewPage] = useState<ReviewPage>("summary");
-  const [playerCardOpen, setPlayerCardOpen] = useState(false);
   const [resetConfirmOpen, setResetConfirmOpen] = useState(false);
   /** 근거 항목 이동은 화면이 자기 DOM 을 알아야 해서, 화면이 함수를 올려준다. */
   const reviewItemFocusMoverRef = useRef<((delta: 1 | -1) => void) | null>(null);
@@ -9003,8 +9002,6 @@ function App() {
       undo: undoLastReview,
       page: reviewPage,
       setPage: setReviewPage,
-      playerCardOpen,
-      closePlayerCard: () => setPlayerCardOpen(false),
       resetConfirmOpen,
       openResetConfirm: () => setResetConfirmOpen(true),
       confirmReset: () => {
@@ -16605,9 +16602,6 @@ function App() {
                   themeLabel={theme === "light" ? "어두운 테마로" : "밝은 테마로"}
                   page={reviewPage}
                   onPageChange={setReviewPage}
-                  playerCardOpen={playerCardOpen}
-                  onPlayerCardOpen={() => setPlayerCardOpen(true)}
-                  onPlayerCardClose={() => setPlayerCardOpen(false)}
                   resetConfirmOpen={resetConfirmOpen}
                   onResetConfirmOpen={() => setResetConfirmOpen(true)}
                   onResetConfirm={() => {

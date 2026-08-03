@@ -30,9 +30,6 @@ export interface ReviewShortcutActions {
   /** 요약 ⇄ 근거. 후보를 넘기면 요약으로 리셋된다(§7.3) — 그 리셋은 화면이 한다. */
   readonly page: ReviewPage;
   readonly setPage: (page: ReviewPage) => void;
-  /** 근거에서 조각을 고르면 뜨는 슬라이드인 플레이어 카드. */
-  readonly playerCardOpen: boolean;
-  readonly closePlayerCard: () => void;
   /** 후보 전체 리셋 확인창. 여는 것만 키가 하고, 확정은 확인창 안에서만. */
   readonly resetConfirmOpen: boolean;
   readonly openResetConfirm: () => void;
@@ -98,16 +95,10 @@ export function useReviewShortcuts(actions: ReviewShortcutActions): void {
 
       if (event.code === "Escape") {
         // 한 방향으로, 한 겹씩, 가까운 것부터. 도움말이 가장 바깥(모달)이고,
-        // 그 아래 플레이어 카드, 그 아래 근거 페이지, 마지막이 포커스 취소다
-        // (명세 §11.2 — 도움말 순서만 개정, 감사 문서에 기록).
+        // 그 아래 근거 페이지, 마지막이 포커스 취소다.
         if (current.helpOpen) {
           event.preventDefault();
           current.closeHelp();
-          return;
-        }
-        if (current.playerCardOpen) {
-          event.preventDefault();
-          current.closePlayerCard();
           return;
         }
         if (current.page !== "summary") {

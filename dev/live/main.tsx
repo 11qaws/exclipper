@@ -1,6 +1,6 @@
 /** Live harness: mounts the real ReviewSurface against fixtures. */
 import { StrictMode, useEffect, useRef, useState } from "react";
-import { createRoot } from "react-dom/client";
+import { createRoot, type Root } from "react-dom/client";
 
 import {
   ReviewSurface,
@@ -20,8 +20,12 @@ const BASE: ReviewCandidate[] = [
     endMs: 1_968_000,
     peakMs: 1_944_000,
     decision: "used",
-    why: "첫 입을 베어 문 직후 큰 웃음과 감탄이 이어지고, 옆자리 참가자들이 연달아 반응을 보탭니다. 맛 평가보다 반응 자체가 중심이 되는 구간입니다.",
-    quote: "\"이거 진짜 유명한 거 맞아? 왜 이렇게 바삭해\"",
+    event: "두바이 초콜릿을 처음 맛본 직후 예상보다 강한 식감에 모두가 동시에 주목합니다.",
+    reaction: "아모레또가 크게 웃으며 바삭한 소리에 놀라고, 옆자리 참가자들이 연달아 맛보겠다고 끼어듭니다.",
+    clipReason: "첫 시식부터 집단 반응까지 48초 안에 완결되어 별도 설명 없이도 재미가 전달됩니다.",
+    contextTopic: "해외 간식 시식",
+    contextSummary: "택배를 열며 쌓인 기대가 첫 시식의 반전으로 이어지는 방송 중반의 핵심 장면입니다.",
+    quote: "이거 진짜 유명한 거 맞아? 왜 이렇게 바삭해",
     people: [
       { name: "세라 교수님", role: "진행자" },
       { name: "아모레또", role: "게스트" },
@@ -51,7 +55,12 @@ const BASE: ReviewCandidate[] = [
     endMs: 2_436_000,
     peakMs: 2_418_000,
     decision: "pending",
-    why: "발표를 앞두고 모두가 말을 멈추는 짧은 정적이 있고, 이어서 환호가 터집니다.",
+    event: "합격자 발표 직전 모두가 말을 멈추고 결과 화면을 기다립니다.",
+    reaction: "짧은 정적 뒤 결과를 확인한 스트리머가 안도하며 환호합니다.",
+    clipReason: "조용한 긴장과 즉각적인 해소가 한 구간 안에서 대비됩니다.",
+    contextTopic: "합격자 발표",
+    contextSummary: "방송 전반에 걸친 도전 결과가 공개되는 결말 구간입니다.",
+    quote: "자 그럼 발표하겠습니다",
     people: [{ name: "세라 교수님", role: "진행자" }],
     cues: [{ id: "q5", atMs: 2_412_000, text: "자 그럼 발표하겠습니다", speaker: "세라 교수님" }],
     context: [],
@@ -64,7 +73,9 @@ const BASE: ReviewCandidate[] = [
     endMs: 3_030_000,
     peakMs: 3_015_000,
     decision: "dropped",
-    why: "빈 데이터 검증용 후보입니다.",
+    event: "사건 설명이 길어질 때 레이아웃을 확인하는 검증용 후보입니다.",
+    reaction: "스트리머 반응 정보가 아직 준비되지 않았습니다.",
+    clipReason: "빈 근거와 긴 제목에서도 화면이 무너지지 않는지 확인합니다.",
     people: [],
     cues: [],
     context: [],
@@ -79,7 +90,6 @@ function Harness(): React.ReactElement {
     globalThis.location?.hash === "#evidence" ? "evidence" : "summary",
   );
   const [helpOpen, setHelpOpen] = useState(false);
-  const [cardOpen, setCardOpen] = useState(false);
   const [resetOpen, setResetOpen] = useState(false);
   // 실제 앱처럼 키맵이 항목 이동을 호출하도록 연결한다 (↑↓ / J K).
   const moverRef = useRef<((delta: 1 | -1) => void) | null>(null);
@@ -107,7 +117,7 @@ function Harness(): React.ReactElement {
   }, []);
 
   return (
-    <div style={{ padding: 24, background: "#1b1d24", minHeight: "100vh" }}>
+    <div style={{ padding: 24, background: "#1b1d24", height: "100vh", boxSizing: "border-box" }}>
       <ReviewSurface
         sourceTitle="교환학생 1기 · 음식 토크 풀버전"
         sourceDurationMs={8_114_000}
@@ -131,9 +141,6 @@ function Harness(): React.ReactElement {
         onUndo={() => undefined}
         canUndo={false}
         onHelp={() => setHelpOpen(true)}
-        playerCardOpen={cardOpen}
-        onPlayerCardOpen={() => setCardOpen(true)}
-        onPlayerCardClose={() => setCardOpen(false)}
         resetConfirmOpen={resetOpen}
         onResetConfirmOpen={() => setResetOpen(true)}
         onResetConfirm={() => { setResetOpen(false); setCandidates(BASE); }}
@@ -149,6 +156,11 @@ function Harness(): React.ReactElement {
   );
 }
 
-createRoot(document.getElementById("root")!).render(
+const rootElement = document.getElementById("root")! as HTMLElement & {
+  __exclipperReviewRoot?: Root;
+};
+const root = rootElement.__exclipperReviewRoot ?? createRoot(rootElement);
+rootElement.__exclipperReviewRoot = root;
+root.render(
   <StrictMode><Harness /></StrictMode>,
 );

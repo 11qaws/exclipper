@@ -14,7 +14,7 @@
  * this check automatically.
  */
 import { StrictMode } from "react";
-import { createRoot } from "react-dom/client";
+import { createRoot, type Root } from "react-dom/client";
 
 import {
   MAX_CANDIDATE_PASS_B_INSIGHT_TEXT_LENGTH,
@@ -49,6 +49,7 @@ function buildCandidates(lang: "ko" | "en") {
       worst: {
         eventSummaryKo: fill(seed, MAX_CANDIDATE_PASS_B_INSIGHT_TEXT_LENGTH),
         reactionSummaryKo: fill(seed, MAX_CANDIDATE_PASS_B_SEGMENT_TEXT_LENGTH),
+        whyGoodClipKo: fill(seed, MAX_CANDIDATE_PASS_B_INSIGHT_TEXT_LENGTH),
         identifiedParticipants: [
           {
             displayName: fill(
@@ -67,6 +68,8 @@ function buildCandidates(lang: "ko" | "en") {
       worst: {
         beforeContextKo: fill(seed, MAX_CANDIDATE_PASS_B_SEGMENT_TEXT_LENGTH),
         afterContextKo: fill(seed, MAX_CANDIDATE_PASS_B_SEGMENT_TEXT_LENGTH),
+        topicContextKo: fill(seed, MAX_CANDIDATE_PASS_B_SEGMENT_TEXT_LENGTH),
+        contextVerdictKo: fill(seed, MAX_CANDIDATE_PASS_B_INSIGHT_TEXT_LENGTH),
       },
     } as never,
     cuesById: {
@@ -121,9 +124,6 @@ function Case({
           onUndo={() => undefined}
           canUndo={false}
           onHelp={() => undefined}
-          playerCardOpen={false}
-          onPlayerCardOpen={() => undefined}
-          onPlayerCardClose={() => undefined}
           resetConfirmOpen={false}
           onResetConfirmOpen={() => undefined}
           onResetConfirm={() => undefined}
@@ -145,6 +145,11 @@ function Harness(): React.ReactElement {
   );
 }
 
-createRoot(document.getElementById("root")!).render(
+const rootElement = document.getElementById("root")! as HTMLElement & {
+  __exclipperWorstCaseRoot?: Root;
+};
+const root = rootElement.__exclipperWorstCaseRoot ?? createRoot(rootElement);
+rootElement.__exclipperWorstCaseRoot = root;
+root.render(
   <StrictMode><Harness /></StrictMode>,
 );

@@ -25,17 +25,20 @@ describe("review surface model", () => {
     expect(candidate?.frames).toEqual([]);
     expect(candidate?.decision).toBe("pending");
     // no invented content — an explicit "not ready" line instead
-    expect(candidate?.why).toContain("아직");
+    expect(candidate?.event).toContain("아직");
+    expect(candidate?.reaction).toContain("아직");
+    expect(candidate?.clipReason).toContain("아직");
     expect(candidate?.quote).toBeUndefined();
   });
 
-  it("carries the summary, reaction quote and participants through", () => {
+  it("keeps event, reaction, clip value, real dialogue and participants separate", () => {
     const [candidate] = buildReviewCandidates(
       input({
         insightById: {
           c1: {
             eventSummaryKo: "첫 시식 직후 큰 웃음이 이어집니다.",
             reactionSummaryKo: "웃음과 감탄",
+            whyGoodClipKo: "반응의 시작과 확산이 한 구간에 담깁니다.",
             identifiedParticipants: [
               { displayName: "아모레또", role: "guest" },
               { displayName: "아모레또", role: "guest" }, // duplicate collapses
@@ -43,11 +46,24 @@ describe("review surface model", () => {
             ],
           },
         } as unknown as ReviewModelInput["insightById"],
+        cuesById: {
+          c1: [
+            {
+              phase: "near-peak",
+              phaseLabel: "반응 시점 부근",
+              absoluteStartMs: 24_000,
+              absoluteEndMs: 25_000,
+              text: "이거 진짜 바삭해",
+            },
+          ],
+        },
         profileImageByName: { 아모레또: "/streamers/amoretto.jpg" },
       }),
     );
-    expect(candidate?.why).toBe("첫 시식 직후 큰 웃음이 이어집니다.");
-    expect(candidate?.quote).toBe("웃음과 감탄");
+    expect(candidate?.event).toBe("첫 시식 직후 큰 웃음이 이어집니다.");
+    expect(candidate?.reaction).toBe("웃음과 감탄");
+    expect(candidate?.clipReason).toBe("반응의 시작과 확산이 한 구간에 담깁니다.");
+    expect(candidate?.quote).toBe("이거 진짜 바삭해");
     expect(candidate?.people).toHaveLength(2);
     expect(candidate?.people[0]).toEqual({
       name: "아모레또",
@@ -64,6 +80,8 @@ describe("review surface model", () => {
           c1: {
             beforeContextKo: "택배 상자를 여는 대화",
             afterContextKo: "다른 참가자들이 맛을 비교",
+            topicContextKo: "해외 간식 시식",
+            contextVerdictKo: "준비 과정이 첫 시식의 반응으로 이어집니다.",
           },
         } as unknown as ReviewModelInput["contextById"],
       }),
@@ -71,6 +89,8 @@ describe("review surface model", () => {
     expect(candidate?.context.map((c) => c.label)).toEqual(["앞선 맥락", "이어지는 맥락"]);
     expect(candidate?.context[0]?.atMs).toBeLessThan(CANDIDATE.startMs);
     expect(candidate?.context[1]?.atMs).toBeGreaterThan(CANDIDATE.endMs);
+    expect(candidate?.contextTopic).toBe("해외 간식 시식");
+    expect(candidate?.contextSummary).toBe("준비 과정이 첫 시식의 반응으로 이어집니다.");
   });
 
   it("drops blank transcript segments and keeps absolute timestamps", () => {

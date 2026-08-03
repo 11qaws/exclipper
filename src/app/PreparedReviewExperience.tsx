@@ -298,7 +298,6 @@ export function PreparedReviewExperience({
   );
   const [undo, setUndo] = useState<PreparedReviewUndo | null>(null);
   const [page, setPage] = useState<ReviewPage>("summary");
-  const [playerCardOpen, setPlayerCardOpen] = useState(false);
   const [resetConfirmOpen, setResetConfirmOpen] = useState(false);
   const playbackTogglerRef = useRef<(() => void) | null>(null);
   const itemFocusMoverRef = useRef<((delta: 1 | -1) => void) | null>(null);
@@ -439,8 +438,6 @@ export function PreparedReviewExperience({
     undo: undoDecision,
     page,
     setPage,
-    playerCardOpen,
-    closePlayerCard: () => setPlayerCardOpen(false),
     resetConfirmOpen,
     openResetConfirm: () => setResetConfirmOpen(true),
     confirmReset: () => {
@@ -521,9 +518,6 @@ export function PreparedReviewExperience({
           themeLabel={themeLabel}
           page={page}
           onPageChange={setPage}
-          playerCardOpen={playerCardOpen}
-          onPlayerCardOpen={() => setPlayerCardOpen(true)}
-          onPlayerCardClose={() => setPlayerCardOpen(false)}
           resetConfirmOpen={resetConfirmOpen}
           onResetConfirmOpen={() => setResetConfirmOpen(true)}
           onResetConfirm={() => {
