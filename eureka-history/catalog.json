@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "channelId": "UCiFzBB8xsUjEBq8_h6Yl6tA",
   "channelHandle": "@eureka_history",
-  "revision": 15,
-  "generatedAt": "2026-08-03T16:55:14.551Z",
+  "revision": 17,
+  "generatedAt": "2026-08-03T18:38:47.052Z",
   "videos": [
     {
       "channelId": "UCiFzBB8xsUjEBq8_h6Yl6tA",
@@ -113,15 +113,21 @@
       "videoId": "Ycmhajyza5c",
       "title": "2026 07 25 팰월드(완?)",
       "normalizedTitle": "2026 07 25 팰월드 완",
-      "durationMs": null,
+      "durationMs": 26949000,
       "publishedAt": "2026-07-25T14:31:10.000Z",
       "updatedAt": "2026-07-25T16:59:38.000Z",
       "watchUrl": "https://www.youtube.com/watch?v=Ycmhajyza5c",
-      "state": "discovered",
-      "revision": 1,
+      "state": "retryable",
+      "revision": 3,
       "artifactIds": [],
       "registeredLocalSampledFingerprints": [],
-      "retry": null
+      "retry": {
+        "stage": "transcript",
+        "lastSuccessfulState": "metadata-ready",
+        "attemptCount": 1,
+        "nextAttemptAt": "2026-08-03T21:38:47.052Z",
+        "errorCode": "YT_DLP_FAILED"
+      }
     },
     {
       "channelId": "UCiFzBB8xsUjEBq8_h6Yl6tA",
