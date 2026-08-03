@@ -1,0 +1,191 @@
+{
+  "schemaVersion": "1.3.0",
+  "runIdentity": {
+    "sourceId": "amoretto-vods",
+    "channelId": "UCHycoTBFDhXz4XNz8jBP-_A",
+    "videoId": "Xns8EY3gae0",
+    "contextArtifactDigest": "sha256:7a290248cbba769665a2f15f2ede799c9ec623325148ab704e2d52a3a9023d15",
+    "broadcastContextDigest": "sha256:534c93d5807215496b50a39b464b779f545616ddd33565c3c455cd5804b3a911",
+    "artifactRevision": 6,
+    "pipelineRevision": "scheduled-review-ready-v8"
+  },
+  "updatedAt": "2026-08-03T00:36:09.468Z",
+  "entries": [
+    {
+      "checkpointKey": "sha256:db91d40e72f075328f19980cd60875d9e1931c2123d52013a5fe053d84b304bb",
+      "candidateId": "scheduled-d4f64db18840e9b17898",
+      "sourceStartMs": 2054500,
+      "sourceEndMs": 2099500,
+      "status": "retryable",
+      "errorCode": "INVALID_CONTEXT",
+      "attemptOrdinal": 0,
+      "retryGrantId": null,
+      "lastRecord": null
+    },
+    {
+      "checkpointKey": "sha256:94485e77dd3883bbdedf4c82f9b1854e8b57335d6716cce36654203c75e795a1",
+      "candidateId": "scheduled-4a8ff1909234ea6e92ab",
+      "sourceStartMs": 2102500,
+      "sourceEndMs": 2147500,
+      "status": "retryable",
+      "errorCode": "INVALID_CONTEXT",
+      "attemptOrdinal": 0,
+      "retryGrantId": null,
+      "lastRecord": null
+    },
+    {
+      "checkpointKey": "sha256:2b0217d511b12ac1216f5bd4ff1cbb01466d3092db408dee5b7ea1365abaf556",
+      "candidateId": "scheduled-e040dbdff7162d254bea",
+      "sourceStartMs": 4335000,
+      "sourceEndMs": 4395000,
+      "status": "retryable",
+      "errorCode": "INVALID_CONTEXT",
+      "attemptOrdinal": 0,
+      "retryGrantId": null,
+      "lastRecord": null
+    },
+    {
+      "checkpointKey": "sha256:8f628128b779ade04264c8e6637a0ce21ceb931b88ceb574583b7a706a24f851",
+      "candidateId": "scheduled-81ce68930739f1193911",
+      "sourceStartMs": 810000,
+      "sourceEndMs": 870000,
+      "status": "retryable",
+      "errorCode": "INVALID_CONTEXT",
+      "attemptOrdinal": 0,
+      "retryGrantId": null,
+      "lastRecord": null
+    },
+    {
+      "checkpointKey": "sha256:2c101ef35710e8db15995ba5935634855666bb3d1c7be2f3c9f969cee7c7768b",
+      "candidateId": "scheduled-7373b9de2b543e4be0f4",
+      "sourceStartMs": 367500,
+      "sourceEndMs": 412500,
+      "status": "retryable",
+      "errorCode": "INVALID_CONTEXT",
+      "attemptOrdinal": 0,
+      "retryGrantId": null,
+      "lastRecord": null
+    },
+    {
+      "checkpointKey": "sha256:7f410f94f2d557794af85b67705afb16d647cdf2aa411202e5521c5fb63e05e8",
+      "candidateId": "scheduled-d99672138a62f2b3742c",
+      "sourceStartMs": 4712500,
+      "sourceEndMs": 4757500,
+      "status": "retryable",
+      "errorCode": "INVALID_CONTEXT",
+      "attemptOrdinal": 0,
+      "retryGrantId": null,
+      "lastRecord": null
+    },
+    {
+      "checkpointKey": "sha256:3937f0d9ebabd7a2c044d57e71906a3985d2800a2911edc925c4b103c733d172",
+      "candidateId": "scheduled-f52c3f887b38afaf09cf",
+      "sourceStartMs": 2805000,
+      "sourceEndMs": 2865000,
+      "status": "retryable",
+      "errorCode": "INVALID_CONTEXT",
+      "attemptOrdinal": 0,
+      "retryGrantId": null,
+      "lastRecord": null
+    },
+    {
+      "checkpointKey": "sha256:fbd60423bceedf5b4d635eabbc5da383f9310a3b8882b18d71963a8a5c4922ac",
+      "candidateId": "scheduled-771886c64c4a1f6a693f",
+      "sourceStartMs": 5865000,
+      "sourceEndMs": 5925000,
+      "status": "retryable",
+      "errorCode": "INVALID_CONTEXT",
+      "attemptOrdinal": 0,
+      "retryGrantId": null,
+      "lastRecord": null
+    },
+    {
+      "checkpointKey": "sha256:5903cbb08c87592ed2c4fe72a1660db5a0f870fec7bfbbc80cd74260c9f6a9df",
+      "candidateId": "scheduled-85dc3b49c4c613847711",
+      "sourceStartMs": 1335000,
+      "sourceEndMs": 1395000,
+      "status": "retryable",
+      "errorCode": "INVALID_CONTEXT",
+      "attemptOrdinal": 0,
+      "retryGrantId": null,
+      "lastRecord": null
+    },
+    {
+      "checkpointKey": "sha256:f15c71e8771325f77c77ec8e5386371ab18c6e6410ce52487025968c9746422f",
+      "candidateId": "scheduled-135b504de30092575631",
+      "sourceStartMs": 2295000,
+      "sourceEndMs": 2355000,
+      "status": "retryable",
+      "errorCode": "INVALID_CONTEXT",
+      "attemptOrdinal": 0,
+      "retryGrantId": null,
+      "lastRecord": null
+    },
+    {
+      "checkpointKey": "sha256:2f3249b7d28ed165a58b5619944139ed872000658a21f163d8e4e913ee3e7c3e",
+      "candidateId": "scheduled-75a8d889ba8f665a743e",
+      "sourceStartMs": 4485000,
+      "sourceEndMs": 4545000,
+      "status": "retryable",
+      "errorCode": "INVALID_CONTEXT",
+      "attemptOrdinal": 0,
+      "retryGrantId": null,
+      "lastRecord": null
+    },
+    {
+      "checkpointKey": "sha256:95bc28932e69b4a5169a2ae179726470d33f3b3872dddfe3025267067f1cacc1",
+      "candidateId": "scheduled-d1aa6b5a225fe1b05c8e",
+      "sourceStartMs": 1425000,
+      "sourceEndMs": 1485000,
+      "status": "retryable",
+      "errorCode": "INVALID_CONTEXT",
+      "attemptOrdinal": 0,
+      "retryGrantId": null,
+      "lastRecord": null
+    },
+    {
+      "checkpointKey": "sha256:22a3df104f53911da2d82e2692302be974866a9537b7ec303b44e47c270941c2",
+      "candidateId": "scheduled-b1242577457b30338cff",
+      "sourceStartMs": 3555000,
+      "sourceEndMs": 3615000,
+      "status": "retryable",
+      "errorCode": "INVALID_CONTEXT",
+      "attemptOrdinal": 0,
+      "retryGrantId": null,
+      "lastRecord": null
+    },
+    {
+      "checkpointKey": "sha256:4659c86786bd2642aea13d1931e207d4637981dd768a33874271bf3143e06805",
+      "candidateId": "scheduled-43a7543dbe443d5b83b0",
+      "sourceStartMs": 5505000,
+      "sourceEndMs": 5565000,
+      "status": "retryable",
+      "errorCode": "INVALID_CONTEXT",
+      "attemptOrdinal": 0,
+      "retryGrantId": null,
+      "lastRecord": null
+    },
+    {
+      "checkpointKey": "sha256:2f712de13ad1eb3475936944bcccd889bc5420bb8d621b2eee4ca16a908f3026",
+      "candidateId": "scheduled-4717714466087fff3d0c",
+      "sourceStartMs": 3165000,
+      "sourceEndMs": 3225000,
+      "status": "retryable",
+      "errorCode": "INVALID_CONTEXT",
+      "attemptOrdinal": 0,
+      "retryGrantId": null,
+      "lastRecord": null
+    },
+    {
+      "checkpointKey": "sha256:063ad7bffb06659675894381d5c0075cdf09eb7713f89232cf22543f63046022",
+      "candidateId": "scheduled-6ad720a779ed4f88e01c",
+      "sourceStartMs": 5175000,
+      "sourceEndMs": 5235000,
+      "status": "retryable",
+      "errorCode": "INVALID_CONTEXT",
+      "attemptOrdinal": 0,
+      "retryGrantId": null,
+      "lastRecord": null
+    }
+  ]
+}

@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "channelId": "UCiFzBB8xsUjEBq8_h6Yl6tA",
   "channelHandle": "@eureka_history",
-  "revision": 6,
-  "generatedAt": "2026-08-02T19:59:30.818Z",
+  "revision": 7,
+  "generatedAt": "2026-08-03T00:15:25.351Z",
   "videos": [
     {
       "channelId": "UCiFzBB8xsUjEBq8_h6Yl6tA",
@@ -12,10 +12,10 @@
       "normalizedTitle": "2026 08 02 세피리아",
       "durationMs": null,
       "publishedAt": "2026-08-02T18:57:53.000Z",
-      "updatedAt": "2026-08-02T19:13:54.000Z",
+      "updatedAt": "2026-08-02T22:51:00.000Z",
       "watchUrl": "https://www.youtube.com/watch?v=qpAyqsZllPg",
       "state": "discovered",
-      "revision": 1,
+      "revision": 2,
       "artifactIds": [],
       "registeredLocalSampledFingerprints": [],
       "retry": null

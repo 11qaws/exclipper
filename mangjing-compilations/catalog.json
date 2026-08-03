@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "channelId": "UC_hftLL-ydsJd1YpcBZ_09g",
   "channelHandle": "@망징-b1t",
-  "revision": 14,
-  "generatedAt": "2026-08-02T23:27:12.105Z",
+  "revision": 19,
+  "generatedAt": "2026-08-03T00:33:53.509Z",
   "videos": [
     {
       "channelId": "UC_hftLL-ydsJd1YpcBZ_09g",
@@ -75,13 +75,17 @@
       "videoId": "x1b3FfrLfqU",
       "title": "[사이버 펑크 엣지러너] 상영회 풀버전",
       "normalizedTitle": "사이버 펑크 엣지러너 상영회 풀버전",
-      "durationMs": null,
+      "durationMs": 21137000,
       "publishedAt": "2026-07-01T05:15:25.000Z",
       "updatedAt": "2026-07-01T05:15:25.000Z",
       "watchUrl": "https://www.youtube.com/watch?v=x1b3FfrLfqU",
-      "state": "discovered",
-      "revision": 1,
-      "artifactIds": [],
+      "state": "review-ready",
+      "revision": 6,
+      "artifactIds": [
+        "youtube-caption-bundle:x1b3FfrLfqU:v2",
+        "youtube-storyboard-visual-fingerprint:x1b3FfrLfqU:v1",
+        "review-bundle:x1b3FfrLfqU:v6"
+      ],
       "registeredLocalSampledFingerprints": [],
       "retry": null
     },
@@ -301,6 +305,36 @@
       "contentDigest": "sha256:ce5610c34b83d699d835c011304082dce3f3fc9ce41040b8fea2d186b822e554",
       "byteLength": 1441609,
       "createdAt": "2026-08-02T23:15:09.607Z"
+    },
+    {
+      "artifactId": "youtube-caption-bundle:x1b3FfrLfqU:v2",
+      "videoId": "x1b3FfrLfqU",
+      "kind": "transcript",
+      "revision": 2,
+      "storageKey": "mangjing-compilations/videos/x1b3FfrLfqU.v2.json",
+      "contentDigest": "sha256:8baa86a8e4da92ae17308e7f4ae704b1093bda7ecb4d506ca7da2b9216fe1487",
+      "byteLength": 644426,
+      "createdAt": "2026-08-03T00:17:17.722Z"
+    },
+    {
+      "artifactId": "youtube-storyboard-visual-fingerprint:x1b3FfrLfqU:v1",
+      "videoId": "x1b3FfrLfqU",
+      "kind": "fingerprint",
+      "revision": 1,
+      "storageKey": "mangjing-compilations/videos/x1b3FfrLfqU.visual-fingerprint.v1.json",
+      "contentDigest": "sha256:b60c2654f11301146087e131f3e231577851b4b980b97a004ae2b7b932e272ee",
+      "byteLength": 2198,
+      "createdAt": "2026-07-01T05:15:25.000Z"
+    },
+    {
+      "artifactId": "review-bundle:x1b3FfrLfqU:v6",
+      "videoId": "x1b3FfrLfqU",
+      "kind": "review",
+      "revision": 6,
+      "storageKey": "mangjing-compilations/videos/x1b3FfrLfqU.review.v6.json",
+      "contentDigest": "sha256:47d935a174233fd972216641d967af62f5bcc5019f041f9e6bd20209a84f56c6",
+      "byteLength": 1796057,
+      "createdAt": "2026-08-03T00:29:07.584Z"
     }
   ]
 }

@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "channelId": "UCHycoTBFDhXz4XNz8jBP-_A",
   "channelHandle": "@AmorettoVODs",
-  "revision": 68,
-  "generatedAt": "2026-08-02T18:22:30.893Z",
+  "revision": 70,
+  "generatedAt": "2026-08-03T00:36:09.470Z",
   "videos": [
     {
       "channelId": "UCHycoTBFDhXz4XNz8jBP-_A",
@@ -35,14 +35,20 @@
       "publishedAt": "2026-07-24T20:30:51.000Z",
       "updatedAt": "2026-07-24T20:47:12.000Z",
       "watchUrl": "https://www.youtube.com/watch?v=Xns8EY3gae0",
-      "state": "transcript-ready",
-      "revision": 4,
+      "state": "retryable",
+      "revision": 6,
       "artifactIds": [
-        "youtube-caption-bundle:Xns8EY3gae0:v1",
-        "youtube-storyboard-visual-fingerprint:Xns8EY3gae0:v1"
+        "youtube-storyboard-visual-fingerprint:Xns8EY3gae0:v1",
+        "youtube-caption-bundle:Xns8EY3gae0:v2"
       ],
       "registeredLocalSampledFingerprints": [],
-      "retry": null
+      "retry": {
+        "stage": "review",
+        "lastSuccessfulState": "context-ready",
+        "attemptCount": 1,
+        "nextAttemptAt": "2026-08-03T03:36:09.470Z",
+        "errorCode": "REVIEW_CANDIDATES_INCOMPLETE"
+      }
     },
     {
       "channelId": "UCHycoTBFDhXz4XNz8jBP-_A",
@@ -271,16 +277,6 @@
     }
   ],
   "artifacts": [
-    {
-      "artifactId": "youtube-caption-bundle:Xns8EY3gae0:v1",
-      "videoId": "Xns8EY3gae0",
-      "kind": "transcript",
-      "revision": 1,
-      "storageKey": "amoretto-vods/videos/Xns8EY3gae0.v1.json",
-      "contentDigest": "sha256:0f797fd63ec0fb555383b4dbdb994a8720802747f5c35837bc4c654f8d767a50",
-      "byteLength": 256442,
-      "createdAt": "2026-07-30T13:09:33.714Z"
-    },
     {
       "artifactId": "youtube-storyboard-visual-fingerprint:Xns8EY3gae0:v1",
       "videoId": "Xns8EY3gae0",
@@ -520,6 +516,16 @@
       "contentDigest": "sha256:ee4942ea18638e8f8ba3c3f4952c25087816675fe26197a13c3ec1b01aecd8fa",
       "byteLength": 1948122,
       "createdAt": "2026-08-02T18:21:50.115Z"
+    },
+    {
+      "artifactId": "youtube-caption-bundle:Xns8EY3gae0:v2",
+      "videoId": "Xns8EY3gae0",
+      "kind": "transcript",
+      "revision": 2,
+      "storageKey": "amoretto-vods/videos/Xns8EY3gae0.v2.json",
+      "contentDigest": "sha256:7a290248cbba769665a2f15f2ede799c9ec623325148ab704e2d52a3a9023d15",
+      "byteLength": 276792,
+      "createdAt": "2026-08-03T00:18:53.662Z"
     }
   ]
 }
