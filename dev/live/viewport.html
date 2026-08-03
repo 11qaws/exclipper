@@ -14,11 +14,12 @@
       const width = Number(params.get("w") ?? 1024);
       const height = Number(params.get("h") ?? 768);
       const page = params.get("page") === "summary" ? "" : "#evidence";
+      const shell = params.get("shell") === "prepared" ? "prepared" : "app";
       const frame = document.createElement("iframe");
       frame.title = `${width}x${height} review fixture`;
       frame.width = String(width);
       frame.height = String(height);
-      frame.src = `./?embedded=${width}x${height}${page}`;
+      frame.src = `./?shell=${shell}&embedded=${width}x${height}${page}`;
       document.body.append(frame);
     </script>
   </body>

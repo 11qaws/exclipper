@@ -22,16 +22,16 @@ function frameFixture(label: string, hue: number): string {
 const BASE: ReviewCandidate[] = [
   {
     id: "c1",
-    title: "두바이 초콜릿 첫 시식",
+    title: "연속 오답으로 당황하며 '전 허땡이가 아니에요' 주장",
     startMs: 1_920_000,
     endMs: 1_968_000,
     peakMs: 1_944_000,
     decision: "used",
-    event: "두바이 초콜릿을 처음 맛본 직후 예상보다 강한 식감에 모두가 동시에 주목합니다.",
-    reaction: "아모레또가 크게 웃으며 바삭한 소리에 놀라고, 옆자리 참가자들이 연달아 맛보겠다고 끼어듭니다.",
-    clipReason: "첫 시식부터 집단 반응까지 48초 안에 완결되어 별도 설명 없이도 재미가 전달됩니다.",
+    event: "음식 이름 맞추기 퀴즈가 이어지는 동안 연속으로 오답을 고른 스트리머가 정답을 확신했다가 다시 틀리며 상황이 급격히 뒤집힙니다.",
+    reaction: "스트리머는 잠시 말을 잇지 못한 뒤 자신은 엉뚱한 사람이 아니라며 억울함을 호소하고, 채팅의 장난스러운 반응에 목소리를 높였다가 결국 웃음을 터뜨립니다.",
+    clipReason: "문제 제시, 확신, 오답 공개, 당황과 항변까지 원인과 반응이 한 구간 안에서 완결되어 방송을 처음 보는 사람도 맥락을 따라갈 수 있습니다.",
     contextTopic: "해외 간식 시식",
-    contextSummary: "택배를 열며 쌓인 기대가 첫 시식의 반전으로 이어지는 방송 중반의 핵심 장면입니다.",
+    contextSummary: "여러 음식 사진을 보고 이름을 맞히던 흐름에서 오답이 누적된 뒤 나온 장면으로, 앞선 자신감과 현재의 당황이 대비되는 방송 중반의 해프닝입니다.",
     quote: "이거 진짜 유명한 거 맞아? 왜 이렇게 바삭해",
     people: [
       { name: "세라 교수님", role: "진행자" },
@@ -90,8 +90,24 @@ const BASE: ReviewCandidate[] = [
   },
 ];
 
+const FULL_BASE: ReviewCandidate[] = [
+  ...BASE,
+  ...Array.from({ length: 9 }, (_, offset) => ({
+    ...BASE[1]!,
+    id: `c${offset + 4}`,
+    title: `후속 검토 후보 ${offset + 4}`,
+    startMs: 3_300_000 + offset * 180_000,
+    endMs: 3_348_000 + offset * 180_000,
+    peakMs: 3_324_000 + offset * 180_000,
+    decision: "pending" as const,
+    cues: [],
+    context: [],
+    frames: [],
+  })),
+];
+
 function Harness(): React.ReactElement {
-  const [candidates, setCandidates] = useState(BASE);
+  const [candidates, setCandidates] = useState(FULL_BASE);
   const [index, setIndex] = useState(0);
   const [page, setPage] = useState<ReviewPage>(
     globalThis.location?.hash === "#evidence" ? "evidence" : "summary",
@@ -123,6 +139,63 @@ function Harness(): React.ReactElement {
     return () => window.clearTimeout(timer);
   }, []);
 
+  const review = (
+    <ReviewSurface
+      sourceTitle="2026 07 17 - 음식 토크"
+      sourceDurationMs={8_114_000}
+      candidates={candidates}
+      activeIndex={index}
+      page={page}
+      streamerName="아모레또"
+      onSelectIndex={(next) => { setIndex(next); setPage("summary"); }}
+      onPageChange={setPage}
+      onDecide={(id, decision: ReviewDecision) =>
+        setCandidates((list) =>
+          list.map((candidate) =>
+            candidate.id === id ? { ...candidate, decision } : candidate,
+          ))}
+      onTrim={(id, edge, delta) =>
+        setCandidates((list) =>
+          list.map((candidate) =>
+            candidate.id === id
+              ? edge === "start"
+                ? { ...candidate, startMs: candidate.startMs + delta }
+                : { ...candidate, endMs: candidate.endMs + delta }
+              : candidate,
+          ))}
+      onUndo={() => undefined}
+      canUndo={false}
+      onHelp={() => setHelpOpen(true)}
+      resetConfirmOpen={resetOpen}
+      onResetConfirmOpen={() => setResetOpen(true)}
+      onResetConfirm={() => { setResetOpen(false); setCandidates(FULL_BASE); }}
+      onResetCancel={() => setResetOpen(false)}
+      onItemFocusMover={(move) => { moverRef.current = move; }}
+    />
+  );
+
+  if (new URLSearchParams(globalThis.location?.search).get("shell") === "prepared") {
+    return (
+      <main className="prv">
+        <header className="prv-toolbar">
+          <div>
+            <span className="prv-eyebrow">사전 분석 완료</span>
+            <strong>2026 07 17 - 음식 토크</strong>
+            <span>저장된 전체 맥락과 화면·대사 검증본을 불러왔어요.</span>
+          </div>
+          <div className="prv-tools">
+            <div className="prv-language" role="group" aria-label="언어 선택">
+              <button type="button" data-active="true">한국어</button>
+              <button type="button">English</button>
+            </div>
+            <button className="prv-exit" type="button">다른 영상</button>
+          </div>
+        </header>
+        {review}
+      </main>
+    );
+  }
+
   return (
     <div className="rh-app">
       <div className="ex-device">
@@ -141,35 +214,7 @@ function Harness(): React.ReactElement {
                   <div className="rh-results-header">
                     <div><p className="rh-eyebrow">AI analysis complete</p><h3>Final review candidates</h3></div>
                   </div>
-                  <ReviewSurface
-        sourceTitle="교환학생 1기 · 음식 토크 풀버전"
-        sourceDurationMs={8_114_000}
-        candidates={candidates}
-        activeIndex={index}
-        page={page}
-        streamerName="교환학생"
-        onSelectIndex={(next) => { setIndex(next); setPage("summary"); }}
-        onPageChange={setPage}
-        onDecide={(id, decision: ReviewDecision) =>
-          setCandidates((list) =>
-            list.map((c) => (c.id === id ? { ...c, decision } : c)))}
-        onTrim={(id, edge, delta) =>
-          setCandidates((list) =>
-            list.map((c) =>
-              c.id === id
-                ? edge === "start"
-                  ? { ...c, startMs: c.startMs + delta }
-                  : { ...c, endMs: c.endMs + delta }
-                : c))}
-        onUndo={() => undefined}
-        canUndo={false}
-        onHelp={() => setHelpOpen(true)}
-        resetConfirmOpen={resetOpen}
-        onResetConfirmOpen={() => setResetOpen(true)}
-        onResetConfirm={() => { setResetOpen(false); setCandidates(BASE); }}
-        onResetCancel={() => setResetOpen(false)}
-                    onItemFocusMover={(move) => { moverRef.current = move; }}
-                  />
+                  {review}
                   <section className="rh-export-panel" aria-label="Export regression fixture">
                     <div className="rh-export-heading"><h3>Approved clips</h3></div>
                     <div className="rh-export-actions">
