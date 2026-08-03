@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "channelId": "UCgq07mhOmrjVeZeJYXiAClw",
   "channelHandle": "@kokotorori",
-  "revision": 28,
-  "generatedAt": "2026-08-03T11:48:57.447Z",
+  "revision": 33,
+  "generatedAt": "2026-08-03T14:30:41.747Z",
   "videos": [
     {
       "channelId": "UCgq07mhOmrjVeZeJYXiAClw",
@@ -85,9 +85,9 @@
       "retry": {
         "stage": "review",
         "lastSuccessfulState": "context-ready",
-        "attemptCount": 2,
-        "nextAttemptAt": "2026-08-03T13:50:13.539Z",
-        "errorCode": "PROCESS_FAILED"
+        "attemptCount": 3,
+        "nextAttemptAt": "2026-08-04T02:30:41.747Z",
+        "errorCode": "REVIEW_CANDIDATES_INCOMPLETE"
       }
     },
     {
@@ -162,15 +162,23 @@
       "videoId": "7BTs-JbYka8",
       "title": "Hello~! 🍮🎐",
       "normalizedTitle": "hello",
-      "durationMs": null,
+      "durationMs": 4751000,
       "publishedAt": "2026-01-04T18:39:07.000Z",
       "updatedAt": "2026-04-21T23:59:10.000Z",
       "watchUrl": "https://www.youtube.com/watch?v=7BTs-JbYka8",
-      "state": "discovered",
-      "revision": 1,
-      "artifactIds": [],
+      "state": "retryable",
+      "revision": 5,
+      "artifactIds": [
+        "youtube-caption-bundle:7BTs-JbYka8:v2"
+      ],
       "registeredLocalSampledFingerprints": [],
-      "retry": null
+      "retry": {
+        "stage": "fingerprint",
+        "lastSuccessfulState": "context-ready",
+        "attemptCount": 1,
+        "nextAttemptAt": "2026-08-03T17:07:33.711Z",
+        "errorCode": "FINGERPRINT_STORYBOARD_UNAVAILABLE"
+      }
     },
     {
       "channelId": "UCgq07mhOmrjVeZeJYXiAClw",
@@ -348,6 +356,16 @@
       "contentDigest": "sha256:2332625c7e99518dc4c2521ff45bb469b03da7ad698b4880daf38d5ac633fd63",
       "byteLength": 10573,
       "createdAt": "2026-08-02T23:15:06.734Z"
+    },
+    {
+      "artifactId": "youtube-caption-bundle:7BTs-JbYka8:v2",
+      "videoId": "7BTs-JbYka8",
+      "kind": "transcript",
+      "revision": 2,
+      "storageKey": "coco-replay/videos/7BTs-JbYka8.v2.json",
+      "contentDigest": "sha256:bbd18ac0a6042a32d5b7ab25f2eeb6843b1de71b0fe99d63fc4c6fee86dba713",
+      "byteLength": 175159,
+      "createdAt": "2026-08-03T14:07:33.638Z"
     }
   ]
 }

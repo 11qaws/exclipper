@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "channelId": "UC_hftLL-ydsJd1YpcBZ_09g",
   "channelHandle": "@망징-b1t",
-  "revision": 19,
-  "generatedAt": "2026-08-03T00:33:53.509Z",
+  "revision": 24,
+  "generatedAt": "2026-08-03T14:56:15.379Z",
   "videos": [
     {
       "channelId": "UC_hftLL-ydsJd1YpcBZ_09g",
@@ -94,13 +94,17 @@
       "videoId": "6l9u4huECow",
       "title": "{림버스 컴퍼니} 괴물같이 등장한 문학소녀의 0, 1장 몰아보기",
       "normalizedTitle": "림버스 컴퍼니 괴물같이 등장한 문학소녀의 0 1장 몰아보기",
-      "durationMs": null,
+      "durationMs": 37082000,
       "publishedAt": "2026-06-28T10:54:04.000Z",
       "updatedAt": "2026-07-04T11:41:18.000Z",
       "watchUrl": "https://www.youtube.com/watch?v=6l9u4huECow",
-      "state": "discovered",
-      "revision": 1,
-      "artifactIds": [],
+      "state": "review-ready",
+      "revision": 6,
+      "artifactIds": [
+        "youtube-caption-bundle:6l9u4huECow:v2",
+        "youtube-storyboard-visual-fingerprint:6l9u4huECow:v1",
+        "review-bundle:6l9u4huECow:v6"
+      ],
       "registeredLocalSampledFingerprints": [],
       "retry": null
     },
@@ -335,6 +339,36 @@
       "contentDigest": "sha256:47d935a174233fd972216641d967af62f5bcc5019f041f9e6bd20209a84f56c6",
       "byteLength": 1796057,
       "createdAt": "2026-08-03T00:29:07.584Z"
+    },
+    {
+      "artifactId": "youtube-caption-bundle:6l9u4huECow:v2",
+      "videoId": "6l9u4huECow",
+      "kind": "transcript",
+      "revision": 2,
+      "storageKey": "mangjing-compilations/videos/6l9u4huECow.v2.json",
+      "contentDigest": "sha256:542ec596d16ade150b3202f7147344c0bd241c31b6e90dbfb0ae1eab89fb8e17",
+      "byteLength": 2132008,
+      "createdAt": "2026-08-03T14:14:29.494Z"
+    },
+    {
+      "artifactId": "youtube-storyboard-visual-fingerprint:6l9u4huECow:v1",
+      "videoId": "6l9u4huECow",
+      "kind": "fingerprint",
+      "revision": 1,
+      "storageKey": "mangjing-compilations/videos/6l9u4huECow.visual-fingerprint.v1.json",
+      "contentDigest": "sha256:ef3ee7336d2a337a3e5cafa74eaa2406238a40fe9c45d3c261f6e4f05bb8ad59",
+      "byteLength": 2203,
+      "createdAt": "2026-07-04T11:41:18.000Z"
+    },
+    {
+      "artifactId": "review-bundle:6l9u4huECow:v6",
+      "videoId": "6l9u4huECow",
+      "kind": "review",
+      "revision": 6,
+      "storageKey": "mangjing-compilations/videos/6l9u4huECow.review.v6.json",
+      "contentDigest": "sha256:9cac7a991ed6a62f4f109e141e17605afe3caa1bf67167c144dfc93aa1b93cfb",
+      "byteLength": 1731447,
+      "createdAt": "2026-08-03T14:48:53.195Z"
     }
   ]
 }
