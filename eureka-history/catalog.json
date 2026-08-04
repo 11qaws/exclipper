@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "channelId": "UCiFzBB8xsUjEBq8_h6Yl6tA",
   "channelHandle": "@eureka_history",
-  "revision": 24,
-  "generatedAt": "2026-08-03T22:03:12.222Z",
+  "revision": 29,
+  "generatedAt": "2026-08-04T01:28:18.460Z",
   "videos": [
     {
       "channelId": "UCiFzBB8xsUjEBq8_h6Yl6tA",
@@ -179,13 +179,17 @@
       "videoId": "MrZ1eCM08MA",
       "title": "2026 07 22 블루록같이보기후열",
       "normalizedTitle": "2026 07 22 블루록같이보기후열",
-      "durationMs": null,
+      "durationMs": 2354000,
       "publishedAt": "2026-07-22T17:16:44.000Z",
       "updatedAt": "2026-07-22T17:26:50.000Z",
       "watchUrl": "https://www.youtube.com/watch?v=MrZ1eCM08MA",
-      "state": "discovered",
-      "revision": 1,
-      "artifactIds": [],
+      "state": "review-ready",
+      "revision": 6,
+      "artifactIds": [
+        "youtube-caption-bundle:MrZ1eCM08MA:v2",
+        "youtube-storyboard-visual-fingerprint:MrZ1eCM08MA:v1",
+        "review-bundle:MrZ1eCM08MA:v6"
+      ],
       "registeredLocalSampledFingerprints": [],
       "retry": null
     },
@@ -345,6 +349,36 @@
       "contentDigest": "sha256:29c2db3f2ccd7f5c300f81d142b84a7f2beb25801642ce1031f79e06f04278e6",
       "byteLength": 2198,
       "createdAt": "2026-07-24T21:35:36.000Z"
+    },
+    {
+      "artifactId": "youtube-caption-bundle:MrZ1eCM08MA:v2",
+      "videoId": "MrZ1eCM08MA",
+      "kind": "transcript",
+      "revision": 2,
+      "storageKey": "eureka-history/videos/MrZ1eCM08MA.v2.json",
+      "contentDigest": "sha256:2cfbdf4b663b8a504801a37ca67bf5f937ba8bba7780e35b166aec80a6e4cefa",
+      "byteLength": 113395,
+      "createdAt": "2026-08-04T01:11:18.625Z"
+    },
+    {
+      "artifactId": "youtube-storyboard-visual-fingerprint:MrZ1eCM08MA:v1",
+      "videoId": "MrZ1eCM08MA",
+      "kind": "fingerprint",
+      "revision": 1,
+      "storageKey": "eureka-history/videos/MrZ1eCM08MA.visual-fingerprint.v1.json",
+      "contentDigest": "sha256:5dea2551413b25192ce77889242d4c2437e54ad8d1bcf60e2e19bebbff69011d",
+      "byteLength": 2187,
+      "createdAt": "2026-07-22T17:26:50.000Z"
+    },
+    {
+      "artifactId": "review-bundle:MrZ1eCM08MA:v6",
+      "videoId": "MrZ1eCM08MA",
+      "kind": "review",
+      "revision": 6,
+      "storageKey": "eureka-history/videos/MrZ1eCM08MA.review.v6.json",
+      "contentDigest": "sha256:6ed77135282be64846747b2197e6fb8a5260df197f7a243dcaf26e0ad2cdadbb",
+      "byteLength": 2477791,
+      "createdAt": "2026-08-04T01:25:34.094Z"
     }
   ]
 }

@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "channelId": "UCHycoTBFDhXz4XNz8jBP-_A",
   "channelHandle": "@AmorettoVODs",
-  "revision": 82,
-  "generatedAt": "2026-08-03T20:29:14.260Z",
+  "revision": 84,
+  "generatedAt": "2026-08-04T01:24:38.446Z",
   "videos": [
     {
       "channelId": "UCHycoTBFDhXz4XNz8jBP-_A",
@@ -163,11 +163,12 @@
       "publishedAt": "2026-07-17T03:20:46.000Z",
       "updatedAt": "2026-07-17T04:13:32.000Z",
       "watchUrl": "https://www.youtube.com/watch?v=EZfCGS5ms_Q",
-      "state": "transcript-ready",
-      "revision": 5,
+      "state": "review-ready",
+      "revision": 7,
       "artifactIds": [
-        "youtube-caption-bundle:EZfCGS5ms_Q:v1",
-        "youtube-storyboard-visual-fingerprint:EZfCGS5ms_Q:v1"
+        "youtube-storyboard-visual-fingerprint:EZfCGS5ms_Q:v1",
+        "youtube-caption-bundle:EZfCGS5ms_Q:v2",
+        "review-bundle:EZfCGS5ms_Q:v7"
       ],
       "registeredLocalSampledFingerprints": [],
       "retry": null
@@ -350,16 +351,6 @@
       "contentDigest": "sha256:712e6e2f23947708aa3aacdb233e60f39791d149fe7009d11db4840ef4e1e8cb",
       "byteLength": 2193,
       "createdAt": "2026-07-18T17:01:25.000Z"
-    },
-    {
-      "artifactId": "youtube-caption-bundle:EZfCGS5ms_Q:v1",
-      "videoId": "EZfCGS5ms_Q",
-      "kind": "transcript",
-      "revision": 1,
-      "storageKey": "amoretto-vods/videos/EZfCGS5ms_Q.v1.json",
-      "contentDigest": "sha256:370d5b53af159e0b58b8cf0691baea189a0ef8eb93b5fa37722e89444a82b56a",
-      "byteLength": 513295,
-      "createdAt": "2026-07-30T16:52:51.772Z"
     },
     {
       "artifactId": "youtube-storyboard-visual-fingerprint:EZfCGS5ms_Q:v1",
@@ -590,6 +581,26 @@
       "contentDigest": "sha256:f6dd68902cde277f7e1d44f4eefd0ba94722a9bac13f0ee21429e574541eaac7",
       "byteLength": 1655863,
       "createdAt": "2026-08-03T16:57:44.663Z"
+    },
+    {
+      "artifactId": "youtube-caption-bundle:EZfCGS5ms_Q:v2",
+      "videoId": "EZfCGS5ms_Q",
+      "kind": "transcript",
+      "revision": 2,
+      "storageKey": "amoretto-vods/videos/EZfCGS5ms_Q.v2.json",
+      "contentDigest": "sha256:8b008529519165b2255df4e062716b25efa81f674c05dc94e3c3db8de63f401c",
+      "byteLength": 542299,
+      "createdAt": "2026-08-04T01:10:28.036Z"
+    },
+    {
+      "artifactId": "review-bundle:EZfCGS5ms_Q:v7",
+      "videoId": "EZfCGS5ms_Q",
+      "kind": "review",
+      "revision": 7,
+      "storageKey": "amoretto-vods/videos/EZfCGS5ms_Q.review.v7.json",
+      "contentDigest": "sha256:10db71f79ae70f34413508125363ee6c58aa430fd3c75162ae1b5a1654eeae4f",
+      "byteLength": 1827479,
+      "createdAt": "2026-08-04T01:14:43.548Z"
     }
   ]
 }
