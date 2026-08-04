@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "channelId": "UCk0Mu5MpVzJ056e65XpAj0Q",
   "channelHandle": "@SENAREPLAY",
-  "revision": 44,
-  "generatedAt": "2026-08-04T15:52:01.604Z",
+  "revision": 45,
+  "generatedAt": "2026-08-04T19:52:57.399Z",
   "videos": [
     {
       "channelId": "UCk0Mu5MpVzJ056e65XpAj0Q",
@@ -104,8 +104,8 @@
       "retry": {
         "stage": "review",
         "lastSuccessfulState": "context-ready",
-        "attemptCount": 1,
-        "nextAttemptAt": "2026-08-04T18:52:01.604Z",
+        "attemptCount": 2,
+        "nextAttemptAt": "2026-08-05T01:52:57.399Z",
         "errorCode": "REVIEW_CANDIDATES_INCOMPLETE"
       }
     },
