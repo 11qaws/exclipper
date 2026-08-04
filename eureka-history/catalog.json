@@ -2,23 +2,32 @@
   "schemaVersion": 1,
   "channelId": "UCiFzBB8xsUjEBq8_h6Yl6tA",
   "channelHandle": "@eureka_history",
-  "revision": 30,
-  "generatedAt": "2026-08-04T07:26:37.849Z",
+  "revision": 36,
+  "generatedAt": "2026-08-04T13:27:04.045Z",
   "videos": [
     {
       "channelId": "UCiFzBB8xsUjEBq8_h6Yl6tA",
       "videoId": "Wacrz9D11Eo",
       "title": "2026 08 04 무친아침노래방",
       "normalizedTitle": "2026 08 04 무친아침노래방",
-      "durationMs": null,
+      "durationMs": 26632000,
       "publishedAt": "2026-08-04T05:39:17.000Z",
-      "updatedAt": "2026-08-04T06:57:43.000Z",
+      "updatedAt": "2026-08-04T12:02:29.000Z",
       "watchUrl": "https://www.youtube.com/watch?v=Wacrz9D11Eo",
-      "state": "discovered",
-      "revision": 1,
-      "artifactIds": [],
+      "state": "retryable",
+      "revision": 7,
+      "artifactIds": [
+        "youtube-caption-bundle:Wacrz9D11Eo:v2",
+        "youtube-storyboard-visual-fingerprint:Wacrz9D11Eo:v1"
+      ],
       "registeredLocalSampledFingerprints": [],
-      "retry": null
+      "retry": {
+        "stage": "review",
+        "lastSuccessfulState": "context-ready",
+        "attemptCount": 1,
+        "nextAttemptAt": "2026-08-04T16:27:04.045Z",
+        "errorCode": "REVIEW_CANDIDATES_INCOMPLETE"
+      }
     },
     {
       "channelId": "UCiFzBB8xsUjEBq8_h6Yl6tA",
@@ -394,6 +403,26 @@
       "contentDigest": "sha256:6ed77135282be64846747b2197e6fb8a5260df197f7a243dcaf26e0ad2cdadbb",
       "byteLength": 2477791,
       "createdAt": "2026-08-04T01:25:34.094Z"
+    },
+    {
+      "artifactId": "youtube-caption-bundle:Wacrz9D11Eo:v2",
+      "videoId": "Wacrz9D11Eo",
+      "kind": "transcript",
+      "revision": 2,
+      "storageKey": "eureka-history/videos/Wacrz9D11Eo.v2.json",
+      "contentDigest": "sha256:8842af908c83e342c337bfaa3156ca4954efec8ba1621c90295d21e973b30e77",
+      "byteLength": 746335,
+      "createdAt": "2026-08-04T12:32:55.746Z"
+    },
+    {
+      "artifactId": "youtube-storyboard-visual-fingerprint:Wacrz9D11Eo:v1",
+      "videoId": "Wacrz9D11Eo",
+      "kind": "fingerprint",
+      "revision": 1,
+      "storageKey": "eureka-history/videos/Wacrz9D11Eo.visual-fingerprint.v1.json",
+      "contentDigest": "sha256:d62304ce05cd6190ecbaac61bd3f2a224edfbfca1e4e771f1f18dced3b0a148b",
+      "byteLength": 2201,
+      "createdAt": "2026-08-04T12:02:29.000Z"
     }
   ]
 }
