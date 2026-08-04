@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "channelId": "UCiFzBB8xsUjEBq8_h6Yl6tA",
   "channelHandle": "@eureka_history",
-  "revision": 46,
-  "generatedAt": "2026-08-04T20:05:38.574Z",
+  "revision": 47,
+  "generatedAt": "2026-08-04T20:08:12.626Z",
   "videos": [
     {
       "channelId": "UCiFzBB8xsUjEBq8_h6Yl6tA",
@@ -74,15 +74,15 @@
       "updatedAt": "2026-07-29T07:03:03.000Z",
       "watchUrl": "https://www.youtube.com/watch?v=ZFMg5irJJU8",
       "state": "retryable",
-      "revision": 4,
+      "revision": 5,
       "artifactIds": [],
       "registeredLocalSampledFingerprints": [],
       "retry": {
         "stage": "transcript",
         "lastSuccessfulState": "metadata-ready",
-        "attemptCount": 2,
-        "nextAttemptAt": "2026-08-04T19:58:24.792Z",
-        "errorCode": "YT_DLP_FAILED"
+        "attemptCount": 3,
+        "nextAttemptAt": "2026-08-11T20:08:12.626Z",
+        "errorCode": "KOREAN_CAPTION_NOT_FOUND"
       }
     },
     {
