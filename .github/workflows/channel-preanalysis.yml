@@ -1,10 +1,6 @@
-name: Refresh channel preanalysis catalogs
+name: Process channel preanalysis queue
 
 on:
-  schedule:
-    # RSS/catalog preflight runs every 30 minutes. Expensive media preparation
-    # remains gated by the preflight result below.
-    - cron: "17,47 * * * *"
   workflow_dispatch:
     inputs:
       source:
@@ -30,13 +26,18 @@ on:
         options:
           - "1"
           - "2"
+      force_heavy:
+        description: "Force heavy preparation even when preflight finds no due work"
+        required: true
+        default: true
+        type: boolean
 
 permissions:
   contents: read
 
 concurrency:
-  group: channel-preanalysis-catalog
-  cancel-in-progress: false
+  group: channel-preanalysis-heavy-queue
+  queue: max
 
 jobs:
   prepare:
@@ -48,9 +49,9 @@ jobs:
       - name: Checkout application source
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
-          # schedule and workflow_dispatch both expose the immutable commit that
-          # selected this workflow as github.sha. Never follow a moving main ref
-          # while this secret-bearing job is waiting for a runner.
+          # workflow_dispatch exposes the immutable commit that selected this
+          # workflow as github.sha. Never follow a moving main ref while this
+          # secret-bearing job is waiting for a runner.
           ref: ${{ github.sha }}
           path: source
           fetch-depth: 1
@@ -140,7 +141,7 @@ jobs:
           CATALOG_DIRECTORY: ${{ github.workspace }}/catalog
           SOURCE_ID: ${{ inputs.source || 'all' }}
           MAX_VIDEOS: ${{ inputs.max_videos || '2' }}
-          EVENT_NAME: ${{ github.event_name }}
+          FORCE_HEAVY: ${{ inputs.force_heavy }}
         run: |
           set -euo pipefail
           npx --no-install tsx scripts/channel-preanalysis-upload-preflight.mjs \
@@ -162,7 +163,7 @@ jobs:
           process.stdout.write(report.heavyRequired ? "true" : "false");
           NODE
           )"
-          if [[ "${EVENT_NAME}" == "workflow_dispatch" ]]; then
+          if [[ "${FORCE_HEAVY}" == "true" ]]; then
             heavy_required="true"
           fi
           echo "heavy_required=${heavy_required}" >> "${GITHUB_OUTPUT}"

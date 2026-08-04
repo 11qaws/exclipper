@@ -27,10 +27,22 @@
 5. participant grounding, 대표 thumbnail, 최종 후보 집합 또는 `verified-empty`
 6. 4MiB 이하 review artifact의 전체 SHA와 내부 content digest readback
 
-workflow는 30분마다 `scripts/channel-preanalysis-upload-preflight.mjs`로 Atom RSS를
-catalog에 먼저 병합한다. 신규·due retry·context/review 누락이 있을 때만 WARP와 yt-dlp를
-준비한 뒤 기존 feed/context 준비와 `scripts/sync-channel-preanalysis-reviews.mjs`를 호출한다.
-수동 dispatch는 preflight 결과와 관계없이 항상 이 heavy 경로를 검증한다. 영상 사본은 runner temp에만 두고
+`channel-preanalysis-scan.yml`은 매시 17분·47분에
+`scripts/channel-preanalysis-upload-preflight.mjs`로 Atom RSS와 최신 catalog를 가볍게
+대조한다. 긴 분석 workflow와 concurrency group을 공유하지 않으므로 이전 분석이 진행
+중이어도 다음 스캔은 시작할 수 있다. 신규·due retry·context/review 누락이 있으면
+`channel-preanalysis.yml`을 `force_heavy=false`로 dispatch하고, heavy workflow의
+`queue: max` 단일 실행열이 발견 작업을 순차 처리한다. 각 queued run은 시작 시 최신
+catalog를 다시 확인하므로 앞 실행이 완료한 영상은 건너뛴다. GitHub scheduler 자체의
+지연 가능성은 남지만 긴 ExClipper 분석이 30분 스캔을 직접 막지는 않는다.
+
+자동 queue는 게시 후 정확히 7일 이내 영상만 받는다. Atom feed에는 신뢰할 수 있는 자막
+존재 필드가 없으므로 heavy run의 첫 yt-dlp 검사에서 한국어 수동·자동 자막을 확인한다.
+자막이 없으면 Worker·AI·예약 ASR을 호출하지 않고 `caption-pending`으로 보존해 7일
+안에서만 재검사한다. 7일이 지난 영상은 catalog에서 지우지 않지만 자동 transcript·context·
+review queue에 다시 넣지 않는다. 작업자가 source와 video ID를 지정한 수동 dispatch는
+진단과 명시적 ASR 복구를 위해 이 자동 제한을 우회하며, `force_heavy=true`가 기본이다.
+영상 사본은 runner temp에만 두고
 게시 여부와 무관하게 삭제한다. 후보별 checkpoint는
 `<source>/.review-checkpoints/<video>.review.vN.checkpoint.json`에 남아 다음 run이 완료
 후보를 재사용한다. `actions/upload-artifact`의 `include-hidden-files: true`를 제거하면 이
@@ -193,8 +205,8 @@ Cloudflare WARP 출구의 평판이며, 그것은 한도가 아니라 상관 장
   Node·npm·`yt-dlp`를 전혀 실행하지 않는다. write token은 마지막 고정 `git push`
   step의 환경에만 존재한다.
 - `prepare`의 application source는 움직이는 branch 이름이 아니라 workflow
-  event의 immutable `github.sha`를 checkout한다. `schedule`과
-  `workflow_dispatch`가 runner를 기다리는 사이 `main`이 갱신되어도 실행 source가
+  event의 immutable `github.sha`를 checkout한다. `workflow_dispatch`가 runner를
+  기다리는 사이 `main`이 갱신되어도 실행 source가
   바뀌지 않는다.
 - pinned `yt-dlp` child에는 PATH·HOME·temp·locale, credential 없는 proxy,
   CA bundle처럼 실행에 필요한 값만 allowlist로 전달한다. 예약 context token,
@@ -270,7 +282,7 @@ Cloudflare 공식 문서로 확인한 값이며 기억에 의존하지 않았다
   전용이므로 이 설정을 바꾸면 무료 범위를 벗어난다.
 - 무료 한도: 요청 100,000/일, 실행 13,000 GB-s/일, SQLite 행 읽기 500만/일,
   행 쓰기 100,000/일, 저장 5GB.
-- 30분 preflight는 Worker를 호출하지 않는다. Worker 요청은 실제 due heavy run에서만
+- 30분 scan/preflight는 Worker를 호출하지 않는다. Worker 요청은 실제 due heavy run에서만
   발생하며, run당 영상은 최대 2개다. 따라서 cron 횟수를 Worker 요청 수로 환산하지 말고
   실제 선택 영상·ASR 범위·후보 수를 run report에서 확인한다.
 - 한도를 넘기면 **과금이 아니라 해당 유형의 작업이 오류로 실패한다.** 즉
@@ -306,7 +318,7 @@ provider와 Durable Object를 하나의 원자적 transaction으로 묶을 수 �
 
 - `PREANALYSIS_CONTEXT_TOKEN`: 예약 runner 전용 opaque Bearer token
 - `PREANALYSIS_QWEN_API_KEY`: 예약 맥락 분석 전용 provider key
-- `PREANALYSIS_GROQ_API_KEY`: 자막 없는 VOD의 예약 ASR 전용 provider key
+- `PREANALYSIS_GROQ_API_KEY`: 특정 video ID 수동 복구에서 쓰는 예약 ASR 전용 provider key
 - 선택 `PREANALYSIS_QWEN_WORKSPACE_ID`: 전경 편집 요청과 upstream quota까지
   분리하려면 별도 Qwen project/workspace를 지정한다.
 
@@ -334,7 +346,8 @@ provider와 Durable Object를 하나의 원자적 transaction으로 묶을 수 �
   v1 transcript pointer와 `retryable(context)`를 보존하고 다음 cron이 같은 stable
   operation ID로 proxy의 terminal 결과를 조회한다.
 
-`context-ready`가 되더라도 이 예약 결과는 YouTube 자막 또는 예약 ASR 전사만 본
+`context-ready`가 되더라도 자동 결과는 YouTube 자막만, 특정 video ID 수동 복구
+결과는 YouTube 자막 또는 예약 ASR 전사만 본
 선분석이다.
 `contextProvenance.evidenceScope`는
 자막이면 `youtube-caption-transcript-only`, 예약 ASR이면

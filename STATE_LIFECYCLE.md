@@ -14,6 +14,13 @@
   네 feed reconciliation은 모두 수행하되 due 작업은 회전 순서로 한 개씩 먼저
   배분하고 남은 슬롯만 두 번째 round에 사용한다. 한 source 발견 실패는 기존
   snapshot을 유지하며 정상 sibling source의 checkpoint 진행을 취소하지 않는다.
+- lightweight scan과 heavy 분석은 서로 다른 workflow다. scan은 30분마다 독립적으로
+  최근 feed를 확인하고 due가 있으면 GitHub Actions의 단일 heavy queue에 실행을
+  추가한다. heavy queue는 최대 100개를 보존하되 동시에 하나만 실행하며, 각 실행은
+  시작 시 최신 catalog를 다시 읽어 이미 완료된 항목을 건너뛴다.
+- 자동 transcript·context·review 선택은 `publishedAt >= now - 7일`인 영상만 허용한다.
+  정확히 7일인 경계는 포함하고 그보다 오래된 manifest와 artifact는 삭제하지 않는다.
+  특정 video ID를 지정한 수동 재시도만 이 자동 선택 경계를 우회한다.
 
 ### 원격 영상
 
@@ -63,7 +70,12 @@
   `contractVersion`·`routingRevision`·`modelId`·`modelRevision`을 모두 bounded
   token으로 보존하며, receipt routing과 provenance routing이 다르면 bundle을
   `context-ready`로 읽지 않는다.
-- 자막이 없는 영상의 예약 ASR은 90초 source range마다 독립된 R2 media ticket과
+- 자동 run은 한국어 수동·자동 자막이 모두 없는 영상을 AI 분석하지 않는다. 해당
+  영상은 `retryable(transcript)`와 run outcome `caption-pending`으로 남아 24시간부터
+  시작하는 bounded backoff로 자막을 다시 확인하되, 게시 후 7일이 지나면 자동 due에서
+  제외한다. 이 정상 대기는 run 전체를 partial 실패로 바꾸지 않는다.
+- 특정 video ID를 지정한 수동 복구에서만 자막이 없는 영상의 예약 ASR을 허용한다.
+  예약 ASR은 90초 source range마다 독립된 R2 media ticket과
   Durable Object terminal을 사용한다. 성공 range는 숨김 catalog checkpoint에 즉시
   write/readback되며 실패·중단 뒤에는 이미 성공한 range를 재요청하지 않는다. 전체
   transcript bundle과 catalog pointer의 closure가 확인된 뒤 checkpoint를 제거한다.

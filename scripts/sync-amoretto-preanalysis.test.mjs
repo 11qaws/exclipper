@@ -66,6 +66,7 @@ import {
   createEmptyCatalog,
   classifyYtDlpFailure,
   createExpectedScheduledContextReceipt,
+  createSingleChannelPreanalysisRunReport,
   createRetryCheckpoint,
   createScheduledAsrTranscriptReadyBundle,
   createScheduledContextRequest,
@@ -99,8 +100,8 @@ function video(overrides = {}) {
     title,
     normalizedTitle: normalizeChannelVideoTitle(title),
     durationMs: 8_114_000,
-    publishedAt: "2026-07-17T04:00:00.000Z",
-    updatedAt: "2026-07-17T09:30:00.000Z",
+    publishedAt: "2026-07-29T04:00:00.000Z",
+    updatedAt: "2026-07-29T09:30:00.000Z",
     watchUrl: `https://www.youtube.com/watch?v=${videoId}`,
     state: "discovered",
     revision: 1,
@@ -566,13 +567,19 @@ test("CLI defaults are bounded and every override is explicit", () => {
   );
 });
 
-test("scheduled and manual runs checkout the immutable workflow event revision through a proven WARP egress", async () => {
+test("the independent scan schedules immutable serial heavy runs through a proven WARP egress", async () => {
   const workflow = await readFile(
     new URL("../.github/workflows/channel-preanalysis.yml", import.meta.url),
     "utf8",
   );
-  assert.match(workflow, /^\s{2}schedule:/mu);
   assert.match(workflow, /^\s{2}workflow_dispatch:/mu);
+  assert.doesNotMatch(workflow, /^\s{2}schedule:/mu);
+  const scanWorkflow = await readFile(
+    new URL("../.github/workflows/channel-preanalysis-scan.yml", import.meta.url),
+    "utf8",
+  );
+  assert.match(scanWorkflow, /^\s{2}schedule:/mu);
+  assert.match(scanWorkflow, /cron:\s*"17,47 \* \* \* \*"/u);
   // YouTube refuses this runner's own address, so yt-dlp must go through WARP
   // and the tunnel must be proven before anything depends on it. Losing either
   // of these silently returns every run to deferring every video.
@@ -969,7 +976,7 @@ test("due selection protects fresh discoveries from retry starvation and never e
   );
   assert.deepEqual(
     selected.map(({ videoId }) => videoId),
-    [FOOD_TALK_ID, OLD_VIDEO_ID],
+    [FOOD_TALK_ID, SUBSCRIPTION_ID],
   );
 
   const forced = selectDueCatalogVideos(
@@ -1020,6 +1027,33 @@ test("due selection protects fresh discoveries from retry starvation and never e
       includePermanentCaptionRetries: false,
     }),
     [],
+  );
+});
+
+test("automatic due selection includes the seven-day boundary and exact selection can inspect older videos", () => {
+  const boundary = video({
+    videoId: "Boundary001",
+    publishedAt: "2026-07-23T00:00:00.000Z",
+  });
+  const expired = video({
+    videoId: OLD_VIDEO_ID,
+    publishedAt: "2026-07-22T23:59:59.999Z",
+  });
+
+  assert.deepEqual(
+    selectDueCatalogVideos(manifest([expired, boundary]), {
+      nowIso: BASE_TIME,
+      maxVideos: 2,
+    }).map(({ videoId }) => videoId),
+    [boundary.videoId],
+  );
+  assert.deepEqual(
+    selectDueCatalogVideos(manifest([expired]), {
+      nowIso: BASE_TIME,
+      maxVideos: 1,
+      videoId: expired.videoId,
+    }),
+    [expired],
   );
 });
 
@@ -2052,7 +2086,7 @@ test("scheduled extraction records duplicated ko aliases as automatic when metad
   }
 });
 
-test("captionless uploads fall back to checkpointed scheduled ASR and reach context-ready", async () => {
+test("an exact manual captionless upload can use checkpointed scheduled ASR", async () => {
   const catalogDir = await mkdtemp(
     join(tmpdir(), "exclipper-scheduled-asr-fallback-"),
   );
@@ -2081,7 +2115,7 @@ test("captionless uploads fall back to checkpointed scheduled ASR and reach cont
         catalogDir,
         ytDlpPath: "test-path-yt-dlp",
         maxVideos: 1,
-        videoId: null,
+        videoId: source.videoId,
         contextProxyUrl: "https://worker.example/v1/broadcast-context",
         contextAuthorizationToken: TEST_CONTEXT_TOKEN,
       },
@@ -2164,6 +2198,74 @@ test("captionless uploads fall back to checkpointed scheduled ASR and reach cont
       "scheduled-asr-transcript-only",
     );
     await assert.rejects(readFile(checkpointPath), { code: "ENOENT" });
+  } finally {
+    await rm(catalogDir, { recursive: true, force: true });
+  }
+});
+
+test("automatic captionless uploads wait for captions without invoking scheduled ASR", async () => {
+  const catalogDir = await mkdtemp(
+    join(tmpdir(), "exclipper-caption-pending-"),
+  );
+  try {
+    const source = video({ durationMs: 240_000, state: "metadata-ready" });
+    await mkdir(join(catalogDir, "videos"), { recursive: true });
+    await writeFile(
+      join(catalogDir, "catalog.json"),
+      `${JSON.stringify(manifest([source]), null, 2)}\n`,
+      "utf8",
+    );
+    let asrCalls = 0;
+    const result = await synchronizeAmorettoCatalog(
+      {
+        catalogDir,
+        ytDlpPath: "test-path-yt-dlp",
+        maxVideos: 1,
+        videoId: null,
+        contextProxyUrl: "https://worker.example/v1/broadcast-context",
+        contextAuthorizationToken: TEST_CONTEXT_TOKEN,
+      },
+      {
+        now: () => new Date(BASE_TIME),
+        fetch: async () => new Response(atomFeedFor(source), { status: 200 }),
+        commandRunner: async (_command, arguments_) => {
+          if (arguments_.length === 1 && arguments_[0] === "--version") {
+            return { stdout: `${PINNED_YT_DLP_VERSION}\n`, stderr: "" };
+          }
+          return {
+            stdout: JSON.stringify(
+              ytDlpCaptionMetadata(source, {
+                automaticOriginalKorean: false,
+                automaticKorean: false,
+              }),
+            ),
+            stderr: "",
+          };
+        },
+        scheduledAsrProvider: async () => {
+          asrCalls += 1;
+          throw new Error("Automatic caption-only work must not use ASR.");
+        },
+        log: { info() {}, warn() {} },
+      },
+    );
+
+    assert.equal(asrCalls, 0);
+    assert.equal(result.outcomes[0]?.state, "caption-pending");
+    assert.equal(
+      result.manifest.videos[0]?.retry?.errorCode,
+      "KOREAN_CAPTION_NOT_FOUND",
+    );
+    assert.equal(
+      createSingleChannelPreanalysisRunReport(
+        result,
+        AMORETTO_CHANNEL_PREANALYSIS_SOURCE,
+        1,
+        BASE_TIME,
+        BASE_TIME,
+      ).status,
+      "complete",
+    );
   } finally {
     await rm(catalogDir, { recursive: true, force: true });
   }

@@ -280,6 +280,28 @@ test("an exact manual review bypasses only the retry time backoff", () => {
   );
 });
 
+test("automatic review excludes videos older than seven days while exact review remains available", () => {
+  const old = {
+    videoId: VIDEO_ID,
+    state: "context-ready",
+    publishedAt: "2026-07-25T02:59:59.999Z",
+    retry: null,
+  };
+  const nowMs = Date.parse("2026-08-01T03:00:00.000Z");
+
+  assert.deepEqual(
+    selectChannelPreanalysisReviewQueue({ videos: [old] }, { nowMs }),
+    [],
+  );
+  assert.deepEqual(
+    selectChannelPreanalysisReviewQueue(
+      { videos: [old] },
+      { nowMs, videoId: VIDEO_ID },
+    ),
+    [old],
+  );
+});
+
 test("an exact manual review selects an already closed video for current-pipeline refresh", () => {
   const exact = {
     videoId: VIDEO_ID,

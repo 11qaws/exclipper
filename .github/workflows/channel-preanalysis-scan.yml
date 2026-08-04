@@ -1,0 +1,137 @@
+name: Scan channel uploads
+
+on:
+  schedule:
+    # Keep the lightweight feed scan independent from the long heavy queue.
+    # :17/:47 also avoids the busiest top-of-hour scheduler window.
+    - cron: "17,47 * * * *"
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: read
+
+concurrency:
+  group: channel-preanalysis-upload-scan
+  cancel-in-progress: true
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout application source
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          ref: ${{ github.sha }}
+          path: source
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Require the preanalysis catalog branch
+        working-directory: source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git ls-remote --exit-code --heads origin refs/heads/preanalysis-catalog >/dev/null
+
+      - name: Checkout current catalog snapshot
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          ref: preanalysis-catalog
+          path: catalog
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Bootstrap missing configured catalog namespaces
+        shell: bash
+        run: |
+          set -euo pipefail
+          namespaces=(
+            amoretto-vods
+            eureka-history
+            sena-replay
+            mangjing-compilations
+          )
+          for namespace in "${namespaces[@]}"; do
+            fallback="source/public/preanalysis/${namespace}"
+            target="catalog/${namespace}"
+            test -f "${fallback}/catalog.json"
+            if [[ ! -e "${target}" ]]; then
+              cp -R -- "${fallback}" "${target}"
+            fi
+            test -f "${target}/catalog.json"
+          done
+
+      - name: Set up Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: "22.12.0"
+          cache: npm
+          cache-dependency-path: source/package-lock.json
+
+      - name: Install locked dependencies
+        working-directory: source
+        run: npm ci --ignore-scripts
+
+      - name: Scan feeds and inspect the seven-day queue
+        id: preflight
+        working-directory: source
+        shell: bash
+        env:
+          CATALOG_DIRECTORY: ${{ github.workspace }}/catalog
+        run: |
+          set -euo pipefail
+          npx --no-install tsx scripts/channel-preanalysis-upload-preflight.mjs \
+            --catalog-dir "${CATALOG_DIRECTORY}" \
+            --source all \
+            --max-videos 2
+          node --input-type=module - \
+            "${CATALOG_DIRECTORY}/channel-preanalysis-upload-preflight-report.json" \
+            "${GITHUB_OUTPUT}" <<'NODE'
+          import { appendFile, readFile } from "node:fs/promises";
+
+          const report = JSON.parse(await readFile(process.argv[2], "utf8"));
+          if (
+            report.schemaVersion !== 1 ||
+            typeof report.heavyRequired !== "boolean" ||
+            !["complete", "partial"].includes(report.status)
+          ) {
+            throw new Error("Invalid channel upload scan report.");
+          }
+          await appendFile(
+            process.argv[3],
+            `heavy_required=${String(report.heavyRequired)}\nstatus=${report.status}\n`,
+            "utf8",
+          );
+          NODE
+
+      - name: Preserve the scan report
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: channel-upload-scan-${{ github.run_id }}-${{ github.run_attempt }}
+          path: catalog/channel-preanalysis-upload-preflight-report.json
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Append due work to the serial heavy queue
+        if: steps.preflight.outputs.heavy_required == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch || 'main' }}
+        run: |
+          set -euo pipefail
+          gh workflow run channel-preanalysis.yml \
+            --repo "${GITHUB_REPOSITORY}" \
+            --ref "${DEFAULT_BRANCH}" \
+            -f source=all \
+            -f max_videos=2 \
+            -f force_heavy=false
+
+      - name: Surface partial feed failures after queueing healthy work
+        if: always() && steps.preflight.outputs.status == 'partial'
+        shell: bash
+        run: |
+          echo "::error::At least one channel feed scan failed; healthy due work was still queued."
+          exit 1

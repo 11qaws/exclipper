@@ -42,8 +42,8 @@ const SOURCE = {
   videoId: VIDEO_ID,
   title: "2026 07 17 - 음식 토크",
   durationMs: 240_000,
-  publishedAt: "2026-07-17T04:00:00.000Z",
-  updatedAt: "2026-07-17T09:30:00.000Z",
+  publishedAt: "2026-07-29T04:00:00.000Z",
+  updatedAt: "2026-07-29T09:30:00.000Z",
   watchUrl: `https://www.youtube.com/watch?v=${VIDEO_ID}`,
 };
 const STORYBOARD_URL =

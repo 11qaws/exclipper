@@ -26,6 +26,7 @@ import {
   CHANNEL_PREANALYSIS_CATALOG_SCHEMA_VERSION,
   YOUTUBE_CHANNEL_ATOM_FEED_MAX_BYTES,
   channelPreanalysisSourceForManifest,
+  isWithinChannelPreanalysisAutomaticWindow,
   isChannelPreanalysisState,
   normalizeChannelVideoTitle,
   parseYouTubeChannelAtomFeed,
@@ -584,6 +585,11 @@ export function selectDueCatalogVideos(
 
   return catalog.videos
     .filter((video) => {
+      if (
+        !isWithinChannelPreanalysisAutomaticWindow(video.publishedAt, nowMs)
+      ) {
+        return false;
+      }
       if (
         catalogVideoReachedTarget(
           catalog,
@@ -2255,7 +2261,7 @@ export async function synchronizeChannelPreanalysisCatalog(
           includeTranscriptReady: contextEnabled,
           includePermanentCaptionRetries:
             options.includePermanentCaptionRetries !== false,
-          recoverCaptionRetriesWithAsr: contextEnabled,
+          recoverCaptionRetriesWithAsr: false,
         });
   const outcomes = [];
 
@@ -2270,6 +2276,7 @@ export async function synchronizeChannelPreanalysisCatalog(
         commandRunner,
         visualFingerprintProvider,
         scheduledAsrProvider,
+        allowScheduledAsr: options.videoId !== null,
         contextProxyUrl,
         contextAuthorizationToken,
         contextProviderRetryPolicy,
@@ -2319,9 +2326,12 @@ export async function synchronizeChannelPreanalysisCatalog(
         nowIso(),
       );
       await writeJsonAtomic(catalogPath, manifest);
+      const captionPending =
+        options.videoId === null &&
+        PERMANENT_CAPTION_RETRY_CODES.has(retry.errorCode);
       outcomes.push({
         videoId: selectedVideo.videoId,
-        state: "retryable",
+        state: captionPending ? "caption-pending" : "retryable",
         errorCode: retry.errorCode,
       });
       // Without the message an operator sees only the code, which cannot
@@ -2333,10 +2343,14 @@ export async function synchronizeChannelPreanalysisCatalog(
       // display, so matching against it would couple the classifier to it.
       const failureKind =
         stage === "transcript" ? ` (${classifyYtDlpFailure(rawMessage)})` : "";
-      log.warn(
+      const message =
         `Deferred ${selectedVideo.videoId} at ${stage}: ${retry.errorCode}${failureKind}; next attempt ${retry.nextAttemptAt}.` +
-          (diagnostic === "" ? "" : ` Diagnostic: ${diagnostic}`),
-      );
+        (diagnostic === "" ? "" : ` Diagnostic: ${diagnostic}`);
+      if (captionPending) {
+        log.info(message);
+      } else {
+        log.warn(message);
+      }
     }
   }
 
@@ -2674,6 +2688,7 @@ async function processCatalogVideo({
   commandRunner,
   visualFingerprintProvider,
   scheduledAsrProvider,
+  allowScheduledAsr,
   contextProxyUrl,
   contextAuthorizationToken,
   contextProviderRetryPolicy,
@@ -2960,6 +2975,7 @@ async function processCatalogVideo({
       } catch (cause) {
         if (
           !PERMANENT_CAPTION_RETRY_CODES.has(errorCodeOf(cause)) ||
+          allowScheduledAsr !== true ||
           contextProxyUrl === null ||
           contextAuthorizationToken === null
         ) {
@@ -4866,6 +4882,7 @@ async function main() {
     console.log(
       `Sources ${result.sources.length}; selected ${result.processedVideoCount}/${result.globalLimit}; ` +
         `context-ready ${outcomes.filter(({ state }) => state === "context-ready").length}; ` +
+        `caption-pending ${outcomes.filter(({ state }) => state === "caption-pending").length}; ` +
         `retryable ${outcomes.filter(({ state }) => state === "retryable").length}; ` +
         `source-errors ${result.sourceErrors.length}.`,
     );
@@ -4893,6 +4910,7 @@ async function main() {
       `selected ${result.selectedVideoIds.length}; ` +
       `transcript-ready ${result.outcomes.filter(({ state }) => state === "transcript-ready").length}; ` +
       `context-ready ${result.outcomes.filter(({ state }) => state === "context-ready").length}; ` +
+      `caption-pending ${result.outcomes.filter(({ state }) => state === "caption-pending").length}; ` +
       `retryable ${result.outcomes.filter(({ state }) => state === "retryable").length}.`,
   );
 }

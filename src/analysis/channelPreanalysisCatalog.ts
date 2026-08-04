@@ -19,6 +19,21 @@ export const YOUTUBE_CHANNEL_ATOM_FEED_MAX_BYTES = 512 * 1024;
 export const YOUTUBE_CHANNEL_ATOM_FEED_MAX_ENTRIES = 64;
 export const CHANNEL_PREANALYSIS_CATALOG_SCHEMA_VERSION = 1 as const;
 export const CHANNEL_PREANALYSIS_TITLE_DURATION_TOLERANCE_MS = 2_000;
+export const CHANNEL_PREANALYSIS_AUTOMATIC_MAX_AGE_MS =
+  7 * 24 * 60 * 60_000;
+
+export function isWithinChannelPreanalysisAutomaticWindow(
+  publishedAt: string,
+  nowMs: number,
+): boolean {
+  const publishedAtMs = Date.parse(publishedAt);
+  return (
+    Number.isSafeInteger(nowMs) &&
+    nowMs >= 0 &&
+    Number.isFinite(publishedAtMs) &&
+    publishedAtMs >= nowMs - CHANNEL_PREANALYSIS_AUTOMATIC_MAX_AGE_MS
+  );
+}
 
 export const CHANNEL_PREANALYSIS_STATES = [
   "discovered",

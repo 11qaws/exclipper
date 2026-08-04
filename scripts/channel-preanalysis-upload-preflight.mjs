@@ -137,7 +137,7 @@ export function selectChannelPreanalysisUploadPreflightDueWork(
     maxVideos,
     includeTranscriptReady: true,
     includePermanentCaptionRetries: true,
-    recoverCaptionRetriesWithAsr: true,
+    recoverCaptionRetriesWithAsr: false,
   })) {
     append(video, "pipeline");
   }

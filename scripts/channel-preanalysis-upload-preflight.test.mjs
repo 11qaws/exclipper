@@ -158,6 +158,20 @@ test("treats a context-ready video without a review bundle as heavy work", () =>
   assert.ok(due[0]?.reasons.includes("review-missing"));
 });
 
+test("does not queue automatic work for a video older than seven days", () => {
+  const expired = {
+    ...catalogVideo("Expired0001", "context-ready"),
+    publishedAt: "2026-07-26T11:59:59.999Z",
+  };
+  assert.deepEqual(
+    selectChannelPreanalysisUploadPreflightDueWork(manifestWith(expired), {
+      nowIso: NOW,
+      maxVideos: 2,
+    }),
+    [],
+  );
+});
+
 test("discovers a new upload in the catalog before requesting heavy work", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "exclipper-upload-preflight-"));
   t.after(() => rm(root, { recursive: true, force: true }));
@@ -211,16 +225,26 @@ test("writes complete no-work reports when every catalog is already current", as
   }
 });
 
-test("workflow gates WARP and media preparation behind preflight while manual runs stay heavy", async () => {
-  const workflow = await readFile(
+test("a 30-minute scan queues serial heavy work while manual runs can force it", async () => {
+  const heavyWorkflow = await readFile(
     new URL("../.github/workflows/channel-preanalysis.yml", import.meta.url),
     "utf8",
   );
-  assert.match(workflow, /cron:\s*"17,47 \* \* \* \*"/u);
-  assert.match(
-    workflow,
-    /if \[\[ "\$\{EVENT_NAME\}" == "workflow_dispatch" \]\]; then\s+heavy_required="true"/u,
+  const scanWorkflow = await readFile(
+    new URL("../.github/workflows/channel-preanalysis-scan.yml", import.meta.url),
+    "utf8",
   );
+  assert.match(scanWorkflow, /cron:\s*"17,47 \* \* \* \*"/u);
+  assert.doesNotMatch(heavyWorkflow, /^\s{2}schedule:/mu);
+  assert.match(heavyWorkflow, /group:\s*channel-preanalysis-heavy-queue/u);
+  assert.match(heavyWorkflow, /queue:\s*max/u);
+  assert.match(
+    heavyWorkflow,
+    /if \[\[ "\$\{FORCE_HEAVY\}" == "true" \]\]; then\s+heavy_required="true"/u,
+  );
+  assert.match(scanWorkflow, /actions:\s*write/u);
+  assert.match(scanWorkflow, /gh workflow run channel-preanalysis\.yml/u);
+  assert.match(scanWorkflow, /-f force_heavy=false/u);
   for (const stepName of [
     "Verify channel sync and visual fingerprint contracts",
     "Download and verify pinned yt-dlp",
@@ -229,19 +253,19 @@ test("workflow gates WARP and media preparation behind preflight while manual ru
     "Prepare complete review-ready bundles",
   ]) {
     assert.match(
-      workflow,
+      heavyWorkflow,
       new RegExp(
         `- name: ${stepName.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")}\\s+if: steps\\.upload-preflight\\.outputs\\.heavy_required == 'true'`,
         "u",
       ),
     );
   }
-  assert.match(workflow, /Require review-ready Worker credentials/u);
+  assert.match(heavyWorkflow, /Require review-ready Worker credentials/u);
   assert.match(
-    workflow,
+    heavyWorkflow,
     /apt-get install -y --no-install-recommends cloudflare-warp ffmpeg/u,
   );
-  assert.doesNotMatch(workflow, /"status": "disabled"/u);
-  assert.match(workflow, /EXPECTED_BASE_SHA: \$\{\{ needs\.prepare\.outputs\.catalog_base_sha \}\}/u);
-  assert.match(workflow, /include-hidden-files:\s*true/u);
+  assert.doesNotMatch(heavyWorkflow, /"status": "disabled"/u);
+  assert.match(heavyWorkflow, /EXPECTED_BASE_SHA: \$\{\{ needs\.prepare\.outputs\.catalog_base_sha \}\}/u);
+  assert.match(heavyWorkflow, /include-hidden-files:\s*true/u);
 });

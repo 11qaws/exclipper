@@ -67,9 +67,10 @@
 | `app/channelPreanalysisVisualIdentity.ts` | App의 로컬 영상 화면 검증 orchestration이다. 단일 probable 후보 또는 이름이 완전히 바뀐 duration cohort의 공통 sampling plan을 한 번 실행하고, 유일한 합의일 때만 snapshot-bound exact lookup을 반환한다. |
 | `media/localVideoVisualAnalysis.ts` | 로컬 파일의 지정 source 시각을 seek·decode하고 원본 pixel buffer를 남기지 않는 고정 32×18 luma 표본으로 축소한다. 표본은 지문 비교 직후 명시적으로 지운다. |
 | `../scripts/channel-preanalysis-visual-fingerprint.mjs` | bounded YouTube storyboard metadata·sheet를 받아 12개 분산 anchor의 manifest-bound 시각 지문 artifact를 생성한다. sheet host·개수·bytes와 이미지 decode를 제한한다. |
-| `../scripts/sync-amoretto-preanalysis.mjs` | 네 공식 playlist feed reconciliation, 전역 최대 2개 fair scheduling, pinned `yt-dlp` metadata/한국어 자막 우선 추출과 자막 부재 예약 ASR fallback, source별 immutable bundle-first commit, review artifact까지 포함한 closure와 단계별 retry checkpoint를 수행한다. |
+| `../scripts/channel-preanalysis-upload-preflight.mjs` | 네 Atom feed를 bounded fetch해 게시 후 7일 이내 due transcript/context/review 작업만 판정하는 무과금 스캔을 소유한다. |
+| `../scripts/sync-amoretto-preanalysis.mjs` | 네 공식 playlist feed reconciliation, 게시 후 7일 자동 선택, 전역 최대 2개 fair scheduling, pinned `yt-dlp` 한국어 자막 gate, 수동 exact 영상만의 예약 ASR fallback, source별 immutable bundle-first commit과 단계별 retry checkpoint를 수행한다. |
 | `../scripts/lib/channel-preanalysis-media.mjs` | 정확한 YouTube 분석 사본의 bounded 다운로드·12시간/16GiB probe·전체 1초 오디오 특징 스트림·후보별 JPEG 4장과 16kHz WAV 추출을 소유한다. |
-| `../scripts/lib/channel-preanalysis-scheduled-asr.mjs` | 자막 없는 VOD의 audio-only 다운로드, 90초 canonical WAV 추출, private R2 stage/resolve, Groq segment timestamp·보수적 no-speech 검증과 range별 atomic checkpoint/resume를 소유한다. |
+| `../scripts/lib/channel-preanalysis-scheduled-asr.mjs` | 특정 video ID로 명시한 자막 없는 VOD의 수동 복구에서 audio-only 다운로드, 90초 canonical WAV, private R2 stage/resolve, Groq timestamp·보수적 no-speech와 range별 atomic resume를 소유한다. 자동 7일 queue는 이 경로를 호출하지 않는다. |
 | `../scripts/lib/channel-preanalysis-review-runner.mjs` | 전체 오디오 신호와 의미 lead를 최대 12개로 융합하고, 화면이 모두 준비된 후보만 AI에 보내 최종 검증 certificate를 만든다. |
 | `../scripts/lib/channel-preanalysis-review-checkpoint.mjs` | source/video/context/revision/pipeline에 봉인된 후보별 완료·제외·재시도 결과를 4MiB 안에서 원자 보존하고 게시 성공 뒤에만 삭제한다. |
 | `../scripts/lib/channel-preanalysis-review-candidate-client.mjs` | 후보 WAV·JPEG를 private R2에 stage하고 맥락을 전용 Worker로 보낸다. 만료 가능한 transport ticket과 고정 semantic operation을 분리해 409·429·5xx를 복구하며 실제 model receipt를 runner 계약으로 봉인한다. |

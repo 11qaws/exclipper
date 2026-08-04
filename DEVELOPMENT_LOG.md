@@ -1,5 +1,25 @@
 # Development Log
 
+## 2026-08-04 30분 독립 스캔·7일 자막 queue
+
+- 30분 cron을 2시간 heavy 분석과 같은 workflow/concurrency group에서 분리했다.
+  `channel-preanalysis-scan.yml`은 매시 17분·47분에 네 Atom feed와 catalog만 확인하고,
+  due가 있을 때 `force_heavy=false` dispatch를 만든다. `channel-preanalysis.yml`은
+  `queue: max` 단일 실행열에서 한 run씩 순서대로 처리하며, 시작할 때 최신 catalog를
+  다시 읽어 앞 run이 끝낸 항목은 건너뛴다. 수동 dispatch의 `force_heavy=true` 기본값은
+  정확 재시도 경로를 보존한다.
+- transcript due, context/fingerprint retry, 후속 review queue 모두 `publishedAt >= now - 7일`을
+  같은 함수로 검사한다. 정확히 7일인 경계는 포함하고 오래된 catalog 기록·artifact는 삭제하지
+  않으며, 특정 source/video ID 수동 실행만 자동 시간 경계를 우회한다.
+- Atom feed만으로 자막 존재를 확정하지 않는다. heavy run이 pinned yt-dlp로 한국어 수동·자동
+  자막을 확인한 뒤, 둘 다 없으면 scheduled ASR·Worker·AI를 호출하지 않고
+  `retryable(transcript)`/`caption-pending`으로 저장한다. 이 상태는 정상 대기이므로 run을
+  partial로 만들지 않고 24시간부터 시작하는 backoff로 7일 안에서만 자막을 다시 확인한다.
+  자막 없는 영상의 ASR 복구는 특정 video ID를 지정한 수동 실행에만 남겼다.
+- 앱 버전은 `0.9.8`이다. 예약 pipeline Node 계약 163개, TypeScript, 사용자 소유
+  `.wrangler-dry-run-2/**`만 제외한 전체 ESLint, 전체 Vitest 178파일·2,199개, 음성 등록 도구
+  9개, production build와 foreground/preanalysis Worker dry-run이 통과했다.
+
 ## 2026-08-04 코코 선분석 대상과 준비본 화면 제외
 
 - 활성 채널 선분석 registry에서 `coco-replay`·`@kokotorori`를 제거했다. 기본 manifest 조회,

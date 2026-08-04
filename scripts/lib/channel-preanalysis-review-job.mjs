@@ -9,6 +9,7 @@ import {
 } from "../../src/analysis/channelPreanalysisBundle.ts";
 import {
   CHANNEL_PREANALYSIS_TITLE_DURATION_TOLERANCE_MS,
+  isWithinChannelPreanalysisAutomaticWindow,
 } from "../../src/analysis/channelPreanalysisCatalog.ts";
 import { parseChannelPreanalysisManifest } from "../../src/analysis/channelPreanalysisClient.ts";
 import { createBroadcastParticipantGrounding } from "../../src/analysis/broadcastParticipantGrounding.ts";
@@ -118,7 +119,10 @@ export function selectChannelPreanalysisReviewQueue(
     return exact === undefined ? [] : [exact];
   }
   const pending = manifest.videos
-    .filter((video) => video.state === "context-ready")
+    .filter((video) =>
+      video.state === "context-ready" &&
+      isWithinChannelPreanalysisAutomaticWindow(video.publishedAt, nowMs),
+    )
     .sort((left, right) =>
       Date.parse(right.publishedAt) - Date.parse(left.publishedAt) ||
       left.videoId.localeCompare(right.videoId),
@@ -128,6 +132,7 @@ export function selectChannelPreanalysisReviewQueue(
       video.state === "retryable" &&
       video.retry?.stage === "review" &&
       video.retry.lastSuccessfulState === "context-ready" &&
+      isWithinChannelPreanalysisAutomaticWindow(video.publishedAt, nowMs) &&
       Date.parse(video.retry.nextAttemptAt) <= nowMs,
     )
     .sort((left, right) =>
