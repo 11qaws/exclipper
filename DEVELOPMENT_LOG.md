@@ -25,7 +25,10 @@
   현재 단계와 재시도 시각을 보존하고, 공개 GitHub Actions API에서는 비밀 없이 실제
   `in_progress`/`queued` 실행 수만 5분마다 읽는다. Actions 상태 확인이 실패해도 catalog
   대기 목록은 유지하므로 원격 상태 장애가 편집 시작 화면을 막지 않는다.
-- 앱 버전은 `0.9.9`다. 예약 pipeline Node 계약 175개, TypeScript, 사용자 소유
+- 실제 원격 run에서 scan 대상 3개 중 review AI까지 올라간 영상은 1개였으므로, 메인 지표는
+  대상 영상 수를 `분석 중`으로 과장하지 않고 Actions의 실행 작업 수를 표시한다. 목록의 영상은
+  `현재 작업 대상`으로 구분하며, 남은 catalog 영상 수와 별도로 보여 준다.
+- 앱 버전은 `0.9.10`이다. 예약 pipeline Node 계약 175개, TypeScript, 사용자 소유
   `.wrangler-dry-run-2/**`만 제외한 전체 ESLint, 전체 Vitest 179파일·2,203개, 음성 등록 도구
   9개, production build와 foreground/preanalysis Worker dry-run이 통과했다.
 

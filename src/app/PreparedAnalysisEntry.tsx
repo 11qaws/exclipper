@@ -58,19 +58,19 @@ const COPY = {
     queueEyebrow: "자동 준비",
     queueTitle: "분석 큐",
     queueDescription: "최근 7일의 방송을 확인하고, 자막이 준비된 순서대로 분석합니다.",
-    analyzing: "분석 중",
+    analyzing: "분석 작업",
     waiting: "대기 중",
     loadingWorker: "확인 중",
     workerUnavailable: "상태 확인 지연",
     workerIdle: "현재 실행 중인 작업 없음",
     workerRunning: (count: number) => `작업 ${count.toLocaleString("ko-KR")}개 처리 중`,
     workerQueued: (count: number) => `실행 대기 ${count.toLocaleString("ko-KR")}개`,
-    activeItem: "분석 중",
-    queuedItem: "실행 대기",
+    activeItem: "현재 작업 대상",
+    queuedItem: "다음 작업 대상",
     noWaiting: "현재 대기 중인 최근 영상이 없습니다.",
     moreWaiting: (count: number) => `외 ${count.toLocaleString("ko-KR")}개 대기 중`,
     retryAt: (value: string) => `${value} 재시도`,
-    scheduleNote: "30분마다 새 영상을 확인하고, 한 번에 최대 2개씩 처리합니다.",
+    scheduleNote: "30분마다 새 영상을 확인하고, 한 작업에서 최대 2개의 분석을 완료합니다.",
     phase: {
       caption: "자막 확인",
       context: "전체 맥락",
@@ -98,19 +98,19 @@ const COPY = {
     queueEyebrow: "Automatic preparation",
     queueTitle: "Analysis queue",
     queueDescription: "Recent broadcasts are checked for seven days and analyzed as captions become ready.",
-    analyzing: "Analyzing",
+    analyzing: "Running jobs",
     waiting: "Waiting",
     loadingWorker: "Checking",
     workerUnavailable: "Status delayed",
     workerIdle: "No job is currently running",
     workerRunning: (count: number) => `${count.toLocaleString("en-US")} job running`,
     workerQueued: (count: number) => `${count.toLocaleString("en-US")} run queued`,
-    activeItem: "Analyzing",
-    queuedItem: "Run queued",
+    activeItem: "Current job target",
+    queuedItem: "Next job target",
     noWaiting: "No recent video is waiting.",
     moreWaiting: (count: number) => `${count.toLocaleString("en-US")} more waiting`,
     retryAt: (value: string) => `Retry ${value}`,
-    scheduleNote: "New videos are checked every 30 minutes and up to two are processed at a time.",
+    scheduleNote: "New videos are checked every 30 minutes; each job completes up to two analyses.",
     phase: {
       caption: "Captions",
       context: "Full context",
@@ -192,10 +192,7 @@ export function PreparedAnalysisEntry({
   ];
   const visibleQueue = orderedQueue.slice(0, 3);
   const hiddenQueueCount = Math.max(0, orderedQueue.length - visibleQueue.length);
-  const activeVideoCount =
-    activeQueue.length > 0
-      ? activeQueue.length
-      : workerSnapshot?.activeRunCount ?? 0;
+  const activeRunCount = workerSnapshot?.activeRunCount ?? 0;
   const waitingVideoCount = Math.max(0, queue.length - activeQueue.length);
   const workerIndicator =
     workerStatus !== "ready"
@@ -353,7 +350,7 @@ export function PreparedAnalysisEntry({
             <small>{copy.analyzing}</small>
             <strong>
               {workerStatus === "ready" && workerSnapshot !== null
-                ? activeVideoCount.toLocaleString(language === "ko" ? "ko-KR" : "en-US")
+                ? activeRunCount.toLocaleString(language === "ko" ? "ko-KR" : "en-US")
                 : "—"}
             </strong>
           </span>
