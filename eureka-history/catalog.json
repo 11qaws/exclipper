@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "channelId": "UCiFzBB8xsUjEBq8_h6Yl6tA",
   "channelHandle": "@eureka_history",
-  "revision": 36,
-  "generatedAt": "2026-08-04T13:27:04.045Z",
+  "revision": 37,
+  "generatedAt": "2026-08-04T13:54:06.469Z",
   "videos": [
     {
       "channelId": "UCiFzBB8xsUjEBq8_h6Yl6tA",
@@ -58,14 +58,14 @@
       "updatedAt": "2026-08-01T05:36:46.000Z",
       "watchUrl": "https://www.youtube.com/watch?v=DHHTY0ITfDA",
       "state": "retryable",
-      "revision": 2,
+      "revision": 3,
       "artifactIds": [],
       "registeredLocalSampledFingerprints": [],
       "retry": {
         "stage": "metadata",
         "lastSuccessfulState": "discovered",
-        "attemptCount": 1,
-        "nextAttemptAt": "2026-08-02T17:00:04.298Z",
+        "attemptCount": 2,
+        "nextAttemptAt": "2026-08-04T19:54:06.469Z",
         "errorCode": "YT_DLP_FAILED"
       }
     },
