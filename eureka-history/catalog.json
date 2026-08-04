@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "channelId": "UCiFzBB8xsUjEBq8_h6Yl6tA",
   "channelHandle": "@eureka_history",
-  "revision": 38,
-  "generatedAt": "2026-08-04T13:58:24.792Z",
+  "revision": 43,
+  "generatedAt": "2026-08-04T14:48:08.969Z",
   "videos": [
     {
       "channelId": "UCiFzBB8xsUjEBq8_h6Yl6tA",
@@ -95,21 +95,19 @@
       "videoId": "wDA0hmbrUKQ",
       "title": "2026 07 28 게릴라",
       "normalizedTitle": "2026 07 28 게릴라",
-      "durationMs": null,
+      "durationMs": 7902000,
       "publishedAt": "2026-07-29T03:16:08.000Z",
       "updatedAt": "2026-07-29T04:09:54.000Z",
       "watchUrl": "https://www.youtube.com/watch?v=wDA0hmbrUKQ",
-      "state": "retryable",
-      "revision": 2,
-      "artifactIds": [],
+      "state": "review-ready",
+      "revision": 7,
+      "artifactIds": [
+        "youtube-caption-bundle:wDA0hmbrUKQ:v2",
+        "youtube-storyboard-visual-fingerprint:wDA0hmbrUKQ:v1",
+        "review-bundle:wDA0hmbrUKQ:v7"
+      ],
       "registeredLocalSampledFingerprints": [],
-      "retry": {
-        "stage": "metadata",
-        "lastSuccessfulState": "discovered",
-        "attemptCount": 1,
-        "nextAttemptAt": "2026-08-03T10:50:05.826Z",
-        "errorCode": "YT_DLP_FAILED"
-      }
+      "retry": null
     },
     {
       "channelId": "UCiFzBB8xsUjEBq8_h6Yl6tA",
@@ -423,6 +421,36 @@
       "contentDigest": "sha256:d62304ce05cd6190ecbaac61bd3f2a224edfbfca1e4e771f1f18dced3b0a148b",
       "byteLength": 2201,
       "createdAt": "2026-08-04T12:02:29.000Z"
+    },
+    {
+      "artifactId": "youtube-caption-bundle:wDA0hmbrUKQ:v2",
+      "videoId": "wDA0hmbrUKQ",
+      "kind": "transcript",
+      "revision": 2,
+      "storageKey": "eureka-history/videos/wDA0hmbrUKQ.v2.json",
+      "contentDigest": "sha256:632bb9f44bc1d9c7612c849c63ba00f8a711ca3ff8f216453adf89abd3de7fb4",
+      "byteLength": 318870,
+      "createdAt": "2026-08-04T14:40:50.045Z"
+    },
+    {
+      "artifactId": "youtube-storyboard-visual-fingerprint:wDA0hmbrUKQ:v1",
+      "videoId": "wDA0hmbrUKQ",
+      "kind": "fingerprint",
+      "revision": 1,
+      "storageKey": "eureka-history/videos/wDA0hmbrUKQ.visual-fingerprint.v1.json",
+      "contentDigest": "sha256:988a28da5c690615de0c68647ab07db3e928572248825416708dbb03006fc7a0",
+      "byteLength": 2199,
+      "createdAt": "2026-07-29T04:09:54.000Z"
+    },
+    {
+      "artifactId": "review-bundle:wDA0hmbrUKQ:v7",
+      "videoId": "wDA0hmbrUKQ",
+      "kind": "review",
+      "revision": 7,
+      "storageKey": "eureka-history/videos/wDA0hmbrUKQ.review.v7.json",
+      "contentDigest": "sha256:2af9673cd4d9200649389b30fcfc3665d38743a30f7a00776d32714d3e89df41",
+      "byteLength": 1698217,
+      "createdAt": "2026-08-04T14:42:55.480Z"
     }
   ]
 }

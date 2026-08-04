@@ -2,23 +2,29 @@
   "schemaVersion": 1,
   "channelId": "UCk0Mu5MpVzJ056e65XpAj0Q",
   "channelHandle": "@SENAREPLAY",
-  "revision": 31,
-  "generatedAt": "2026-08-04T12:30:12.152Z",
+  "revision": 33,
+  "generatedAt": "2026-08-04T14:40:54.928Z",
   "videos": [
     {
       "channelId": "UCk0Mu5MpVzJ056e65XpAj0Q",
       "videoId": "6-pQH_dd3AI",
       "title": "【26. 08. 03】 저챗 하구 싱드컵 연습 겸 노래 부른 날~ ★",
       "normalizedTitle": "26 08 03 저챗 하구 싱드컵 연습 겸 노래 부른 날",
-      "durationMs": null,
+      "durationMs": 13101000,
       "publishedAt": "2026-08-04T08:28:27.000Z",
       "updatedAt": "2026-08-04T08:34:53.000Z",
       "watchUrl": "https://www.youtube.com/watch?v=6-pQH_dd3AI",
-      "state": "discovered",
-      "revision": 1,
+      "state": "retryable",
+      "revision": 3,
       "artifactIds": [],
       "registeredLocalSampledFingerprints": [],
-      "retry": null
+      "retry": {
+        "stage": "transcript",
+        "lastSuccessfulState": "metadata-ready",
+        "attemptCount": 1,
+        "nextAttemptAt": "2026-08-05T14:40:54.928Z",
+        "errorCode": "KOREAN_CAPTION_NOT_FOUND"
+      }
     },
     {
       "channelId": "UCk0Mu5MpVzJ056e65XpAj0Q",
