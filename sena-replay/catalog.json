@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "channelId": "UCk0Mu5MpVzJ056e65XpAj0Q",
   "channelHandle": "@SENAREPLAY",
-  "revision": 25,
-  "generatedAt": "2026-08-03T22:03:17.768Z",
+  "revision": 30,
+  "generatedAt": "2026-08-04T07:39:09.830Z",
   "videos": [
     {
       "channelId": "UCk0Mu5MpVzJ056e65XpAj0Q",
@@ -151,13 +151,17 @@
       "videoId": "16TduhrkUl4",
       "title": "【26. 07. 16】 저챗 + 야추 연습 ★",
       "normalizedTitle": "26 07 16 저챗 야추 연습",
-      "durationMs": null,
+      "durationMs": 13340000,
       "publishedAt": "2026-07-22T07:55:54.000Z",
       "updatedAt": "2026-07-22T07:55:54.000Z",
       "watchUrl": "https://www.youtube.com/watch?v=16TduhrkUl4",
-      "state": "discovered",
-      "revision": 1,
-      "artifactIds": [],
+      "state": "review-ready",
+      "revision": 6,
+      "artifactIds": [
+        "youtube-caption-bundle:16TduhrkUl4:v2",
+        "youtube-storyboard-visual-fingerprint:16TduhrkUl4:v1",
+        "review-bundle:16TduhrkUl4:v6"
+      ],
       "registeredLocalSampledFingerprints": [],
       "retry": null
     },
@@ -357,6 +361,36 @@
       "contentDigest": "sha256:35a1422ea10c0bc39167305db6816cb354997068814ca60b8ade41878eb928fd",
       "byteLength": 1643080,
       "createdAt": "2026-08-03T11:53:03.676Z"
+    },
+    {
+      "artifactId": "youtube-caption-bundle:16TduhrkUl4:v2",
+      "videoId": "16TduhrkUl4",
+      "kind": "transcript",
+      "revision": 2,
+      "storageKey": "sena-replay/videos/16TduhrkUl4.v2.json",
+      "contentDigest": "sha256:b444b331e16a784c02ff4611b70b114cd146f256e25852dc26c7b69b12b177ba",
+      "byteLength": 663005,
+      "createdAt": "2026-08-04T07:29:00.010Z"
+    },
+    {
+      "artifactId": "youtube-storyboard-visual-fingerprint:16TduhrkUl4:v1",
+      "videoId": "16TduhrkUl4",
+      "kind": "fingerprint",
+      "revision": 1,
+      "storageKey": "sena-replay/videos/16TduhrkUl4.visual-fingerprint.v1.json",
+      "contentDigest": "sha256:4f53675d83f810da586385bca2c6fe3f23fa90a68b339fc7b2b49c320001a7b7",
+      "byteLength": 2205,
+      "createdAt": "2026-07-22T07:55:54.000Z"
+    },
+    {
+      "artifactId": "review-bundle:16TduhrkUl4:v6",
+      "videoId": "16TduhrkUl4",
+      "kind": "review",
+      "revision": 6,
+      "storageKey": "sena-replay/videos/16TduhrkUl4.review.v6.json",
+      "contentDigest": "sha256:d0feff49aa3b2485b404a8b02072f84e1eac7b07c82f88e38eb9a1c7bd3d0566",
+      "byteLength": 2048787,
+      "createdAt": "2026-08-04T07:33:10.186Z"
     }
   ]
 }

@@ -2,9 +2,24 @@
   "schemaVersion": 1,
   "channelId": "UCiFzBB8xsUjEBq8_h6Yl6tA",
   "channelHandle": "@eureka_history",
-  "revision": 29,
-  "generatedAt": "2026-08-04T01:28:18.460Z",
+  "revision": 30,
+  "generatedAt": "2026-08-04T07:26:37.849Z",
   "videos": [
+    {
+      "channelId": "UCiFzBB8xsUjEBq8_h6Yl6tA",
+      "videoId": "Wacrz9D11Eo",
+      "title": "2026 08 04 무친아침노래방",
+      "normalizedTitle": "2026 08 04 무친아침노래방",
+      "durationMs": null,
+      "publishedAt": "2026-08-04T05:39:17.000Z",
+      "updatedAt": "2026-08-04T06:57:43.000Z",
+      "watchUrl": "https://www.youtube.com/watch?v=Wacrz9D11Eo",
+      "state": "discovered",
+      "revision": 1,
+      "artifactIds": [],
+      "registeredLocalSampledFingerprints": [],
+      "retry": null
+    },
     {
       "channelId": "UCiFzBB8xsUjEBq8_h6Yl6tA",
       "videoId": "qpAyqsZllPg",

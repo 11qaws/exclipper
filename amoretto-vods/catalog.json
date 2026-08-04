@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "channelId": "UCHycoTBFDhXz4XNz8jBP-_A",
   "channelHandle": "@AmorettoVODs",
-  "revision": 84,
-  "generatedAt": "2026-08-04T01:24:38.446Z",
+  "revision": 86,
+  "generatedAt": "2026-08-04T07:46:27.391Z",
   "videos": [
     {
       "channelId": "UCHycoTBFDhXz4XNz8jBP-_A",
@@ -182,11 +182,12 @@
       "publishedAt": "2026-07-16T14:52:43.000Z",
       "updatedAt": "2026-07-16T15:49:46.000Z",
       "watchUrl": "https://www.youtube.com/watch?v=CvnTApEN7Q4",
-      "state": "transcript-ready",
-      "revision": 4,
+      "state": "review-ready",
+      "revision": 6,
       "artifactIds": [
-        "youtube-caption-bundle:CvnTApEN7Q4:v1",
-        "youtube-storyboard-visual-fingerprint:CvnTApEN7Q4:v1"
+        "youtube-storyboard-visual-fingerprint:CvnTApEN7Q4:v1",
+        "youtube-caption-bundle:CvnTApEN7Q4:v2",
+        "review-bundle:CvnTApEN7Q4:v6"
       ],
       "registeredLocalSampledFingerprints": [],
       "retry": null
@@ -361,16 +362,6 @@
       "contentDigest": "sha256:416059985c87f8e44df548510896fcbaefc2e999101534858243be5b9b0fcf10",
       "byteLength": 2199,
       "createdAt": "2026-07-17T04:13:32.000Z"
-    },
-    {
-      "artifactId": "youtube-caption-bundle:CvnTApEN7Q4:v1",
-      "videoId": "CvnTApEN7Q4",
-      "kind": "transcript",
-      "revision": 1,
-      "storageKey": "amoretto-vods/videos/CvnTApEN7Q4.v1.json",
-      "contentDigest": "sha256:80259af53fa64d752b3c60f1c669311fa7bf8d0862ab49e295950cdd51481c76",
-      "byteLength": 732517,
-      "createdAt": "2026-07-30T19:56:01.518Z"
     },
     {
       "artifactId": "youtube-storyboard-visual-fingerprint:CvnTApEN7Q4:v1",
@@ -601,6 +592,26 @@
       "contentDigest": "sha256:10db71f79ae70f34413508125363ee6c58aa430fd3c75162ae1b5a1654eeae4f",
       "byteLength": 1827479,
       "createdAt": "2026-08-04T01:14:43.548Z"
+    },
+    {
+      "artifactId": "youtube-caption-bundle:CvnTApEN7Q4:v2",
+      "videoId": "CvnTApEN7Q4",
+      "kind": "transcript",
+      "revision": 2,
+      "storageKey": "amoretto-vods/videos/CvnTApEN7Q4.v2.json",
+      "contentDigest": "sha256:45b42464d3ea9c3033882fe112e8f83493828790af7b1c42aeab932a2d069125",
+      "byteLength": 758386,
+      "createdAt": "2026-08-04T07:29:58.001Z"
+    },
+    {
+      "artifactId": "review-bundle:CvnTApEN7Q4:v6",
+      "videoId": "CvnTApEN7Q4",
+      "kind": "review",
+      "revision": 6,
+      "storageKey": "amoretto-vods/videos/CvnTApEN7Q4.review.v6.json",
+      "contentDigest": "sha256:e7e089c57813bc43350e962e4e3d7318163d64092fa6cf1f1d30de84702e823a",
+      "byteLength": 1604194,
+      "createdAt": "2026-08-04T07:43:04.231Z"
     }
   ]
 }
