@@ -111,10 +111,7 @@ jobs:
             ...new Set(report.sources.flatMap((source) =>
               source.due.map((entry) => entry.videoId),
             )),
-          ];
-          if (queueVideoIds.length > 8) {
-            throw new Error("Channel upload scan queue exceeds its display bound.");
-          }
+          ].slice(0, 2);
           await appendFile(
             process.argv[3],
             [

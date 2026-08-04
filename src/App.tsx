@@ -899,7 +899,7 @@ type AnalysisSelectionSummary = DurableAnalysisSelectionSummary;
 type AnalysisCoverageSummary = DurableAnalysisCoverageSummary;
 type AnalysisGapApprovalEvidence = DurableAnalysisGapApprovalEvidence;
 
-const APP_VERSION = "0.9.10";
+const APP_VERSION = "0.9.11";
 const PERSISTENCE_SCHEMA_VERSION = "0.3.0";
 const SIGNAL_ENGINE_VERSION = CURRENT_FAST_PASS_MODEL_MANIFEST_HASH;
 const MAX_CHAT_FILE_BYTES = 32 * 1024 * 1024;
@@ -14688,7 +14688,7 @@ function App() {
 
   if (!contextualCandidatePublicationReady || orderedCandidates.length === 0) {
     return (
-      <div className="rh-app">
+      <div className="rh-app rh-app--front">
         <FrontSurface
           model={frontSurfaceModel}
           evidenceRanges={frontEvidenceRanges}

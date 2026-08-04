@@ -43,6 +43,17 @@
   font-family: var(--frt-font);
 }
 
+/* The legacy review shell becomes a fixed 16:10 device on desktop. The
+ * analysis entry is a document-like dashboard and must own normal page
+ * scrolling instead of being clipped to that review viewport. */
+.rh-app.rh-app--front {
+  display: block;
+  min-block-size: 100dvh;
+  block-size: auto;
+  padding: 0;
+  overflow: visible;
+}
+
 .frt-app,
 .frt-app * {
   box-sizing: border-box;
@@ -307,14 +318,51 @@
 }
 
 .frt-empty[data-has-entry="true"] {
-  justify-content: flex-start;
+  display: grid;
+  grid-template-areas:
+    "heading heading"
+    "drop search"
+    "library queue"
+    "sources sources";
+  grid-template-columns: minmax(0, 1.72fr) minmax(300px, .78fr);
+  align-content: start;
+  align-items: stretch;
   padding: clamp(26px, 3vw, 42px);
 }
 
+.frt-empty[data-has-entry="true"] .frt-empty-heading {
+  grid-area: heading;
+  justify-self: center;
+}
+
 .frt-empty[data-has-entry="true"] .frt-dropzone {
-  inline-size: min(1040px, 100%);
+  position: relative;
+  grid-area: drop;
+  inline-size: 100%;
   min-block-size: 190px;
-  margin: 24px auto;
+  margin: 24px 0 18px;
+  border: 1px solid var(--frt-line);
+  border-inline-end: 0;
+  border-radius: var(--frt-radius-lg) 0 0 var(--frt-radius-lg);
+}
+
+.frt-empty[data-has-entry="true"] .frt-dropzone::after {
+  position: absolute;
+  inset: 12px;
+  border: 1px dashed var(--frt-line-strong);
+  border-radius: var(--frt-radius-sm);
+  content: "";
+  pointer-events: none;
+}
+
+.frt-empty[data-has-entry="true"] .frt-dropzone > * {
+  position: relative;
+  z-index: 1;
+}
+
+.frt-empty[data-has-entry="true"] .frt-source-options {
+  grid-area: sources;
+  inline-size: 100%;
 }
 
 .frt-empty-heading {
@@ -398,13 +446,7 @@
 /* ── Prepared replay entry ────────────────────────────────── */
 
 .frt-prepared-entry {
-  inline-size: min(1180px, 100%);
-  display: grid;
-  grid-template-columns:
-    minmax(220px, .8fr)
-    minmax(280px, 1.12fr)
-    minmax(220px, .84fr);
-  border-block: 1px solid var(--frt-line);
+  display: contents;
 }
 
 .frt-prepared-search,
@@ -412,19 +454,30 @@
 .frt-prepared-queue {
   min-inline-size: 0;
   padding: 22px 24px;
+  border: 1px solid var(--frt-line);
 }
 
 .frt-prepared-search {
-  padding-inline-start: 0;
+  grid-area: search;
+  min-block-size: 190px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  margin-block: 24px 18px;
+  border-radius: 0 var(--frt-radius-lg) var(--frt-radius-lg) 0;
 }
 
 .frt-prepared-library {
-  border-inline-start: 1px solid var(--frt-line);
+  grid-area: library;
+  min-block-size: 330px;
+  border-inline-end: 0;
+  border-radius: var(--frt-radius-lg) 0 0 var(--frt-radius-lg);
 }
 
 .frt-prepared-queue {
-  border-inline-start: 1px solid var(--frt-line);
-  padding-inline-end: 0;
+  grid-area: queue;
+  min-block-size: 330px;
+  border-radius: 0 var(--frt-radius-lg) var(--frt-radius-lg) 0;
   background: color-mix(in srgb, var(--frt-soft) 34%, transparent);
 }
 
@@ -613,7 +666,7 @@
 }
 
 .frt-prepared-videos ul {
-  max-block-size: 174px;
+  max-block-size: 234px;
   margin: 0;
   padding: 0;
   overflow-y: auto;
@@ -736,7 +789,7 @@
 
 .frt-queue-metrics {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 7px;
   margin-block-start: 13px;
 }
@@ -744,9 +797,10 @@
 .frt-queue-metrics > span {
   min-inline-size: 0;
   display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 8px;
+  align-items: flex-start;
+  flex-direction: column;
+  justify-content: center;
+  gap: 3px;
   border: 1px solid var(--frt-line);
   border-radius: var(--frt-radius-sm);
   padding: 9px 10px;
@@ -764,7 +818,7 @@
 }
 
 .frt-queue-list {
-  max-block-size: 138px;
+  max-block-size: 174px;
   margin: 10px 0 0;
   padding: 0;
   overflow-y: auto;
@@ -2033,24 +2087,34 @@
     border-block-start: 1px solid var(--frt-line);
   }
 
-  .frt-prepared-entry {
-    grid-template-columns: 1fr;
+  .frt-empty[data-has-entry="true"] {
+    grid-template-areas:
+      "heading"
+      "drop"
+      "search"
+      "library"
+      "queue"
+      "sources";
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
   }
 
+  .frt-empty[data-has-entry="true"] .frt-dropzone,
   .frt-prepared-search,
   .frt-prepared-library,
   .frt-prepared-queue {
-    padding-inline: 0;
+    margin: 0;
+    border: 1px solid var(--frt-line);
+    border-radius: var(--frt-radius-lg);
+    padding: 20px;
   }
 
-  .frt-prepared-library,
-  .frt-prepared-queue {
-    border-inline-start: 0;
-    border-block-start: 1px solid var(--frt-line);
+  .frt-empty[data-has-entry="true"] .frt-dropzone {
+    min-block-size: 190px;
   }
 
   .frt-prepared-queue {
-    background: transparent;
+    background: color-mix(in srgb, var(--frt-soft) 34%, transparent);
   }
 }
 

@@ -245,14 +245,18 @@ test("a 30-minute scan queues serial heavy work while manual runs can force it",
   assert.match(scanWorkflow, /actions:\s*write/u);
   assert.match(scanWorkflow, /gh workflow run channel-preanalysis\.yml/u);
   assert.match(scanWorkflow, /-f force_heavy=false/u);
+  assert.match(heavyWorkflow, /actions:\s*write/u);
+  assert.match(heavyWorkflow, /Continue draining any due queue/u);
+  assert.match(heavyWorkflow, /gh workflow run channel-preanalysis-scan\.yml/u);
   assert.match(
     heavyWorkflow,
     /run-name:\s*"Prepare channel queue .*inputs\.queue_video_ids/u,
   );
   assert.match(
     heavyWorkflow,
-    /\^\[A-Za-z0-9_-\]\{11\}\(,\[A-Za-z0-9_-\]\{11\}\)\{0,7\}\$/u,
+    /\^\[A-Za-z0-9_-\]\{11\}\(,\[A-Za-z0-9_-\]\{11\}\)\{0,1\}\$/u,
   );
+  assert.match(scanWorkflow, /\]\.slice\(0, 2\);/u);
   assert.match(scanWorkflow, /queue_video_ids=\$\{queueVideoIds\.join\(","\)\}/u);
   assert.match(scanWorkflow, /-f queue_video_ids="\$\{QUEUE_VIDEO_IDS\}"/u);
   for (const stepName of [

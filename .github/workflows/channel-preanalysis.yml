@@ -33,7 +33,7 @@ on:
         default: true
         type: boolean
       queue_video_ids:
-        description: "Validated comma-separated IDs shown in the public queue status"
+        description: "One or two validated video IDs assigned to this public batch"
         required: false
         type: string
 
@@ -57,8 +57,8 @@ jobs:
           QUEUE_VIDEO_IDS: ${{ inputs.queue_video_ids || '' }}
         run: |
           set -euo pipefail
-          if [[ -n "${QUEUE_VIDEO_IDS}" && ! "${QUEUE_VIDEO_IDS}" =~ ^[A-Za-z0-9_-]{11}(,[A-Za-z0-9_-]{11}){0,7}$ ]]; then
-            echo "::error::Queue display metadata must contain one to eight canonical YouTube IDs."
+          if [[ -n "${QUEUE_VIDEO_IDS}" && ! "${QUEUE_VIDEO_IDS}" =~ ^[A-Za-z0-9_-]{11}(,[A-Za-z0-9_-]{11}){0,1}$ ]]; then
+            echo "::error::Queue display metadata must contain one or two canonical YouTube IDs."
             exit 1
           fi
 
@@ -368,6 +368,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
+      actions: write
       contents: write
     steps:
       - name: Checkout persistent catalog branch without stored credentials
@@ -441,6 +442,20 @@ jobs:
           git push \
             "https://x-access-token:${GITHUB_TOKEN}@github.com/${REPOSITORY}.git" \
             HEAD:preanalysis-catalog
+
+      - name: Continue draining any due queue
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch || 'main' }}
+        run: |
+          set -euo pipefail
+          # A heavy pass is deliberately bounded to two videos. Re-scan the
+          # durable catalog immediately so another bounded pass starts without
+          # waiting for the next 30-minute upload discovery tick.
+          gh workflow run channel-preanalysis-scan.yml \
+            --repo "${GITHUB_REPOSITORY}" \
+            --ref "${DEFAULT_BRANCH}"
 
       - name: Surface partial source failures after preserving healthy updates
         shell: bash
