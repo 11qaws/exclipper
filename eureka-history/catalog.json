@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "channelId": "UCiFzBB8xsUjEBq8_h6Yl6tA",
   "channelHandle": "@eureka_history",
-  "revision": 44,
-  "generatedAt": "2026-08-04T18:43:26.136Z",
+  "revision": 46,
+  "generatedAt": "2026-08-04T20:05:38.574Z",
   "videos": [
     {
       "channelId": "UCiFzBB8xsUjEBq8_h6Yl6tA",
@@ -48,20 +48,20 @@
       "videoId": "DHHTY0ITfDA",
       "title": "2026 07 31 scp알아보기 전후열",
       "normalizedTitle": "2026 07 31 scp알아보기 전후열",
-      "durationMs": null,
+      "durationMs": 13638000,
       "publishedAt": "2026-08-01T05:07:58.000Z",
       "updatedAt": "2026-08-01T05:36:46.000Z",
       "watchUrl": "https://www.youtube.com/watch?v=DHHTY0ITfDA",
       "state": "retryable",
-      "revision": 3,
+      "revision": 5,
       "artifactIds": [],
       "registeredLocalSampledFingerprints": [],
       "retry": {
-        "stage": "metadata",
-        "lastSuccessfulState": "discovered",
-        "attemptCount": 2,
-        "nextAttemptAt": "2026-08-04T19:54:06.469Z",
-        "errorCode": "YT_DLP_FAILED"
+        "stage": "transcript",
+        "lastSuccessfulState": "metadata-ready",
+        "attemptCount": 1,
+        "nextAttemptAt": "2026-08-05T20:05:38.574Z",
+        "errorCode": "KOREAN_CAPTION_NOT_FOUND"
       }
     },
     {
