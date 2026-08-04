@@ -499,7 +499,7 @@ export function mergeFeedIntoCatalog(existing, feed, nowIso) {
     const hasImmutableBundle =
       SUCCESSFUL_STATES.has(current.state) ||
       (current.state === "retryable" &&
-        ["transcript-ready", "context-ready"].includes(
+        ["transcript-ready", "context-ready", "review-ready"].includes(
           current.retry?.lastSuccessfulState,
         ));
     const nextTitle = hasImmutableBundle ? current.title : incoming.title;
@@ -528,7 +528,9 @@ export function mergeFeedIntoCatalog(existing, feed, nowIso) {
       publishedAt: nextPublishedAt,
       updatedAt: incoming.updatedAt,
       watchUrl: incoming.watchUrl,
-      revision: current.revision + 1,
+      revision: hasImmutableBundle
+        ? current.revision
+        : current.revision + 1,
     });
     changed = true;
   }

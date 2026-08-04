@@ -16,8 +16,17 @@
   `retryable(transcript)`/`caption-pending`으로 저장한다. 이 상태는 정상 대기이므로 run을
   partial로 만들지 않고 24시간부터 시작하는 backoff로 7일 안에서만 자막을 다시 확인한다.
   자막 없는 영상의 ASR 복구는 특정 video ID를 지정한 수동 실행에만 남겼다.
-- 앱 버전은 `0.9.8`이다. 예약 pipeline Node 계약 163개, TypeScript, 사용자 소유
-  `.wrangler-dry-run-2/**`만 제외한 전체 ESLint, 전체 Vitest 178파일·2,199개, 음성 등록 도구
+- 첫 원격 scan에서 망징 catalog가 `CATALOG_INVALID`로 격리된 원인을 LF checkout으로
+  재현했다. feed의 `updatedAt` 변경이 이미 `review-ready`인 영상 revision까지 올리면서
+  고정 review artifact revision과 불일치하던 버그였다. immutable bundle이 있는 영상은
+  feed 표시 metadata를 갱신해도 분석 revision을 유지하고, `retryable(fingerprint)`의
+  `lastSuccessfulState=review-ready`도 같은 규칙을 적용한다.
+- 메인 화면의 오른쪽 `분석 큐`는 catalog에서 최근 7일의 미완성 영상을 직접 투영한다.
+  현재 단계와 재시도 시각을 보존하고, 공개 GitHub Actions API에서는 비밀 없이 실제
+  `in_progress`/`queued` 실행 수만 5분마다 읽는다. Actions 상태 확인이 실패해도 catalog
+  대기 목록은 유지하므로 원격 상태 장애가 편집 시작 화면을 막지 않는다.
+- 앱 버전은 `0.9.9`다. 예약 pipeline Node 계약 175개, TypeScript, 사용자 소유
+  `.wrangler-dry-run-2/**`만 제외한 전체 ESLint, 전체 Vitest 179파일·2,203개, 음성 등록 도구
   9개, production build와 foreground/preanalysis Worker dry-run이 통과했다.
 
 ## 2026-08-04 코코 선분석 대상과 준비본 화면 제외

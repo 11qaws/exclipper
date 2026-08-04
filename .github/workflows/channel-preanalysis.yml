@@ -1,4 +1,5 @@
 name: Process channel preanalysis queue
+run-name: "Prepare channel queue · ${{ inputs.queue_video_ids || 'manual' }}"
 
 on:
   workflow_dispatch:
@@ -31,6 +32,10 @@ on:
         required: true
         default: true
         type: boolean
+      queue_video_ids:
+        description: "Validated comma-separated IDs shown in the public queue status"
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -46,6 +51,17 @@ jobs:
     outputs:
       catalog_base_sha: ${{ steps.catalog-base.outputs.sha }}
     steps:
+      - name: Validate public queue status metadata
+        shell: bash
+        env:
+          QUEUE_VIDEO_IDS: ${{ inputs.queue_video_ids || '' }}
+        run: |
+          set -euo pipefail
+          if [[ -n "${QUEUE_VIDEO_IDS}" && ! "${QUEUE_VIDEO_IDS}" =~ ^[A-Za-z0-9_-]{11}(,[A-Za-z0-9_-]{11}){0,7}$ ]]; then
+            echo "::error::Queue display metadata must contain one to eight canonical YouTube IDs."
+            exit 1
+          fi
+
       - name: Checkout application source
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:

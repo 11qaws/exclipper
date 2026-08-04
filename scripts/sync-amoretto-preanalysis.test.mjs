@@ -904,12 +904,22 @@ test("feed edits never rewrite identity fields sealed into an immutable bundle",
     byteLength: 512,
     createdAt: BASE_TIME,
   };
+  const reviewArtifact = {
+    artifactId: `review-bundle:${FOOD_TALK_ID}:v1`,
+    videoId: FOOD_TALK_ID,
+    kind: "review",
+    revision: 1,
+    storageKey: `amoretto-vods/videos/${FOOD_TALK_ID}.review.v1.json`,
+    contentDigest: `sha256:${"b".repeat(64)}`,
+    byteLength: 512,
+    createdAt: BASE_TIME,
+  };
   const ready = video({
-    state: "transcript-ready",
-    artifactIds: [artifact.artifactId],
+    state: "review-ready",
+    artifactIds: [artifact.artifactId, reviewArtifact.artifactId],
   });
   const merged = mergeFeedIntoCatalog(
-    manifest([ready], [artifact]),
+    manifest([ready], [artifact, reviewArtifact]),
     feed([
       feedVideo({
         videoId: FOOD_TALK_ID,
@@ -924,6 +934,8 @@ test("feed edits never rewrite identity fields sealed into an immutable bundle",
   assert.equal(result.title, ready.title);
   assert.equal(result.durationMs, ready.durationMs);
   assert.equal(result.updatedAt, "2026-07-30T03:00:00.000Z");
+  assert.equal(result.revision, ready.revision);
+  assert.deepEqual(result.artifactIds, ready.artifactIds);
 });
 
 test("due selection protects fresh discoveries from retry starvation and never exceeds two videos", () => {

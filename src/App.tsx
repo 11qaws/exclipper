@@ -656,6 +656,12 @@ import { executeAnalysisPipelineRecoveryInApp } from "./app/analysisPipelineReco
 import { AnalysisProgressPanel } from "./app/components/AnalysisProgressPanel";
 import { PreparedAnalysisEntry } from "./app/PreparedAnalysisEntry";
 import { buildPreparedAnalysisLibraryGroups } from "./app/preparedAnalysisLibrary";
+import {
+  buildPreparedAnalysisQueue,
+  fetchPreparedAnalysisWorkerSnapshot,
+  PREPARED_ANALYSIS_QUEUE_POLL_INTERVAL_MS,
+  type PreparedAnalysisWorkerSnapshot,
+} from "./app/preparedAnalysisQueue";
 import { STREAMER_PROFILE_IMAGE_BY_NAME } from "./app/streamerProfiles";
 import { STREAMER_PALETTE_SEEDS } from "./app/streamerPalette";
 import { paletteIdForCastRosterId } from "./app/streamerPaletteForRoster";
@@ -729,6 +735,13 @@ type PreparedAnalysisCatalogState =
   | {
       readonly status: "ready";
       readonly result: ConfiguredChannelPreanalysisManifestsResult;
+    };
+
+type PreparedAnalysisWorkerState =
+  | { readonly status: "loading" | "unavailable"; readonly snapshot: null }
+  | {
+      readonly status: "ready";
+      readonly snapshot: PreparedAnalysisWorkerSnapshot;
     };
 
 const PREPARED_CHANNEL_REVIEW_POLL_INTERVAL_MS = 30_000;
@@ -886,7 +899,7 @@ type AnalysisSelectionSummary = DurableAnalysisSelectionSummary;
 type AnalysisCoverageSummary = DurableAnalysisCoverageSummary;
 type AnalysisGapApprovalEvidence = DurableAnalysisGapApprovalEvidence;
 
-const APP_VERSION = "0.9.8";
+const APP_VERSION = "0.9.9";
 const PERSISTENCE_SCHEMA_VERSION = "0.3.0";
 const SIGNAL_ENGINE_VERSION = CURRENT_FAST_PASS_MODEL_MANIFEST_HASH;
 const MAX_CHAT_FILE_BYTES = 32 * 1024 * 1024;
@@ -1001,6 +1014,8 @@ function App() {
     useState(0);
   const [preparedAnalysisCatalogs, setPreparedAnalysisCatalogs] =
     useState<PreparedAnalysisCatalogState>({ status: "loading" });
+  const [preparedAnalysisWorker, setPreparedAnalysisWorker] =
+    useState<PreparedAnalysisWorkerState>({ status: "loading", snapshot: null });
   const preparedChannelReviewAbortController = useRef<AbortController | null>(null);
   const dismissedPreparedChannelReviewKeyRef = useRef<string | null>(null);
   const registeredChannelPreanalysisVideoId = useMemo(() => {
@@ -1743,12 +1758,55 @@ function App() {
     };
   }, [preparedAnalysisCatalogRetryEpoch]);
 
+  useEffect(() => {
+    const controller = new AbortController();
+    let requestPending = false;
+    const refresh = async (): Promise<void> => {
+      if (requestPending) return;
+      requestPending = true;
+      try {
+        const snapshot = await fetchPreparedAnalysisWorkerSnapshot({
+          signal: controller.signal,
+        });
+        if (!controller.signal.aborted) {
+          setPreparedAnalysisWorker({ status: "ready", snapshot });
+        }
+      } catch {
+        if (!controller.signal.aborted) {
+          setPreparedAnalysisWorker((current) =>
+            current.status === "ready"
+              ? current
+              : { status: "unavailable", snapshot: null },
+          );
+        }
+      } finally {
+        requestPending = false;
+      }
+    };
+    void refresh();
+    const interval = globalThis.setInterval(
+      () => void refresh(),
+      PREPARED_ANALYSIS_QUEUE_POLL_INTERVAL_MS,
+    );
+    return () => {
+      globalThis.clearInterval(interval);
+      controller.abort();
+    };
+  }, []);
+
   const preparedAnalysisLibraryGroups = useMemo(
     () =>
       preparedAnalysisCatalogs.status === "ready"
         ? buildPreparedAnalysisLibraryGroups(
             preparedAnalysisCatalogs.result.manifests,
           )
+        : [],
+    [preparedAnalysisCatalogs],
+  );
+  const preparedAnalysisQueue = useMemo(
+    () =>
+      preparedAnalysisCatalogs.status === "ready"
+        ? buildPreparedAnalysisQueue(preparedAnalysisCatalogs.result.manifests)
         : [],
     [preparedAnalysisCatalogs],
   );
@@ -14419,6 +14477,9 @@ function App() {
           : "complete"
       }
       groups={preparedAnalysisLibraryGroups}
+      queue={preparedAnalysisQueue}
+      workerStatus={preparedAnalysisWorker.status}
+      workerSnapshot={preparedAnalysisWorker.snapshot}
       onInputChange={updateManualVodInput}
       onSearch={retryPreparedReplayLookup}
       onSelectVideo={(watchUrl) => {
