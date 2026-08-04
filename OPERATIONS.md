@@ -46,6 +46,11 @@ catalog를 다시 확인하므로 앞 실행이 완료한 영상은 건너뛴다
 드물게 누락할 수 있으므로 17분과 47분 timer는 별도 항목으로 등록하고, heavy 완료 뒤 즉시
 스캔하는 self-drain 경로도 유지한다.
 
+self-drain이 재시도 시각보다 수십 초 먼저 도착하면 lightweight preflight는 최대 120초만
+기다리고 같은 catalog를 현재 시각으로 다시 판정한다. 기다리는 동안 yt-dlp·WARP·Worker·AI는
+실행하지 않는다. 120초보다 먼 backoff는 runner를 붙잡지 않고 다음 17분/47분 scan에 맡긴다.
+따라서 짧은 시간 경계는 연속 처리하고, 3·6·12·24시간 backoff에는 무료 runner 시간을 쓰지 않는다.
+
 자동 queue는 게시 후 정확히 7일 이내 영상만 받는다. Atom feed에는 신뢰할 수 있는 자막
 존재 필드가 없으므로 heavy run의 첫 yt-dlp 검사에서 한국어 수동·자동 자막을 확인한다.
 자막이 없으면 Worker·AI·예약 ASR을 호출하지 않고 `caption-pending`으로 보존해 7일

@@ -17,7 +17,10 @@
 - lightweight scan과 heavy 분석은 서로 다른 workflow다. scan은 30분마다 독립적으로
   최근 feed를 확인하고 due가 있으면 GitHub Actions의 단일 heavy queue에 실행을
   추가한다. heavy queue는 최대 100개를 보존하되 동시에 하나만 실행하며, 각 실행은
-  시작 시 최신 catalog를 다시 읽어 이미 완료된 항목을 건너뛴다.
+  시작 시 최신 catalog를 다시 읽어 이미 완료된 항목을 건너뛴다. self-drain scan 시점에
+  아직 due가 아니지만 2분 안에 재시도 시각이 도래하는 항목만 그 경계까지 기다려 다시
+  선택한다. 대기 전후에는 같은 immutable catalog checkpoint를 사용하고 실제 due가 된
+  뒤에만 heavy workflow를 추가한다.
 - 첫 화면의 queue projection은 `running-job | runner-queued-job | start-pending-video |
   retry-scheduled-video`의 서로 겹치지 않는 네 집합이다. 앞의 두 상태는 공개 Actions API,
   뒤의 두 상태는 catalog `nextAttemptAt`에서 계산한다. 한 heavy run의 최대 두 영상은

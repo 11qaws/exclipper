@@ -114,9 +114,24 @@ test("parses the bounded lightweight preflight CLI", () => {
   );
   assert.equal(parsed.source, SOURCE);
   assert.equal(parsed.maxVideos, 1);
+  assert.equal(parsed.waitNearDueMs, 0);
   assert.throws(
     () => parseChannelPreanalysisUploadPreflightArguments(["--max-videos", "3"]),
     /between 1 and 2/u,
+  );
+  assert.equal(
+    parseChannelPreanalysisUploadPreflightArguments([
+      "--wait-near-due-ms",
+      "120000",
+    ]).waitNearDueMs,
+    120_000,
+  );
+  assert.throws(
+    () => parseChannelPreanalysisUploadPreflightArguments([
+      "--wait-near-due-ms",
+      "120001",
+    ]),
+    /between 0 and 120000/u,
   );
 });
 
@@ -225,6 +240,44 @@ test("writes complete no-work reports when every catalog is already current", as
   }
 });
 
+test("a lightweight scan waits across a near-due retry boundary before dispatch", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "exclipper-upload-near-due-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  let currentMs = Date.parse(NOW);
+  const nextAttemptAt = new Date(currentMs + 40_000).toISOString();
+  const video = catalogVideo(
+    "NearDue0001",
+    "retryable",
+    retry("context", "transcript-ready", nextAttemptAt),
+  );
+  const slept = [];
+  const report = await runChannelPreanalysisUploadPreflight(
+    {
+      catalogRoot: root,
+      source: SOURCE,
+      maxVideos: 2,
+      waitNearDueMs: 120_000,
+    },
+    {
+      now: () => new Date(currentMs),
+      sleep: async (delayMs) => {
+        slept.push(delayMs);
+        currentMs += delayMs;
+      },
+      synchronizeSource: async () => ({ manifest: manifestWith(video) }),
+      log: { info() {}, warn() {} },
+    },
+  );
+
+  assert.deepEqual(slept, [40_000]);
+  assert.equal(report.waitedForNearDueMs, 40_000);
+  assert.equal(report.waitedForRetryAt, nextAttemptAt);
+  assert.equal(report.heavyRequired, true);
+  assert.deepEqual(report.sources[0]?.due, [
+    { videoId: video.videoId, reasons: ["context-retry"] },
+  ]);
+});
+
 test("a 30-minute scan queues serial heavy work while manual runs can force it", async () => {
   const heavyWorkflow = await readFile(
     new URL("../.github/workflows/channel-preanalysis.yml", import.meta.url),
@@ -246,6 +299,7 @@ test("a 30-minute scan queues serial heavy work while manual runs can force it",
   assert.match(scanWorkflow, /actions:\s*write/u);
   assert.match(scanWorkflow, /gh workflow run channel-preanalysis\.yml/u);
   assert.match(scanWorkflow, /-f force_heavy=false/u);
+  assert.match(scanWorkflow, /--wait-near-due-ms 120000/u);
   assert.match(heavyWorkflow, /actions:\s*write/u);
   assert.match(heavyWorkflow, /Continue draining any due queue/u);
   assert.match(heavyWorkflow, /gh workflow run channel-preanalysis-scan\.yml/u);

@@ -88,7 +88,8 @@ jobs:
           npx --no-install tsx scripts/channel-preanalysis-upload-preflight.mjs \
             --catalog-dir "${CATALOG_DIRECTORY}" \
             --source all \
-            --max-videos 2
+            --max-videos 2 \
+            --wait-near-due-ms 120000
           node --input-type=module - \
             "${CATALOG_DIRECTORY}/channel-preanalysis-upload-preflight-report.json" \
             "${GITHUB_OUTPUT}" <<'NODE'
@@ -98,6 +99,11 @@ jobs:
           if (
             report.schemaVersion !== 1 ||
             typeof report.heavyRequired !== "boolean" ||
+            !Number.isSafeInteger(report.waitedForNearDueMs) ||
+            report.waitedForNearDueMs < 0 ||
+            report.waitedForNearDueMs > 120000 ||
+            (report.waitedForRetryAt !== null &&
+              typeof report.waitedForRetryAt !== "string") ||
             !["complete", "partial"].includes(report.status) ||
             !Array.isArray(report.sources) ||
             report.sources.some((source) =>

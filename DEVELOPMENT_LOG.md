@@ -1,5 +1,22 @@
 # Development Log
 
+## 2026-08-05 self-drain 재시도 경계 복구
+
+- 실제 Actions 기록에서 heavy run이 catalog를 게시한 뒤 self-drain scan이 19:53:22Z에
+  시작했지만, 다음 두 checkpoint의 `nextAttemptAt`은 19:54:03Z와 19:54:06Z였다. scan은
+  약 40초 먼저 정상 종료했고, 두 영상은 곧 `시작 대기`가 되었지만 다음 run이 없어 보이는
+  상태가 재현됐다.
+- 예약 scan 전용 preflight에 최대 120초의 bounded wait를 추가했다. 현재 due가 하나도 없고
+  실제 선택 규칙으로 2분 안에 retry가 도래할 때만 정확한 경계까지 기다린 뒤 동일 manifest를
+  다시 판정한다. heavy workflow의 preflight에는 이 옵션을 주지 않아 무거운 runner는 기다리지
+  않으며, 3·6·12·24시간 backoff도 기존 30분 scan으로 처리한다.
+- 40초 뒤 context retry가 도래하는 manifest를 고정 시계로 재현하는 회귀 테스트와 CLI 상한,
+  workflow wiring 계약을 추가했다. TypeScript, ESLint warning 0, 전체 Vitest 179파일·2,204개,
+  예약 pipeline 계약 164개, 음성 등록 도구 9개와 production build가 통과했다.
+- 운영 큐도 수동 scan `30946094265`로 다시 깨웠다. 첫 heavy `30946146572`가 두 checkpoint를
+  처리·게시하고 성공한 뒤 self-drain scan `30946313557`가 다음 heavy `30946356805`를 바로
+  배정해, 저장 지점에서 연속 처리되는 실제 경로를 확인했다. 앱 버전은 `0.9.13`이다.
+
 ## 2026-08-04 30분 독립 스캔·7일 자막 queue
 
 - 30분 cron을 2시간 heavy 분석과 같은 workflow/concurrency group에서 분리했다.

@@ -23,6 +23,7 @@ import { CHANNEL_PREANALYSIS_REVIEW_RUN_REPORT_FILENAME } from "./sync-channel-p
 
 export const CHANNEL_PREANALYSIS_UPLOAD_PREFLIGHT_REPORT_FILENAME =
   "channel-preanalysis-upload-preflight-report.json";
+export const MAX_CHANNEL_PREANALYSIS_NEAR_DUE_WAIT_MS = 120_000;
 
 function preflightError(message) {
   const error = new Error(message);
@@ -53,6 +54,20 @@ function parseMaximumVideos(value) {
   return parsed;
 }
 
+function parseNearDueWaitMs(value) {
+  const parsed = Number(value ?? 0);
+  if (
+    !Number.isSafeInteger(parsed) ||
+    parsed < 0 ||
+    parsed > MAX_CHANNEL_PREANALYSIS_NEAR_DUE_WAIT_MS
+  ) {
+    throw preflightError(
+      `--wait-near-due-ms must be between 0 and ${String(MAX_CHANNEL_PREANALYSIS_NEAR_DUE_WAIT_MS)}.`,
+    );
+  }
+  return parsed;
+}
+
 export function parseChannelPreanalysisUploadPreflightArguments(
   argv,
   { cwd = process.cwd() } = {},
@@ -71,7 +86,14 @@ export function parseChannelPreanalysisUploadPreflightArguments(
     const separator = argument.indexOf("=");
     const key = separator < 0 ? argument : argument.slice(0, separator);
     const inlineValue = separator < 0 ? null : argument.slice(separator + 1);
-    if (!["--catalog-dir", "--source", "--max-videos"].includes(key)) {
+    if (
+      ![
+        "--catalog-dir",
+        "--source",
+        "--max-videos",
+        "--wait-near-due-ms",
+      ].includes(key)
+    ) {
       throw preflightError(`Unknown option: ${key}`);
     }
     if (values.has(key)) throw preflightError(`Duplicate option: ${key}`);
@@ -99,6 +121,7 @@ export function parseChannelPreanalysisUploadPreflightArguments(
     ),
     source,
     maxVideos: parseMaximumVideos(values.get("--max-videos")),
+    waitNearDueMs: parseNearDueWaitMs(values.get("--wait-near-due-ms")),
   };
 }
 
@@ -148,6 +171,31 @@ export function selectChannelPreanalysisUploadPreflightDueWork(
     append(video, "review");
   }
   return [...dueByVideoId.values()];
+}
+
+function selectNextDueRetryAt(
+  manifest,
+  { nowIso, maxVideos, lookaheadMs },
+) {
+  if (lookaheadMs <= 0) return null;
+  const nowMs = Date.parse(nowIso);
+  const deadlineMs = nowMs + lookaheadMs;
+  const dueAtDeadline = selectChannelPreanalysisUploadPreflightDueWork(
+    manifest,
+    {
+      nowIso: new Date(deadlineMs).toISOString(),
+      maxVideos,
+    },
+  );
+  const videoById = new Map(
+    manifest.videos.map((video) => [video.videoId, video]),
+  );
+  const retryTimes = dueAtDeadline
+    .map(({ videoId }) =>
+      Date.parse(videoById.get(videoId)?.retry?.nextAttemptAt ?? ""))
+    .filter((retryAtMs) => retryAtMs > nowMs && retryAtMs <= deadlineMs);
+  if (retryTimes.length === 0) return null;
+  return new Date(Math.min(...retryTimes)).toISOString();
 }
 
 async function writeJson(path, value) {
@@ -207,11 +255,14 @@ export async function runChannelPreanalysisUploadPreflight(
   const fetchImpl = dependencies.fetch ?? globalThis.fetch;
   const synchronizeSource =
     dependencies.synchronizeSource ?? synchronizeChannelPreanalysisCatalog;
+  const sleep = dependencies.sleep ?? ((delayMs) =>
+    new Promise((resolveSleep) => setTimeout(resolveSleep, delayMs)));
   const log = dependencies.log ?? console;
   const runStartedAt = now().toISOString();
   const sources = options.source === null ? CHANNEL_PREANALYSIS_SOURCES : [options.source];
   const sourceReports = [];
   const sourceErrors = [];
+  const sourceManifests = new Map();
 
   await mkdir(options.catalogRoot, { recursive: true });
   for (const source of sources) {
@@ -234,13 +285,11 @@ export async function runChannelPreanalysisUploadPreflight(
           skipYtDlpVerification: true,
         },
       );
+      sourceManifests.set(source.sourceId, result.manifest);
       sourceReports.push({
         sourceId: source.sourceId,
         catalogRevision: result.manifest.revision,
-        due: selectChannelPreanalysisUploadPreflightDueWork(result.manifest, {
-          nowIso: now().toISOString(),
-          maxVideos: options.maxVideos,
-        }),
+        due: [],
       });
     } catch (error) {
       sourceErrors.push({
@@ -248,6 +297,46 @@ export async function runChannelPreanalysisUploadPreflight(
         errorCode: errorCodeOf(error),
         message: "Lightweight YouTube feed reconciliation failed.",
       });
+    }
+  }
+
+  const selectDueAt = (nowIso) => {
+    for (const sourceReport of sourceReports) {
+      const manifest = sourceManifests.get(sourceReport.sourceId);
+      sourceReport.due = selectChannelPreanalysisUploadPreflightDueWork(
+        manifest,
+        { nowIso, maxVideos: options.maxVideos },
+      );
+    }
+  };
+  let decisionNow = now();
+  selectDueAt(decisionNow.toISOString());
+
+  let waitedForNearDueMs = 0;
+  let waitedForRetryAt = null;
+  if (
+    sourceReports.every(({ due }) => due.length === 0) &&
+    options.waitNearDueMs > 0
+  ) {
+    const nextRetryTimes = sourceReports
+      .map(({ sourceId }) =>
+        selectNextDueRetryAt(sourceManifests.get(sourceId), {
+          nowIso: decisionNow.toISOString(),
+          maxVideos: options.maxVideos,
+          lookaheadMs: options.waitNearDueMs,
+        }))
+      .filter((retryAt) => retryAt !== null)
+      .map((retryAt) => Date.parse(retryAt));
+    if (nextRetryTimes.length > 0) {
+      const nextRetryAtMs = Math.min(...nextRetryTimes);
+      waitedForRetryAt = new Date(nextRetryAtMs).toISOString();
+      decisionNow = now();
+      waitedForNearDueMs = Math.max(
+        0,
+        nextRetryAtMs - decisionNow.getTime(),
+      );
+      if (waitedForNearDueMs > 0) await sleep(waitedForNearDueMs);
+      selectDueAt(now().toISOString());
     }
   }
 
@@ -263,6 +352,8 @@ export async function runChannelPreanalysisUploadPreflight(
     completedAt,
     heavyRequired: dueVideoCount > 0,
     dueVideoCount,
+    waitedForNearDueMs,
+    waitedForRetryAt,
     sources: sourceReports,
     sourceErrors,
   };
@@ -294,7 +385,8 @@ function helpText() {
   return `Usage: tsx scripts/channel-preanalysis-upload-preflight.mjs [options]\n\n` +
     "  --catalog-dir PATH  Catalog branch root.\n" +
     "  --source ID|all     One configured source or all.\n" +
-    "  --max-videos 1|2    Existing heavy-run processing budget.\n";
+    "  --max-videos 1|2    Existing heavy-run processing budget.\n" +
+    "  --wait-near-due-ms N  Wait up to two minutes for a retry boundary.\n";
 }
 
 async function main() {
