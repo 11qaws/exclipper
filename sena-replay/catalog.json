@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "channelId": "UCk0Mu5MpVzJ056e65XpAj0Q",
   "channelHandle": "@SENAREPLAY",
-  "revision": 33,
-  "generatedAt": "2026-08-04T14:40:54.928Z",
+  "revision": 39,
+  "generatedAt": "2026-08-04T15:26:07.937Z",
   "videos": [
     {
       "channelId": "UCk0Mu5MpVzJ056e65XpAj0Q",
@@ -31,15 +31,21 @@
       "videoId": "AqYmYChqx2c",
       "title": "【26. 07. 31】 구독티콘 추가하며 저챗!",
       "normalizedTitle": "26 07 31 구독티콘 추가하며 저챗",
-      "durationMs": null,
+      "durationMs": 9457000,
       "publishedAt": "2026-08-04T08:28:22.000Z",
       "updatedAt": "2026-08-04T08:28:23.000Z",
       "watchUrl": "https://www.youtube.com/watch?v=AqYmYChqx2c",
-      "state": "discovered",
-      "revision": 1,
+      "state": "retryable",
+      "revision": 3,
       "artifactIds": [],
       "registeredLocalSampledFingerprints": [],
-      "retry": null
+      "retry": {
+        "stage": "transcript",
+        "lastSuccessfulState": "metadata-ready",
+        "attemptCount": 1,
+        "nextAttemptAt": "2026-08-05T15:09:11.888Z",
+        "errorCode": "KOREAN_CAPTION_NOT_FOUND"
+      }
     },
     {
       "channelId": "UCk0Mu5MpVzJ056e65XpAj0Q",
@@ -50,17 +56,15 @@
       "publishedAt": "2026-07-31T00:43:37.000Z",
       "updatedAt": "2026-07-31T00:43:37.000Z",
       "watchUrl": "https://www.youtube.com/watch?v=PlFjEb8mgPg",
-      "state": "retryable",
-      "revision": 3,
-      "artifactIds": [],
+      "state": "review-ready",
+      "revision": 7,
+      "artifactIds": [
+        "youtube-caption-bundle:PlFjEb8mgPg:v2",
+        "youtube-storyboard-visual-fingerprint:PlFjEb8mgPg:v1",
+        "review-bundle:PlFjEb8mgPg:v7"
+      ],
       "registeredLocalSampledFingerprints": [],
-      "retry": {
-        "stage": "transcript",
-        "lastSuccessfulState": "metadata-ready",
-        "attemptCount": 1,
-        "nextAttemptAt": "2026-08-02T18:30:30.680Z",
-        "errorCode": "INVALID_TRANSCRIPT"
-      }
+      "retry": null
     },
     {
       "channelId": "UCk0Mu5MpVzJ056e65XpAj0Q",
@@ -427,6 +431,36 @@
       "contentDigest": "sha256:d0feff49aa3b2485b404a8b02072f84e1eac7b07c82f88e38eb9a1c7bd3d0566",
       "byteLength": 2048787,
       "createdAt": "2026-08-04T07:33:10.186Z"
+    },
+    {
+      "artifactId": "youtube-caption-bundle:PlFjEb8mgPg:v2",
+      "videoId": "PlFjEb8mgPg",
+      "kind": "transcript",
+      "revision": 2,
+      "storageKey": "sena-replay/videos/PlFjEb8mgPg.v2.json",
+      "contentDigest": "sha256:f12145076989552a055ac2db944cd4e9700e36f61b8c174b4c50605fb3c16953",
+      "byteLength": 1010267,
+      "createdAt": "2026-08-04T15:10:15.082Z"
+    },
+    {
+      "artifactId": "youtube-storyboard-visual-fingerprint:PlFjEb8mgPg:v1",
+      "videoId": "PlFjEb8mgPg",
+      "kind": "fingerprint",
+      "revision": 1,
+      "storageKey": "sena-replay/videos/PlFjEb8mgPg.visual-fingerprint.v1.json",
+      "contentDigest": "sha256:f02b1e76cf7e4eb960b6a2dc8a65a1e2e13461e8500fa115d9686be353c52017",
+      "byteLength": 2203,
+      "createdAt": "2026-07-31T00:43:37.000Z"
+    },
+    {
+      "artifactId": "review-bundle:PlFjEb8mgPg:v7",
+      "videoId": "PlFjEb8mgPg",
+      "kind": "review",
+      "revision": 7,
+      "storageKey": "sena-replay/videos/PlFjEb8mgPg.review.v7.json",
+      "contentDigest": "sha256:93de64e5cb4f128eb937e966663bf62e7e891644ea6dbcba42fc2344cadd6791",
+      "byteLength": 1736987,
+      "createdAt": "2026-08-04T15:19:46.581Z"
     }
   ]
 }
