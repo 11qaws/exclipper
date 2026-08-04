@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "channelId": "UCk0Mu5MpVzJ056e65XpAj0Q",
   "channelHandle": "@SENAREPLAY",
-  "revision": 39,
-  "generatedAt": "2026-08-04T15:26:07.937Z",
+  "revision": 44,
+  "generatedAt": "2026-08-04T15:52:01.604Z",
   "videos": [
     {
       "channelId": "UCk0Mu5MpVzJ056e65XpAj0Q",
@@ -90,20 +90,23 @@
       "videoId": "2UjkCyKNGFA",
       "title": "【26. 07. 28】 얼굴이 굳은 날... 싱드컵 노래 골랐어요 ★",
       "normalizedTitle": "26 07 28 얼굴이 굳은 날 싱드컵 노래 골랐어요",
-      "durationMs": null,
+      "durationMs": 18132000,
       "publishedAt": "2026-07-31T00:43:03.000Z",
       "updatedAt": "2026-07-31T00:43:03.000Z",
       "watchUrl": "https://www.youtube.com/watch?v=2UjkCyKNGFA",
       "state": "retryable",
-      "revision": 2,
-      "artifactIds": [],
+      "revision": 7,
+      "artifactIds": [
+        "youtube-caption-bundle:2UjkCyKNGFA:v2",
+        "youtube-storyboard-visual-fingerprint:2UjkCyKNGFA:v1"
+      ],
       "registeredLocalSampledFingerprints": [],
       "retry": {
-        "stage": "metadata",
-        "lastSuccessfulState": "discovered",
+        "stage": "review",
+        "lastSuccessfulState": "context-ready",
         "attemptCount": 1,
-        "nextAttemptAt": "2026-08-02T21:45:45.175Z",
-        "errorCode": "YT_DLP_FAILED"
+        "nextAttemptAt": "2026-08-04T18:52:01.604Z",
+        "errorCode": "REVIEW_CANDIDATES_INCOMPLETE"
       }
     },
     {
@@ -461,6 +464,26 @@
       "contentDigest": "sha256:93de64e5cb4f128eb937e966663bf62e7e891644ea6dbcba42fc2344cadd6791",
       "byteLength": 1736987,
       "createdAt": "2026-08-04T15:19:46.581Z"
+    },
+    {
+      "artifactId": "youtube-caption-bundle:2UjkCyKNGFA:v2",
+      "videoId": "2UjkCyKNGFA",
+      "kind": "transcript",
+      "revision": 2,
+      "storageKey": "sena-replay/videos/2UjkCyKNGFA.v2.json",
+      "contentDigest": "sha256:1fbd58f8142935ed1b897fe63c6d314baa8145bf14451e72e568db18a967e3f9",
+      "byteLength": 798087,
+      "createdAt": "2026-08-04T15:34:53.409Z"
+    },
+    {
+      "artifactId": "youtube-storyboard-visual-fingerprint:2UjkCyKNGFA:v1",
+      "videoId": "2UjkCyKNGFA",
+      "kind": "fingerprint",
+      "revision": 1,
+      "storageKey": "sena-replay/videos/2UjkCyKNGFA.visual-fingerprint.v1.json",
+      "contentDigest": "sha256:1457c7b3c10c23cf78abeaaffa4c240d82902264a4be383dc55f172df3414780",
+      "byteLength": 2207,
+      "createdAt": "2026-07-31T00:43:03.000Z"
     }
   ]
 }
