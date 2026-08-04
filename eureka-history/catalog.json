@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "channelId": "UCiFzBB8xsUjEBq8_h6Yl6tA",
   "channelHandle": "@eureka_history",
-  "revision": 43,
-  "generatedAt": "2026-08-04T14:48:08.969Z",
+  "revision": 44,
+  "generatedAt": "2026-08-04T18:43:26.136Z",
   "videos": [
     {
       "channelId": "UCiFzBB8xsUjEBq8_h6Yl6tA",
@@ -14,20 +14,15 @@
       "publishedAt": "2026-08-04T05:39:17.000Z",
       "updatedAt": "2026-08-04T12:02:29.000Z",
       "watchUrl": "https://www.youtube.com/watch?v=Wacrz9D11Eo",
-      "state": "retryable",
+      "state": "review-ready",
       "revision": 7,
       "artifactIds": [
         "youtube-caption-bundle:Wacrz9D11Eo:v2",
-        "youtube-storyboard-visual-fingerprint:Wacrz9D11Eo:v1"
+        "youtube-storyboard-visual-fingerprint:Wacrz9D11Eo:v1",
+        "review-bundle:Wacrz9D11Eo:v7"
       ],
       "registeredLocalSampledFingerprints": [],
-      "retry": {
-        "stage": "review",
-        "lastSuccessfulState": "context-ready",
-        "attemptCount": 1,
-        "nextAttemptAt": "2026-08-04T16:27:04.045Z",
-        "errorCode": "REVIEW_CANDIDATES_INCOMPLETE"
-      }
+      "retry": null
     },
     {
       "channelId": "UCiFzBB8xsUjEBq8_h6Yl6tA",
@@ -451,6 +446,16 @@
       "contentDigest": "sha256:2af9673cd4d9200649389b30fcfc3665d38743a30f7a00776d32714d3e89df41",
       "byteLength": 1698217,
       "createdAt": "2026-08-04T14:42:55.480Z"
+    },
+    {
+      "artifactId": "review-bundle:Wacrz9D11Eo:v7",
+      "videoId": "Wacrz9D11Eo",
+      "kind": "review",
+      "revision": 7,
+      "storageKey": "eureka-history/videos/Wacrz9D11Eo.review.v7.json",
+      "contentDigest": "sha256:bb3c6ef9ed67ccd8c2bcb3c04296e2cca58f6b351bef11a29eb736d170c83ad9",
+      "byteLength": 2598522,
+      "createdAt": "2026-08-04T18:43:08.172Z"
     }
   ]
 }
