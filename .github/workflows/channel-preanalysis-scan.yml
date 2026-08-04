@@ -4,7 +4,10 @@ on:
   schedule:
     # Keep the lightweight feed scan independent from the long heavy queue.
     # :17/:47 also avoids the busiest top-of-hour scheduler window.
-    - cron: "17,47 * * * *"
+    # Separate timers keep both half-hour ticks independently observable when
+    # GitHub delays or drops one scheduled event under load.
+    - cron: "17 * * * *"
+    - cron: "47 * * * *"
   workflow_dispatch:
 
 permissions:

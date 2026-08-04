@@ -1,7 +1,7 @@
 {
   "name": "exclipper",
   "private": true,
-  "version": "0.9.11",
+  "version": "0.9.12",
   "type": "module",
   "engines": {
     "node": ">=22.12.0"

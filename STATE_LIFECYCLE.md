@@ -18,6 +18,10 @@
   최근 feed를 확인하고 due가 있으면 GitHub Actions의 단일 heavy queue에 실행을
   추가한다. heavy queue는 최대 100개를 보존하되 동시에 하나만 실행하며, 각 실행은
   시작 시 최신 catalog를 다시 읽어 이미 완료된 항목을 건너뛴다.
+- 첫 화면의 queue projection은 `running-job | runner-queued-job | start-pending-video |
+  retry-scheduled-video`의 서로 겹치지 않는 네 집합이다. 앞의 두 상태는 공개 Actions API,
+  뒤의 두 상태는 catalog `nextAttemptAt`에서 계산한다. 한 heavy run의 최대 두 영상은
+  배정 상한이며 run 안에서 순차 처리하므로 최소 동시 실행 수로 해석하지 않는다.
 - 자동 transcript·context·review 선택은 `publishedAt >= now - 7일`인 영상만 허용한다.
   정확히 7일인 경계는 포함하고 그보다 오래된 manifest와 artifact는 삭제하지 않는다.
   특정 video ID를 지정한 수동 재시도만 이 자동 선택 경계를 우회한다.

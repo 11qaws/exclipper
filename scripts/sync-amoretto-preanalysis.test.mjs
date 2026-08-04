@@ -579,7 +579,8 @@ test("the independent scan schedules immutable serial heavy runs through a prove
     "utf8",
   );
   assert.match(scanWorkflow, /^\s{2}schedule:/mu);
-  assert.match(scanWorkflow, /cron:\s*"17,47 \* \* \* \*"/u);
+  assert.match(scanWorkflow, /cron:\s*"17 \* \* \* \*"/u);
+  assert.match(scanWorkflow, /cron:\s*"47 \* \* \* \*"/u);
   // YouTube refuses this runner's own address, so yt-dlp must go through WARP
   // and the tunnel must be proven before anything depends on it. Losing either
   // of these silently returns every run to deferring every video.

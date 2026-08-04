@@ -13,6 +13,7 @@ import {
   buildPreparedAnalysisQueue,
   fetchPreparedAnalysisWorkerSnapshot,
   parseWorkflowRunCount,
+  partitionPreparedAnalysisQueue,
 } from "./preparedAnalysisQueue";
 
 const NOW = Date.parse("2026-08-04T12:00:00.000Z");
@@ -147,6 +148,42 @@ describe("prepared analysis queue", () => {
 });
 
 describe("prepared analysis worker status", () => {
+  it("partitions active, assigned, start-pending, and scheduled-retry videos without overlap", () => {
+    const queue = buildPreparedAnalysisQueue([
+      loadedManifest(AMORETTO_CHANNEL_PREANALYSIS_SOURCE, [
+        video(AMORETTO_CHANNEL_PREANALYSIS_SOURCE, "aaaaaaaaaaa", "discovered", "2026-08-04T11:00:00.000Z"),
+        video(AMORETTO_CHANNEL_PREANALYSIS_SOURCE, "bbbbbbbbbbb", "discovered", "2026-08-04T10:00:00.000Z"),
+        video(AMORETTO_CHANNEL_PREANALYSIS_SOURCE, "ccccccccccc", "discovered", "2026-08-04T09:00:00.000Z"),
+        video(
+          AMORETTO_CHANNEL_PREANALYSIS_SOURCE,
+          "ddddddddddd",
+          "retryable",
+          "2026-08-04T08:00:00.000Z",
+          {
+            stage: "review",
+            lastSuccessfulState: "context-ready",
+            attemptCount: 2,
+            nextAttemptAt: "2026-08-04T13:00:00.000Z",
+            errorCode: "PROVIDER_BUSY",
+          },
+        ),
+      ]),
+    ], NOW);
+
+    const buckets = partitionPreparedAnalysisQueue(queue, {
+      activeRunCount: 1,
+      queuedRunCount: 1,
+      activeVideoIds: ["aaaaaaaaaaa"],
+      queuedVideoIds: ["bbbbbbbbbbb"],
+      checkedAt: new Date(NOW).toISOString(),
+    });
+
+    expect(buckets.active.map(({ videoId }) => videoId)).toEqual(["aaaaaaaaaaa"]);
+    expect(buckets.assigned.map(({ videoId }) => videoId)).toEqual(["bbbbbbbbbbb"]);
+    expect(buckets.startPending.map(({ videoId }) => videoId)).toEqual(["ccccccccccc"]);
+    expect(buckets.retryScheduled.map(({ videoId }) => videoId)).toEqual(["ddddddddddd"]);
+  });
+
   it("reads active and queued counts from the public workflow endpoints", async () => {
     const fetchImplementation = vi.fn((input: RequestInfo | URL) => {
       const url = input instanceof Request

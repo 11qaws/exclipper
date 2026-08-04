@@ -14,6 +14,7 @@ import type {
   PreparedAnalysisQueueVideo,
   PreparedAnalysisWorkerSnapshot,
 } from "./preparedAnalysisQueue";
+import { partitionPreparedAnalysisQueue } from "./preparedAnalysisQueue";
 
 export interface PreparedAnalysisEntryProps {
   readonly language: FrontLanguage;
@@ -57,24 +58,25 @@ const COPY = {
     open: "검토 열기",
     queueEyebrow: "자동 준비",
     queueTitle: "분석 큐",
-    queueDescription: "최근 7일의 방송을 확인하고, 자막이 준비된 순서대로 분석합니다.",
-    analyzing: "처리 중",
-    ready: "바로 처리",
-    deferred: "재시도 대기",
+    queueDescription: "실제 실행기 상태와 영상의 재시도 시각을 구분해 보여 줍니다.",
+    analyzing: "실행 중 작업",
+    assigned: "실행 대기 작업",
+    ready: "시작 대기 영상",
+    deferred: "재시도 예약",
     loadingWorker: "확인 중",
     workerUnavailable: "상태 확인 지연",
-    workerIdle: "현재 처리할 영상 없음",
+    workerIdle: "현재 실행할 영상 없음",
     workerRunning: (count: number) =>
-      count > 0 ? `영상 ${count.toLocaleString("ko-KR")}개 분석 중` : "분석 실행 중",
-    workerQueued: (count: number) => `실행 대기 ${count.toLocaleString("ko-KR")}개`,
-    workerReady: (count: number) => `영상 ${count.toLocaleString("ko-KR")}개 실행 준비`,
-    activeItem: "이번 실행 대상",
-    queuedItem: "다음 작업 대상",
-    readyItem: "바로 처리 가능",
+      count > 0 ? `작업 1개 실행 중 · 영상 ${count.toLocaleString("ko-KR")}개 배정` : "분석 작업 실행 중",
+    workerQueued: (count: number) => `작업 ${count.toLocaleString("ko-KR")}개 실행기 대기`,
+    workerReady: (count: number) => `영상 ${count.toLocaleString("ko-KR")}개 자동 시작 대기`,
+    activeItem: "실행 중 작업에 배정",
+    queuedItem: "실행기 배정 대기",
+    readyItem: "재시도 시각 경과 · 다음 점검 대기",
     noWaiting: "현재 대기 중인 최근 영상이 없습니다.",
     moreWaiting: (count: number) => `외 ${count.toLocaleString("ko-KR")}개 대기 중`,
     retryAt: (value: string) => `${value} 재시도`,
-    scheduleNote: "새 영상은 30분마다 찾고, 준비된 작업은 2개 단위로 끊김 없이 이어서 처리합니다.",
+    scheduleNote: "30분마다 작업을 배정합니다. 작업 하나가 영상을 최대 2개씩 순서대로 분석하며, 실패 지점은 보존한 뒤 예약 시각에 다시 시도합니다.",
     phase: {
       caption: "자막 확인",
       context: "전체 맥락",
@@ -101,24 +103,25 @@ const COPY = {
     open: "Open review",
     queueEyebrow: "Automatic preparation",
     queueTitle: "Analysis queue",
-    queueDescription: "Recent broadcasts are checked for seven days and analyzed as captions become ready.",
-    analyzing: "Running",
-    ready: "Ready now",
-    deferred: "Retry later",
+    queueDescription: "Shows runner state separately from each video's scheduled retry time.",
+    analyzing: "Jobs running",
+    assigned: "Jobs queued",
+    ready: "Videos awaiting start",
+    deferred: "Retries scheduled",
     loadingWorker: "Checking",
     workerUnavailable: "Status delayed",
-    workerIdle: "No video is ready to process",
+    workerIdle: "No video is ready to run",
     workerRunning: (count: number) =>
-      count > 0 ? `${count.toLocaleString("en-US")} videos running` : "Analysis is running",
-    workerQueued: (count: number) => `${count.toLocaleString("en-US")} run queued`,
-    workerReady: (count: number) => `${count.toLocaleString("en-US")} videos ready to start`,
-    activeItem: "Current batch",
-    queuedItem: "Next job target",
-    readyItem: "Ready now",
+      count > 0 ? `1 job running · ${count.toLocaleString("en-US")} videos assigned` : "Analysis job running",
+    workerQueued: (count: number) => `${count.toLocaleString("en-US")} jobs awaiting a runner`,
+    workerReady: (count: number) => `${count.toLocaleString("en-US")} videos awaiting automatic start`,
+    activeItem: "Assigned to the running job",
+    queuedItem: "Waiting for a runner",
+    readyItem: "Retry time reached · awaiting next check",
     noWaiting: "No recent video is waiting.",
     moreWaiting: (count: number) => `${count.toLocaleString("en-US")} more waiting`,
     retryAt: (value: string) => `Retry ${value}`,
-    scheduleNote: "New videos are discovered every 30 minutes; ready work keeps draining in batches of two.",
+    scheduleNote: "Work is assigned every 30 minutes. One job analyzes up to two videos in sequence and resumes failures from their saved retry point.",
     phase: {
       caption: "Captions",
       context: "Full context",
@@ -191,23 +194,18 @@ export function PreparedAnalysisEntry({
   const inputIsValid = youtubeVideoIdFromUserInput(inputValue) !== null;
   const activeVideoIds = new Set(workerSnapshot?.activeVideoIds ?? []);
   const queuedVideoIds = new Set(workerSnapshot?.queuedVideoIds ?? []);
-  const activeQueue = queue.filter(({ videoId }) => activeVideoIds.has(videoId));
-  const waitingQueue = queue.filter(({ videoId }) => !activeVideoIds.has(videoId));
-  const readyVideoCount = waitingQueue.filter(({ readyNow }) => readyNow).length;
-  const deferredVideoCount = waitingQueue.length - readyVideoCount;
+  const queueBuckets = partitionPreparedAnalysisQueue(queue, workerSnapshot);
+  const activeVideoCount = queueBuckets.active.length;
+  const readyVideoCount = queueBuckets.startPending.length;
+  const deferredVideoCount = queueBuckets.retryScheduled.length;
   const orderedQueue = [
-    ...activeQueue,
-    ...waitingQueue.filter(({ videoId }) => queuedVideoIds.has(videoId)),
-    ...waitingQueue.filter(
-      ({ videoId, readyNow }) => !queuedVideoIds.has(videoId) && readyNow,
-    ),
-    ...waitingQueue.filter(
-      ({ videoId, readyNow }) => !queuedVideoIds.has(videoId) && !readyNow,
-    ),
+    ...queueBuckets.active,
+    ...queueBuckets.assigned,
+    ...queueBuckets.startPending,
+    ...queueBuckets.retryScheduled,
   ];
   const visibleQueue = orderedQueue.slice(0, 3);
   const hiddenQueueCount = Math.max(0, orderedQueue.length - visibleQueue.length);
-  const activeVideoCount = workerSnapshot?.activeVideoIds.length ?? 0;
   const workerIndicator =
     workerStatus !== "ready"
       ? workerStatus
@@ -216,7 +214,7 @@ export function PreparedAnalysisEntry({
         : (workerSnapshot?.queuedRunCount ?? 0) > 0
           ? "queued"
           : readyVideoCount > 0
-            ? "queued"
+            ? "ready"
           : "idle";
   const workerDetail =
     workerStatus === "loading"
@@ -369,6 +367,14 @@ export function PreparedAnalysisEntry({
             <strong>
               {workerStatus === "ready" && workerSnapshot !== null
                 ? activeVideoCount.toLocaleString(language === "ko" ? "ko-KR" : "en-US")
+                : "—"}
+            </strong>
+          </span>
+          <span>
+            <small>{copy.assigned}</small>
+            <strong>
+              {workerStatus === "ready" && workerSnapshot !== null
+                ? workerSnapshot.queuedRunCount.toLocaleString(language === "ko" ? "ko-KR" : "en-US")
                 : "—"}
             </strong>
           </span>

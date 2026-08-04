@@ -234,7 +234,8 @@ test("a 30-minute scan queues serial heavy work while manual runs can force it",
     new URL("../.github/workflows/channel-preanalysis-scan.yml", import.meta.url),
     "utf8",
   );
-  assert.match(scanWorkflow, /cron:\s*"17,47 \* \* \* \*"/u);
+  assert.match(scanWorkflow, /cron:\s*"17 \* \* \* \*"/u);
+  assert.match(scanWorkflow, /cron:\s*"47 \* \* \* \*"/u);
   assert.doesNotMatch(heavyWorkflow, /^\s{2}schedule:/mu);
   assert.match(heavyWorkflow, /group:\s*channel-preanalysis-heavy-queue/u);
   assert.match(heavyWorkflow, /queue:\s*max/u);

@@ -27,7 +27,7 @@
 5. participant grounding, 대표 thumbnail, 최종 후보 집합 또는 `verified-empty`
 6. 4MiB 이하 review artifact의 전체 SHA와 내부 content digest readback
 
-`channel-preanalysis-scan.yml`은 매시 17분·47분에
+`channel-preanalysis-scan.yml`은 매시 17분·47분의 독립된 두 schedule에서
 `scripts/channel-preanalysis-upload-preflight.mjs`로 Atom RSS와 최신 catalog를 가볍게
 대조한다. 긴 분석 workflow와 concurrency group을 공유하지 않으므로 이전 분석이 진행
 중이어도 다음 스캔은 시작할 수 있다. 신규·due retry·context/review 누락이 있으면
@@ -35,6 +35,16 @@
 `queue: max` 단일 실행열이 발견 작업을 순차 처리한다. 각 queued run은 시작 시 최신
 catalog를 다시 확인하므로 앞 실행이 완료한 영상은 건너뛴다. GitHub scheduler 자체의
 지연 가능성은 남지만 긴 ExClipper 분석이 30분 스캔을 직접 막지는 않는다.
+
+메인 화면의 큐 상태는 다음 네 값만 표시한다. `실행 중 작업`은 GitHub Actions
+`in_progress` run, `실행 대기 작업`은 runner를 기다리는 `queued` run,
+`시작 대기 영상`은 재시도 시각이 지났지만 아직 run에 배정되지 않은 catalog 항목,
+`재시도 예약`은 `nextAttemptAt`이 미래인 항목이다. 한 run에는 최대 2개 영상이 배정되지만
+영상은 catalog 쓰기 충돌을 피하려고 그 run 안에서 순서대로 처리한다. 따라서 이 상한은
+항상 두 영상이 동시에 실행된다는 뜻이 아니다. `시작 대기 영상`이 남아 있는데 실행 작업이
+0이면 데이터 손실이 아니라 다음 schedule 배정을 기다리는 상태다. GitHub가 schedule event를
+드물게 누락할 수 있으므로 17분과 47분 timer는 별도 항목으로 등록하고, heavy 완료 뒤 즉시
+스캔하는 self-drain 경로도 유지한다.
 
 자동 queue는 게시 후 정확히 7일 이내 영상만 받는다. Atom feed에는 신뢰할 수 있는 자막
 존재 필드가 없으므로 heavy run의 첫 yt-dlp 검사에서 한국어 수동·자동 자막을 확인한다.

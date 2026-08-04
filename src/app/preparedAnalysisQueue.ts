@@ -43,10 +43,38 @@ export interface PreparedAnalysisWorkerSnapshot {
   readonly checkedAt: string;
 }
 
+export interface PreparedAnalysisQueueBuckets {
+  readonly active: readonly PreparedAnalysisQueueVideo[];
+  readonly assigned: readonly PreparedAnalysisQueueVideo[];
+  readonly startPending: readonly PreparedAnalysisQueueVideo[];
+  readonly retryScheduled: readonly PreparedAnalysisQueueVideo[];
+}
+
 export interface PreparedAnalysisWorkerSnapshotOptions {
   readonly fetchImplementation?: typeof fetch;
   readonly signal?: AbortSignal;
   readonly now?: () => number;
+}
+
+export function partitionPreparedAnalysisQueue(
+  queue: readonly PreparedAnalysisQueueVideo[],
+  workerSnapshot: PreparedAnalysisWorkerSnapshot | null,
+): PreparedAnalysisQueueBuckets {
+  const activeVideoIds = new Set(workerSnapshot?.activeVideoIds ?? []);
+  const queuedVideoIds = new Set(workerSnapshot?.queuedVideoIds ?? []);
+  const active: PreparedAnalysisQueueVideo[] = [];
+  const assigned: PreparedAnalysisQueueVideo[] = [];
+  const startPending: PreparedAnalysisQueueVideo[] = [];
+  const retryScheduled: PreparedAnalysisQueueVideo[] = [];
+
+  for (const video of queue) {
+    if (activeVideoIds.has(video.videoId)) active.push(video);
+    else if (queuedVideoIds.has(video.videoId)) assigned.push(video);
+    else if (video.readyNow) startPending.push(video);
+    else retryScheduled.push(video);
+  }
+
+  return { active, assigned, startPending, retryScheduled };
 }
 
 function phaseForRetryStage(
