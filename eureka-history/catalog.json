@@ -2,9 +2,30 @@
   "schemaVersion": 1,
   "channelId": "UCiFzBB8xsUjEBq8_h6Yl6tA",
   "channelHandle": "@eureka_history",
-  "revision": 47,
-  "generatedAt": "2026-08-04T20:08:12.626Z",
+  "revision": 50,
+  "generatedAt": "2026-08-05T16:53:11.565Z",
   "videos": [
+    {
+      "channelId": "UCiFzBB8xsUjEBq8_h6Yl6tA",
+      "videoId": "ehiSg77LpRY",
+      "title": "2026 08 05 링피트 짧앵실패한저쳇",
+      "normalizedTitle": "2026 08 05 링피트 짧앵실패한저쳇",
+      "durationMs": 33929000,
+      "publishedAt": "2026-08-05T16:03:42.000Z",
+      "updatedAt": "2026-08-05T16:25:43.000Z",
+      "watchUrl": "https://www.youtube.com/watch?v=ehiSg77LpRY",
+      "state": "retryable",
+      "revision": 3,
+      "artifactIds": [],
+      "registeredLocalSampledFingerprints": [],
+      "retry": {
+        "stage": "transcript",
+        "lastSuccessfulState": "metadata-ready",
+        "attemptCount": 1,
+        "nextAttemptAt": "2026-08-06T16:53:11.565Z",
+        "errorCode": "KOREAN_CAPTION_NOT_FOUND"
+      }
+    },
     {
       "channelId": "UCiFzBB8xsUjEBq8_h6Yl6tA",
       "videoId": "Wacrz9D11Eo",

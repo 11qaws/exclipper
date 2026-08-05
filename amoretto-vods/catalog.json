@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "channelId": "UCHycoTBFDhXz4XNz8jBP-_A",
   "channelHandle": "@AmorettoVODs",
-  "revision": 95,
-  "generatedAt": "2026-08-05T15:53:07.446Z",
+  "revision": 96,
+  "generatedAt": "2026-08-05T16:52:30.297Z",
   "videos": [
     {
       "channelId": "UCHycoTBFDhXz4XNz8jBP-_A",
@@ -12,10 +12,10 @@
       "normalizedTitle": "2026 08 05 명조 롤체",
       "durationMs": 17748000,
       "publishedAt": "2026-08-05T14:51:46.000Z",
-      "updatedAt": "2026-08-05T15:41:31.000Z",
+      "updatedAt": "2026-08-05T16:22:08.000Z",
       "watchUrl": "https://www.youtube.com/watch?v=MPXBr2ygnCE",
       "state": "retryable",
-      "revision": 3,
+      "revision": 4,
       "artifactIds": [],
       "registeredLocalSampledFingerprints": [],
       "retry": {
