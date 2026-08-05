@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "channelId": "UCk0Mu5MpVzJ056e65XpAj0Q",
   "channelHandle": "@SENAREPLAY",
-  "revision": 46,
-  "generatedAt": "2026-08-05T08:23:51.910Z",
+  "revision": 48,
+  "generatedAt": "2026-08-05T15:53:11.903Z",
   "videos": [
     {
       "channelId": "UCk0Mu5MpVzJ056e65XpAj0Q",
@@ -15,14 +15,14 @@
       "updatedAt": "2026-08-04T08:34:53.000Z",
       "watchUrl": "https://www.youtube.com/watch?v=6-pQH_dd3AI",
       "state": "retryable",
-      "revision": 3,
+      "revision": 4,
       "artifactIds": [],
       "registeredLocalSampledFingerprints": [],
       "retry": {
         "stage": "transcript",
         "lastSuccessfulState": "metadata-ready",
-        "attemptCount": 1,
-        "nextAttemptAt": "2026-08-05T14:40:54.928Z",
+        "attemptCount": 2,
+        "nextAttemptAt": "2026-08-08T15:53:11.903Z",
         "errorCode": "KOREAN_CAPTION_NOT_FOUND"
       }
     },
@@ -230,10 +230,10 @@
       "normalizedTitle": "26 07 15 오리엔트 첫 합방 스파이 래프트",
       "durationMs": null,
       "publishedAt": "2026-07-22T07:55:34.000Z",
-      "updatedAt": "2026-07-22T07:55:34.000Z",
+      "updatedAt": "2026-08-05T12:42:40.000Z",
       "watchUrl": "https://www.youtube.com/watch?v=UpMqOTWG-BU",
       "state": "discovered",
-      "revision": 1,
+      "revision": 2,
       "artifactIds": [],
       "registeredLocalSampledFingerprints": [],
       "retry": null
