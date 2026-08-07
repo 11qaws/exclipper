@@ -2,9 +2,28 @@
   "schemaVersion": 1,
   "channelId": "UCHycoTBFDhXz4XNz8jBP-_A",
   "channelHandle": "@AmorettoVODs",
-  "revision": 97,
-  "generatedAt": "2026-08-05T20:15:00.500Z",
+  "revision": 103,
+  "generatedAt": "2026-08-07T00:41:29.137Z",
   "videos": [
+    {
+      "channelId": "UCHycoTBFDhXz4XNz8jBP-_A",
+      "videoId": "z1epZokrg70",
+      "title": "2026 08 06 - 한국어 패치 1화 +  롤체",
+      "normalizedTitle": "2026 08 06 한국어 패치 1화 롤체",
+      "durationMs": 11637000,
+      "publishedAt": "2026-08-06T16:08:12.000Z",
+      "updatedAt": "2026-08-06T17:54:07.000Z",
+      "watchUrl": "https://www.youtube.com/watch?v=z1epZokrg70",
+      "state": "review-ready",
+      "revision": 6,
+      "artifactIds": [
+        "youtube-caption-bundle:z1epZokrg70:v2",
+        "youtube-storyboard-visual-fingerprint:z1epZokrg70:v1",
+        "review-bundle:z1epZokrg70:v6"
+      ],
+      "registeredLocalSampledFingerprints": [],
+      "retry": null
+    },
     {
       "channelId": "UCHycoTBFDhXz4XNz8jBP-_A",
       "videoId": "MPXBr2ygnCE",
@@ -644,6 +663,36 @@
       "contentDigest": "sha256:aff00e60184f1b1168583c857b50d116a1e405af8b8b2ad793887a8b571e36d6",
       "byteLength": 1625026,
       "createdAt": "2026-08-04T12:35:58.389Z"
+    },
+    {
+      "artifactId": "youtube-caption-bundle:z1epZokrg70:v2",
+      "videoId": "z1epZokrg70",
+      "kind": "transcript",
+      "revision": 2,
+      "storageKey": "amoretto-vods/videos/z1epZokrg70.v2.json",
+      "contentDigest": "sha256:5f9197b4805820e4ecc436833839e8b989deb31d8898225092661199a779d252",
+      "byteLength": 574307,
+      "createdAt": "2026-08-07T00:32:55.260Z"
+    },
+    {
+      "artifactId": "youtube-storyboard-visual-fingerprint:z1epZokrg70:v1",
+      "videoId": "z1epZokrg70",
+      "kind": "fingerprint",
+      "revision": 1,
+      "storageKey": "amoretto-vods/videos/z1epZokrg70.visual-fingerprint.v1.json",
+      "contentDigest": "sha256:f89e6f2be5dcaac47926fc94ef4444de7a57f70c41da43c2f0ad6216ff711331",
+      "byteLength": 2198,
+      "createdAt": "2026-08-06T17:54:07.000Z"
+    },
+    {
+      "artifactId": "review-bundle:z1epZokrg70:v6",
+      "videoId": "z1epZokrg70",
+      "kind": "review",
+      "revision": 6,
+      "storageKey": "amoretto-vods/videos/z1epZokrg70.review.v6.json",
+      "contentDigest": "sha256:bd5fcdf95d449fcddb0df75e80dd51061033b1a290e9991453a2ccddbd9a852d",
+      "byteLength": 2125967,
+      "createdAt": "2026-08-07T00:37:30.371Z"
     }
   ]
 }
