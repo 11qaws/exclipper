@@ -2,9 +2,64 @@
   "schemaVersion": 1,
   "channelId": "UCk0Mu5MpVzJ056e65XpAj0Q",
   "channelHandle": "@SENAREPLAY",
-  "revision": 51,
-  "generatedAt": "2026-08-07T00:41:32.552Z",
+  "revision": 59,
+  "generatedAt": "2026-08-07T08:44:43.766Z",
   "videos": [
+    {
+      "channelId": "UCk0Mu5MpVzJ056e65XpAj0Q",
+      "videoId": "u_khLAUmUio",
+      "title": "【26. 08. 06】 스텔라이브 궁극기 월드컵 2부 전 저챗 ★",
+      "normalizedTitle": "26 08 06 스텔라이브 궁극기 월드컵 2부 전 저챗",
+      "durationMs": 5439000,
+      "publishedAt": "2026-08-07T08:31:39.000Z",
+      "updatedAt": "2026-08-07T08:31:39.000Z",
+      "watchUrl": "https://www.youtube.com/watch?v=u_khLAUmUio",
+      "state": "retryable",
+      "revision": 3,
+      "artifactIds": [],
+      "registeredLocalSampledFingerprints": [],
+      "retry": {
+        "stage": "transcript",
+        "lastSuccessfulState": "metadata-ready",
+        "attemptCount": 1,
+        "nextAttemptAt": "2026-08-08T08:40:23.615Z",
+        "errorCode": "KOREAN_CAPTION_NOT_FOUND"
+      }
+    },
+    {
+      "channelId": "UCk0Mu5MpVzJ056e65XpAj0Q",
+      "videoId": "UjT2T_aE3Fc",
+      "title": "【26. 08. 05】 스텔라이브 궁극기 월드컵 전 저챗 ★",
+      "normalizedTitle": "26 08 05 스텔라이브 궁극기 월드컵 전 저챗",
+      "durationMs": 3524000,
+      "publishedAt": "2026-08-07T08:31:31.000Z",
+      "updatedAt": "2026-08-07T08:31:31.000Z",
+      "watchUrl": "https://www.youtube.com/watch?v=UjT2T_aE3Fc",
+      "state": "review-ready",
+      "revision": 6,
+      "artifactIds": [
+        "youtube-caption-bundle:UjT2T_aE3Fc:v2",
+        "youtube-storyboard-visual-fingerprint:UjT2T_aE3Fc:v1",
+        "review-bundle:UjT2T_aE3Fc:v6"
+      ],
+      "registeredLocalSampledFingerprints": [],
+      "retry": null
+    },
+    {
+      "channelId": "UCk0Mu5MpVzJ056e65XpAj0Q",
+      "videoId": "Qcabe3lB8cg",
+      "title": "【26. 08. 04】 지옥계 미용실 ASMR ★",
+      "normalizedTitle": "26 08 04 지옥계 미용실 asmr",
+      "durationMs": null,
+      "publishedAt": "2026-08-07T08:31:25.000Z",
+      "updatedAt": "2026-08-07T08:31:25.000Z",
+      "watchUrl": "https://www.youtube.com/watch?v=Qcabe3lB8cg",
+      "state": "discovered",
+      "revision": 1,
+      "artifactIds": [],
+      "registeredLocalSampledFingerprints": [],
+      "retry": null
+    },
     {
       "channelId": "UCk0Mu5MpVzJ056e65XpAj0Q",
       "videoId": "6-pQH_dd3AI",
@@ -484,6 +539,36 @@
       "contentDigest": "sha256:1457c7b3c10c23cf78abeaaffa4c240d82902264a4be383dc55f172df3414780",
       "byteLength": 2207,
       "createdAt": "2026-07-31T00:43:03.000Z"
+    },
+    {
+      "artifactId": "youtube-caption-bundle:UjT2T_aE3Fc:v2",
+      "videoId": "UjT2T_aE3Fc",
+      "kind": "transcript",
+      "revision": 2,
+      "storageKey": "sena-replay/videos/UjT2T_aE3Fc.v2.json",
+      "contentDigest": "sha256:3293532b00879ac0a3682a21add27b939d2d0a6e34d1998b1bb190365c766a23",
+      "byteLength": 204845,
+      "createdAt": "2026-08-07T08:41:11.865Z"
+    },
+    {
+      "artifactId": "youtube-storyboard-visual-fingerprint:UjT2T_aE3Fc:v1",
+      "videoId": "UjT2T_aE3Fc",
+      "kind": "fingerprint",
+      "revision": 1,
+      "storageKey": "sena-replay/videos/UjT2T_aE3Fc.visual-fingerprint.v1.json",
+      "contentDigest": "sha256:19b99e5894fe8639af95ab832ebad021b77926f9781559ddb18d624ac6d55d7f",
+      "byteLength": 2197,
+      "createdAt": "2026-08-07T08:31:31.000Z"
+    },
+    {
+      "artifactId": "review-bundle:UjT2T_aE3Fc:v6",
+      "videoId": "UjT2T_aE3Fc",
+      "kind": "review",
+      "revision": 6,
+      "storageKey": "sena-replay/videos/UjT2T_aE3Fc.review.v6.json",
+      "contentDigest": "sha256:bfdeae8161ef3a3bee8ad8bdf4ce5f849a628b9fb53e8d099bef10f14baa6795",
+      "byteLength": 2134467,
+      "createdAt": "2026-08-07T08:42:17.858Z"
     }
   ]
 }
