@@ -2,9 +2,30 @@
   "schemaVersion": 1,
   "channelId": "UCHycoTBFDhXz4XNz8jBP-_A",
   "channelHandle": "@AmorettoVODs",
-  "revision": 108,
-  "generatedAt": "2026-08-07T07:47:56.266Z",
+  "revision": 111,
+  "generatedAt": "2026-08-08T07:59:19.437Z",
   "videos": [
+    {
+      "channelId": "UCHycoTBFDhXz4XNz8jBP-_A",
+      "videoId": "ukJR8mGPAmM",
+      "title": "2026 08 08 - 슬더스 방송",
+      "normalizedTitle": "2026 08 08 슬더스 방송",
+      "durationMs": 15590000,
+      "publishedAt": "2026-08-08T07:52:55.000Z",
+      "updatedAt": "2026-08-08T07:52:55.000Z",
+      "watchUrl": "https://www.youtube.com/watch?v=ukJR8mGPAmM",
+      "state": "retryable",
+      "revision": 3,
+      "artifactIds": [],
+      "registeredLocalSampledFingerprints": [],
+      "retry": {
+        "stage": "transcript",
+        "lastSuccessfulState": "metadata-ready",
+        "attemptCount": 1,
+        "nextAttemptAt": "2026-08-09T07:59:19.437Z",
+        "errorCode": "KOREAN_CAPTION_NOT_FOUND"
+      }
+    },
     {
       "channelId": "UCHycoTBFDhXz4XNz8jBP-_A",
       "videoId": "z1epZokrg70",

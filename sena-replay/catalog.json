@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "channelId": "UCk0Mu5MpVzJ056e65XpAj0Q",
   "channelHandle": "@SENAREPLAY",
-  "revision": 62,
-  "generatedAt": "2026-08-07T08:47:35.310Z",
+  "revision": 63,
+  "generatedAt": "2026-08-08T07:58:36.929Z",
   "videos": [
     {
       "channelId": "UCk0Mu5MpVzJ056e65XpAj0Q",
@@ -52,10 +52,10 @@
       "normalizedTitle": "26 08 04 지옥계 미용실 asmr",
       "durationMs": 4657000,
       "publishedAt": "2026-08-07T08:31:25.000Z",
-      "updatedAt": "2026-08-07T08:31:25.000Z",
+      "updatedAt": "2026-08-07T09:34:20.000Z",
       "watchUrl": "https://www.youtube.com/watch?v=Qcabe3lB8cg",
       "state": "retryable",
-      "revision": 3,
+      "revision": 4,
       "artifactIds": [],
       "registeredLocalSampledFingerprints": [],
       "retry": {

@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "channelId": "UC_hftLL-ydsJd1YpcBZ_09g",
   "channelHandle": "@망징-b1t",
-  "revision": 26,
-  "generatedAt": "2026-08-07T00:31:03.659Z",
+  "revision": 27,
+  "generatedAt": "2026-08-08T07:58:37.535Z",
   "videos": [
     {
       "channelId": "UC_hftLL-ydsJd1YpcBZ_09g",
@@ -115,10 +115,10 @@
       "normalizedTitle": "마법소녀의 마녀재판 2장 5챕터 최종화",
       "durationMs": null,
       "publishedAt": "2026-06-26T05:44:37.000Z",
-      "updatedAt": "2026-08-06T14:14:02.000Z",
+      "updatedAt": "2026-08-07T10:13:58.000Z",
       "watchUrl": "https://www.youtube.com/watch?v=TYDLaokyl1M",
       "state": "discovered",
-      "revision": 2,
+      "revision": 3,
       "artifactIds": [],
       "registeredLocalSampledFingerprints": [],
       "retry": null
