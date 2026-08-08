@@ -2,9 +2,30 @@
   "schemaVersion": 1,
   "channelId": "UC_hftLL-ydsJd1YpcBZ_09g",
   "channelHandle": "@망징-b1t",
-  "revision": 27,
-  "generatedAt": "2026-08-08T07:58:37.535Z",
+  "revision": 29,
+  "generatedAt": "2026-08-08T21:06:25.846Z",
   "videos": [
+    {
+      "channelId": "UC_hftLL-ydsJd1YpcBZ_09g",
+      "videoId": "nwNIi2FdHZY",
+      "title": "{림버스 컴퍼니} ｢이상-날개｣ 다 읽고 4장 몰아보기",
+      "normalizedTitle": "림버스 컴퍼니 이상 날개 다 읽고 4장 몰아보기",
+      "durationMs": null,
+      "publishedAt": "2026-08-08T21:01:30.000Z",
+      "updatedAt": "2026-08-08T21:01:30.000Z",
+      "watchUrl": "https://www.youtube.com/watch?v=nwNIi2FdHZY",
+      "state": "retryable",
+      "revision": 2,
+      "artifactIds": [],
+      "registeredLocalSampledFingerprints": [],
+      "retry": {
+        "stage": "metadata",
+        "lastSuccessfulState": "discovered",
+        "attemptCount": 1,
+        "nextAttemptAt": "2026-08-09T00:06:25.846Z",
+        "errorCode": "INVALID_METADATA"
+      }
+    },
     {
       "channelId": "UC_hftLL-ydsJd1YpcBZ_09g",
       "videoId": "I4LeuyItmTU",
