@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "channelId": "UCk0Mu5MpVzJ056e65XpAj0Q",
   "channelHandle": "@SENAREPLAY",
-  "revision": 74,
-  "generatedAt": "2026-08-08T16:03:05.680Z",
+  "revision": 75,
+  "generatedAt": "2026-08-08T16:05:37.614Z",
   "videos": [
     {
       "channelId": "UCk0Mu5MpVzJ056e65XpAj0Q",
@@ -93,14 +93,14 @@
       "updatedAt": "2026-08-04T08:28:23.000Z",
       "watchUrl": "https://www.youtube.com/watch?v=AqYmYChqx2c",
       "state": "retryable",
-      "revision": 4,
+      "revision": 5,
       "artifactIds": [],
       "registeredLocalSampledFingerprints": [],
       "retry": {
         "stage": "transcript",
         "lastSuccessfulState": "metadata-ready",
-        "attemptCount": 2,
-        "nextAttemptAt": "2026-08-08T15:55:28.754Z",
+        "attemptCount": 3,
+        "nextAttemptAt": "2026-08-15T16:05:37.614Z",
         "errorCode": "KOREAN_CAPTION_NOT_FOUND"
       }
     },
