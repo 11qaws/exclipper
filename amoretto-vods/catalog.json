@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "channelId": "UCHycoTBFDhXz4XNz8jBP-_A",
   "channelHandle": "@AmorettoVODs",
-  "revision": 111,
-  "generatedAt": "2026-08-08T07:59:19.437Z",
+  "revision": 112,
+  "generatedAt": "2026-08-08T08:58:55.285Z",
   "videos": [
     {
       "channelId": "UCHycoTBFDhXz4XNz8jBP-_A",
@@ -12,10 +12,10 @@
       "normalizedTitle": "2026 08 08 슬더스 방송",
       "durationMs": 15590000,
       "publishedAt": "2026-08-08T07:52:55.000Z",
-      "updatedAt": "2026-08-08T07:52:55.000Z",
+      "updatedAt": "2026-08-08T08:49:46.000Z",
       "watchUrl": "https://www.youtube.com/watch?v=ukJR8mGPAmM",
       "state": "retryable",
-      "revision": 3,
+      "revision": 4,
       "artifactIds": [],
       "registeredLocalSampledFingerprints": [],
       "retry": {
