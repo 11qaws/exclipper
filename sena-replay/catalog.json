@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "channelId": "UCk0Mu5MpVzJ056e65XpAj0Q",
   "channelHandle": "@SENAREPLAY",
-  "revision": 72,
-  "generatedAt": "2026-08-08T13:13:58.029Z",
+  "revision": 73,
+  "generatedAt": "2026-08-08T13:41:31.292Z",
   "videos": [
     {
       "channelId": "UCk0Mu5MpVzJ056e65XpAj0Q",
@@ -52,20 +52,15 @@
       "publishedAt": "2026-08-07T08:31:25.000Z",
       "updatedAt": "2026-08-07T09:34:20.000Z",
       "watchUrl": "https://www.youtube.com/watch?v=Qcabe3lB8cg",
-      "state": "retryable",
+      "state": "review-ready",
       "revision": 8,
       "artifactIds": [
         "youtube-caption-bundle:Qcabe3lB8cg:v2",
-        "youtube-storyboard-visual-fingerprint:Qcabe3lB8cg:v1"
+        "youtube-storyboard-visual-fingerprint:Qcabe3lB8cg:v1",
+        "review-bundle:Qcabe3lB8cg:v8"
       ],
       "registeredLocalSampledFingerprints": [],
-      "retry": {
-        "stage": "review",
-        "lastSuccessfulState": "context-ready",
-        "attemptCount": 1,
-        "nextAttemptAt": "2026-08-08T12:15:09.465Z",
-        "errorCode": "PROCESS_FAILED"
-      }
+      "retry": null
     },
     {
       "channelId": "UCk0Mu5MpVzJ056e65XpAj0Q",
@@ -626,6 +621,16 @@
       "contentDigest": "sha256:305775287831966c69c9fe05894ef171a06d3024d7269adc7943eec861b4267e",
       "byteLength": 1954268,
       "createdAt": "2026-08-08T13:13:48.781Z"
+    },
+    {
+      "artifactId": "review-bundle:Qcabe3lB8cg:v8",
+      "videoId": "Qcabe3lB8cg",
+      "kind": "review",
+      "revision": 8,
+      "storageKey": "sena-replay/videos/Qcabe3lB8cg.review.v8.json",
+      "contentDigest": "sha256:b21017c37f3519185246a075775d55cc1a553f446b54a75e53fd111f91fcc8ed",
+      "byteLength": 1426904,
+      "createdAt": "2026-08-08T13:36:21.651Z"
     }
   ]
 }
