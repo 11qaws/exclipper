@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "channelId": "UCk0Mu5MpVzJ056e65XpAj0Q",
   "channelHandle": "@SENAREPLAY",
-  "revision": 67,
-  "generatedAt": "2026-08-08T09:11:41.773Z",
+  "revision": 71,
+  "generatedAt": "2026-08-08T09:15:09.465Z",
   "videos": [
     {
       "channelId": "UCk0Mu5MpVzJ056e65XpAj0Q",
@@ -58,15 +58,18 @@
       "updatedAt": "2026-08-07T09:34:20.000Z",
       "watchUrl": "https://www.youtube.com/watch?v=Qcabe3lB8cg",
       "state": "retryable",
-      "revision": 4,
-      "artifactIds": [],
+      "revision": 8,
+      "artifactIds": [
+        "youtube-caption-bundle:Qcabe3lB8cg:v2",
+        "youtube-storyboard-visual-fingerprint:Qcabe3lB8cg:v1"
+      ],
       "registeredLocalSampledFingerprints": [],
       "retry": {
-        "stage": "transcript",
-        "lastSuccessfulState": "metadata-ready",
+        "stage": "review",
+        "lastSuccessfulState": "context-ready",
         "attemptCount": 1,
-        "nextAttemptAt": "2026-08-08T08:47:35.310Z",
-        "errorCode": "KOREAN_CAPTION_NOT_FOUND"
+        "nextAttemptAt": "2026-08-08T12:15:09.465Z",
+        "errorCode": "PROCESS_FAILED"
       }
     },
     {
@@ -598,6 +601,26 @@
       "contentDigest": "sha256:acf02f6005a65024f25ff22731db72b0e368022b299047bce5eac6617f59d2fd",
       "byteLength": 2199,
       "createdAt": "2026-08-07T08:41:40.000Z"
+    },
+    {
+      "artifactId": "youtube-caption-bundle:Qcabe3lB8cg:v2",
+      "videoId": "Qcabe3lB8cg",
+      "kind": "transcript",
+      "revision": 2,
+      "storageKey": "sena-replay/videos/Qcabe3lB8cg.v2.json",
+      "contentDigest": "sha256:6b0bfebc8d8b2bdd807ad7ddb34983a76471446ab25f08190198a7de133f89b6",
+      "byteLength": 185230,
+      "createdAt": "2026-08-08T09:15:02.757Z"
+    },
+    {
+      "artifactId": "youtube-storyboard-visual-fingerprint:Qcabe3lB8cg:v1",
+      "videoId": "Qcabe3lB8cg",
+      "kind": "fingerprint",
+      "revision": 1,
+      "storageKey": "sena-replay/videos/Qcabe3lB8cg.visual-fingerprint.v1.json",
+      "contentDigest": "sha256:879a5c6575da2ae87f0f210c5c1a86c479dc334c40580cfa1a33bfc182f16be2",
+      "byteLength": 2187,
+      "createdAt": "2026-08-07T09:34:20.000Z"
     }
   ]
 }
