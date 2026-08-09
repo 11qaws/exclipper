@@ -2,9 +2,30 @@
   "schemaVersion": 1,
   "channelId": "UCHycoTBFDhXz4XNz8jBP-_A",
   "channelHandle": "@AmorettoVODs",
-  "revision": 112,
-  "generatedAt": "2026-08-08T08:58:55.285Z",
+  "revision": 115,
+  "generatedAt": "2026-08-09T07:41:11.782Z",
   "videos": [
+    {
+      "channelId": "UCHycoTBFDhXz4XNz8jBP-_A",
+      "videoId": "MRuu0t_rpXw",
+      "title": "2026 08 09 - 이것저것 다이소방송",
+      "normalizedTitle": "2026 08 09 이것저것 다이소방송",
+      "durationMs": 14503000,
+      "publishedAt": "2026-08-09T07:33:49.000Z",
+      "updatedAt": "2026-08-09T07:33:50.000Z",
+      "watchUrl": "https://www.youtube.com/watch?v=MRuu0t_rpXw",
+      "state": "retryable",
+      "revision": 3,
+      "artifactIds": [],
+      "registeredLocalSampledFingerprints": [],
+      "retry": {
+        "stage": "transcript",
+        "lastSuccessfulState": "metadata-ready",
+        "attemptCount": 1,
+        "nextAttemptAt": "2026-08-10T07:41:11.782Z",
+        "errorCode": "KOREAN_CAPTION_NOT_FOUND"
+      }
+    },
     {
       "channelId": "UCHycoTBFDhXz4XNz8jBP-_A",
       "videoId": "ukJR8mGPAmM",
