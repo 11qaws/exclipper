@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "channelId": "UC_hftLL-ydsJd1YpcBZ_09g",
   "channelHandle": "@망징-b1t",
-  "revision": 32,
-  "generatedAt": "2026-08-09T09:02:19.877Z",
+  "revision": 33,
+  "generatedAt": "2026-08-09T21:08:20.043Z",
   "videos": [
     {
       "channelId": "UC_hftLL-ydsJd1YpcBZ_09g",
@@ -15,15 +15,15 @@
       "updatedAt": "2026-08-08T21:38:00.000Z",
       "watchUrl": "https://www.youtube.com/watch?v=nwNIi2FdHZY",
       "state": "retryable",
-      "revision": 5,
+      "revision": 6,
       "artifactIds": [],
       "registeredLocalSampledFingerprints": [],
       "retry": {
         "stage": "metadata",
         "lastSuccessfulState": "discovered",
-        "attemptCount": 3,
-        "nextAttemptAt": "2026-08-09T21:02:19.877Z",
-        "errorCode": "YT_DLP_FAILED"
+        "attemptCount": 4,
+        "nextAttemptAt": "2026-08-10T21:08:20.043Z",
+        "errorCode": "INVALID_METADATA"
       }
     },
     {
