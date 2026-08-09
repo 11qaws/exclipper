@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "channelId": "UCHycoTBFDhXz4XNz8jBP-_A",
   "channelHandle": "@AmorettoVODs",
-  "revision": 120,
-  "generatedAt": "2026-08-09T08:20:54.630Z",
+  "revision": 121,
+  "generatedAt": "2026-08-09T09:01:41.561Z",
   "videos": [
     {
       "channelId": "UCHycoTBFDhXz4XNz8jBP-_A",
@@ -12,10 +12,10 @@
       "normalizedTitle": "2026 08 09 이것저것 다이소방송",
       "durationMs": 14503000,
       "publishedAt": "2026-08-09T07:33:49.000Z",
-      "updatedAt": "2026-08-09T07:57:04.000Z",
+      "updatedAt": "2026-08-09T08:22:40.000Z",
       "watchUrl": "https://www.youtube.com/watch?v=MRuu0t_rpXw",
       "state": "retryable",
-      "revision": 4,
+      "revision": 5,
       "artifactIds": [],
       "registeredLocalSampledFingerprints": [],
       "retry": {
