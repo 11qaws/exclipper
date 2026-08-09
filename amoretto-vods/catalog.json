@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "channelId": "UCHycoTBFDhXz4XNz8jBP-_A",
   "channelHandle": "@AmorettoVODs",
-  "revision": 115,
-  "generatedAt": "2026-08-09T07:41:11.782Z",
+  "revision": 120,
+  "generatedAt": "2026-08-09T08:20:54.630Z",
   "videos": [
     {
       "channelId": "UCHycoTBFDhXz4XNz8jBP-_A",
@@ -12,10 +12,10 @@
       "normalizedTitle": "2026 08 09 이것저것 다이소방송",
       "durationMs": 14503000,
       "publishedAt": "2026-08-09T07:33:49.000Z",
-      "updatedAt": "2026-08-09T07:33:50.000Z",
+      "updatedAt": "2026-08-09T07:57:04.000Z",
       "watchUrl": "https://www.youtube.com/watch?v=MRuu0t_rpXw",
       "state": "retryable",
-      "revision": 3,
+      "revision": 4,
       "artifactIds": [],
       "registeredLocalSampledFingerprints": [],
       "retry": {
@@ -35,17 +35,15 @@
       "publishedAt": "2026-08-08T07:52:55.000Z",
       "updatedAt": "2026-08-08T08:49:46.000Z",
       "watchUrl": "https://www.youtube.com/watch?v=ukJR8mGPAmM",
-      "state": "retryable",
-      "revision": 4,
-      "artifactIds": [],
+      "state": "review-ready",
+      "revision": 8,
+      "artifactIds": [
+        "youtube-caption-bundle:ukJR8mGPAmM:v2",
+        "youtube-storyboard-visual-fingerprint:ukJR8mGPAmM:v1",
+        "review-bundle:ukJR8mGPAmM:v8"
+      ],
       "registeredLocalSampledFingerprints": [],
-      "retry": {
-        "stage": "transcript",
-        "lastSuccessfulState": "metadata-ready",
-        "attemptCount": 1,
-        "nextAttemptAt": "2026-08-09T07:59:19.437Z",
-        "errorCode": "KOREAN_CAPTION_NOT_FOUND"
-      }
+      "retry": null
     },
     {
       "channelId": "UCHycoTBFDhXz4XNz8jBP-_A",
@@ -763,6 +761,36 @@
       "contentDigest": "sha256:ba1a4b49de40898a577329d7a54e853d3780a74be5081689cc19384214b951f1",
       "byteLength": 2165071,
       "createdAt": "2026-08-07T07:47:41.754Z"
+    },
+    {
+      "artifactId": "youtube-caption-bundle:ukJR8mGPAmM:v2",
+      "videoId": "ukJR8mGPAmM",
+      "kind": "transcript",
+      "revision": 2,
+      "storageKey": "amoretto-vods/videos/ukJR8mGPAmM.v2.json",
+      "contentDigest": "sha256:8ca455c4c6d4310bea1bb895fda084c11a48b6d6c52f7c5a36c06e24333ef274",
+      "byteLength": 699334,
+      "createdAt": "2026-08-09T08:03:58.517Z"
+    },
+    {
+      "artifactId": "youtube-storyboard-visual-fingerprint:ukJR8mGPAmM:v1",
+      "videoId": "ukJR8mGPAmM",
+      "kind": "fingerprint",
+      "revision": 1,
+      "storageKey": "amoretto-vods/videos/ukJR8mGPAmM.visual-fingerprint.v1.json",
+      "contentDigest": "sha256:d41e614baad23bec51dbb0b14c64f28c9c61e0e93ea2c0be03809b9a9f88d597",
+      "byteLength": 2197,
+      "createdAt": "2026-08-08T08:49:46.000Z"
+    },
+    {
+      "artifactId": "review-bundle:ukJR8mGPAmM:v8",
+      "videoId": "ukJR8mGPAmM",
+      "kind": "review",
+      "revision": 8,
+      "storageKey": "amoretto-vods/videos/ukJR8mGPAmM.review.v8.json",
+      "contentDigest": "sha256:2487742c78c99eab735ba3ddb1bc82f8df8f31b2466aabd1ac4fe34d710206d6",
+      "byteLength": 1986863,
+      "createdAt": "2026-08-09T08:10:06.193Z"
     }
   ]
 }
