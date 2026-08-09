@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "channelId": "UC_hftLL-ydsJd1YpcBZ_09g",
   "channelHandle": "@망징-b1t",
-  "revision": 29,
-  "generatedAt": "2026-08-08T21:06:25.846Z",
+  "revision": 31,
+  "generatedAt": "2026-08-09T02:28:39.777Z",
   "videos": [
     {
       "channelId": "UC_hftLL-ydsJd1YpcBZ_09g",
@@ -12,17 +12,17 @@
       "normalizedTitle": "림버스 컴퍼니 이상 날개 다 읽고 4장 몰아보기",
       "durationMs": null,
       "publishedAt": "2026-08-08T21:01:30.000Z",
-      "updatedAt": "2026-08-08T21:01:30.000Z",
+      "updatedAt": "2026-08-08T21:38:00.000Z",
       "watchUrl": "https://www.youtube.com/watch?v=nwNIi2FdHZY",
       "state": "retryable",
-      "revision": 2,
+      "revision": 4,
       "artifactIds": [],
       "registeredLocalSampledFingerprints": [],
       "retry": {
         "stage": "metadata",
         "lastSuccessfulState": "discovered",
-        "attemptCount": 1,
-        "nextAttemptAt": "2026-08-09T00:06:25.846Z",
+        "attemptCount": 2,
+        "nextAttemptAt": "2026-08-09T08:28:39.777Z",
         "errorCode": "INVALID_METADATA"
       }
     },
