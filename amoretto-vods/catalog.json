@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "channelId": "UCHycoTBFDhXz4XNz8jBP-_A",
   "channelHandle": "@AmorettoVODs",
-  "revision": 126,
-  "generatedAt": "2026-08-10T15:18:01.102Z",
+  "revision": 127,
+  "generatedAt": "2026-08-10T21:26:08.484Z",
   "videos": [
     {
       "channelId": "UCHycoTBFDhXz4XNz8jBP-_A",
@@ -12,10 +12,10 @@
       "normalizedTitle": "2026 08 10 스케줄 만드는 짧방",
       "durationMs": 3995000,
       "publishedAt": "2026-08-10T14:44:35.000Z",
-      "updatedAt": "2026-08-10T15:14:53.000Z",
+      "updatedAt": "2026-08-10T15:45:47.000Z",
       "watchUrl": "https://www.youtube.com/watch?v=9fnsOgRaTRc",
       "state": "retryable",
-      "revision": 3,
+      "revision": 4,
       "artifactIds": [],
       "registeredLocalSampledFingerprints": [],
       "retry": {
@@ -33,10 +33,10 @@
       "normalizedTitle": "2026 08 09 이것저것 다이소방송",
       "durationMs": 14503000,
       "publishedAt": "2026-08-09T07:33:49.000Z",
-      "updatedAt": "2026-08-10T11:50:39.000Z",
+      "updatedAt": "2026-08-10T17:54:43.000Z",
       "watchUrl": "https://www.youtube.com/watch?v=MRuu0t_rpXw",
       "state": "retryable",
-      "revision": 8,
+      "revision": 9,
       "artifactIds": [],
       "registeredLocalSampledFingerprints": [],
       "retry": {
