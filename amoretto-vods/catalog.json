@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "channelId": "UCHycoTBFDhXz4XNz8jBP-_A",
   "channelHandle": "@AmorettoVODs",
-  "revision": 122,
-  "generatedAt": "2026-08-09T21:07:32.955Z",
+  "revision": 123,
+  "generatedAt": "2026-08-10T08:51:44.478Z",
   "videos": [
     {
       "channelId": "UCHycoTBFDhXz4XNz8jBP-_A",
@@ -15,14 +15,14 @@
       "updatedAt": "2026-08-09T09:44:30.000Z",
       "watchUrl": "https://www.youtube.com/watch?v=MRuu0t_rpXw",
       "state": "retryable",
-      "revision": 6,
+      "revision": 7,
       "artifactIds": [],
       "registeredLocalSampledFingerprints": [],
       "retry": {
         "stage": "transcript",
         "lastSuccessfulState": "metadata-ready",
-        "attemptCount": 1,
-        "nextAttemptAt": "2026-08-10T07:41:11.782Z",
+        "attemptCount": 2,
+        "nextAttemptAt": "2026-08-13T08:51:44.478Z",
         "errorCode": "KOREAN_CAPTION_NOT_FOUND"
       }
     },
