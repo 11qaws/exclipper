@@ -2,9 +2,30 @@
   "schemaVersion": 1,
   "channelId": "UCHycoTBFDhXz4XNz8jBP-_A",
   "channelHandle": "@AmorettoVODs",
-  "revision": 123,
-  "generatedAt": "2026-08-10T08:51:44.478Z",
+  "revision": 126,
+  "generatedAt": "2026-08-10T15:18:01.102Z",
   "videos": [
+    {
+      "channelId": "UCHycoTBFDhXz4XNz8jBP-_A",
+      "videoId": "9fnsOgRaTRc",
+      "title": "2026 08 10 - 스케줄 만드는 짧방",
+      "normalizedTitle": "2026 08 10 스케줄 만드는 짧방",
+      "durationMs": 3995000,
+      "publishedAt": "2026-08-10T14:44:35.000Z",
+      "updatedAt": "2026-08-10T15:14:53.000Z",
+      "watchUrl": "https://www.youtube.com/watch?v=9fnsOgRaTRc",
+      "state": "retryable",
+      "revision": 3,
+      "artifactIds": [],
+      "registeredLocalSampledFingerprints": [],
+      "retry": {
+        "stage": "transcript",
+        "lastSuccessfulState": "metadata-ready",
+        "attemptCount": 1,
+        "nextAttemptAt": "2026-08-11T15:18:01.102Z",
+        "errorCode": "KOREAN_CAPTION_NOT_FOUND"
+      }
+    },
     {
       "channelId": "UCHycoTBFDhXz4XNz8jBP-_A",
       "videoId": "MRuu0t_rpXw",
@@ -12,10 +33,10 @@
       "normalizedTitle": "2026 08 09 이것저것 다이소방송",
       "durationMs": 14503000,
       "publishedAt": "2026-08-09T07:33:49.000Z",
-      "updatedAt": "2026-08-09T09:44:30.000Z",
+      "updatedAt": "2026-08-10T11:50:39.000Z",
       "watchUrl": "https://www.youtube.com/watch?v=MRuu0t_rpXw",
       "state": "retryable",
-      "revision": 7,
+      "revision": 8,
       "artifactIds": [],
       "registeredLocalSampledFingerprints": [],
       "retry": {

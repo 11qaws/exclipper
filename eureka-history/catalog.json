@@ -2,9 +2,28 @@
   "schemaVersion": 1,
   "channelId": "UCiFzBB8xsUjEBq8_h6Yl6tA",
   "channelHandle": "@eureka_history",
-  "revision": 57,
-  "generatedAt": "2026-08-07T08:00:16.241Z",
+  "revision": 63,
+  "generatedAt": "2026-08-10T15:23:55.807Z",
   "videos": [
+    {
+      "channelId": "UCiFzBB8xsUjEBq8_h6Yl6tA",
+      "videoId": "GJ_KCFXYhHY",
+      "title": "2026 08 10 김전일가치보기전열",
+      "normalizedTitle": "2026 08 10 김전일가치보기전열",
+      "durationMs": 3422000,
+      "publishedAt": "2026-08-10T14:12:41.000Z",
+      "updatedAt": "2026-08-10T15:00:32.000Z",
+      "watchUrl": "https://www.youtube.com/watch?v=GJ_KCFXYhHY",
+      "state": "review-ready",
+      "revision": 6,
+      "artifactIds": [
+        "youtube-caption-bundle:GJ_KCFXYhHY:v2",
+        "youtube-storyboard-visual-fingerprint:GJ_KCFXYhHY:v1",
+        "review-bundle:GJ_KCFXYhHY:v6"
+      ],
+      "registeredLocalSampledFingerprints": [],
+      "retry": null
+    },
     {
       "channelId": "UCiFzBB8xsUjEBq8_h6Yl6tA",
       "videoId": "ehiSg77LpRY",
@@ -505,6 +524,36 @@
       "contentDigest": "sha256:1aecb2f47da995e36d93c91c51160791ccb7d45dc64f37f5d512e55de89dcb2c",
       "byteLength": 2131393,
       "createdAt": "2026-08-07T07:57:52.795Z"
+    },
+    {
+      "artifactId": "youtube-caption-bundle:GJ_KCFXYhHY:v2",
+      "videoId": "GJ_KCFXYhHY",
+      "kind": "transcript",
+      "revision": 2,
+      "storageKey": "eureka-history/videos/GJ_KCFXYhHY.v2.json",
+      "contentDigest": "sha256:c8a1b72b7af089f6de72ec7f4bf6df3846bfd939cac3910dc7dc9456b2da0e6a",
+      "byteLength": 169665,
+      "createdAt": "2026-08-10T15:17:54.277Z"
+    },
+    {
+      "artifactId": "youtube-storyboard-visual-fingerprint:GJ_KCFXYhHY:v1",
+      "videoId": "GJ_KCFXYhHY",
+      "kind": "fingerprint",
+      "revision": 1,
+      "storageKey": "eureka-history/videos/GJ_KCFXYhHY.visual-fingerprint.v1.json",
+      "contentDigest": "sha256:a33ff4ac4bea81c0e0618c5366e032081d241eb28802f690f19a17815b8a00b3",
+      "byteLength": 2198,
+      "createdAt": "2026-08-10T15:00:32.000Z"
+    },
+    {
+      "artifactId": "review-bundle:GJ_KCFXYhHY:v6",
+      "videoId": "GJ_KCFXYhHY",
+      "kind": "review",
+      "revision": 6,
+      "storageKey": "eureka-history/videos/GJ_KCFXYhHY.review.v6.json",
+      "contentDigest": "sha256:dbd3adfafd6a6fdf27cde69698e06fac18104c294bc905d1c328056de8bf0ec9",
+      "byteLength": 2575958,
+      "createdAt": "2026-08-10T15:20:49.445Z"
     }
   ]
 }
