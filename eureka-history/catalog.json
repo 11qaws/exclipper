@@ -2,9 +2,54 @@
   "schemaVersion": 1,
   "channelId": "UCiFzBB8xsUjEBq8_h6Yl6tA",
   "channelHandle": "@eureka_history",
-  "revision": 63,
-  "generatedAt": "2026-08-10T15:23:55.807Z",
+  "revision": 71,
+  "generatedAt": "2026-08-11T13:43:45.740Z",
   "videos": [
+    {
+      "channelId": "UCiFzBB8xsUjEBq8_h6Yl6tA",
+      "videoId": "28f2IlLR_eU",
+      "title": "2026 08 11 김전일전열",
+      "normalizedTitle": "2026 08 11 김전일전열",
+      "durationMs": 3676000,
+      "publishedAt": "2026-08-11T13:05:29.000Z",
+      "updatedAt": "2026-08-11T13:34:14.000Z",
+      "watchUrl": "https://www.youtube.com/watch?v=28f2IlLR_eU",
+      "state": "retryable",
+      "revision": 3,
+      "artifactIds": [],
+      "registeredLocalSampledFingerprints": [],
+      "retry": {
+        "stage": "transcript",
+        "lastSuccessfulState": "metadata-ready",
+        "attemptCount": 1,
+        "nextAttemptAt": "2026-08-12T13:42:14.865Z",
+        "errorCode": "KOREAN_CAPTION_NOT_FOUND"
+      }
+    },
+    {
+      "channelId": "UCiFzBB8xsUjEBq8_h6Yl6tA",
+      "videoId": "Akvy8Z6TmF8",
+      "title": "2026 08 11 김전일후열",
+      "normalizedTitle": "2026 08 11 김전일후열",
+      "durationMs": 5152000,
+      "publishedAt": "2026-08-11T13:00:56.000Z",
+      "updatedAt": "2026-08-11T13:30:12.000Z",
+      "watchUrl": "https://www.youtube.com/watch?v=Akvy8Z6TmF8",
+      "state": "retryable",
+      "revision": 6,
+      "artifactIds": [
+        "youtube-caption-bundle:Akvy8Z6TmF8:v2",
+        "youtube-storyboard-visual-fingerprint:Akvy8Z6TmF8:v1"
+      ],
+      "registeredLocalSampledFingerprints": [],
+      "retry": {
+        "stage": "review",
+        "lastSuccessfulState": "context-ready",
+        "attemptCount": 1,
+        "nextAttemptAt": "2026-08-11T16:43:45.740Z",
+        "errorCode": "PROCESS_FAILED"
+      }
+    },
     {
       "channelId": "UCiFzBB8xsUjEBq8_h6Yl6tA",
       "videoId": "GJ_KCFXYhHY",
@@ -554,6 +599,26 @@
       "contentDigest": "sha256:dbd3adfafd6a6fdf27cde69698e06fac18104c294bc905d1c328056de8bf0ec9",
       "byteLength": 2575958,
       "createdAt": "2026-08-10T15:20:49.445Z"
+    },
+    {
+      "artifactId": "youtube-caption-bundle:Akvy8Z6TmF8:v2",
+      "videoId": "Akvy8Z6TmF8",
+      "kind": "transcript",
+      "revision": 2,
+      "storageKey": "eureka-history/videos/Akvy8Z6TmF8.v2.json",
+      "contentDigest": "sha256:564c37cc71119d379856467eab2be26434bd623a9c818054fd3886c05e682027",
+      "byteLength": 250179,
+      "createdAt": "2026-08-11T13:43:39.427Z"
+    },
+    {
+      "artifactId": "youtube-storyboard-visual-fingerprint:Akvy8Z6TmF8:v1",
+      "videoId": "Akvy8Z6TmF8",
+      "kind": "fingerprint",
+      "revision": 1,
+      "storageKey": "eureka-history/videos/Akvy8Z6TmF8.visual-fingerprint.v1.json",
+      "contentDigest": "sha256:399e2af2b67e8fa3c10211c8647bcf11ed824af722d4fde9591ab78182904f7e",
+      "byteLength": 2193,
+      "createdAt": "2026-08-11T13:30:12.000Z"
     }
   ]
 }
