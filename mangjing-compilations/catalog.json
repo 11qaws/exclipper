@@ -2,9 +2,28 @@
   "schemaVersion": 1,
   "channelId": "UC_hftLL-ydsJd1YpcBZ_09g",
   "channelHandle": "@망징-b1t",
-  "revision": 34,
-  "generatedAt": "2026-08-10T21:26:50.071Z",
+  "revision": 40,
+  "generatedAt": "2026-08-11T09:35:09.874Z",
   "videos": [
+    {
+      "channelId": "UC_hftLL-ydsJd1YpcBZ_09g",
+      "videoId": "3UOCMKPtJLw",
+      "title": "개쫄보가 진행하는 벌칙 공겜 [그림자 복도]",
+      "normalizedTitle": "개쫄보가 진행하는 벌칙 공겜 그림자 복도",
+      "durationMs": 19241000,
+      "publishedAt": "2026-08-11T01:27:58.000Z",
+      "updatedAt": "2026-08-11T01:30:32.000Z",
+      "watchUrl": "https://www.youtube.com/watch?v=3UOCMKPtJLw",
+      "state": "review-ready",
+      "revision": 6,
+      "artifactIds": [
+        "youtube-caption-bundle:3UOCMKPtJLw:v2",
+        "youtube-storyboard-visual-fingerprint:3UOCMKPtJLw:v1",
+        "review-bundle:3UOCMKPtJLw:v6"
+      ],
+      "registeredLocalSampledFingerprints": [],
+      "retry": null
+    },
     {
       "channelId": "UC_hftLL-ydsJd1YpcBZ_09g",
       "videoId": "nwNIi2FdHZY",
@@ -390,6 +409,36 @@
       "contentDigest": "sha256:9cac7a991ed6a62f4f109e141e17605afe3caa1bf67167c144dfc93aa1b93cfb",
       "byteLength": 1731447,
       "createdAt": "2026-08-03T14:48:53.195Z"
+    },
+    {
+      "artifactId": "youtube-caption-bundle:3UOCMKPtJLw:v2",
+      "videoId": "3UOCMKPtJLw",
+      "kind": "transcript",
+      "revision": 2,
+      "storageKey": "mangjing-compilations/videos/3UOCMKPtJLw.v2.json",
+      "contentDigest": "sha256:26b19bd577e686e478169c6924f02b5920899d9f5733c1bceb0671101c4ebf82",
+      "byteLength": 822946,
+      "createdAt": "2026-08-11T09:24:25.895Z"
+    },
+    {
+      "artifactId": "youtube-storyboard-visual-fingerprint:3UOCMKPtJLw:v1",
+      "videoId": "3UOCMKPtJLw",
+      "kind": "fingerprint",
+      "revision": 1,
+      "storageKey": "mangjing-compilations/videos/3UOCMKPtJLw.visual-fingerprint.v1.json",
+      "contentDigest": "sha256:5426dfcdb587aec64e953d14a106e2a62eff5e91eabacf7cc7b64f0a1b83081f",
+      "byteLength": 2203,
+      "createdAt": "2026-08-11T01:30:32.000Z"
+    },
+    {
+      "artifactId": "review-bundle:3UOCMKPtJLw:v6",
+      "videoId": "3UOCMKPtJLw",
+      "kind": "review",
+      "revision": 6,
+      "storageKey": "mangjing-compilations/videos/3UOCMKPtJLw.review.v6.json",
+      "contentDigest": "sha256:ab25969b15cdf5e12fb03b91dd2efc29404097b8f0d8c527f6dc4ad55d6a067d",
+      "byteLength": 1628670,
+      "createdAt": "2026-08-11T09:31:36.977Z"
     }
   ]
 }
