@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "channelId": "UCHycoTBFDhXz4XNz8jBP-_A",
   "channelHandle": "@AmorettoVODs",
-  "revision": 127,
-  "generatedAt": "2026-08-10T21:26:08.484Z",
+  "revision": 131,
+  "generatedAt": "2026-08-11T15:55:02.014Z",
   "videos": [
     {
       "channelId": "UCHycoTBFDhXz4XNz8jBP-_A",
@@ -15,15 +15,18 @@
       "updatedAt": "2026-08-10T15:45:47.000Z",
       "watchUrl": "https://www.youtube.com/watch?v=9fnsOgRaTRc",
       "state": "retryable",
-      "revision": 4,
-      "artifactIds": [],
+      "revision": 8,
+      "artifactIds": [
+        "youtube-caption-bundle:9fnsOgRaTRc:v2",
+        "youtube-storyboard-visual-fingerprint:9fnsOgRaTRc:v1"
+      ],
       "registeredLocalSampledFingerprints": [],
       "retry": {
-        "stage": "transcript",
-        "lastSuccessfulState": "metadata-ready",
+        "stage": "review",
+        "lastSuccessfulState": "context-ready",
         "attemptCount": 1,
-        "nextAttemptAt": "2026-08-11T15:18:01.102Z",
-        "errorCode": "KOREAN_CAPTION_NOT_FOUND"
+        "nextAttemptAt": "2026-08-11T18:55:02.014Z",
+        "errorCode": "REVIEW_CANDIDATES_INCOMPLETE"
       }
     },
     {
@@ -812,6 +815,26 @@
       "contentDigest": "sha256:2487742c78c99eab735ba3ddb1bc82f8df8f31b2466aabd1ac4fe34d710206d6",
       "byteLength": 1986863,
       "createdAt": "2026-08-09T08:10:06.193Z"
+    },
+    {
+      "artifactId": "youtube-caption-bundle:9fnsOgRaTRc:v2",
+      "videoId": "9fnsOgRaTRc",
+      "kind": "transcript",
+      "revision": 2,
+      "storageKey": "amoretto-vods/videos/9fnsOgRaTRc.v2.json",
+      "contentDigest": "sha256:5f638556e0fc1fa9876f471e60d2258f7725809cf7a40711fb63844aba1e0eac",
+      "byteLength": 205906,
+      "createdAt": "2026-08-11T15:40:04.114Z"
+    },
+    {
+      "artifactId": "youtube-storyboard-visual-fingerprint:9fnsOgRaTRc:v1",
+      "videoId": "9fnsOgRaTRc",
+      "kind": "fingerprint",
+      "revision": 1,
+      "storageKey": "amoretto-vods/videos/9fnsOgRaTRc.visual-fingerprint.v1.json",
+      "contentDigest": "sha256:8e1a767a9c90b36c3fd68a95fe1dd74fb52a6b01987f898aeb6774a6bd5a18bf",
+      "byteLength": 2198,
+      "createdAt": "2026-08-10T15:45:47.000Z"
     }
   ]
 }

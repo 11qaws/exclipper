@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "channelId": "UCiFzBB8xsUjEBq8_h6Yl6tA",
   "channelHandle": "@eureka_history",
-  "revision": 71,
-  "generatedAt": "2026-08-11T13:43:45.740Z",
+  "revision": 72,
+  "generatedAt": "2026-08-11T15:38:14.223Z",
   "videos": [
     {
       "channelId": "UCiFzBB8xsUjEBq8_h6Yl6tA",
@@ -12,10 +12,10 @@
       "normalizedTitle": "2026 08 11 김전일전열",
       "durationMs": 3676000,
       "publishedAt": "2026-08-11T13:05:29.000Z",
-      "updatedAt": "2026-08-11T13:34:14.000Z",
+      "updatedAt": "2026-08-11T14:16:25.000Z",
       "watchUrl": "https://www.youtube.com/watch?v=28f2IlLR_eU",
       "state": "retryable",
-      "revision": 3,
+      "revision": 4,
       "artifactIds": [],
       "registeredLocalSampledFingerprints": [],
       "retry": {
